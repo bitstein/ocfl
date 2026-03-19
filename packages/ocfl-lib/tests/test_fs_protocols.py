@@ -125,7 +125,7 @@ class TestProtocolsRuntimeCheckable:
             def mkdir(self, name: str) -> None:
                 pass
 
-            def copy(self, dst: str, src: str) -> int:
+            def copy(self, src: str, dst: str) -> int:
                 return 0
 
         assert isinstance(MyCopyFS(), CopyFS)

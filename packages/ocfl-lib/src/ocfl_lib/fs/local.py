@@ -92,7 +92,7 @@ class LocalFS:
 
     # -- CopyFS --
 
-    def copy(self, dst: str, src: str) -> int:
+    def copy(self, src: str, dst: str) -> int:
         """Copy a file within this filesystem."""
         src_path = self._resolve(src)
         dst_path = self._resolve(dst)

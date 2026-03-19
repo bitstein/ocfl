@@ -155,7 +155,7 @@ class TestMkdir:
 
 class TestCopy:
     def test_copy_file(self, fs: LocalFS, fs_dir: Path):
-        n = fs.copy("copy.txt", "a.txt")
+        n = fs.copy("a.txt", "copy.txt")
         assert n == 5
         assert (fs_dir / "copy.txt").read_bytes() == b"hello"
         # Source unchanged
@@ -163,12 +163,12 @@ class TestCopy:
 
     def test_copy_nested(self, fs: LocalFS, fs_dir: Path):
         fs.mkdir("out")
-        fs.copy("out/b_copy.txt", "sub/b.txt")
+        fs.copy("sub/b.txt", "out/b_copy.txt")
         assert (fs_dir / "out" / "b_copy.txt").read_bytes() == b"world"
 
     def test_copy_not_found(self, fs: LocalFS):
         with pytest.raises(FileNotFoundError):
-            fs.copy("dst.txt", "nope.txt")
+            fs.copy("nope.txt", "dst.txt")
 
 
 class TestWalkFiles:

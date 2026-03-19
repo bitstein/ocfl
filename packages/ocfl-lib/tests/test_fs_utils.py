@@ -78,7 +78,7 @@ class TestExists:
 class TestCopy:
     def test_same_fs_uses_copy_fs(self, fs: LocalFS, fs_dir: Path):
         """When src and dst are the same CopyFS, use server-side copy."""
-        n = copy(fs, "copy.txt", fs, "hello.txt")
+        n = copy(fs, "hello.txt", fs, "copy.txt")
         assert n == 11
         assert (fs_dir / "copy.txt").read_bytes() == b"hello world"
 
@@ -93,10 +93,10 @@ class TestCopy:
         src_fs = LocalFS(src_dir)
         dst_fs = LocalFS(dst_dir)
 
-        n = copy(dst_fs, "data.bin", src_fs, "data.bin")
+        n = copy(src_fs, "data.bin", dst_fs, "data.bin")
         assert n == 10
         assert (dst_dir / "data.bin").read_bytes() == b"cross copy"
 
     def test_not_found(self, fs: LocalFS):
         with pytest.raises(FileNotFoundError):
-            copy(fs, "dst.txt", fs, "nope.txt")
+            copy(fs, "nope.txt", fs, "dst.txt")

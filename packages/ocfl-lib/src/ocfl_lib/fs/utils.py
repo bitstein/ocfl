@@ -8,6 +8,7 @@ from ocfl_lib.fs.protocols import CopyFS, WriteFS
 if TYPE_CHECKING:
     from ocfl_lib.fs.protocols import FS
 
+
 def read_all(fsys: FS, name: str) -> bytes:
     """Read entire file contents as bytes."""
     with fsys.open_file(name) as f:
@@ -33,12 +34,12 @@ def exists(fsys: FS, name: str) -> bool:
         return False
 
 
-def copy(dst_fs: WriteFS, dst_name: str, src_fs: FS, src_name: str) -> int:
+def copy(src_fs: FS, src_name: str, dst_fs: WriteFS, dst_name: str) -> int:
     """Copy a file between filesystems.
 
     Uses server-side copy if src and dst are the same CopyFS instance.
     """
-    if dst_fs is src_fs and isinstance(dst_fs, CopyFS):
-        return dst_fs.copy(dst_name, src_name)
+    if src_fs is dst_fs and isinstance(dst_fs, CopyFS):
+        return dst_fs.copy(src_name, dst_name)
     with src_fs.open_file(src_name) as f:
         return dst_fs.write(dst_name, f)

@@ -47,7 +47,7 @@ class WriteFS(FS, Protocol):
 class CopyFS(WriteFS, Protocol):
     """Filesystem with server-side copy (e.g. same-bucket S3 copy)."""
 
-    def copy(self, dst: str, src: str) -> int: ...
+    def copy(self, src: str, dst: str) -> int: ...
 
 
 @runtime_checkable
