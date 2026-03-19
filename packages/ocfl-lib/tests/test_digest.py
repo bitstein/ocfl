@@ -13,6 +13,7 @@ from ocfl_lib.digest import (
     DigestAlgorithm,
     bytes_digest,
     file_digest,
+    multi_digest,
     stream_digest,
 )
 
@@ -181,3 +182,43 @@ class TestBytesDigest:
     @pytest.mark.parametrize("alg", list(EMPTY_DIGESTS))
     def test_all_algorithms(self, alg: DigestAlgorithm):
         assert bytes_digest(b"", alg) == EMPTY_DIGESTS[alg]
+
+
+class TestMultiDigest:
+    def test_two_algorithms(self, tmp_path: Path):
+        f = tmp_path / "test.txt"
+        f.write_bytes(HELLO_WORLD)
+        result = multi_digest(f, [DigestAlgorithm.SHA256, DigestAlgorithm.SHA512])
+        assert result[DigestAlgorithm.SHA256] == HELLO_SHA256
+        assert result[DigestAlgorithm.SHA512] == HELLO_SHA512
+
+    def test_matches_individual(self, tmp_path: Path):
+        data = b"test data for multi digest"
+        f = tmp_path / "test.bin"
+        f.write_bytes(data)
+        algs = [DigestAlgorithm.SHA512, DigestAlgorithm.SHA256, DigestAlgorithm.MD5]
+        result = multi_digest(f, algs)
+        for alg in algs:
+            assert result[alg] == file_digest(f, alg)
+
+    def test_single_algorithm(self, tmp_path: Path):
+        f = tmp_path / "test.txt"
+        f.write_bytes(HELLO_WORLD)
+        result = multi_digest(f, [DigestAlgorithm.SHA256])
+        assert result[DigestAlgorithm.SHA256] == HELLO_SHA256
+
+    def test_empty_file(self, tmp_path: Path):
+        f = tmp_path / "empty.txt"
+        f.write_bytes(b"")
+        result = multi_digest(f, [DigestAlgorithm.SHA256, DigestAlgorithm.SHA512])
+        assert result[DigestAlgorithm.SHA256] == EMPTY_DIGESTS[DigestAlgorithm.SHA256]
+        assert result[DigestAlgorithm.SHA512] == EMPTY_DIGESTS[DigestAlgorithm.SHA512]
+
+    def test_large_file(self, tmp_path: Path):
+        """Verify multi-pass works across chunk boundaries."""
+        data = b"z" * 100_000
+        f = tmp_path / "large.bin"
+        f.write_bytes(data)
+        result = multi_digest(f, [DigestAlgorithm.SHA256, DigestAlgorithm.MD5])
+        assert result[DigestAlgorithm.SHA256] == hashlib.sha256(data).hexdigest()
+        assert result[DigestAlgorithm.MD5] == hashlib.md5(data).hexdigest()

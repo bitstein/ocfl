@@ -7,6 +7,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, BinaryIO, Protocol
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 _CHUNK_SIZE = 32 * 1024
@@ -88,3 +89,15 @@ def bytes_digest(data: bytes, alg: DigestAlgorithm) -> str:
     h = alg.new_hasher()
     h.update(data)
     return h.hexdigest()
+
+
+def multi_digest(
+    path: Path, algs: Sequence[DigestAlgorithm]
+) -> dict[DigestAlgorithm, str]:
+    """Compute multiple digests in a single pass through the file."""
+    hashers = {alg: alg.new_hasher() for alg in algs}
+    with open(path, "rb") as f:
+        while chunk := f.read(_CHUNK_SIZE):
+            for h in hashers.values():
+                h.update(chunk)
+    return {alg: h.hexdigest() for alg, h in hashers.items()}
