@@ -1,0 +1,81 @@
+"""0007-n-tuple-omit-prefix-storage-layout extension."""
+
+from typing import Literal
+
+import msgspec
+
+EXTENSION_NAME = "0007-n-tuple-omit-prefix-storage-layout"
+
+
+class NTupleOmitPrefixConfig(msgspec.Struct, rename="camel"):
+    extension_name: str = EXTENSION_NAME
+    delimiter: str = ":"
+    tuple_size: int = 3
+    number_of_tuples: int = 3
+    zero_padding: Literal["left", "right"] = "left"
+    reverse_object_root: bool = False
+
+
+class NTupleOmitPrefixLayout:
+    """OCFL 0007: n-tuple omit prefix storage layout."""
+
+    def __init__(
+        self,
+        *,
+        delimiter: str = ":",
+        tuple_size: int = 3,
+        number_of_tuples: int = 3,
+        zero_padding: Literal["left", "right"] = "left",
+        reverse_object_root: bool = False,
+    ) -> None:
+        if not delimiter:
+            raise ValueError("delimiter must not be empty")
+        self._delimiter = delimiter
+        self._tuple_size = tuple_size
+        self._n_tuples = number_of_tuples
+        self._zero_padding = zero_padding
+        self._reverse = reverse_object_root
+
+    @property
+    def name(self) -> str:
+        return EXTENSION_NAME
+
+    @classmethod
+    def from_config(cls, config: dict | None = None) -> NTupleOmitPrefixLayout:
+        if config is None:
+            return cls()
+        cfg = msgspec.convert(config, NTupleOmitPrefixConfig)
+        return cls(
+            delimiter=cfg.delimiter,
+            tuple_size=cfg.tuple_size,
+            number_of_tuples=cfg.number_of_tuples,
+            zero_padding=cfg.zero_padding,
+            reverse_object_root=cfg.reverse_object_root,
+        )
+
+    def resolve(self, object_id: str) -> str:
+        # Strip prefix: use whole ID if delimiter not found
+        idx = object_id.rfind(self._delimiter)
+        remainder = (
+            object_id[idx + len(self._delimiter) :] if idx >= 0 else object_id
+        )
+
+        total_len = self._tuple_size * self._n_tuples
+
+        # Pad
+        if self._zero_padding == "left":
+            padded = remainder.rjust(total_len, "0")
+        else:
+            padded = remainder.ljust(total_len, "0")
+
+        # Optionally reverse
+        if self._reverse:
+            padded = padded[::-1]
+
+        # Extract tuples from first total_len chars
+        tuples = [
+            padded[i : i + self._tuple_size]
+            for i in range(0, total_len, self._tuple_size)
+        ]
+
+        return "/".join([*tuples, remainder])
