@@ -1,4 +1,4 @@
-"""Tests for InventoryBuilder (Phase 4.4)."""
+"""Tests for InventoryBuilder."""
 
 from typing import TYPE_CHECKING
 

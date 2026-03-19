@@ -1,4 +1,4 @@
-"""Tests for DigestMap operations (Phase 4.3)."""
+"""Tests for DigestMap operations."""
 
 from ocfl_lib.digest_map import (
     DigestMap,

@@ -1,4 +1,4 @@
-"""Tests for inventory model (Phase 4.1-4.2)."""
+"""Tests for inventory model."""
 
 import json
 
