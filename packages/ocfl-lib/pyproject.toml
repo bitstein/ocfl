@@ -3,7 +3,9 @@ name = "ocfl-lib"
 version = "0.1.0"
 description = "Library for implementing OCFL"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "msgspec>=0.20.0",
+]
 
 [build-system]
 requires = ["hatchling"]
