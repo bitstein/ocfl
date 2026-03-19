@@ -2,7 +2,9 @@
 
 from typing import runtime_checkable
 
-from ocfl_lib.layout import Layout, LayoutRegistry
+import pytest
+
+from ocfl_lib.layout import Layout, LayoutRegistry, get_layout
 
 
 class _DummyLayout:
@@ -66,3 +68,24 @@ class TestLayoutRegistry:
         reg.register("x", lambda config: _DummyLayout())
         # no error — last registration wins
         assert reg.get_layout("x") is not None
+
+
+class TestDefaultRegistry:
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "0002-flat-direct-storage-layout",
+            "0003-hash-and-id-n-tuple-storage-layout",
+            "0004-hashed-n-tuple-storage-layout",
+            "0006-flat-omit-prefix-storage-layout",
+            "0007-n-tuple-omit-prefix-storage-layout",
+        ],
+    )
+    def test_builtin_layouts_registered(self, name):
+        # 0006 requires config with delimiter
+        if name == "0006-flat-omit-prefix-storage-layout":
+            layout = get_layout(name, config={"delimiter": ":"})
+        else:
+            layout = get_layout(name)
+        assert isinstance(layout, Layout)
+        assert layout.name == name

@@ -30,6 +30,10 @@ class NTupleOmitPrefixLayout:
     ) -> None:
         if not delimiter:
             raise ValueError("delimiter must not be empty")
+        if tuple_size < 1:
+            raise ValueError(f"tupleSize must be >= 1, got {tuple_size}")
+        if number_of_tuples < 1:
+            raise ValueError(f"numberOfTuples must be >= 1, got {number_of_tuples}")
         self._delimiter = delimiter
         self._tuple_size = tuple_size
         self._n_tuples = number_of_tuples
@@ -56,9 +60,7 @@ class NTupleOmitPrefixLayout:
     def resolve(self, object_id: str) -> str:
         # Strip prefix: use whole ID if delimiter not found
         idx = object_id.rfind(self._delimiter)
-        remainder = (
-            object_id[idx + len(self._delimiter) :] if idx >= 0 else object_id
-        )
+        remainder = object_id[idx + len(self._delimiter) :] if idx >= 0 else object_id
 
         total_len = self._tuple_size * self._n_tuples
 
