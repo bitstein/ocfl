@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 import msgspec
 
+from ocfl_lib.digest import DigestAlgorithm
 from ocfl_lib.inventory import Inventory
 
 if TYPE_CHECKING:
@@ -30,6 +31,8 @@ _SUPPORTED_VERSIONS = frozenset({"1.0", "1.1"})
 
 # Simple URI check: has a scheme followed by :
 _URI_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*:")
+
+_VNUM_RE = re.compile(r"^v\d+$")
 
 
 def validate_inventory(
@@ -138,4 +141,98 @@ def _validate_structure(
         result.error("E044", where=where)
         return False
 
+    # manifest validation
+    alg_name = data["digestAlgorithm"]
+    content_dir = data.get("contentDirectory", "content")
+    if isinstance(alg_name, str) and alg_name in _ALLOWED_ALGORITHMS:
+        _validate_manifest(
+            data["manifest"],
+            result,
+            where=where,
+            alg_name=alg_name,
+            content_dir=content_dir,
+            lax_digests=lax_digests,
+        )
+
     return True
+
+
+def _validate_manifest(
+    manifest: dict[str, Any],
+    result: ValidationResult,
+    *,
+    where: str,
+    alg_name: str,
+    content_dir: str,
+    lax_digests: bool,
+) -> None:
+    """Validate manifest block: digest format, paths, duplicates."""
+    try:
+        alg = DigestAlgorithm.from_ocfl_name(alg_name)
+    except ValueError:
+        return
+
+    digest_re = alg.regex
+    seen_digests: dict[str, str] = {}  # lowercase → original
+    all_content_paths: list[str] = []
+
+    for digest, paths in manifest.items():
+        # Digest format check
+        if not lax_digests and not digest_re.match(digest):
+            result.error("E025b", where=where, digest=digest, algorithm=alg_name)
+
+        # Case-insensitive duplicate check
+        lower = digest.lower()
+        if lower in seen_digests and seen_digests[lower] != digest:
+            result.error("E096", where=where, digest=digest)
+        seen_digests[lower] = digest
+
+        # Values must be arrays of strings
+        if not isinstance(paths, list):
+            result.error("E091", where=where, digest=digest)
+            continue
+
+        for path in paths:
+            if not isinstance(path, str):
+                result.error("E091", where=where, digest=digest)
+                continue
+
+            # Path segment validation
+            if path.startswith("/") or path.endswith("/"):
+                result.error("E100", where=where, path=path)
+                continue
+
+            segments = path.split("/")
+            if any(s in ("", ".", "..") for s in segments):
+                result.error("E099", where=where, path=path)
+                continue
+
+            # Content path must be v{N}/{contentDir}/...
+            if len(segments) < 3:
+                result.error("E042a", where=where, path=path)
+                continue
+
+            if not _VNUM_RE.match(segments[0]):
+                result.error("E042b", where=where, path=path)
+                continue
+
+            if segments[1] != content_dir:
+                result.error(
+                    "E042c", where=where, path=path, content_directory=content_dir
+                )
+                continue
+
+            all_content_paths.append(path)
+
+    # Duplicate content path check
+    path_set: set[str] = set()
+    for path in all_content_paths:
+        if path in path_set:
+            result.error("E101a", where=where, path=path)
+        path_set.add(path)
+
+    # Path prefix conflict check (path used as both file and directory)
+    sorted_paths = sorted(path_set)
+    for i in range(len(sorted_paths) - 1):
+        if sorted_paths[i + 1].startswith(sorted_paths[i] + "/"):
+            result.error("E101b", where=where, path=sorted_paths[i])
