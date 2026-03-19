@@ -371,11 +371,11 @@ def _validate_created(
     """Validate created datetime string."""
     # Check for timezone
     if not (created.endswith("Z") or "+" in created[10:] or created[-6:-5] == "-"):
-        result.warning("E049a", where=where, version=version)
+        result.error("E049a", where=where, version=version)
 
     # Check granularity to seconds (has T and at least HH:MM:SS)
     if "T" not in created or len(created) < 19:
-        result.warning("E049b", where=where, version=version)
+        result.error("E049b", where=where, version=version)
 
 
 def _validate_version_state(
