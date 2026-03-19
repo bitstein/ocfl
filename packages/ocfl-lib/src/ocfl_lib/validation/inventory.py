@@ -157,6 +157,16 @@ def _validate_structure(
     # versions validation
     _validate_versions(data, result, where=where)
 
+    # fixity validation
+    if "fixity" in data:
+        _validate_fixity(
+            data["fixity"],
+            data["manifest"],
+            result,
+            where=where,
+            lax_digests=lax_digests,
+        )
+
     return True
 
 
@@ -447,3 +457,66 @@ def _validate_user(
             result.warning("W009", where=where, version=version)
     elif not isinstance(user["address"], str):
         result.error("E054c", where=where, version=version)
+
+
+def _validate_fixity(
+    fixity: Any,
+    manifest: dict[str, Any],
+    result: ValidationResult,
+    *,
+    where: str,
+    lax_digests: bool,
+) -> None:
+    """Validate fixity block."""
+    if not isinstance(fixity, dict):
+        result.error("E056a", where=where)
+        return
+
+    # Collect all manifest content paths for cross-reference
+    manifest_paths: set[str] = set()
+    for paths in manifest.values():
+        if isinstance(paths, list):
+            manifest_paths.update(p for p in paths if isinstance(p, str))
+
+    for alg_name, digest_map in fixity.items():
+        # Check algorithm is known
+        try:
+            alg = DigestAlgorithm.from_ocfl_name(alg_name)
+        except ValueError:
+            if not lax_digests:
+                result.error("E056b", where=where, algorithm=alg_name)
+            continue
+
+        if not isinstance(digest_map, dict):
+            result.error("E057a", where=where, algorithm=alg_name)
+            continue
+
+        digest_re = alg.regex
+        seen_digests: dict[str, str] = {}
+
+        for digest, paths in digest_map.items():
+            # Digest format check
+            if not digest_re.match(digest):
+                result.error("E057b", where=where, algorithm=alg_name, digest=digest)
+
+            # Case-insensitive duplicate check
+            lower = digest.lower()
+            if lower in seen_digests and seen_digests[lower] != digest:
+                result.error("E097", where=where, algorithm=alg_name, digest=digest)
+            seen_digests[lower] = digest
+
+            # Values must be list
+            if not isinstance(paths, list):
+                result.error("E057c", where=where, algorithm=alg_name, digest=digest)
+                continue
+
+            # Each path must be in manifest
+            for path in paths:
+                if isinstance(path, str) and path not in manifest_paths:
+                    result.error(
+                        "E057d",
+                        where=where,
+                        algorithm=alg_name,
+                        digest=digest,
+                        path=path,
+                    )
