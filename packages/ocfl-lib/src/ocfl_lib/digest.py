@@ -1,10 +1,15 @@
-"""OCFL digest algorithms."""
+"""OCFL digest algorithms and computation."""
 
 import enum
 import hashlib
 import re
 from functools import cached_property
-from typing import Protocol
+from typing import TYPE_CHECKING, BinaryIO, Protocol
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+_CHUNK_SIZE = 32 * 1024
 
 
 class Hasher(Protocol):
@@ -62,3 +67,24 @@ class DigestAlgorithm(enum.Enum):
         if self._digest_size is not None:
             return hashlib.blake2b(digest_size=self._digest_size)
         return hashlib.new(self.hashlib_name)
+
+
+def file_digest(path: Path, alg: DigestAlgorithm) -> str:
+    """Compute hex digest of a file. Stdlib handles chunking."""
+    with open(path, "rb") as f:
+        return hashlib.file_digest(f, alg.hashlib_name).hexdigest()
+
+
+def stream_digest(stream: BinaryIO, alg: DigestAlgorithm) -> str:
+    """Compute hex digest of a binary stream using 32KB chunks."""
+    h = alg.new_hasher()
+    while chunk := stream.read(_CHUNK_SIZE):
+        h.update(chunk)
+    return h.hexdigest()
+
+
+def bytes_digest(data: bytes, alg: DigestAlgorithm) -> str:
+    """Compute hex digest of bytes."""
+    h = alg.new_hasher()
+    h.update(data)
+    return h.hexdigest()

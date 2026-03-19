@@ -1,10 +1,20 @@
-"""Tests for DigestAlgorithm."""
+"""Tests for DigestAlgorithm and digest computation."""
 
 import hashlib
+import io
+from typing import TYPE_CHECKING
 
 import pytest
 
-from ocfl_lib.digest import DigestAlgorithm
+if TYPE_CHECKING:
+    from pathlib import Path
+
+from ocfl_lib.digest import (
+    DigestAlgorithm,
+    bytes_digest,
+    file_digest,
+    stream_digest,
+)
 
 
 class TestFromOcflName:
@@ -100,3 +110,74 @@ class TestNewHasher:
         digest = h.hexdigest()
         assert len(digest) == 64
         assert DigestAlgorithm.SHA512_256.regex.match(digest)
+
+
+# Known SHA-256 of b"hello world"
+HELLO_WORLD = b"hello world"
+HELLO_SHA256 = hashlib.sha256(HELLO_WORLD).hexdigest()
+HELLO_SHA512 = hashlib.sha512(HELLO_WORLD).hexdigest()
+
+
+class TestFileDigest:
+    def test_sha256(self, tmp_path: Path):
+        f = tmp_path / "test.txt"
+        f.write_bytes(HELLO_WORLD)
+        assert file_digest(f, DigestAlgorithm.SHA256) == HELLO_SHA256
+
+    def test_sha512(self, tmp_path: Path):
+        f = tmp_path / "test.txt"
+        f.write_bytes(HELLO_WORLD)
+        assert file_digest(f, DigestAlgorithm.SHA512) == HELLO_SHA512
+
+    def test_empty_file(self, tmp_path: Path):
+        f = tmp_path / "empty.txt"
+        f.write_bytes(b"")
+        assert (
+            file_digest(f, DigestAlgorithm.SHA256)
+            == EMPTY_DIGESTS[DigestAlgorithm.SHA256]
+        )
+
+    def test_large_file(self, tmp_path: Path):
+        """File larger than chunk size (32KB) to test chunked reading."""
+        data = b"x" * 100_000
+        f = tmp_path / "large.bin"
+        f.write_bytes(data)
+        assert (
+            file_digest(f, DigestAlgorithm.SHA256) == hashlib.sha256(data).hexdigest()
+        )
+
+
+class TestStreamDigest:
+    def test_sha256(self):
+        stream = io.BytesIO(HELLO_WORLD)
+        assert stream_digest(stream, DigestAlgorithm.SHA256) == HELLO_SHA256
+
+    def test_empty_stream(self):
+        stream = io.BytesIO(b"")
+        assert (
+            stream_digest(stream, DigestAlgorithm.SHA256)
+            == EMPTY_DIGESTS[DigestAlgorithm.SHA256]
+        )
+
+    def test_large_stream(self):
+        data = b"y" * 100_000
+        stream = io.BytesIO(data)
+        assert (
+            stream_digest(stream, DigestAlgorithm.SHA256)
+            == hashlib.sha256(data).hexdigest()
+        )
+
+
+class TestBytesDigest:
+    def test_sha256(self):
+        assert bytes_digest(HELLO_WORLD, DigestAlgorithm.SHA256) == HELLO_SHA256
+
+    def test_empty(self):
+        assert (
+            bytes_digest(b"", DigestAlgorithm.SHA512)
+            == EMPTY_DIGESTS[DigestAlgorithm.SHA512]
+        )
+
+    @pytest.mark.parametrize("alg", list(EMPTY_DIGESTS))
+    def test_all_algorithms(self, alg: DigestAlgorithm):
+        assert bytes_digest(b"", alg) == EMPTY_DIGESTS[alg]
