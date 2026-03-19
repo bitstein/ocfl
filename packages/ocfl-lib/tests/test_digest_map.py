@@ -1,6 +1,5 @@
 """Tests for DigestMap operations (Phase 4.3)."""
 
-
 from ocfl_lib.digest_map import (
     DigestMap,
     PathMap,
@@ -35,6 +34,12 @@ class TestNormalize:
         dm: DigestMap = {"BBB": ["b.txt"], "AAA": ["a.txt"]}
         result = normalize(dm)
         assert set(result.keys()) == {"aaa", "bbb"}
+
+    def test_merges_case_colliding_keys(self):
+        dm: DigestMap = {"ABC": ["a.txt"], "abc": ["b.txt"]}
+        result = normalize(dm)
+        assert "abc" in result
+        assert sorted(result["abc"]) == ["a.txt", "b.txt"]
 
 
 class TestToPathMap:
@@ -103,6 +108,12 @@ class TestMerge:
         a: DigestMap = {"abc": ["a.txt"]}
         assert merge(a, {}) == a
 
+    def test_no_duplicate_paths(self):
+        a: DigestMap = {"abc": ["a.txt"]}
+        b: DigestMap = {"abc": ["a.txt"]}
+        result = merge(a, b)
+        assert result["abc"] == ["a.txt"]
+
 
 class TestPaths:
     def test_yields_all_path_digest_pairs(self):
@@ -127,6 +138,17 @@ class TestRenamePaths:
         dm: DigestMap = {"abc": ["a.txt"]}
         result = rename_paths(dm, "old", "new")
         assert result == dm
+
+    def test_does_not_rename_similar_prefix(self):
+        """'old' prefix should not match 'older'."""
+        dm: DigestMap = {"abc": ["older/a.txt"]}
+        result = rename_paths(dm, "old", "new")
+        assert result == dm
+
+    def test_exact_path_match(self):
+        dm: DigestMap = {"abc": ["old"]}
+        result = rename_paths(dm, "old", "new")
+        assert result == {"abc": ["new"]}
 
     def test_empty(self):
         assert rename_paths({}, "a", "b") == {}

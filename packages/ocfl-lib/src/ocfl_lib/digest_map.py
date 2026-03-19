@@ -10,8 +10,14 @@ type PathMap = dict[str, str]
 
 
 def normalize(dm: DigestMap) -> DigestMap:
-    """Lowercase digests, sort path lists."""
-    return {d.lower(): sorted(ps) for d, ps in dm.items()}
+    """Lowercase digests, sort path lists, merge case-colliding keys."""
+    result: DigestMap = {}
+    for d, ps in dm.items():
+        key = d.lower()
+        existing = result.get(key, [])
+        existing.extend(ps)
+        result[key] = existing
+    return {d: sorted(ps) for d, ps in result.items()}
 
 
 def to_path_map(dm: DigestMap) -> PathMap:
@@ -55,12 +61,21 @@ def paths(dm: DigestMap) -> Iterator[tuple[str, str]]:
             yield p, digest
 
 
+def _rename_path(path: str, src: str, dst: str) -> str:
+    """Replace path component prefix src with dst."""
+    if path == src:
+        return dst
+    prefix = src + "/"
+    if path.startswith(prefix):
+        return dst + "/" + path[len(prefix) :]
+    return path
+
+
 def rename_paths(dm: DigestMap, src: str, dst: str) -> DigestMap:
-    """Replace path prefix src with dst."""
-    result: DigestMap = {}
-    for digest, ps in dm.items():
-        result[digest] = [dst + p[len(src) :] if p.startswith(src) else p for p in ps]
-    return result
+    """Replace path prefix src with dst (component-aware)."""
+    return {
+        digest: [_rename_path(p, src, dst) for p in ps] for digest, ps in dm.items()
+    }
 
 
 def remove_path(dm: DigestMap, path: str) -> DigestMap:
