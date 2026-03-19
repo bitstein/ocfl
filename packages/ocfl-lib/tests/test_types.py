@@ -102,6 +102,17 @@ class TestVNumOrdering:
     def test_hash_ignores_padding(self):
         assert hash(VNum(1, 0)) == hash(VNum(1, 3))
 
+    def test_gt(self):
+        assert VNum(2) > VNum(1)
+
+    def test_le(self):
+        assert VNum(1) <= VNum(2)
+        assert VNum(1) <= VNum(1)
+
+    def test_ge(self):
+        assert VNum(2) >= VNum(1)
+        assert VNum(2) >= VNum(2)
+
     def test_set_dedup(self):
         assert len({VNum(1, 0), VNum(1, 3)}) == 1
 

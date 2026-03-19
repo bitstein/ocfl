@@ -1,6 +1,7 @@
 """Core OCFL types and constants."""
 
 import enum
+import functools
 import re
 from dataclasses import dataclass
 from typing import Literal
@@ -33,6 +34,7 @@ DEFAULT_DIGEST_ALGORITHM: str = "sha512"
 _VNUM_RE = re.compile(r"^v(0*[1-9]\d*)$")
 
 
+@functools.total_ordering
 @dataclass(frozen=True, order=False)
 class VNum:
     """OCFL version number (e.g. v1, v002)."""
