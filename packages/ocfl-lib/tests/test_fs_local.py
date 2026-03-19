@@ -70,6 +70,7 @@ class TestReadDir:
         assert entries["a.txt"].is_dir is False
         assert entries["sub"].is_dir is True
         assert entries["sub"].is_file is False
+        assert entries["sub"].size is None
 
     def test_file_size(self, fs: LocalFS):
         entries = {e.name: e for e in fs.read_dir("")}

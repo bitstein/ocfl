@@ -43,11 +43,11 @@ class TestFileRef:
 
 class TestFsEntry:
     def test_construction(self):
-        entry = FsEntry(name="subdir", is_dir=True, is_file=False, size=0)
+        entry = FsEntry(name="subdir", is_dir=True, is_file=False, size=None)
         assert entry.name == "subdir"
         assert entry.is_dir is True
         assert entry.is_file is False
-        assert entry.size == 0
+        assert entry.size is None
 
     def test_file_entry(self):
         entry = FsEntry(name="data.bin", is_dir=False, is_file=True, size=1024)
@@ -64,8 +64,8 @@ class TestFsEntry:
             pass
 
     def test_equality(self):
-        a = FsEntry(name="a", is_dir=True, is_file=False, size=0)
-        b = FsEntry(name="a", is_dir=True, is_file=False, size=0)
+        a = FsEntry(name="a", is_dir=True, is_file=False, size=None)
+        b = FsEntry(name="a", is_dir=True, is_file=False, size=None)
         assert a == b
 
 
@@ -139,7 +139,7 @@ class TestProtocolsRuntimeCheckable:
             def read_dir(self, name: str) -> Iterator[FsEntry]:
                 yield from ()
 
-            def walk_files(self, dir: str) -> Iterator[FileRef]:
+            def walk_files(self, name: str) -> Iterator[FileRef]:
                 yield from ()
 
         assert isinstance(MyWalker(), FileWalker)

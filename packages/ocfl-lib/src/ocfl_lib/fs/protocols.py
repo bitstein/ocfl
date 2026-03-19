@@ -22,7 +22,7 @@ class FsEntry:
     name: str
     is_dir: bool
     is_file: bool
-    size: int
+    size: int | None
 
 
 @runtime_checkable
@@ -54,4 +54,4 @@ class CopyFS(WriteFS, Protocol):
 class FileWalker(FS, Protocol):
     """Filesystem that can recursively walk files."""
 
-    def walk_files(self, dir: str) -> Iterator[FileRef]: ...
+    def walk_files(self, name: str) -> Iterator[FileRef]: ...

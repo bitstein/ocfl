@@ -45,7 +45,7 @@ class LocalFS:
                     name=entry.name,
                     is_dir=entry.is_dir(),
                     is_file=is_file,
-                    size=entry.stat().st_size if is_file else 0,
+                    size=entry.stat().st_size if is_file else None,
                 )
 
     # -- WriteFS --
@@ -101,9 +101,12 @@ class LocalFS:
 
     # -- FileWalker --
 
-    def walk_files(self, dir: str) -> Iterator[FileRef]:
-        """Recursively yield FileRef for every file under dir."""
-        base = self._resolve(dir)
+    def __repr__(self) -> str:
+        return f"LocalFS({self._root})"
+
+    def walk_files(self, name: str) -> Iterator[FileRef]:
+        """Recursively yield FileRef for every file under name."""
+        base = self._resolve(name)
         for dirpath, _dirnames, filenames in os.walk(base):
             for fname in filenames:
                 full = Path(dirpath) / fname
