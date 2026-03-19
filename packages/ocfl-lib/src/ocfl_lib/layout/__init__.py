@@ -6,11 +6,11 @@ from ocfl_lib.layout.config import (
     write_layout_config,
     write_ocfl_layout,
 )
-from ocfl_lib.layout.flat_direct import FlatDirectLayout
-from ocfl_lib.layout.flat_omit_prefix import FlatOmitPrefixLayout
-from ocfl_lib.layout.hash_and_id_n_tuple import HashAndIdNTupleLayout
-from ocfl_lib.layout.hashed_n_tuple import HashedNTupleLayout
-from ocfl_lib.layout.n_tuple_omit_prefix import NTupleOmitPrefixLayout
+from ocfl_lib.layout.ext0002_flat_direct import FlatDirectLayout
+from ocfl_lib.layout.ext0003_hash_and_id_n_tuple import HashAndIdNTupleLayout
+from ocfl_lib.layout.ext0004_hashed_n_tuple import HashedNTupleLayout
+from ocfl_lib.layout.ext0006_flat_omit_prefix import FlatOmitPrefixLayout
+from ocfl_lib.layout.ext0007_n_tuple_omit_prefix import NTupleOmitPrefixLayout
 from ocfl_lib.layout.registry import LayoutRegistry
 from ocfl_lib.layout.types import Layout
 

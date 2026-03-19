@@ -3,7 +3,10 @@
 import pytest
 
 from ocfl_lib.layout import Layout
-from ocfl_lib.layout.hashed_n_tuple import HashedNTupleConfig, HashedNTupleLayout
+from ocfl_lib.layout.ext0004_hashed_n_tuple import (
+    HashedNTupleConfig,
+    HashedNTupleLayout,
+)
 
 
 class TestHashedNTupleLayout:

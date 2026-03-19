@@ -3,7 +3,7 @@
 import pytest
 
 from ocfl_lib.layout import Layout
-from ocfl_lib.layout.hash_and_id_n_tuple import (
+from ocfl_lib.layout.ext0003_hash_and_id_n_tuple import (
     HashAndIdNTupleConfig,
     HashAndIdNTupleLayout,
 )
@@ -59,17 +59,17 @@ class TestHashAndIdNTupleLayout:
     # -- Percent encoding --
 
     def test_encode_dot(self):
-        from ocfl_lib.layout.hash_and_id_n_tuple import _percent_encode
+        from ocfl_lib.layout.ext0003_hash_and_id_n_tuple import _percent_encode
 
         assert _percent_encode(".") == "%2e"
 
     def test_encode_cedilla(self):
-        from ocfl_lib.layout.hash_and_id_n_tuple import _percent_encode
+        from ocfl_lib.layout.ext0003_hash_and_id_n_tuple import _percent_encode
 
         assert _percent_encode("\u00e7") == "%c3%a7"
 
     def test_encode_safe_chars_unchanged(self):
-        from ocfl_lib.layout.hash_and_id_n_tuple import _percent_encode
+        from ocfl_lib.layout.ext0003_hash_and_id_n_tuple import _percent_encode
 
         assert _percent_encode("abc-XYZ_012") == "abc-XYZ_012"
 

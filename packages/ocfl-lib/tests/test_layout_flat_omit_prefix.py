@@ -4,7 +4,10 @@ import msgspec
 import pytest
 
 from ocfl_lib.layout import Layout
-from ocfl_lib.layout.flat_omit_prefix import FlatOmitPrefixConfig, FlatOmitPrefixLayout
+from ocfl_lib.layout.ext0006_flat_omit_prefix import (
+    FlatOmitPrefixConfig,
+    FlatOmitPrefixLayout,
+)
 
 
 class TestFlatOmitPrefixLayout:

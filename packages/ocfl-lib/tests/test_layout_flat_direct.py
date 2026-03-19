@@ -3,7 +3,7 @@
 import pytest
 
 from ocfl_lib.layout import Layout
-from ocfl_lib.layout.flat_direct import FlatDirectLayout
+from ocfl_lib.layout.ext0002_flat_direct import FlatDirectLayout
 
 
 class TestFlatDirectLayout:
@@ -45,7 +45,7 @@ class TestFlatDirectLayout:
     def test_config_struct(self):
         import msgspec
 
-        from ocfl_lib.layout.flat_direct import FlatDirectConfig
+        from ocfl_lib.layout.ext0002_flat_direct import FlatDirectConfig
 
         cfg = FlatDirectConfig()
         data = msgspec.json.encode(cfg)
