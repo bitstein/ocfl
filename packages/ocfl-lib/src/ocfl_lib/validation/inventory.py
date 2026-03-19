@@ -154,6 +154,9 @@ def _validate_structure(
             lax_digests=lax_digests,
         )
 
+    # versions validation
+    _validate_versions(data, result, where=where)
+
     return True
 
 
@@ -236,3 +239,211 @@ def _validate_manifest(
     for i in range(len(sorted_paths) - 1):
         if sorted_paths[i + 1].startswith(sorted_paths[i] + "/"):
             result.error("E101b", where=where, path=sorted_paths[i])
+
+
+def _validate_versions(
+    data: dict[str, Any],
+    result: ValidationResult,
+    *,
+    where: str,
+) -> None:
+    """Validate versions block: keys, sequencing, head, version blocks."""
+    versions = data["versions"]
+    manifest = data["manifest"]
+    head = data["head"]
+
+    # Parse and validate version keys
+    vnums: list[tuple[int, str]] = []  # (number, key)
+    is_padded = False
+    for vkey in versions:
+        m = _VNUM_RE.match(vkey)
+        if not m:
+            result.error("E046b", dir=vkey)
+            continue
+        # Extract number
+        digits = vkey[1:]
+        num = int(digits)
+        if digits[0] == "0":
+            is_padded = True
+        vnums.append((num, vkey))
+
+    if not vnums:
+        result.error("E008", where=where)
+        return
+
+    # E011: inconsistent padding (some padded, some not)
+    has_unpadded = any(vkey[1:] == str(num) for num, vkey in vnums)
+    if is_padded and has_unpadded:
+        result.error("E011", where=where)
+    elif is_padded:
+        result.warning("W001", where=where)
+
+    vnums.sort()
+
+    # Must start at 1
+    if vnums[0][0] != 1:
+        result.error("E009", where=where)
+
+    # Must be contiguous
+    for i in range(1, len(vnums)):
+        if vnums[i][0] != vnums[i - 1][0] + 1:
+            result.error("E010", where=where)
+            break
+
+    # head must equal highest version
+    highest_key = vnums[-1][1]
+    if head != highest_key:
+        result.error("E040", where=where, got=head, expected=highest_key)
+
+    # Collect all state digests to check manifest usage later
+    all_state_digests: set[str] = set()
+
+    # Validate each version block
+    for _, vkey in vnums:
+        vblock = versions[vkey]
+        if not isinstance(vblock, dict):
+            continue
+
+        # created
+        if "created" not in vblock:
+            result.error("E048", where=where, version=vkey)
+        else:
+            created = vblock["created"]
+            if not isinstance(created, str):
+                result.error("E049d", where=where, version=vkey)
+            else:
+                _validate_created(created, result, where=where, version=vkey)
+
+        # state
+        if "state" not in vblock:
+            result.error("E048c", where=where, version=vkey)
+        else:
+            state = vblock["state"]
+            if not isinstance(state, dict):
+                result.error("E050c", where=where, version=vkey)
+            else:
+                _validate_version_state(
+                    state,
+                    manifest,
+                    result,
+                    where=where,
+                    version=vkey,
+                )
+                for digest in state:
+                    if isinstance(digest, str):
+                        all_state_digests.add(digest.lower())
+
+        # message
+        if "message" not in vblock:
+            result.warning("W007a", where=where, version=vkey)
+        elif not isinstance(vblock["message"], str):
+            result.error("E094", where=where, version=vkey)
+
+        # user
+        if "user" not in vblock:
+            result.warning("W007b", where=where, version=vkey)
+        else:
+            _validate_user(vblock["user"], result, where=where, version=vkey)
+
+    # E107: all manifest digests must be referenced by at least one version state
+    for digest in manifest:
+        if digest.lower() not in all_state_digests:
+            result.error("E107", where=where, digests=digest)
+
+
+def _validate_created(
+    created: str,
+    result: ValidationResult,
+    *,
+    where: str,
+    version: str,
+) -> None:
+    """Validate created datetime string."""
+    # Check for timezone
+    if not (created.endswith("Z") or "+" in created[10:] or created[-6:-5] == "-"):
+        result.warning("E049a", where=where, version=version)
+
+    # Check granularity to seconds (has T and at least HH:MM:SS)
+    if "T" not in created or len(created) < 19:
+        result.warning("E049b", where=where, version=version)
+
+
+def _validate_version_state(
+    state: dict[str, Any],
+    manifest: dict[str, Any],
+    result: ValidationResult,
+    *,
+    where: str,
+    version: str,
+) -> None:
+    """Validate a single version's state block."""
+    all_logical_paths: list[str] = []
+    manifest_lower = {d.lower(): d for d in manifest}
+
+    for digest, paths in state.items():
+        # Check digest is in manifest (case-insensitive), then exact case
+        if isinstance(digest, str):
+            lower = digest.lower()
+            if lower not in manifest_lower:
+                result.error("E050f", where=where, version=version, digest=digest)
+            elif digest != manifest_lower[lower]:
+                result.error("E050d", where=where, version=version, digest=digest)
+
+        # Values must be list
+        if not isinstance(paths, list):
+            result.error("E050e", where=where, version=version, digest=str(digest))
+            continue
+
+        for path in paths:
+            if not isinstance(path, str):
+                continue
+
+            # Check for leading/trailing slash
+            if path.startswith("/") or path.endswith("/"):
+                result.error("E052", where=where, version=version, path=path)
+                continue
+
+            # Check for ., .., empty segments
+            segments = path.split("/")
+            if any(s in ("", ".", "..") for s in segments):
+                result.error("E053", where=where, version=version, path=path)
+                continue
+
+            all_logical_paths.append(path)
+
+    # Duplicate logical paths
+    seen: set[str] = set()
+    for path in all_logical_paths:
+        if path in seen:
+            result.error("E095a", where=where, version=version, path=path)
+        seen.add(path)
+
+    # Path prefix conflicts
+    sorted_paths = sorted(seen)
+    for i in range(len(sorted_paths) - 1):
+        if sorted_paths[i + 1].startswith(sorted_paths[i] + "/"):
+            result.error("E095b", where=where, version=version, path=sorted_paths[i])
+
+
+def _validate_user(
+    user: Any,
+    result: ValidationResult,
+    *,
+    where: str,
+    version: str,
+) -> None:
+    """Validate user block in a version."""
+    if not isinstance(user, dict):
+        result.error("E054a", where=where, version=version)
+        return
+
+    if "name" not in user or not isinstance(user.get("name"), str):
+        result.error("E054b", where=where, version=version)
+
+    if "address" not in user:
+        result.warning("W008", where=where, version=version)
+    elif isinstance(user["address"], str):
+        if not _URI_RE.match(user["address"]):
+            result.warning("W009", where=where, version=version)
+    elif not isinstance(user["address"], str):
+        result.error("E054c", where=where, version=version)
