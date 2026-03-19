@@ -1,12 +1,14 @@
-"""Tests for inventory msgspec structs (Phase 4.1)."""
+"""Tests for inventory model (Phase 4.1-4.2)."""
 
 import json
 
 import msgspec
 import pytest
 
+from ocfl_lib.digest import DigestAlgorithm
 from ocfl_lib.inventory import (
     Inventory,
+    StoredInventory,
     UserInfo,
     VersionInfo,
 )
@@ -217,3 +219,98 @@ class TestInventory:
             msgspec.json.decode(_inv_json(id=123), type=Inventory)
         with pytest.raises(msgspec.ValidationError):
             msgspec.json.decode(_inv_json(manifest="not-a-dict"), type=Inventory)
+
+
+# --- StoredInventory ---
+
+
+class TestStoredInventory:
+    def test_from_bytes_round_trip(self):
+        """Raw bytes are preserved exactly."""
+        raw = _inv_json()
+        si = StoredInventory.from_bytes(raw, DigestAlgorithm.SHA512)
+        assert si.raw_bytes == raw
+        assert si.inventory.id == "http://example.org/obj1"
+        assert si.digest_algorithm == DigestAlgorithm.SHA512
+
+    def test_from_bytes_digest_matches(self):
+        """Stored digest matches independent computation."""
+        from ocfl_lib.digest import bytes_digest
+
+        raw = _inv_json()
+        si = StoredInventory.from_bytes(raw, DigestAlgorithm.SHA512)
+        expected = bytes_digest(raw, DigestAlgorithm.SHA512)
+        assert si.digest == expected
+
+    def test_from_inventory_produces_valid_json(self):
+        """from_inventory creates well-formed JSON with sorted keys."""
+        inv = msgspec.json.decode(_inv_json(), type=Inventory)
+        si = StoredInventory.from_inventory(inv, DigestAlgorithm.SHA512)
+        # Verify it's valid JSON
+        parsed = json.loads(si.raw_bytes)
+        assert parsed["id"] == "http://example.org/obj1"
+        # Verify sorted keys
+        keys = list(parsed.keys())
+        assert keys == sorted(keys)
+        # Verify 2-space indent
+        text = si.raw_bytes.decode()
+        assert "\n  " in text  # has indentation
+        assert "\n    " in text  # nested indentation
+
+    def test_from_inventory_digest_correct(self):
+        from ocfl_lib.digest import bytes_digest
+
+        inv = msgspec.json.decode(_inv_json(), type=Inventory)
+        si = StoredInventory.from_inventory(inv, DigestAlgorithm.SHA256)
+        expected = bytes_digest(si.raw_bytes, DigestAlgorithm.SHA256)
+        assert si.digest == expected
+        assert si.digest_algorithm == DigestAlgorithm.SHA256
+
+    def test_from_inventory_camel_case_keys(self):
+        """JSON output uses camelCase keys."""
+        inv = msgspec.json.decode(_inv_json(contentDirectory="stuff"), type=Inventory)
+        si = StoredInventory.from_inventory(inv, DigestAlgorithm.SHA512)
+        parsed = json.loads(si.raw_bytes)
+        assert "digestAlgorithm" in parsed
+        assert "contentDirectory" in parsed
+        assert "digest_algorithm" not in parsed
+
+    def test_sidecar_filename(self):
+        si = StoredInventory.from_bytes(_inv_json(), DigestAlgorithm.SHA512)
+        assert si.sidecar_filename == "inventory.json.sha512"
+
+    def test_sidecar_filename_sha256(self):
+        si = StoredInventory.from_bytes(_inv_json(), DigestAlgorithm.SHA256)
+        assert si.sidecar_filename == "inventory.json.sha256"
+
+    def test_sidecar_content(self):
+        si = StoredInventory.from_bytes(_inv_json(), DigestAlgorithm.SHA512)
+        expected = f"{si.digest} inventory.json\n"
+        assert si.sidecar_content == expected
+
+    def test_byte_preservation_from_fixture(self):
+        """Bytes read from disk are preserved exactly through StoredInventory."""
+        import pathlib
+
+        fixture = (
+            pathlib.Path(__file__).parents[3]
+            / "tests"
+            / "fixtures"
+            / "1.1"
+            / "good-objects"
+            / "minimal_no_content"
+            / "inventory.json"
+        )
+        if not fixture.exists():
+            pytest.skip("fixtures not available")
+        raw = fixture.read_bytes()
+        si = StoredInventory.from_bytes(raw, DigestAlgorithm.SHA512)
+        assert si.raw_bytes == raw
+
+    def test_from_inventory_omits_none_fields(self):
+        """Optional None fields not in JSON output."""
+        inv = msgspec.json.decode(_inv_json(), type=Inventory)
+        si = StoredInventory.from_inventory(inv, DigestAlgorithm.SHA512)
+        parsed = json.loads(si.raw_bytes)
+        assert "contentDirectory" not in parsed
+        assert "fixity" not in parsed
