@@ -1,0 +1,64 @@
+"""OCFL digest algorithms."""
+
+import enum
+import hashlib
+import re
+from functools import cached_property
+from typing import Protocol
+
+
+class Hasher(Protocol):
+    """Protocol for hashlib-compatible hash objects."""
+
+    def update(self, data: bytes, /) -> None: ...
+    def hexdigest(self) -> str: ...
+    def digest(self) -> bytes: ...
+    def copy(self) -> Hasher: ...
+
+
+class DigestAlgorithm(enum.Enum):
+    """OCFL-supported digest algorithms."""
+
+    SHA512 = ("sha512", "sha512", 128)
+    SHA256 = ("sha256", "sha256", 64)
+    SHA1 = ("sha1", "sha1", 40)
+    MD5 = ("md5", "md5", 32)
+    BLAKE2B_512 = ("blake2b-512", "blake2b", 128, 64)
+    BLAKE2B_256 = ("blake2b-256", "blake2b", 64, 32)
+    BLAKE2B_160 = ("blake2b-160", "blake2b", 40, 20)
+    SHA512_256 = ("sha512/256", "sha512_256", 64)
+
+    def __init__(
+        self,
+        ocfl_name: str,
+        hashlib_name: str,
+        hex_length: int,
+        digest_size: int | None = None,
+    ):
+        self.ocfl_name = ocfl_name
+        self.hashlib_name = hashlib_name
+        self.hex_length = hex_length
+        self._digest_size = digest_size
+
+    @classmethod
+    def from_ocfl_name(cls, name: str) -> DigestAlgorithm:
+        for member in cls:
+            if member.ocfl_name == name:
+                return member
+        raise ValueError(f"unknown digest algorithm: {name!r}")
+
+    @property
+    def is_spec_algorithm(self) -> bool:
+        """True for sha512 and sha256 only."""
+        return self in (DigestAlgorithm.SHA512, DigestAlgorithm.SHA256)
+
+    @cached_property
+    def regex(self) -> re.Pattern[str]:
+        """Compiled pattern matching valid hex digest."""
+        return re.compile(f"^[a-fA-F0-9]{{{self.hex_length}}}$")
+
+    def new_hasher(self) -> Hasher:
+        """Return correctly configured hashlib hash object."""
+        if self._digest_size is not None:
+            return hashlib.blake2b(digest_size=self._digest_size)
+        return hashlib.new(self.hashlib_name)
