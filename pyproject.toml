@@ -5,5 +5,31 @@ description = "OCFL workspace"
 readme = "README.md"
 requires-python = ">=3.14"
 
+[dependency-groups]
+dev = ["pytest>=8", "pytest-cov>=6", "ty", "ruff>=0.9"]
+
 [tool.uv.workspace]
 members = ["packages/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages/ocfl-lib/tests", "packages/ocfl-cli/tests"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "TCH",   # flake8-type-checking
+    "RUF",   # ruff-specific
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ocfl_lib", "ocfl_cli"]
