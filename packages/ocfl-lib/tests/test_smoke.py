@@ -1,0 +1,9 @@
+from pathlib import Path
+
+
+def test_fixtures_exist(fixtures_root: Path) -> None:
+    """Verify test fixtures submodule is available."""
+    assert (fixtures_root / "1.0" / "good-objects").is_dir()
+    assert (fixtures_root / "1.1" / "good-objects").is_dir()
+    assert (fixtures_root / "1.0" / "bad-objects").is_dir()
+    assert (fixtures_root / "1.1" / "bad-objects").is_dir()
