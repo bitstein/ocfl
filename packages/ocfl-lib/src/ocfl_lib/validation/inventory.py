@@ -520,3 +520,138 @@ def _validate_fixity(
                         digest=digest,
                         path=path,
                     )
+
+
+def validate_inventory_against_prior(
+    current: dict[str, Any],
+    prior: dict[str, Any],
+    result: ValidationResult,
+    *,
+    where: str = "root",
+) -> None:
+    """Validate current inventory against a prior version's inventory."""
+    # ID must not change
+    cur_id = current.get("id", "")
+    pri_id = prior.get("id", "")
+    if cur_id != pri_id:
+        result.error("E110", where=where, current_id=str(cur_id), prior_id=str(pri_id))
+
+    # Prior versions must be subset of current
+    cur_versions = current.get("versions", {})
+    pri_versions = prior.get("versions", {})
+
+    if not isinstance(cur_versions, dict) or not isinstance(pri_versions, dict):
+        return
+
+    prior_head = prior.get("head", "")
+
+    for vkey in pri_versions:
+        if vkey not in cur_versions:
+            result.error("E066a", prior_head=str(prior_head), where=where)
+            return
+
+    # E023b: prior manifest must include all content paths under its version scope
+    cur_manifest = current.get("manifest", {})
+    pri_manifest = prior.get("manifest", {})
+    if isinstance(cur_manifest, dict) and isinstance(pri_manifest, dict):
+        cur_content: set[str] = set()
+        for paths in cur_manifest.values():
+            if isinstance(paths, list):
+                cur_content.update(p for p in paths if isinstance(p, str))
+        pri_content: set[str] = set()
+        for paths in pri_manifest.values():
+            if isinstance(paths, list):
+                pri_content.update(p for p in paths if isinstance(p, str))
+        pri_prefixes = [vkey + "/" for vkey in pri_versions]
+        missing = {
+            p
+            for p in cur_content
+            if any(p.startswith(pfx) for pfx in pri_prefixes) and p not in pri_content
+        }
+        if missing:
+            result.error(
+                "E023b", where=where, missing_filepaths=", ".join(sorted(missing))
+            )
+
+    # For shared versions: state must match
+    for vkey in pri_versions:
+        if vkey not in cur_versions:
+            continue
+
+        pri_state = (
+            pri_versions[vkey].get("state", {})
+            if isinstance(pri_versions[vkey], dict)
+            else {}
+        )
+        cur_state = (
+            cur_versions[vkey].get("state", {})
+            if isinstance(cur_versions[vkey], dict)
+            else {}
+        )
+
+        if not isinstance(pri_state, dict) or not isinstance(cur_state, dict):
+            continue
+
+        # Compare logical paths per digest
+        pri_paths: set[str] = set()
+        cur_paths: set[str] = set()
+        for paths in pri_state.values():
+            if isinstance(paths, list):
+                pri_paths.update(p for p in paths if isinstance(p, str))
+        for paths in cur_state.values():
+            if isinstance(paths, list):
+                cur_paths.update(p for p in paths if isinstance(p, str))
+
+        only_in_prior = pri_paths - cur_paths
+        only_in_current = cur_paths - pri_paths
+
+        if only_in_prior:
+            result.error(
+                "E066b",
+                prior_head=str(prior_head),
+                version=vkey,
+                where=where,
+                logical_paths=", ".join(sorted(only_in_prior)),
+                only_in=str(prior_head),
+            )
+        if only_in_current:
+            result.error(
+                "E066b",
+                prior_head=str(prior_head),
+                version=vkey,
+                where=where,
+                logical_paths=", ".join(sorted(only_in_current)),
+                only_in=where,
+            )
+
+        # E066c: same logical path must map to same digest (skip if alg differs)
+        same_alg = current.get("digestAlgorithm") == prior.get("digestAlgorithm")
+        if not same_alg:
+            continue
+        pri_path_dig: dict[str, str] = {}
+        for digest, paths in pri_state.items():
+            if isinstance(paths, list):
+                for p in paths:
+                    if isinstance(p, str):
+                        pri_path_dig[p] = str(digest)
+        cur_path_dig: dict[str, str] = {}
+        for digest, paths in cur_state.items():
+            if isinstance(paths, list):
+                for p in paths:
+                    if isinstance(p, str):
+                        cur_path_dig[p] = str(digest)
+
+        for lpath in pri_path_dig:
+            if lpath in cur_path_dig:
+                pd = pri_path_dig[lpath]
+                cd = cur_path_dig[lpath]
+                if pd.lower() != cd.lower():
+                    result.error(
+                        "E066c",
+                        prior_head=str(prior_head),
+                        version=vkey,
+                        logical_path=lpath,
+                        prior_content=pd,
+                        where=where,
+                        current_content=cd,
+                    )
