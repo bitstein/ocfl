@@ -3,6 +3,7 @@
 import enum
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 
 class Spec(enum.StrEnum):
@@ -82,3 +83,44 @@ class VNum:
 
     def __hash__(self) -> int:
         return hash(self.number)
+
+
+_NAMASTE_RE = re.compile(r"^0=(ocfl(?:_object)?)_(1\.[01])$")
+
+_NAMASTE_PREFIX = {"root": "ocfl", "object": "ocfl_object"}
+
+
+@dataclass(frozen=True)
+class Namaste:
+    """OCFL NAMASTE declaration file."""
+
+    kind: Literal["root", "object"]
+    spec: Spec
+
+    @classmethod
+    def for_root(cls, spec: Spec) -> Namaste:
+        return cls("root", spec)
+
+    @classmethod
+    def for_object(cls, spec: Spec) -> Namaste:
+        return cls("object", spec)
+
+    @classmethod
+    def parse(cls, filename: str) -> Namaste | None:
+        """Returns None if not a valid NAMASTE filename."""
+        m = _NAMASTE_RE.match(filename)
+        if not m:
+            return None
+        prefix, version = m.group(1), m.group(2)
+        kind: Literal["root", "object"] = (
+            "object" if prefix == "ocfl_object" else "root"
+        )
+        return cls(kind, Spec(version))
+
+    @property
+    def filename(self) -> str:
+        return f"0={_NAMASTE_PREFIX[self.kind]}_{self.spec}"
+
+    @property
+    def content(self) -> str:
+        return f"{_NAMASTE_PREFIX[self.kind]}_{self.spec}\n"

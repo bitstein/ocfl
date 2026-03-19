@@ -7,6 +7,7 @@ from ocfl_lib._types import (
     DEFAULT_DIGEST_ALGORITHM,
     DEFAULT_SPEC,
     INVENTORY_FILENAME,
+    Namaste,
     Spec,
     VNum,
 )
@@ -128,3 +129,46 @@ class TestVNumFirst:
     def test_first_with_padding(self):
         assert VNum.first(3) == VNum(1, 3)
         assert str(VNum.first(3)) == "v001"
+
+
+class TestNamaste:
+    def test_root_1_0(self):
+        n = Namaste.for_root(Spec.V1_0)
+        assert n.filename == "0=ocfl_1.0"
+        assert n.content == "ocfl_1.0\n"
+
+    def test_root_1_1(self):
+        n = Namaste.for_root(Spec.V1_1)
+        assert n.filename == "0=ocfl_1.1"
+        assert n.content == "ocfl_1.1\n"
+
+    def test_object_1_0(self):
+        n = Namaste.for_object(Spec.V1_0)
+        assert n.filename == "0=ocfl_object_1.0"
+        assert n.content == "ocfl_object_1.0\n"
+
+    def test_object_1_1(self):
+        n = Namaste.for_object(Spec.V1_1)
+        assert n.filename == "0=ocfl_object_1.1"
+        assert n.content == "ocfl_object_1.1\n"
+
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "0=ocfl_1.0",
+            "0=ocfl_1.1",
+            "0=ocfl_object_1.0",
+            "0=ocfl_object_1.1",
+        ],
+    )
+    def test_parse_round_trip(self, filename: str):
+        n = Namaste.parse(filename)
+        assert n is not None
+        assert n.filename == filename
+
+    @pytest.mark.parametrize(
+        "filename",
+        ["1=ocfl_1.0", "0=ocfl_2.0", "0=foo_1.1", "readme.txt", ""],
+    )
+    def test_parse_invalid(self, filename: str):
+        assert Namaste.parse(filename) is None
