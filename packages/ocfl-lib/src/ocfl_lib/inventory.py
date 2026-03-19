@@ -62,9 +62,9 @@ class StoredInventory:
 
     @classmethod
     def from_inventory(cls, inv: Inventory, alg: DigestAlgorithm) -> StoredInventory:
-        """Encode inventory to JSON bytes (2-space indent, sorted keys)."""
+        """Encode inventory to compact JSON bytes with sorted keys."""
         obj = msgspec.to_builtins(inv)
-        raw = json.dumps(obj, sort_keys=True, indent=2).encode()
+        raw = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
         digest = bytes_digest(raw, alg)
         return cls(inventory=inv, raw_bytes=raw, digest=digest, digest_algorithm=alg)
 

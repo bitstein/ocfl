@@ -242,20 +242,20 @@ class TestStoredInventory:
         expected = bytes_digest(raw, DigestAlgorithm.SHA512)
         assert si.digest == expected
 
-    def test_from_inventory_produces_valid_json(self):
-        """from_inventory creates well-formed JSON with sorted keys."""
+    def test_from_inventory_produces_compact_sorted_json(self):
+        """from_inventory creates compact JSON with sorted keys."""
         inv = msgspec.json.decode(_inv_json(), type=Inventory)
         si = StoredInventory.from_inventory(inv, DigestAlgorithm.SHA512)
         # Verify it's valid JSON
         parsed = json.loads(si.raw_bytes)
         assert parsed["id"] == "http://example.org/obj1"
-        # Verify sorted keys
+        # Verify sorted keys at top level
         keys = list(parsed.keys())
         assert keys == sorted(keys)
-        # Verify 2-space indent
+        # Verify compact (no whitespace)
         text = si.raw_bytes.decode()
-        assert "\n  " in text  # has indentation
-        assert "\n    " in text  # nested indentation
+        assert "\n" not in text
+        assert "  " not in text
 
     def test_from_inventory_digest_correct(self):
         from ocfl_lib.digest import bytes_digest
