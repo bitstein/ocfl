@@ -40,11 +40,12 @@ class LocalFS:
         path = self._resolve(name)
         with os.scandir(path) as it:
             for entry in it:
+                is_file = entry.is_file()
                 yield FsEntry(
                     name=entry.name,
                     is_dir=entry.is_dir(),
-                    is_file=entry.is_file(),
-                    size=entry.stat().st_size if entry.is_file() else 0,
+                    is_file=is_file,
+                    size=entry.stat().st_size if is_file else 0,
                 )
 
     # -- WriteFS --

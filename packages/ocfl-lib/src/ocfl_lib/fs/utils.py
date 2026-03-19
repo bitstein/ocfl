@@ -8,9 +8,6 @@ from ocfl_lib.fs.protocols import CopyFS, WriteFS
 if TYPE_CHECKING:
     from ocfl_lib.fs.protocols import FS
 
-_CHUNK_SIZE = 32 * 1024
-
-
 def read_all(fsys: FS, name: str) -> bytes:
     """Read entire file contents as bytes."""
     with fsys.open_file(name) as f:
