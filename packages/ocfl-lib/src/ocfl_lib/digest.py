@@ -7,7 +7,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, BinaryIO, Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
     from pathlib import Path
 
 _CHUNK_SIZE = 32 * 1024
@@ -101,3 +101,37 @@ def multi_digest(
             for h in hashers.values():
                 h.update(chunk)
     return {alg: h.hexdigest() for alg, h in hashers.items()}
+
+
+def digest_files(
+    paths: Iterable[Path],
+    alg: DigestAlgorithm,
+    *,
+    max_workers: int | None = None,
+) -> dict[Path, str]:
+    """Compute digests for multiple files in parallel."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    path_list = list(paths)
+    if not path_list:
+        return {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        digests = pool.map(lambda p: file_digest(p, alg), path_list)
+    return dict(zip(path_list, digests, strict=True))
+
+
+def digest_files_multi(
+    paths: Iterable[Path],
+    algs: Sequence[DigestAlgorithm],
+    *,
+    max_workers: int | None = None,
+) -> dict[Path, dict[DigestAlgorithm, str]]:
+    """Compute multiple digests for multiple files in parallel."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    path_list = list(paths)
+    if not path_list:
+        return {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        results = pool.map(lambda p: multi_digest(p, algs), path_list)
+    return dict(zip(path_list, results, strict=True))

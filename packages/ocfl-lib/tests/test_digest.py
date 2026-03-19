@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 from ocfl_lib.digest import (
     DigestAlgorithm,
     bytes_digest,
+    digest_files,
+    digest_files_multi,
     file_digest,
     multi_digest,
     stream_digest,
@@ -222,3 +224,59 @@ class TestMultiDigest:
         result = multi_digest(f, [DigestAlgorithm.SHA256, DigestAlgorithm.MD5])
         assert result[DigestAlgorithm.SHA256] == hashlib.sha256(data).hexdigest()
         assert result[DigestAlgorithm.MD5] == hashlib.md5(data).hexdigest()
+
+
+def _make_files(tmp_path: Path, count: int = 5) -> list[Path]:
+    """Create test files with distinct content."""
+    paths = []
+    for i in range(count):
+        f = tmp_path / f"file_{i}.bin"
+        f.write_bytes(f"content {i}".encode())
+        paths.append(f)
+    return paths
+
+
+class TestDigestFiles:
+    def test_matches_serial(self, tmp_path: Path):
+        paths = _make_files(tmp_path)
+        result = digest_files(paths, DigestAlgorithm.SHA256)
+        for p in paths:
+            assert result[p] == file_digest(p, DigestAlgorithm.SHA256)
+
+    def test_single_file(self, tmp_path: Path):
+        f = tmp_path / "single.txt"
+        f.write_bytes(HELLO_WORLD)
+        result = digest_files([f], DigestAlgorithm.SHA256)
+        assert result[f] == HELLO_SHA256
+
+    def test_empty_list(self):
+        result = digest_files([], DigestAlgorithm.SHA256)
+        assert result == {}
+
+    def test_max_workers(self, tmp_path: Path):
+        paths = _make_files(tmp_path)
+        result = digest_files(paths, DigestAlgorithm.SHA256, max_workers=2)
+        for p in paths:
+            assert result[p] == file_digest(p, DigestAlgorithm.SHA256)
+
+
+class TestDigestFilesMulti:
+    def test_matches_serial(self, tmp_path: Path):
+        paths = _make_files(tmp_path)
+        algs = [DigestAlgorithm.SHA256, DigestAlgorithm.MD5]
+        result = digest_files_multi(paths, algs)
+        for p in paths:
+            for alg in algs:
+                assert result[p][alg] == file_digest(p, alg)
+
+    def test_single_algorithm(self, tmp_path: Path):
+        paths = _make_files(tmp_path, count=3)
+        result = digest_files_multi(paths, [DigestAlgorithm.SHA512])
+        for p in paths:
+            assert result[p][DigestAlgorithm.SHA512] == file_digest(
+                p, DigestAlgorithm.SHA512
+            )
+
+    def test_empty_list(self):
+        result = digest_files_multi([], [DigestAlgorithm.SHA256])
+        assert result == {}
