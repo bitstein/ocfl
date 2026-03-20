@@ -72,6 +72,23 @@ class StorageRoot:
         for obj_path in self.object_paths():
             yield Object(self._fsys, obj_path)
 
+    def objects_batch(self, *, max_workers: int | None = None) -> Iterator[Object]:
+        """Load objects in parallel using ThreadPoolExecutor."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        obj_paths = list(self.object_paths())
+        if not obj_paths:
+            return
+
+        def _load(path: str) -> Object:
+            obj = Object(self._fsys, path)
+            # Force inventory load to parallelize I/O
+            _ = obj.inventory
+            return obj
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            yield from pool.map(_load, obj_paths)
+
     def _detect_spec(self) -> Spec:
         """Find and parse the root NAMASTE declaration."""
         try:

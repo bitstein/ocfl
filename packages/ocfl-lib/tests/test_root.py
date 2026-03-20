@@ -220,3 +220,49 @@ class TestStorageRootObjects:
         fsys = LocalFS(tmp_path)
         root = StorageRoot(fsys)
         assert list(root.objects()) == []
+
+
+class TestStorageRootObjectsBatch:
+    def test_objects_batch_matches_serial(self, tmp_path: Path):
+        _make_root(tmp_path)
+        _make_object(tmp_path, "obj-a", "http://example.org/a")
+        _make_object(tmp_path, "obj-b", "http://example.org/b")
+        _make_object(tmp_path, "obj-c", "http://example.org/c")
+        fsys = LocalFS(tmp_path)
+        root = StorageRoot(fsys)
+        serial_ids = sorted(o.id for o in root.objects())
+        batch_ids = sorted(o.id for o in root.objects_batch())
+        assert serial_ids == batch_ids
+
+    def test_objects_batch_empty_root(self, tmp_path: Path):
+        _make_root(tmp_path)
+        fsys = LocalFS(tmp_path)
+        root = StorageRoot(fsys)
+        assert list(root.objects_batch()) == []
+
+    def test_objects_batch_with_max_workers(self, tmp_path: Path):
+        _make_root(tmp_path)
+        _make_object(tmp_path, "obj-a", "http://example.org/a")
+        _make_object(tmp_path, "obj-b", "http://example.org/b")
+        fsys = LocalFS(tmp_path)
+        root = StorageRoot(fsys)
+        objs = sorted(root.objects_batch(max_workers=2), key=lambda o: o.id)
+        assert len(objs) == 2
+        assert objs[0].id == "http://example.org/a"
+        assert objs[1].id == "http://example.org/b"
+
+    def test_objects_batch_loads_inventories(self, tmp_path: Path):
+        """Verify batch-loaded objects have accessible inventories."""
+        _make_root(tmp_path)
+        _make_object(
+            tmp_path,
+            "obj-x",
+            "http://example.org/x",
+            content={"hello.txt": b"hello"},
+        )
+        fsys = LocalFS(tmp_path)
+        root = StorageRoot(fsys)
+        objs = list(root.objects_batch())
+        assert len(objs) == 1
+        assert objs[0].id == "http://example.org/x"
+        assert objs[0].head.number == 1
