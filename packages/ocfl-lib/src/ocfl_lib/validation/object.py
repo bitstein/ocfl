@@ -186,11 +186,14 @@ def validate_object(
             manifest_paths.update(p for p in paths if isinstance(p, str))
 
     actual_files: set[str] = set()
+    prefix_len = len(path) + 1 if path else 0
     for vkey in inv_versions:
         content_path = _join(path, vkey, content_dir)
         try:
             for ref in fsys.walk_files(content_path):
-                actual_files.add(ref.path)
+                # Strip object path prefix to get manifest-relative path
+                rel = ref.path[prefix_len:] if prefix_len else ref.path
+                actual_files.add(rel)
         except FileNotFoundError, OSError:
             pass
 
@@ -290,6 +293,29 @@ def _validate_version_dir(
     if vinv is None:
         return
 
+    # E040: version inventory head must match version directory
+    vinv_head = vinv_data.get("head", "")
+    if vinv_head != vkey:
+        result.error("E040", where=vkey, got=vinv_head, expected=vkey)
+
+    # E103: version inventory spec must not be older than a later version's spec
+    _check_spec_regression(vinv_data, root_inv_data, result, vkey=vkey)
+
+    # E092: when version alg differs from root, verify version manifest digests
+    vinv_alg_name = vinv_data.get("digestAlgorithm", "")
+    if vinv_alg_name != root_inv_data.get("digestAlgorithm", ""):
+        try:
+            vinv_alg = DigestAlgorithm.from_ocfl_name(vinv_alg_name)
+        except ValueError:
+            vinv_alg = None
+        if vinv_alg is not None:
+            obj_path = vdir.rsplit("/", 1)[0] if "/" in vdir else ""
+            vinv_manifest = vinv_data.get("manifest", {})
+            if isinstance(vinv_manifest, dict):
+                _verify_digests(
+                    fsys, obj_path, vinv_manifest, vinv_alg, result, where=vkey
+                )
+
     # Cross-validate: version inventory is prior, root inventory is current
     if vkey != head:
         validate_inventory_against_prior(root_inv_data, vinv_data, result, where=vkey)
@@ -329,6 +355,31 @@ def _check_version_metadata(
                     prior_head=str(prior_head),
                     where="root",
                 )
+
+
+_SPEC_RE = re.compile(r"https://ocfl\.io/(\d+\.\d+)/spec/#inventory")
+
+
+def _check_spec_regression(
+    vinv_data: dict[str, Any],
+    root_inv_data: dict[str, Any],
+    result: ValidationResult,
+    *,
+    vkey: str,
+) -> None:
+    """E103: version inventory spec must not be older than root spec."""
+    vtype = vinv_data.get("type", "")
+    rtype = root_inv_data.get("type", "")
+    vm = _SPEC_RE.match(vtype) if isinstance(vtype, str) else None
+    rm = _SPEC_RE.match(rtype) if isinstance(rtype, str) else None
+    if vm and rm and vm.group(1) < rm.group(1):
+        result.error(
+            "E103",
+            where=vkey,
+            this_spec_version=vm.group(1),
+            prev_version_dir="root",
+            prev_spec_version=rm.group(1),
+        )
 
 
 def _validate_sidecar(

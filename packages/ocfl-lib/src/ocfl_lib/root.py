@@ -14,7 +14,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from ocfl_lib.fs.protocols import FileWalker, WriteFS
+    from ocfl_lib.inventory import UserInfo
     from ocfl_lib.layout.types import Layout
+    from ocfl_lib.stage import Stage
 
 
 class StorageRoot:
@@ -94,6 +96,41 @@ class StorageRoot:
         obj_path = self.object_path(object_id)
         full_path = _join(self._path, obj_path)
         return Object(self._fsys, full_path)
+
+    def commit(
+        self,
+        fsys: WriteFS,
+        id: str,
+        stage: Stage,
+        *,
+        spec: Spec | None = None,
+        message: str | None = None,
+        user: UserInfo | None = None,
+        created: str | None = None,
+    ) -> Object:
+        """Add or update an object in the storage root.
+
+        Resolves id to path via layout, then delegates to Object.update().
+        For new objects, spec defaults to root's spec.
+        Raises ValueError if no layout is configured.
+        """
+        obj_path = self.object_path(id)
+        full_path = _join(self._path, obj_path)
+        obj = Object(self._fsys, full_path)
+
+        # Default spec to root's spec for new objects
+        obj_spec = spec if spec is not None else (None if obj.exists else self._spec)
+
+        obj.update(
+            fsys,
+            stage,
+            id=id,
+            spec=obj_spec,
+            message=message,
+            user=user,
+            created=created,
+        )
+        return obj
 
     def object_paths(self) -> Iterator[str]:
         """Walk the hierarchy and yield paths to all OCFL objects."""
