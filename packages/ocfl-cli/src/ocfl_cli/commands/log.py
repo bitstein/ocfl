@@ -1,0 +1,63 @@
+"""ocfl log command."""
+
+from typing import Annotated
+
+import typer
+
+from ocfl_cli._common import err, open_root, output_json
+
+
+def log(
+    ctx: typer.Context,
+    object_id: Annotated[str, typer.Argument(help="Object ID.")],
+    reverse: Annotated[
+        bool, typer.Option("--reverse", help="Show oldest first.")
+    ] = False,
+    num: Annotated[
+        int | None, typer.Option("-n", help="Limit number of versions shown.")
+    ] = None,
+) -> None:
+    """Show version history of an object."""
+    json_mode = ctx.obj.get("json", False)
+    root, _fs = open_root(ctx.obj.get("root"))
+
+    try:
+        obj = root.get_object(object_id)
+        if not obj.exists:
+            raise ValueError(f"object {object_id!r} not found")
+    except ValueError as e:
+        err(str(e))
+        raise typer.Exit(1) from None
+
+    versions = obj.versions()
+    if not reverse:
+        versions = list(reversed(versions))
+    if num is not None:
+        versions = versions[:num]
+
+    if json_mode:
+        entries = []
+        for v in versions:
+            info = obj.version_info(v)
+            entry: dict[str, str | None] = {
+                "version": str(v),
+                "created": info.created,
+                "message": info.message,
+            }
+            if info.user:
+                entry["user_name"] = info.user.name
+                entry["user_address"] = info.user.address
+            entries.append(entry)
+        output_json(entries)
+    else:
+        for v in versions:
+            info = obj.version_info(v)
+            typer.echo(f"{v}  {info.created}")
+            if info.message:
+                typer.echo(f"    {info.message}")
+            if info.user:
+                user_str = info.user.name
+                if info.user.address:
+                    user_str += f" <{info.user.address}>"
+                typer.echo(f"    {user_str}")
+            typer.echo()
