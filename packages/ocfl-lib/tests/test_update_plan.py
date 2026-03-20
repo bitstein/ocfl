@@ -639,3 +639,99 @@ class TestRevertPlan:
         assert (tmp_path / "obj1" / "v1" / "content" / "file.txt").is_file()
         # Declaration file preserved (not deleted by revert)
         assert (tmp_path / "obj1" / "0=ocfl_object_1.1").is_file()
+
+
+class TestPlanResume:
+    """prepare_steps preserves completed state on resume."""
+
+    def test_resume_skips_completed_steps(self, tmp_path: Path):
+        """Serialize mid-execution plan, deserialize, prepare, execute
+        → only incomplete steps run."""
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"aabbcc": b"hello"})
+
+        prepare_steps(plan, fsys, "obj1", source)
+
+        # Execute first 3 steps (object-root, declaration, version-dir)
+        for step in plan.steps[:3]:
+            assert step.run is not None
+            step.run()
+            step.completed = True
+
+        # Serialize and deserialize (simulates process restart)
+        data = serialize(plan)
+        restored = deserialize(data)
+
+        # Re-prepare with callables
+        prepare_steps(restored, fsys, "obj1", source)
+
+        # Completed flags preserved
+        for step in restored.steps[:3]:
+            assert step.completed
+
+        # Execute remaining
+        execute_plan(restored)
+
+        # All steps completed, object valid on disk
+        for step in restored.steps:
+            assert step.completed
+        obj_dir = tmp_path / "obj1"
+        assert (obj_dir / "inventory.json").read_bytes() == new_inv.raw_bytes
+        assert (obj_dir / "v1" / "content" / "file.txt").read_bytes() == b"hello"
+
+    def test_resume_mismatch_raises(self, tmp_path: Path):
+        """prepare_steps raises if existing steps don't match new steps."""
+        inv1 = _build_v1_inventory(files={"a.txt": "d1"})
+        inv2 = _build_v1_inventory(files={"a.txt": "d1", "b.txt": "d2"})
+
+        # Build plan with inv1's steps
+        plan = UpdatePlan(steps=[], new_inv=inv1, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"d1": b"aaa", "d2": b"bbb"})
+        prepare_steps(plan, fsys, "obj1", source)
+
+        # Swap inventory to inv2 (different step count)
+        plan.new_inv = inv2
+
+        with pytest.raises(ValueError, match="mismatch"):
+            prepare_steps(plan, fsys, "obj1", source)
+
+    def test_resume_digest_mismatch_raises(self, tmp_path: Path):
+        """prepare_steps raises if content digests don't match."""
+        inv1 = _build_v1_inventory(files={"a.txt": "d1"})
+        inv2 = _build_v1_inventory(files={"a.txt": "d2"})
+
+        plan = UpdatePlan(steps=[], new_inv=inv1, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"d1": b"aaa", "d2": b"bbb"})
+        prepare_steps(plan, fsys, "obj1", source)
+
+        # Swap inventory (same step count, different content digest)
+        plan.new_inv = inv2
+
+        with pytest.raises(ValueError, match="mismatch"):
+            prepare_steps(plan, fsys, "obj1", source)
+
+    def test_resume_full_execution_idempotent(self, tmp_path: Path):
+        """Resuming a fully completed plan is a no-op."""
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"aabbcc": b"hello"})
+
+        prepare_steps(plan, fsys, "obj1", source)
+        execute_plan(plan)
+
+        # Serialize/deserialize fully completed plan
+        data = serialize(plan)
+        restored = deserialize(data)
+        prepare_steps(restored, fsys, "obj1", source)
+
+        # All steps already completed
+        assert all(s.completed for s in restored.steps)
+
+        # Execute again — should be a no-op
+        execute_plan(restored)
+        assert (tmp_path / "obj1" / "inventory.json").read_bytes() == new_inv.raw_bytes

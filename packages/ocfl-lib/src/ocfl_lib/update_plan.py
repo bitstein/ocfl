@@ -170,6 +170,10 @@ def prepare_steps(
 
     Populates plan.steps with the full step sequence. Called after
     construction or deserialization to make the plan executable.
+
+    On resume (plan.steps non-empty from deserialization): validates
+    rebuilt steps match existing by (name, content_digest), then
+    transfers completed/error state from old steps to new.
     """
     new_inv = plan.new_inv
     old_inv = plan.old_inv
@@ -319,6 +323,29 @@ def prepare_steps(
                 revert=_noop_revert,
             )
         )
+
+    # On resume: validate new steps match existing, transfer completed state
+    if plan.steps:
+        old_steps = plan.steps
+        if len(old_steps) != len(steps):
+            raise ValueError(
+                f"plan step count mismatch: existing {len(old_steps)}, "
+                f"rebuilt {len(steps)}"
+            )
+        for old, new in zip(old_steps, steps, strict=False):
+            if old.name != new.name or old.content_digest != new.content_digest:
+                raise ValueError(
+                    f"plan step mismatch: existing ({old.name!r}, "
+                    f"{old.content_digest!r}) != rebuilt ({new.name!r}, "
+                    f"{new.content_digest!r})"
+                )
+            new.completed = old.completed
+            new.size = old.size
+            # Only transfer error/revert_error for completed steps;
+            # incomplete steps with stale errors will be re-run clean
+            if old.completed:
+                new.error = old.error
+                new.revert_error = old.revert_error
 
     plan.steps = steps
 
