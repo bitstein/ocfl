@@ -5,6 +5,7 @@ from typing import Annotated
 import typer
 
 from ocfl_cli.commands.diff import diff
+from ocfl_cli.commands.export import export
 from ocfl_cli.commands.info import info
 from ocfl_cli.commands.init import init
 from ocfl_cli.commands.log import log
@@ -19,6 +20,7 @@ app = typer.Typer(
 )
 
 app.command()(diff)
+app.command()(export)
 app.command()(info)
 app.command()(init)
 app.command()(log)
