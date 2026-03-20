@@ -313,7 +313,7 @@ class Object:
 
         try:
             execute_plan(plan)
-        except Exception:
+        except BaseException:
             revert_plan(plan)
             raise
 
