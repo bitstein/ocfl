@@ -4,11 +4,15 @@ from typing import Annotated
 
 import typer
 
+from ocfl_cli.commands.validate import validate
+
 app = typer.Typer(
     name="ocfl",
     help="CLI for managing an OCFL archive.",
     no_args_is_help=True,
 )
+
+app.command()(validate)
 
 
 @app.callback()

@@ -33,3 +33,6 @@ select = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["ocfl_lib", "ocfl_cli"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["TCH"]
