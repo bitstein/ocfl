@@ -1,18 +1,21 @@
-"""UpdatePlan data structures and serialization for OCFL write operations."""
+"""UpdatePlan data structures, serialization, and step construction."""
 
 import base64
+import contextlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import msgspec
 
 from ocfl_lib.digest import DigestAlgorithm
+from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.inventory import StoredInventory
+from ocfl_lib.spec import Namaste, Spec, VNum
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from ocfl_lib.fs.protocols import FS
+    from ocfl_lib.fs.protocols import FS, WriteFS
 
 
 @runtime_checkable
@@ -134,3 +137,167 @@ def deserialize(data: bytes) -> UpdatePlan:
         new_inv=_state_to_inv(state.new_inv),
         old_inv=_state_to_inv(state.old_inv) if state.old_inv else None,
     )
+
+
+# --- Step construction ---
+
+
+def _join(base: str, name: str) -> str:
+    if not base:
+        return name
+    return f"{base}/{name}"
+
+
+def _noop_run() -> int:
+    return 0
+
+
+def _noop_revert() -> None:
+    pass
+
+
+def prepare_steps(
+    plan: UpdatePlan,
+    fsys: WriteFS,
+    obj_dir: str,
+    content_source: ContentSource,
+) -> None:
+    """Build run/revert callables on plan steps from inventory data.
+
+    Populates plan.steps with the full step sequence. Called after
+    construction or deserialization to make the plan executable.
+    """
+    new_inv = plan.new_inv
+    old_inv = plan.old_inv
+    inv = new_inv.inventory
+    spec = Spec.from_inventory_type(inv.type)
+    vnum = VNum.parse(inv.head)
+    vnum_str = str(vnum)
+    version_dir = _join(obj_dir, vnum_str)
+    is_new = old_inv is None
+
+    old_manifest = old_inv.inventory.manifest if old_inv else {}
+
+    steps: list[PlanStep] = []
+
+    # 1. Object root (v1 only)
+    if is_new:
+        steps.append(
+            PlanStep(
+                name="object-root",
+                run=_noop_run,
+                revert=lambda: fsys.remove_all(obj_dir),
+            )
+        )
+
+    # 2. Declaration
+    namaste = Namaste.for_object(spec)
+    namaste_path = _join(obj_dir, namaste.filename)
+    namaste_bytes = namaste.content.encode()
+
+    def _write_declaration() -> int:
+        fsys.mkdir(obj_dir)
+        return fs_utils.write_bytes(fsys, namaste_path, namaste_bytes)
+
+    def _revert_declaration() -> None:
+        with contextlib.suppress(FileNotFoundError):
+            fsys.remove(namaste_path)
+
+    steps.append(
+        PlanStep(
+            name="declaration",
+            run=_write_declaration,
+            revert=_revert_declaration,
+        )
+    )
+
+    # 3. Version directory
+    def _make_version_dir() -> int:
+        fsys.mkdir(version_dir)
+        return 0
+
+    steps.append(
+        PlanStep(
+            name="version-dir",
+            run=_make_version_dir,
+            revert=lambda: fsys.remove_all(version_dir),
+        )
+    )
+
+    # 4. Content copies (async)
+    for digest, content_paths in inv.manifest.items():
+        if digest in old_manifest:
+            continue
+        content_path = content_paths[0]
+        dest = _join(obj_dir, content_path)
+
+        def _make_copy(d: str = digest, dst: str = dest) -> int:
+            # Ensure parent directory exists
+            parent = dst.rsplit("/", 1)[0] if "/" in dst else ""
+            if parent:
+                fsys.mkdir(parent)
+            src_fs, src_path = content_source.get_content(d)
+            return fs_utils.copy(src_fs, src_path, fsys, dst)
+
+        def _make_revert(dst: str = dest) -> None:
+            with contextlib.suppress(FileNotFoundError):
+                fsys.remove(dst)
+
+        steps.append(
+            PlanStep(
+                name="content-copy",
+                content_digest=digest,
+                is_async=True,
+                run=_make_copy,
+                revert=_make_revert,
+            )
+        )
+
+    # 5. Version inventory.json
+    vinv_path = _join(version_dir, "inventory.json")
+    steps.append(
+        PlanStep(
+            name="version-inv",
+            run=lambda: fs_utils.write_bytes(fsys, vinv_path, new_inv.raw_bytes),
+            revert=lambda: _try_remove(fsys, vinv_path),
+        )
+    )
+
+    # 6. Version sidecar
+    vsidecar_path = _join(version_dir, new_inv.sidecar_filename)
+    vsidecar_bytes = new_inv.sidecar_content.encode()
+    steps.append(
+        PlanStep(
+            name="version-sidecar",
+            run=lambda: fs_utils.write_bytes(fsys, vsidecar_path, vsidecar_bytes),
+            revert=lambda: _try_remove(fsys, vsidecar_path),
+        )
+    )
+
+    # 7. Root inventory.json
+    rinv_path = _join(obj_dir, "inventory.json")
+    steps.append(
+        PlanStep(
+            name="root-inv",
+            run=lambda: fs_utils.write_bytes(fsys, rinv_path, new_inv.raw_bytes),
+            revert=lambda: _try_remove(fsys, rinv_path),
+        )
+    )
+
+    # 8. Root sidecar (last step — marks completion)
+    rsidecar_path = _join(obj_dir, new_inv.sidecar_filename)
+    rsidecar_bytes = new_inv.sidecar_content.encode()
+    steps.append(
+        PlanStep(
+            name="root-sidecar",
+            run=lambda: fs_utils.write_bytes(fsys, rsidecar_path, rsidecar_bytes),
+            revert=lambda: _try_remove(fsys, rsidecar_path),
+        )
+    )
+
+    plan.steps = steps
+
+
+def _try_remove(fsys: WriteFS, path: str) -> None:
+    with contextlib.suppress(FileNotFoundError):
+        fsys.remove(path)
