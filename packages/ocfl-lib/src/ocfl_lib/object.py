@@ -1,4 +1,4 @@
-"""OCFL object read operations."""
+"""OCFL object read and write operations."""
 
 import json
 from dataclasses import dataclass
@@ -7,11 +7,18 @@ from typing import TYPE_CHECKING, BinaryIO, Literal
 from ocfl_lib.digest import DigestAlgorithm
 from ocfl_lib.digest_map import DigestMap, to_path_map
 from ocfl_lib.fs import utils as fs_utils
-from ocfl_lib.inventory import StoredInventory, VersionInfo
+from ocfl_lib.inventory import StoredInventory, UserInfo, VersionInfo
+from ocfl_lib.inventory_builder import InventoryBuilder
 from ocfl_lib.spec import INVENTORY_FILENAME, Namaste, Spec, VNum
+from ocfl_lib.update_plan import (
+    UpdatePlan,
+    execute_plan,
+    prepare_steps,
+    revert_plan,
+)
 
 if TYPE_CHECKING:
-    from ocfl_lib.fs.protocols import FS
+    from ocfl_lib.fs.protocols import FS, WriteFS
     from ocfl_lib.stage import Stage
 
 
@@ -213,6 +220,61 @@ class Object:
         if not fs_utils.exists(self._fsys, inv_path):
             return None
         return self._load_inventory(vdir)
+
+    def update(
+        self,
+        fsys: WriteFS,
+        stage: Stage,
+        *,
+        id: str | None = None,
+        spec: Spec | None = None,
+        message: str | None = None,
+        user: UserInfo | None = None,
+        created: str | None = None,
+    ) -> None:
+        """Create or update an OCFL object version.
+
+        For new objects (not self.exists), id is required.
+        Builds inventory, creates update plan, executes it.
+        On error: reverts completed steps, then re-raises.
+        Updates cached inventory on success.
+        """
+        prev = self._stored_inv.inventory if self._stored_inv else None
+
+        builder = InventoryBuilder(prev=prev)
+        if id is not None:
+            builder.id(id)
+        if spec is not None:
+            builder.spec(spec)
+        if stage.fixity_source is not None:
+            builder.fixity_source(stage.fixity_source)
+
+        builder.add_version(
+            stage.state,
+            created=created,
+            message=message,
+            user=user,
+        )
+        new_inv = builder.build()
+
+        alg = DigestAlgorithm.from_ocfl_name(new_inv.digest_algorithm)
+        new_stored = StoredInventory.from_inventory(new_inv, alg)
+
+        plan = UpdatePlan(
+            steps=[],
+            new_inv=new_stored,
+            old_inv=self._stored_inv,
+        )
+        prepare_steps(plan, fsys, self._path, stage.content_source)
+
+        try:
+            execute_plan(plan)
+        except Exception:
+            revert_plan(plan)
+            raise
+
+        # Update cached inventory
+        self._stored_inv = new_stored
 
     def _load_inventory(self, dir_path: str) -> StoredInventory:
         """Read inventory.json + sidecar, validate digest, return StoredInventory."""
