@@ -16,6 +16,10 @@ class FlatDirectLayout:
     def name(self) -> str:
         return EXTENSION_NAME
 
+    @property
+    def config(self) -> dict | None:
+        return None
+
     @classmethod
     def from_config(cls, config: dict | None = None) -> FlatDirectLayout:
         if config is not None:

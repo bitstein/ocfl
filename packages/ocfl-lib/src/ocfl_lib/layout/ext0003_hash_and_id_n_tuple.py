@@ -59,6 +59,15 @@ class HashAndIdNTupleLayout:
     def name(self) -> str:
         return EXTENSION_NAME
 
+    @property
+    def config(self) -> dict | None:
+        cfg = HashAndIdNTupleConfig(
+            digest_algorithm=self._alg.ocfl_name,
+            tuple_size=self._tuple_size,
+            number_of_tuples=self._n_tuples,
+        )
+        return msgspec.to_builtins(cfg)
+
     @classmethod
     def from_config(cls, config: dict | None = None) -> HashAndIdNTupleLayout:
         if config is None:

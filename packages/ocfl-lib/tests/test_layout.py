@@ -14,6 +14,10 @@ class _DummyLayout:
     def name(self) -> str:
         return "dummy-layout"
 
+    @property
+    def config(self) -> dict | None:
+        return None
+
     def resolve(self, object_id: str) -> str:
         return object_id
 

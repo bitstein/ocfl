@@ -15,3 +15,8 @@ class Layout(Protocol):
     def name(self) -> str:
         """The registered extension name."""
         ...
+
+    @property
+    def config(self) -> dict | None:
+        """Layout configuration as a dict, or None if no config needed."""
+        ...
