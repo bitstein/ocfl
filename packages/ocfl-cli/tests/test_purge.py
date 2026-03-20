@@ -37,7 +37,8 @@ class TestPurge:
             ["--root", str(storage_root), "purge", "obj:test"],
             input="n\n",
         )
-        assert result.exit_code == 0
+        assert result.exit_code == 1
+        assert "Aborted" in result.output
         # Object should still exist
         fs = LocalFS(storage_root)
         root = StorageRoot(fs)

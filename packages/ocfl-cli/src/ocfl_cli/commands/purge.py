@@ -19,16 +19,13 @@ def purge(
     root, fs = open_root(ctx.obj.get("root"))
 
     if not force:
-        confirm = typer.prompt(
-            f"Permanently delete {object_id!r}? This cannot be undone [y/N]",
-            default="n",
-            show_default=False,
+        typer.confirm(
+            f"Permanently delete {object_id!r}? This cannot be undone",
+            abort=True,
         )
-        if confirm.lower() != "y":
-            return
 
     try:
         root.purge(fs, object_id)
-    except ValueError as e:
+    except (ValueError, OSError) as e:
         err(str(e))
         raise typer.Exit(1) from None
