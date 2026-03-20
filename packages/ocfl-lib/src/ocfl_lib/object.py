@@ -12,6 +12,7 @@ from ocfl_lib.spec import INVENTORY_FILENAME, Namaste, Spec, VNum
 
 if TYPE_CHECKING:
     from ocfl_lib.fs.protocols import FS
+    from ocfl_lib.stage import Stage
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +83,24 @@ class Object:
         if vkey not in versions:
             raise KeyError(f"version {vkey} not found")
         return versions[vkey]
+
+    def version_stage(self, v: VNum) -> Stage:
+        """Create a Stage from an existing version's state.
+
+        The stage's ContentSource is backed by this object's manifest.
+        Raises KeyError if version not found.
+        """
+        from ocfl_lib.stage import Stage
+
+        state = self.version_state(v)
+        inv = self.inventory.inventory
+        alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
+        content_source = _ObjectContentSource(self._fsys, self._path, inv.manifest)
+        return Stage(
+            state=state,
+            digest_algorithm=alg,
+            content_source=content_source,
+        )
 
     def content_path(self, digest: str) -> str | None:
         """Manifest lookup: digest → first content path, or None."""
@@ -219,6 +238,22 @@ class Object:
             )
 
         return stored
+
+
+class _ObjectContentSource:
+    """ContentSource backed by an object's manifest."""
+
+    def __init__(self, fsys: FS, obj_path: str, manifest: dict[str, list[str]]):
+        self._fsys = fsys
+        self._obj_path = obj_path
+        self._manifest = manifest
+
+    def get_content(self, digest: str) -> tuple[FS, str]:
+        paths = self._manifest.get(digest)
+        if not paths:
+            raise KeyError(f"digest {digest!r} not in manifest")
+        full = _join(self._obj_path, paths[0])
+        return self._fsys, full
 
 
 def _join(base: str, name: str) -> str:

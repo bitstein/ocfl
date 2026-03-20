@@ -7,6 +7,8 @@ from ocfl_lib.digest import DigestAlgorithm, file_digest, multi_digest
 if TYPE_CHECKING:
     from pathlib import Path
 from ocfl_lib.fs.local import LocalFS
+from ocfl_lib.object import Object
+from ocfl_lib.spec import VNum
 from ocfl_lib.stage import FixitySource, Stage, stage_dir
 from ocfl_lib.update_plan import ContentSource
 
@@ -295,3 +297,56 @@ class TestStageOverlay:
         s2 = _make_stage({"d2": ["b.txt"]}, alg=DigestAlgorithm.SHA256)
         merged = s1.overlay(s2)
         assert merged.digest_algorithm is DigestAlgorithm.SHA256
+
+
+class TestVersionStage:
+    def test_version_stage_state_matches(self, good_objects_1_1: Path):
+        """version_stage state matches version_state."""
+        obj_path = good_objects_1_1 / "spec-ex-full"
+        fsys = LocalFS(obj_path)
+        obj = Object(fsys, "")
+        v1 = VNum(1)
+        stage = obj.version_stage(v1)
+        assert stage.state == obj.version_state(v1)
+
+    def test_version_stage_algorithm(self, good_objects_1_1: Path):
+        """version_stage uses object's digest algorithm."""
+        obj_path = good_objects_1_1 / "spec-ex-full"
+        fsys = LocalFS(obj_path)
+        obj = Object(fsys, "")
+        stage = obj.version_stage(VNum(1))
+        assert stage.digest_algorithm is DigestAlgorithm.SHA512
+
+    def test_version_stage_content_source(self, good_objects_1_1: Path):
+        """Content source from version_stage can open files."""
+        obj_path = good_objects_1_1 / "spec-ex-full"
+        fsys = LocalFS(obj_path)
+        obj = Object(fsys, "")
+        v1 = VNum(1)
+        stage = obj.version_stage(v1)
+
+        # Get first digest from state
+        digest = next(iter(stage.state))
+        src_fs, src_path = stage.content_source.get_content(digest)
+        # Should be able to open and read the content
+        with src_fs.open_file(src_path) as f:
+            data = f.read()
+        assert len(data) > 0
+
+    def test_version_stage_head(self, good_objects_1_1: Path):
+        """version_stage works for head version."""
+        obj_path = good_objects_1_1 / "spec-ex-full"
+        fsys = LocalFS(obj_path)
+        obj = Object(fsys, "")
+        stage = obj.version_stage(obj.head)
+        assert stage.state == obj.version_state(obj.head)
+
+    def test_version_stage_invalid_version(self, good_objects_1_1: Path):
+        """version_stage raises KeyError for nonexistent version."""
+        obj_path = good_objects_1_1 / "spec-ex-full"
+        fsys = LocalFS(obj_path)
+        obj = Object(fsys, "")
+        import pytest
+
+        with pytest.raises(KeyError):
+            obj.version_stage(VNum(99))
