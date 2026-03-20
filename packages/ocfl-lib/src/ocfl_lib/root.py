@@ -1,7 +1,9 @@
-"""OCFL storage root read operations."""
+"""OCFL storage root operations."""
 
 import posixpath
 from typing import TYPE_CHECKING
+
+import msgspec
 
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.layout import get_layout
@@ -11,12 +13,12 @@ from ocfl_lib.spec import Namaste, Spec
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from ocfl_lib.fs.protocols import FileWalker
+    from ocfl_lib.fs.protocols import FileWalker, WriteFS
     from ocfl_lib.layout.types import Layout
 
 
 class StorageRoot:
-    """Read-only interface to an existing OCFL storage root.
+    """Interface to an OCFL storage root.
 
     Requires a FileWalker FS (walking is fundamental to root operations).
     Layout is loaded eagerly in the constructor (fail fast on bad config).
@@ -27,6 +29,45 @@ class StorageRoot:
         self._path = path
         self._spec = self._detect_spec()
         self._layout = self._load_layout()
+
+    @classmethod
+    def init(
+        cls,
+        fsys: WriteFS,
+        walker: FileWalker,
+        path: str = "",
+        *,
+        spec: Spec = Spec.V1_1,
+        layout: Layout | None = None,
+        layout_description: str = "",
+    ) -> StorageRoot:
+        """Create a new OCFL storage root on disk.
+
+        Writes NAMASTE declaration, ocfl_layout.json (if layout), and
+        extension config (if layout.config is not None).
+        """
+        namaste = Namaste.for_root(spec)
+        namaste_path = _join(path, namaste.filename)
+        fs_utils.write_bytes(fsys, namaste_path, namaste.content.encode())
+
+        if layout is not None:
+            ocfl_layout = {"extension": layout.name, "description": layout_description}
+            fs_utils.write_bytes(
+                fsys,
+                _join(path, "ocfl_layout.json"),
+                msgspec.json.encode(ocfl_layout),
+            )
+            cfg = layout.config
+            if cfg is not None:
+                ext_dir = _join(path, f"extensions/{layout.name}")
+                fsys.mkdir(ext_dir)
+                fs_utils.write_bytes(
+                    fsys,
+                    _join(ext_dir, "config.json"),
+                    msgspec.json.encode(cfg),
+                )
+
+        return cls(walker, path)
 
     @property
     def spec(self) -> Spec:
