@@ -20,6 +20,7 @@ from ocfl_lib.update_plan import (
     deserialize,
     execute_plan,
     prepare_steps,
+    revert_plan,
     serialize,
 )
 
@@ -527,3 +528,111 @@ class TestExecutePlan:
 
 def _failing_step() -> int:
     raise RuntimeError("disk full")
+
+
+class TestRevertPlan:
+    def test_revert_full_execution(self, tmp_path: Path):
+        """Reverting a fully executed plan should clean up everything."""
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"aabbcc": b"hello"})
+
+        prepare_steps(plan, fsys, "obj1", source)
+        execute_plan(plan)
+
+        # Object exists
+        assert (tmp_path / "obj1").is_dir()
+
+        revert_plan(plan)
+
+        # Object completely removed (object-root revert does remove_all)
+        assert not (tmp_path / "obj1").exists()
+
+    def test_revert_partial_execution(self, tmp_path: Path):
+        """Reverting a partially executed plan cleans up completed steps."""
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"aabbcc": b"hello"})
+
+        prepare_steps(plan, fsys, "obj1", source)
+
+        # Execute only first 3 steps (object-root, declaration, version-dir)
+        for step in plan.steps[:3]:
+            assert step.run is not None
+            step.run()
+            step.completed = True
+
+        assert (tmp_path / "obj1").is_dir()
+
+        revert_plan(plan)
+
+        # Object removed
+        assert not (tmp_path / "obj1").exists()
+
+    def test_revert_only_completed_steps(self, tmp_path: Path):
+        """Only completed steps should be reverted."""
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"aabbcc": b"hello"})
+
+        prepare_steps(plan, fsys, "obj1", source)
+
+        # Don't execute anything
+        revert_plan(plan)
+
+        # Nothing to revert — no error, no object dir
+        assert not (tmp_path / "obj1").exists()
+
+    def test_revert_continues_on_error(self, tmp_path: Path):
+        """Revert should continue even if one step's revert fails."""
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"aabbcc": b"hello"})
+
+        prepare_steps(plan, fsys, "obj1", source)
+        execute_plan(plan)
+
+        # Replace a middle step's revert with a failing callable
+        def _bad_revert() -> None:
+            raise RuntimeError("cleanup failed")
+
+        plan.steps[3].revert = _bad_revert
+
+        # Should not raise, but should set revert_error
+        revert_plan(plan)
+
+        assert plan.steps[3].revert_error == "cleanup failed"
+        # Other steps should still have been reverted
+        # (object-root revert removes everything)
+        assert not (tmp_path / "obj1").exists()
+
+    def test_revert_update_preserves_old_object(self, tmp_path: Path):
+        """Reverting v2 update should leave v1 intact."""
+        # Create v1
+        old_inv = _build_v1_inventory()
+        plan1 = UpdatePlan(steps=[], new_inv=old_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source1 = _DictContentSource({"aabbcc": b"hello"})
+        prepare_steps(plan1, fsys, "obj1", source1)
+        execute_plan(plan1)
+
+        # Prepare and execute v2
+        new_inv = _build_v2_inventory(old_inv)
+        plan2 = UpdatePlan(steps=[], new_inv=new_inv, old_inv=old_inv)
+        source2 = _DictContentSource({"ddeeff": b"world"})
+        prepare_steps(plan2, fsys, "obj1", source2)
+        execute_plan(plan2)
+
+        # v2 exists
+        assert (tmp_path / "obj1" / "v2").is_dir()
+
+        # Revert v2
+        revert_plan(plan2)
+
+        # v2 dir removed but v1 still intact
+        assert not (tmp_path / "obj1" / "v2").exists()
+        assert (tmp_path / "obj1" / "v1" / "content" / "file.txt").is_file()

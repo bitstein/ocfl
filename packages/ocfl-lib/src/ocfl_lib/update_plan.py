@@ -363,3 +363,23 @@ def _run_step(step: PlanStep) -> None:
     except Exception as exc:
         step.error = str(exc)
         raise
+
+
+# --- Plan revert ---
+
+
+def revert_plan(plan: UpdatePlan) -> None:
+    """Revert completed steps in reverse order.
+
+    Calls each completed step's revert callable. On revert failure,
+    sets step.revert_error and continues reverting remaining steps.
+    """
+    for step in reversed(plan.steps):
+        if not step.completed:
+            continue
+        if step.revert is None:
+            continue
+        try:
+            step.revert()
+        except Exception as exc:
+            step.revert_error = str(exc)
