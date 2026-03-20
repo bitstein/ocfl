@@ -11,3 +11,6 @@ wheels/
 
 # Planning docs
 PLAN.md
+
+# Claude Code
+.claude/
