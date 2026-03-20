@@ -84,6 +84,17 @@ def stream_digest(stream: BinaryIO, alg: DigestAlgorithm) -> str:
     return h.hexdigest()
 
 
+def stream_multi_digest(
+    stream: BinaryIO, algs: Sequence[DigestAlgorithm]
+) -> dict[DigestAlgorithm, str]:
+    """Compute multiple digests in a single pass through a stream."""
+    hashers = {alg: alg.new_hasher() for alg in algs}
+    while chunk := stream.read(_CHUNK_SIZE):
+        for h in hashers.values():
+            h.update(chunk)
+    return {alg: h.hexdigest() for alg, h in hashers.items()}
+
+
 def bytes_digest(data: bytes, alg: DigestAlgorithm) -> str:
     """Compute hex digest of bytes."""
     h = alg.new_hasher()
