@@ -1,4 +1,4 @@
-"""Tests for Layout.config property (Phase 12.0)."""
+"""Tests for Layout.config property."""
 
 from ocfl_lib.layout import (
     FlatDirectLayout,

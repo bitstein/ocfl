@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class TestObjectReadExisting:
-    """7.1: Object class — read existing objects from fixtures."""
+    """Object class — read existing objects from fixtures."""
 
     def test_exists_true(self, good_objects_1_1: Path):
         obj_path = good_objects_1_1 / "minimal_one_version_one_file"
@@ -140,7 +140,7 @@ class TestObjectReadExisting:
 
 
 class TestVersionContentAccess:
-    """7.2: Version content access."""
+    """Version content access."""
 
     def test_version_state(self, good_objects_1_1: Path):
         obj_path = good_objects_1_1 / "minimal_one_version_one_file"
@@ -248,7 +248,7 @@ class TestVersionContentAccess:
 
 
 class TestObjectDiff:
-    """7.3: Object diff between versions."""
+    """Object diff between versions."""
 
     def test_diff_no_changes(self, good_objects_1_1: Path):
         """Diffing a version against itself yields no entries."""

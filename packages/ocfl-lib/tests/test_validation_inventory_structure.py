@@ -1,4 +1,4 @@
-"""Tests for inventory validation — structural checks (phase 1: raw dict)."""
+"""Tests for inventory validation — structural checks (raw dict)."""
 
 from ocfl_lib.validation.inventory import validate_inventory
 from ocfl_lib.validation.result import ValidationResult

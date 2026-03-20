@@ -191,7 +191,7 @@ class TestContentPathFunc:
 
 
 class TestFixitySupport:
-    """11.1: InventoryBuilder fixity support."""
+    """InventoryBuilder fixity support."""
 
     def test_fixity_populated_from_source(self):
         """New manifest digests query FixitySource, populate fixity block."""

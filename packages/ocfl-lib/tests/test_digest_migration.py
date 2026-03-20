@@ -1,4 +1,4 @@
-"""Tests for digest algorithm migration (Phase 13)."""
+"""Tests for digest algorithm migration."""
 
 from typing import TYPE_CHECKING
 
@@ -51,7 +51,7 @@ def _create_v1(
 
 
 class TestAlgorithmMigration:
-    """13.1: Algorithm migration between versions."""
+    """Algorithm migration between versions."""
 
     def test_sha256_to_sha512(self, tmp_path: Path):
         """Create v1 sha256, v2 sha512 — fixity has sha256 digests."""

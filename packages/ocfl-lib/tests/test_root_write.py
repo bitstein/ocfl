@@ -1,4 +1,4 @@
-"""Tests for StorageRoot write operations (Phase 12.1-12.2)."""
+"""Tests for StorageRoot write operations."""
 
 from typing import TYPE_CHECKING
 
@@ -30,7 +30,7 @@ def _make_src(tmp_path: Path, files: dict[str, str]) -> Path:
 
 
 class TestStorageRootInit:
-    """12.1: StorageRoot.init() — create new root."""
+    """StorageRoot.init() — create new root."""
 
     def test_init_default_spec(self, tmp_path: Path):
         """Init with default spec (1.1), no layout."""
@@ -118,7 +118,7 @@ class TestStorageRootInit:
 
 
 class TestStorageRootCommit:
-    """12.2: StorageRoot.commit() — add/update objects."""
+    """StorageRoot.commit() — add/update objects."""
 
     def test_commit_new_object(self, tmp_path: Path):
         """Commit new object to root, returns Object."""

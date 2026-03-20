@@ -1,4 +1,4 @@
-"""Tests for OCFL Object write operations (Phase 11.2-11.3)."""
+"""Tests for OCFL Object write operations."""
 
 from typing import TYPE_CHECKING
 
@@ -29,7 +29,7 @@ def _make_src_dir(tmp_path: Path, files: dict[str, str]) -> Path:
 
 
 class TestObjectUpdate:
-    """11.2: Object.update() — full write path."""
+    """Object.update() — full write path."""
 
     def test_create_new_object(self, tmp_path: Path):
         """Create a new v1 object from a staged directory."""
@@ -361,7 +361,7 @@ class TestObjectUpdate:
 
 
 class TestTwoStepWrite:
-    """11.3: Object.new_update_plan() / apply_update_plan()."""
+    """Object.new_update_plan() / apply_update_plan()."""
 
     def test_create_via_two_step(self, tmp_path: Path):
         """Create object via plan + apply."""
