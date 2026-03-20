@@ -11,6 +11,7 @@ from ocfl_lib.inventory import StoredInventory, UserInfo, VersionInfo
 from ocfl_lib.inventory_builder import InventoryBuilder
 from ocfl_lib.spec import INVENTORY_FILENAME, Namaste, Spec, VNum
 from ocfl_lib.update_plan import (
+    ContentSource,
     UpdatePlan,
     execute_plan,
     prepare_steps,
@@ -239,6 +240,39 @@ class Object:
         On error: reverts completed steps, then re-raises.
         Updates cached inventory on success.
         """
+        plan = self.new_update_plan(
+            stage,
+            id=id,
+            spec=spec,
+            message=message,
+            user=user,
+            created=created,
+        )
+        prepare_steps(plan, fsys, self._path, stage.content_source)
+
+        try:
+            execute_plan(plan)
+        except Exception:
+            revert_plan(plan)
+            raise
+
+        self._stored_inv = plan.new_inv
+
+    def new_update_plan(
+        self,
+        stage: Stage,
+        *,
+        id: str | None = None,
+        spec: Spec | None = None,
+        message: str | None = None,
+        user: UserInfo | None = None,
+        created: str | None = None,
+    ) -> UpdatePlan:
+        """Build an update plan without executing it.
+
+        Does NOT embed ContentSource in the plan. Use apply_update_plan()
+        to execute with a ContentSource.
+        """
         prev = self._stored_inv.inventory if self._stored_inv else None
 
         builder = InventoryBuilder(prev=prev)
@@ -260,21 +294,27 @@ class Object:
         alg = DigestAlgorithm.from_ocfl_name(new_inv.digest_algorithm)
         new_stored = StoredInventory.from_inventory(new_inv, alg)
 
-        plan = UpdatePlan(
+        return UpdatePlan(
             steps=[],
             new_inv=new_stored,
             old_inv=self._stored_inv,
         )
-        prepare_steps(plan, fsys, self._path, stage.content_source)
 
-        try:
-            execute_plan(plan)
-        except Exception:
-            revert_plan(plan)
-            raise
+    def apply_update_plan(
+        self,
+        fsys: WriteFS,
+        plan: UpdatePlan,
+        content_source: ContentSource,
+    ) -> None:
+        """Execute a previously created update plan.
 
-        # Update cached inventory
-        self._stored_inv = new_stored
+        Takes ContentSource separately (enables resume with different source).
+        No auto-revert — caller handles errors and decides whether to revert.
+        Updates cached inventory on success.
+        """
+        prepare_steps(plan, fsys, self._path, content_source)
+        execute_plan(plan)
+        self._stored_inv = plan.new_inv
 
     def _load_inventory(self, dir_path: str) -> StoredInventory:
         """Read inventory.json + sidecar, validate digest, return StoredInventory."""

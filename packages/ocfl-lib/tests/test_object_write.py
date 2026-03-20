@@ -323,3 +323,134 @@ class TestObjectUpdate:
         assert info.user.name == "Alice"
         assert info.user.address == "mailto:alice@example.org"
         assert info.created == "2024-01-01T00:00:00Z"
+
+
+class TestTwoStepWrite:
+    """11.3: Object.new_update_plan() / apply_update_plan()."""
+
+    def test_create_via_two_step(self, tmp_path: Path):
+        """Create object via plan + apply."""
+        src = _make_src_dir(tmp_path, {"file.txt": "hello"})
+        obj_dir = tmp_path / "obj"
+        obj_dir.mkdir()
+
+        src_fs = LocalFS(src.parent)
+        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+
+        obj_fs = LocalFS(obj_dir)
+        obj = Object(obj_fs, "")
+
+        plan = obj.new_update_plan(
+            stage,
+            id="test:1",
+            spec=Spec.V1_1,
+            created="2024-01-01T00:00:00Z",
+        )
+        # Plan created but object not yet written
+        assert not obj.exists
+
+        obj.apply_update_plan(obj_fs, plan, stage.content_source)
+        assert obj.exists
+        assert obj.head == VNum(1)
+
+        result = ValidationResult()
+        validate_object(obj_fs, "", result)
+        assert result.is_valid
+
+    def test_plan_serializable(self, tmp_path: Path):
+        """Plan can be serialized, deserialized, and applied."""
+        from ocfl_lib.update_plan import deserialize, serialize
+
+        src = _make_src_dir(tmp_path, {"file.txt": "hello"})
+        obj_dir = tmp_path / "obj"
+        obj_dir.mkdir()
+
+        src_fs = LocalFS(src.parent)
+        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+
+        obj_fs = LocalFS(obj_dir)
+        obj = Object(obj_fs, "")
+
+        plan = obj.new_update_plan(
+            stage,
+            id="test:1",
+            spec=Spec.V1_1,
+            created="2024-01-01T00:00:00Z",
+        )
+
+        # Serialize and deserialize
+        data = serialize(plan)
+        plan2 = deserialize(data)
+
+        # Apply deserialized plan
+        obj.apply_update_plan(obj_fs, plan2, stage.content_source)
+        assert obj.exists
+
+        result = ValidationResult()
+        validate_object(obj_fs, "", result)
+        assert result.is_valid
+
+    def test_no_auto_revert(self, tmp_path: Path):
+        """apply_update_plan does NOT auto-revert — caller decides."""
+        obj_dir = tmp_path / "obj"
+        obj_dir.mkdir()
+
+        class FailingSource:
+            def get_content(self, digest: str) -> tuple:
+                raise OSError("fail")
+
+        stage = Stage(
+            state={"abc123": ["file.txt"]},
+            digest_algorithm=DigestAlgorithm.SHA512,
+            content_source=FailingSource(),
+        )
+
+        obj_fs = LocalFS(obj_dir)
+        obj = Object(obj_fs, "")
+
+        plan = obj.new_update_plan(
+            stage,
+            id="test:1",
+            spec=Spec.V1_1,
+            created="2024-01-01T00:00:00Z",
+        )
+
+        with pytest.raises(OSError, match="fail"):
+            obj.apply_update_plan(obj_fs, plan, stage.content_source)
+
+        # Some steps completed (declaration, version-dir) but NOT reverted
+        completed = [s for s in plan.steps if s.completed]
+        assert len(completed) > 0
+
+    def test_v2_via_two_step(self, tmp_path: Path):
+        """Add v2 via two-step API on existing object."""
+        src1 = _make_src_dir(tmp_path, {"file.txt": "v1"})
+        obj_dir = tmp_path / "obj"
+        obj_dir.mkdir()
+
+        src_fs = LocalFS(src1.parent)
+        stage1 = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+
+        obj_fs = LocalFS(obj_dir)
+        obj = Object(obj_fs, "")
+        obj.update(
+            obj_fs,
+            stage1,
+            id="test:1",
+            spec=Spec.V1_1,
+            created="2024-01-01T00:00:00Z",
+        )
+
+        # v2 via two-step
+        src2 = tmp_path / "src2"
+        src2.mkdir()
+        (src2 / "file.txt").write_text("v2")
+
+        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        plan = obj.new_update_plan(stage2, created="2024-06-01T00:00:00Z")
+        obj.apply_update_plan(obj_fs, plan, stage2.content_source)
+
+        assert obj.head == VNum(2)
+        result = ValidationResult()
+        validate_object(obj_fs, "", result)
+        assert result.is_valid
