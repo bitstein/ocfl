@@ -1,0 +1,34 @@
+"""ocfl purge command."""
+
+from typing import Annotated
+
+import typer
+
+from ocfl_cli._common import err, open_root
+
+
+def purge(
+    ctx: typer.Context,
+    object_id: Annotated[str, typer.Argument(help="Object ID to purge.")],
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Skip confirmation prompt."),
+    ] = False,
+) -> None:
+    """Permanently remove an object from the storage root."""
+    root, fs = open_root(ctx.obj.get("root"))
+
+    if not force:
+        confirm = typer.prompt(
+            f"Permanently delete {object_id!r}? This cannot be undone [y/N]",
+            default="n",
+            show_default=False,
+        )
+        if confirm.lower() != "y":
+            return
+
+    try:
+        root.purge(fs, object_id)
+    except ValueError as e:
+        err(str(e))
+        raise typer.Exit(1) from None

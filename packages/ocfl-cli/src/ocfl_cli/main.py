@@ -10,6 +10,7 @@ from ocfl_cli.commands.info import info
 from ocfl_cli.commands.init import init
 from ocfl_cli.commands.log import log
 from ocfl_cli.commands.ls import ls
+from ocfl_cli.commands.purge import purge
 from ocfl_cli.commands.show import show
 from ocfl_cli.commands.validate import validate
 
@@ -25,6 +26,7 @@ app.command()(info)
 app.command()(init)
 app.command()(log)
 app.command()(ls)
+app.command()(purge)
 app.command()(show)
 app.command()(validate)
 
