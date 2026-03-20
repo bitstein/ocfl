@@ -97,6 +97,33 @@ class StorageRoot:
         full_path = _join(self._path, obj_path)
         return Object(self._fsys, full_path)
 
+    def purge(self, fsys: WriteFS, object_id: str) -> None:
+        """Permanently remove an object from the storage root.
+
+        Resolves ID via layout, verifies object exists, removes object dir,
+        and cleans empty parent directories up the hierarchy.
+        Raises ValueError if object not found or no layout configured.
+        """
+        obj_path = self.object_path(object_id)
+        full_path = _join(self._path, obj_path)
+        obj = Object(self._fsys, full_path)
+        if not obj.exists:
+            raise ValueError(f"object {object_id!r} not found")
+
+        fsys.remove_all(full_path)
+
+        # Clean empty parent directories up to (but not including) root
+        parts = obj_path.split("/")
+        for i in range(len(parts) - 1, 0, -1):
+            parent = _join(self._path, "/".join(parts[:i]))
+            try:
+                entries = list(self._fsys.read_dir(parent))
+            except FileNotFoundError, OSError:
+                break
+            if entries:
+                break
+            fsys.remove_all(parent)
+
     def commit(
         self,
         fsys: WriteFS,
