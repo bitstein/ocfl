@@ -3,7 +3,7 @@ name = "ocfl-cli"
 version = "0.1.0"
 description = "CLI for managing an OCFL archive"
 requires-python = ">=3.14"
-dependencies = ["ocfl-lib"]
+dependencies = ["ocfl-lib", "typer>=0.15"]
 
 [project.scripts]
 ocfl = "ocfl_cli:main"
