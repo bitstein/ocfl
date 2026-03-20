@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from ocfl_lib.digest_map import DigestMap
+    from ocfl_lib.stage import FixitySource
 
 
 class InventoryBuilder:
@@ -32,6 +33,7 @@ class InventoryBuilder:
             else DigestAlgorithm.SHA512
         )
         self._content_path_func: Callable[[str], str] | None = None
+        self._fixity_source: FixitySource | None = None
         self._pending_versions: list[
             tuple[DigestMap, str, str | None, UserInfo | None]
         ] = []
@@ -50,6 +52,10 @@ class InventoryBuilder:
 
     def digest_algorithm(self, alg: DigestAlgorithm) -> Self:
         self._digest_alg = alg
+        return self
+
+    def fixity_source(self, fs: FixitySource | None) -> Self:
+        self._fixity_source = fs
         return self
 
     def content_path_func(self, fn: Callable[[str], str] | None) -> Self:
@@ -95,6 +101,12 @@ class InventoryBuilder:
         # Build existing manifest path→digest for dedup
         existing_digests = set(manifest.keys())
 
+        # Collect fixity for new digests
+        fixity: dict[str, dict[str, list[str]]] = {}
+        if prev and prev.fixity:
+            for alg_name, dm in prev.fixity.items():
+                fixity[alg_name] = {d: list(ps) for d, ps in dm.items()}
+
         for state, created, message, user in self._pending_versions:
             vnum = next_vnum
             vnum_str = str(vnum)
@@ -109,6 +121,13 @@ class InventoryBuilder:
                     content_path = f"{vnum_str}/{content_dir}/{logical}"
                     manifest[digest] = [content_path]
                     existing_digests.add(digest)
+
+                    # Query fixity for new digest
+                    if self._fixity_source is not None:
+                        fixity_digests = self._fixity_source.get_fixity(digest)
+                        for fix_alg, fix_digest in fixity_digests.items():
+                            alg_name = fix_alg.ocfl_name
+                            fixity.setdefault(alg_name, {})[fix_digest] = [content_path]
 
             versions[vnum_str] = VersionInfo(
                 created=created,
@@ -127,5 +146,5 @@ class InventoryBuilder:
             manifest=manifest,
             versions=versions,
             content_directory=self._content_dir,
-            fixity=prev.fixity if prev and prev.fixity else None,
+            fixity=fixity or None,
         )

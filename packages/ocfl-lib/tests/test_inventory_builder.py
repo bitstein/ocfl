@@ -190,6 +190,147 @@ class TestContentPathFunc:
         assert inv.manifest["abc"] == ["v1/content/FILE.TXT"]
 
 
+class TestFixitySupport:
+    """11.1: InventoryBuilder fixity support."""
+
+    def test_fixity_populated_from_source(self):
+        """New manifest digests query FixitySource, populate fixity block."""
+        state: DigestMap = {"abc123": ["file.txt"]}
+
+        class FakeFixity:
+            def get_fixity(self, digest: str) -> dict[DigestAlgorithm, str]:
+                if digest == "abc123":
+                    return {DigestAlgorithm.MD5: "md5_of_abc123"}
+                return {}
+
+        inv = (
+            InventoryBuilder()
+            .id("test")
+            .fixity_source(FakeFixity())
+            .add_version(state, created="2024-01-01T00:00:00Z")
+            .build()
+        )
+        assert inv.fixity is not None
+        assert "md5" in inv.fixity
+        assert "md5_of_abc123" in inv.fixity["md5"]
+        # fixity content path should match manifest content path
+        assert inv.fixity["md5"]["md5_of_abc123"] == inv.manifest["abc123"]
+
+    def test_no_fixity_when_source_is_none(self):
+        state: DigestMap = {"abc": ["file.txt"]}
+        inv = (
+            InventoryBuilder()
+            .id("test")
+            .add_version(state, created="2024-01-01T00:00:00Z")
+            .build()
+        )
+        assert inv.fixity is None
+
+    def test_fixity_multiple_algorithms(self):
+        """FixitySource returning multiple algs populates all."""
+        state: DigestMap = {"abc": ["file.txt"]}
+
+        class MultiFixity:
+            def get_fixity(self, digest: str) -> dict[DigestAlgorithm, str]:
+                return {
+                    DigestAlgorithm.MD5: "md5val",
+                    DigestAlgorithm.SHA1: "sha1val",
+                }
+
+        inv = (
+            InventoryBuilder()
+            .id("test")
+            .fixity_source(MultiFixity())
+            .add_version(state, created="2024-01-01T00:00:00Z")
+            .build()
+        )
+        assert inv.fixity is not None
+        assert "md5" in inv.fixity
+        assert "sha1" in inv.fixity
+
+    def test_fixity_merged_with_prev(self):
+        """Fixity from prev inventory preserved, new fixity added."""
+        # Build v1 with fixity
+        state_v1: DigestMap = {"abc": ["file.txt"]}
+
+        class FixityV1:
+            def get_fixity(self, digest: str) -> dict[DigestAlgorithm, str]:
+                if digest == "abc":
+                    return {DigestAlgorithm.MD5: "md5_abc"}
+                return {}
+
+        prev = (
+            InventoryBuilder()
+            .id("test")
+            .fixity_source(FixityV1())
+            .add_version(state_v1, created="2024-01-01T00:00:00Z")
+            .build()
+        )
+        assert prev.fixity is not None
+
+        # Build v2 with new file and fixity
+        state_v2: DigestMap = {"abc": ["file.txt"], "def": ["new.txt"]}
+
+        class FixityV2:
+            def get_fixity(self, digest: str) -> dict[DigestAlgorithm, str]:
+                if digest == "def":
+                    return {DigestAlgorithm.MD5: "md5_def"}
+                return {}
+
+        inv = (
+            InventoryBuilder(prev=prev)
+            .fixity_source(FixityV2())
+            .add_version(state_v2, created="2024-06-01T00:00:00Z")
+            .build()
+        )
+        assert inv.fixity is not None
+        # Both old and new fixity present
+        md5 = inv.fixity["md5"]
+        assert "md5_abc" in md5
+        assert "md5_def" in md5
+
+    def test_fixity_not_queried_for_existing_digests(self):
+        """Existing manifest digests (dedup) should not query fixity again."""
+        state_v1: DigestMap = {"abc": ["file.txt"]}
+        prev = (
+            InventoryBuilder()
+            .id("test")
+            .add_version(state_v1, created="2024-01-01T00:00:00Z")
+            .build()
+        )
+
+        calls: list[str] = []
+
+        class TrackingFixity:
+            def get_fixity(self, digest: str) -> dict[DigestAlgorithm, str]:
+                calls.append(digest)
+                return {DigestAlgorithm.MD5: f"md5_{digest}"}
+
+        state_v2: DigestMap = {"abc": ["file.txt"], "def": ["new.txt"]}
+        InventoryBuilder(prev=prev).fixity_source(TrackingFixity()).add_version(
+            state_v2, created="2024-06-01T00:00:00Z"
+        ).build()
+        # Only "def" should be queried (abc already in manifest)
+        assert calls == ["def"]
+
+    def test_fixity_empty_source_returns(self):
+        """FixitySource returning empty dict → no fixity block."""
+        state: DigestMap = {"abc": ["file.txt"]}
+
+        class EmptyFixity:
+            def get_fixity(self, digest: str) -> dict[DigestAlgorithm, str]:
+                return {}
+
+        inv = (
+            InventoryBuilder()
+            .id("test")
+            .fixity_source(EmptyFixity())
+            .add_version(state, created="2024-01-01T00:00:00Z")
+            .build()
+        )
+        assert inv.fixity is None
+
+
 class TestValidationFailures:
     def test_no_id(self):
         with pytest.raises(ValueError, match="id"):
