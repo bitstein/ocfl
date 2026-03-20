@@ -1,11 +1,12 @@
 """OCFL object read operations."""
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO
 
 from ocfl_lib.digest import DigestAlgorithm
+from ocfl_lib.digest_map import DigestMap, to_path_map
 from ocfl_lib.fs import utils as fs_utils
-from ocfl_lib.inventory import StoredInventory
+from ocfl_lib.inventory import StoredInventory, VersionInfo
 from ocfl_lib.spec import INVENTORY_FILENAME, Namaste, Spec, VNum
 
 if TYPE_CHECKING:
@@ -57,6 +58,42 @@ class Object:
         vnums = [VNum.parse(k) for k in self.inventory.inventory.versions]
         vnums.sort()
         return vnums
+
+    def version_state(self, v: VNum) -> DigestMap:
+        """State (digest → [logical_paths]) for a specific version."""
+        return self.version_info(v).state
+
+    def version_info(self, v: VNum) -> VersionInfo:
+        """Metadata for a specific version. Raises KeyError if not found."""
+        vkey = str(v)
+        versions = self.inventory.inventory.versions
+        if vkey not in versions:
+            raise KeyError(f"version {vkey} not found")
+        return versions[vkey]
+
+    def content_path(self, digest: str) -> str | None:
+        """Manifest lookup: digest → first content path, or None."""
+        paths = self.inventory.inventory.manifest.get(digest)
+        if paths:
+            return paths[0]
+        return None
+
+    def open_logical_path(self, v: VNum, logical_path: str) -> BinaryIO:
+        """Open a file by logical path in a version.
+
+        Raises KeyError if logical_path not in version state.
+        Raises FileNotFoundError if content file missing on disk.
+        """
+        state = self.version_state(v)
+        path_map = to_path_map(state)  # logical_path → digest
+        if logical_path not in path_map:
+            raise KeyError(f"logical path {logical_path!r} not in version {v} state")
+        digest = path_map[logical_path]
+        cp = self.content_path(digest)
+        if cp is None:
+            raise FileNotFoundError(f"digest {digest[:16]}... not found in manifest")
+        full_path = _join(self._path, cp)
+        return self._fsys.open_file(full_path)
 
     def version_inventory(self, v: VNum) -> StoredInventory | None:
         """Load inventory from a specific version directory, or None if absent."""
