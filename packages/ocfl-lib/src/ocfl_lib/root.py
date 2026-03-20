@@ -104,12 +104,12 @@ class StorageRoot:
         and cleans empty parent directories up the hierarchy.
         Raises ValueError if object not found or no layout configured.
         """
-        obj_path = self.object_path(object_id)
-        full_path = _join(self._path, obj_path)
-        obj = Object(self._fsys, full_path)
+        obj = self.get_object(object_id)
         if not obj.exists:
             raise ValueError(f"object {object_id!r} not found")
 
+        obj_path = self.object_path(object_id)
+        full_path = _join(self._path, obj_path)
         fsys.remove_all(full_path)
 
         # Clean empty parent directories up to (but not including) root

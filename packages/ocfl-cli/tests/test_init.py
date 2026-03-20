@@ -82,6 +82,10 @@ class TestInit:
         assert result.exit_code == 0
         assert (tmp_path / "0=ocfl_1.0").exists()
 
+    def test_init_invalid_spec(self, runner: CliRunner, tmp_path: Path):
+        result = runner.invoke(app, ["--root", str(tmp_path), "init", "--spec", "2.0"])
+        assert result.exit_code == 1
+
     def test_init_invalid_layout(self, runner: CliRunner, tmp_path: Path):
         result = runner.invoke(
             app,

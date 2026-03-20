@@ -2,6 +2,7 @@
 
 import fnmatch
 import sys
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -58,14 +59,12 @@ def export(
             sys.stdout.buffer.write(f.read())
         return
 
-    from pathlib import Path
-
     out_dir = Path(to)
     for logical_path in paths:
         dest = out_dir / logical_path
         if dest.exists() and not replace:
             err(f"file exists: {dest} (use --replace to overwrite)")
-            raise typer.Exit(1) from None
+            raise typer.Exit(1)
 
         dest.parent.mkdir(parents=True, exist_ok=True)
         with obj.open_logical_path(v, logical_path) as f:

@@ -31,8 +31,8 @@ def init(
     root_path = resolve_root(ctx.obj.get("root"))
 
     try:
-        ocfl_spec = Spec.V1_1 if spec == "1.1" else Spec.V1_0
-    except Exception:
+        ocfl_spec = Spec(spec)
+    except ValueError:
         err(f"invalid spec: {spec!r}")
         raise typer.Exit(1) from None
 
