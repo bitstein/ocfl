@@ -4,6 +4,7 @@ from typing import Annotated
 
 import typer
 
+from ocfl_cli.commands.ls import ls
 from ocfl_cli.commands.validate import validate
 
 app = typer.Typer(
@@ -12,6 +13,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+app.command()(ls)
 app.command()(validate)
 
 
