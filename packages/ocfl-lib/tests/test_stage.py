@@ -203,3 +203,95 @@ class TestStageDir:
         fsys = LocalFS(tmp_path)
         stage = stage_dir(fsys, "", DigestAlgorithm.SHA512)
         assert stage.fixity_source is None
+
+
+def _make_stage(
+    state: dict[str, list[str]],
+    alg: DigestAlgorithm = DigestAlgorithm.SHA512,
+    files: dict[str, tuple[object, str]] | None = None,
+    fixity: dict[str, dict[DigestAlgorithm, str]] | None = None,
+) -> Stage:
+    """Helper to build a Stage with dummy sources."""
+    cs = _DummyContentSource(files or {})
+    fs = _DummyFixitySource(fixity) if fixity else None
+    return Stage(state=state, digest_algorithm=alg, content_source=cs, fixity_source=fs)
+
+
+class TestStageOverlay:
+    def test_overlay_adds_new_files(self):
+        base = _make_stage({"d1": ["a.txt"]})
+        overlay = _make_stage({"d2": ["b.txt"]})
+        merged = base.overlay(overlay)
+        assert "d1" in merged.state
+        assert "d2" in merged.state
+
+    def test_overlay_replaces_by_path(self):
+        """Overlay's path->digest wins over base."""
+        base = _make_stage({"old_digest": ["file.txt"]})
+        overlay = _make_stage({"new_digest": ["file.txt"]})
+        merged = base.overlay(overlay)
+        assert "new_digest" in merged.state
+        assert merged.state["new_digest"] == ["file.txt"]
+        assert "old_digest" not in merged.state
+
+    def test_overlay_multiple_stages(self):
+        s1 = _make_stage({"d1": ["a.txt"]})
+        s2 = _make_stage({"d2": ["b.txt"]})
+        s3 = _make_stage({"d3": ["c.txt"]})
+        merged = s1.overlay(s2, s3)
+        paths = {p for ps in merged.state.values() for p in ps}
+        assert paths == {"a.txt", "b.txt", "c.txt"}
+
+    def test_overlay_algorithm_mismatch_raises(self):
+        s1 = _make_stage({"d1": ["a.txt"]}, alg=DigestAlgorithm.SHA512)
+        s2 = _make_stage({"d2": ["b.txt"]}, alg=DigestAlgorithm.SHA256)
+        import pytest
+
+        with pytest.raises(ValueError, match="digest_algorithm"):
+            s1.overlay(s2)
+
+    def test_overlay_content_source_chain(self):
+        """Content source tries each stage's source in order."""
+        fs1 = _DummyFS()
+        fs2 = _DummyFS()
+        s1 = _make_stage(
+            {"d1": ["a.txt"]},
+            files={"d1": (fs1, "path1")},
+        )
+        s2 = _make_stage(
+            {"d2": ["b.txt"]},
+            files={"d2": (fs2, "path2")},
+        )
+        merged = s1.overlay(s2)
+        result_fs, _ = merged.content_source.get_content("d1")
+        assert result_fs is fs1
+        result_fs, _ = merged.content_source.get_content("d2")
+        assert result_fs is fs2
+
+    def test_overlay_fixity_chain(self):
+        """Fixity source chains through all stages."""
+        s1 = _make_stage(
+            {"d1": ["a.txt"]},
+            fixity={"d1": {DigestAlgorithm.SHA256: "aaa"}},
+        )
+        s2 = _make_stage(
+            {"d2": ["b.txt"]},
+            fixity={"d2": {DigestAlgorithm.SHA256: "bbb"}},
+        )
+        merged = s1.overlay(s2)
+        assert merged.fixity_source is not None
+        assert merged.fixity_source.get_fixity("d1") == {DigestAlgorithm.SHA256: "aaa"}
+        assert merged.fixity_source.get_fixity("d2") == {DigestAlgorithm.SHA256: "bbb"}
+
+    def test_overlay_no_fixity(self):
+        """If no stages have fixity, result has none."""
+        s1 = _make_stage({"d1": ["a.txt"]})
+        s2 = _make_stage({"d2": ["b.txt"]})
+        merged = s1.overlay(s2)
+        assert merged.fixity_source is None
+
+    def test_overlay_preserves_algorithm(self):
+        s1 = _make_stage({"d1": ["a.txt"]}, alg=DigestAlgorithm.SHA256)
+        s2 = _make_stage({"d2": ["b.txt"]}, alg=DigestAlgorithm.SHA256)
+        merged = s1.overlay(s2)
+        assert merged.digest_algorithm is DigestAlgorithm.SHA256

@@ -29,6 +29,76 @@ class Stage:
     content_source: ContentSource
     fixity_source: FixitySource | None = None
 
+    def overlay(self, *others: Stage) -> Stage:
+        """Merge other stages on top of this one.
+
+        Later stages override earlier ones by path. All stages must
+        share the same digest_algorithm. Content and fixity sources
+        are chained: tries each in order.
+        """
+        from ocfl_lib.digest_map import merge
+
+        for other in others:
+            if other.digest_algorithm != self.digest_algorithm:
+                msg = (
+                    f"digest_algorithm mismatch: "
+                    f"{self.digest_algorithm} vs {other.digest_algorithm}"
+                )
+                raise ValueError(msg)
+
+        # Merge states: overlay paths win
+        merged_state = dict(self.state)
+        for other in others:
+            merged_state = merge(merged_state, other.state, replace=True)
+
+        # Chain content sources
+        all_sources = [self.content_source, *(o.content_source for o in others)]
+        content_source = _ChainContentSource(all_sources)
+
+        # Chain fixity sources
+        all_fixity = [
+            s.fixity_source for s in [self, *others] if s.fixity_source is not None
+        ]
+        fixity_source: FixitySource | None = None
+        if all_fixity:
+            fixity_source = _ChainFixitySource(all_fixity)
+
+        return Stage(
+            state=merged_state,
+            digest_algorithm=self.digest_algorithm,
+            content_source=content_source,
+            fixity_source=fixity_source,
+        )
+
+
+class _ChainContentSource:
+    """ContentSource that tries multiple sources in order."""
+
+    def __init__(self, sources: list[ContentSource]):
+        self._sources = sources
+
+    def get_content(self, digest: str) -> tuple[FS, str]:
+        for src in self._sources:
+            try:
+                return src.get_content(digest)
+            except KeyError:
+                continue
+        raise KeyError(f"digest {digest!r} not found in any content source")
+
+
+class _ChainFixitySource:
+    """FixitySource that tries multiple sources in order."""
+
+    def __init__(self, sources: list[FixitySource]):
+        self._sources = sources
+
+    def get_fixity(self, digest: str) -> dict[DigestAlgorithm, str]:
+        for src in self._sources:
+            result = src.get_fixity(digest)
+            if result:
+                return result
+        return {}
+
 
 class _DirContentSource:
     """ContentSource backed by a directory in an FS."""
