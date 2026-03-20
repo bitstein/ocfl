@@ -1,7 +1,8 @@
 """OCFL object read operations."""
 
 import json
-from typing import TYPE_CHECKING, BinaryIO
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, BinaryIO, Literal
 
 from ocfl_lib.digest import DigestAlgorithm
 from ocfl_lib.digest_map import DigestMap, to_path_map
@@ -11,6 +12,17 @@ from ocfl_lib.spec import INVENTORY_FILENAME, Namaste, Spec, VNum
 
 if TYPE_CHECKING:
     from ocfl_lib.fs.protocols import FS
+
+
+@dataclass(frozen=True, slots=True)
+class DiffEntry:
+    """A single change between two version states."""
+
+    path: str
+    action: Literal["added", "deleted", "modified", "renamed"]
+    digest_before: str | None = None
+    digest_after: str | None = None
+    renamed_from: str | None = None
 
 
 class Object:
@@ -94,6 +106,86 @@ class Object:
             raise FileNotFoundError(f"digest {digest[:16]}... not found in manifest")
         full_path = _join(self._path, cp)
         return self._fsys.open_file(full_path)
+
+    def diff_versions(self, v1: VNum, v2: VNum) -> list[DiffEntry]:
+        """Compute changes between two versions.
+
+        Detects added, deleted, modified, and renamed files.
+        Rename detection: pairs added/removed files sharing a digest.
+        """
+        pm1 = to_path_map(self.version_state(v1))  # path → digest
+        pm2 = to_path_map(self.version_state(v2))
+
+        all_paths = set(pm1) | set(pm2)
+        added: dict[str, str] = {}  # path → digest
+        removed: dict[str, str] = {}  # path → digest
+        entries: list[DiffEntry] = []
+
+        for path in sorted(all_paths):
+            d1 = pm1.get(path)
+            d2 = pm2.get(path)
+            if d1 == d2:
+                continue
+            if d1 is None:
+                assert d2 is not None
+                added[path] = d2
+            elif d2 is None:
+                removed[path] = d1
+            else:
+                entries.append(
+                    DiffEntry(
+                        path=path,
+                        action="modified",
+                        digest_before=d1,
+                        digest_after=d2,
+                    )
+                )
+
+        # Rename detection: pair added/removed sharing a digest
+        # Build digest → [paths] maps for added and removed
+        added_by_digest: dict[str, list[str]] = {}
+        for path, digest in added.items():
+            added_by_digest.setdefault(digest, []).append(path)
+        removed_by_digest: dict[str, list[str]] = {}
+        for path, digest in removed.items():
+            removed_by_digest.setdefault(digest, []).append(path)
+
+        paired_added: set[str] = set()
+        paired_removed: set[str] = set()
+
+        for digest in added_by_digest:
+            if digest not in removed_by_digest:
+                continue
+            a_paths = sorted(added_by_digest[digest])
+            r_paths = sorted(removed_by_digest[digest])
+            # Pair up: min(len(a), len(r)) renames, rest are pure adds/removes
+            for a_path, r_path in zip(a_paths, r_paths, strict=False):
+                entries.append(
+                    DiffEntry(
+                        path=a_path,
+                        action="renamed",
+                        digest_before=digest,
+                        digest_after=digest,
+                        renamed_from=r_path,
+                    )
+                )
+                paired_added.add(a_path)
+                paired_removed.add(r_path)
+
+        # Remaining unpaired adds/removes
+        for path in sorted(added):
+            if path not in paired_added:
+                entries.append(
+                    DiffEntry(path=path, action="added", digest_after=added[path])
+                )
+        for path in sorted(removed):
+            if path not in paired_removed:
+                entries.append(
+                    DiffEntry(path=path, action="deleted", digest_before=removed[path])
+                )
+
+        entries.sort(key=lambda e: e.path)
+        return entries
 
     def version_inventory(self, v: VNum) -> StoredInventory | None:
         """Load inventory from a specific version directory, or None if absent."""

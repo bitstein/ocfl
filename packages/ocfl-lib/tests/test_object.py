@@ -6,7 +6,7 @@ import pytest
 
 from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.inventory import VersionInfo
-from ocfl_lib.object import Object
+from ocfl_lib.object import DiffEntry, Object
 from ocfl_lib.spec import Spec, VNum
 
 if TYPE_CHECKING:
@@ -245,3 +245,102 @@ class TestVersionContentAccess:
         with obj.open_logical_path(VNum(3), "image.tiff") as f:
             data = f.read()
         assert len(data) > 0
+
+
+class TestObjectDiff:
+    """7.3: Object diff between versions."""
+
+    def test_diff_no_changes(self, good_objects_1_1: Path):
+        """Diffing a version against itself yields no entries."""
+        obj_path = good_objects_1_1 / "minimal_one_version_one_file"
+        fsys = LocalFS(obj_path)
+        obj = Object(fsys, "")
+        diff = obj.diff_versions(VNum(1), VNum(1))
+        assert diff == []
+
+    def test_diff_modified_file(self, good_objects_1_1: Path):
+        """v1→v2: a_file.txt modified (different digest, same path)."""
+        obj_path = good_objects_1_1 / "updates_three_versions_one_file"
+        fsys = LocalFS(obj_path)
+        obj = Object(fsys, "")
+        diff = obj.diff_versions(VNum(1), VNum(2))
+        assert len(diff) == 1
+        entry = diff[0]
+        assert entry.path == "a_file.txt"
+        assert entry.action == "modified"
+        assert entry.digest_before is not None
+        assert entry.digest_after is not None
+        assert entry.digest_before != entry.digest_after
+
+    def test_diff_spec_ex_full_v1_v2(self, good_objects_1_1: Path):
+        """v1→v2: bar.xml modified, image.tiff deleted, empty2.txt added."""
+        obj_path = good_objects_1_1 / "spec-ex-full"
+        fsys = LocalFS(obj_path)
+        obj = Object(fsys, "")
+        diff = obj.diff_versions(VNum(1), VNum(2))
+        by_path = {e.path: e for e in diff}
+
+        assert by_path["foo/bar.xml"].action == "modified"
+        assert by_path["image.tiff"].action == "deleted"
+        assert by_path["empty2.txt"].action == "added"
+
+    def test_diff_spec_ex_full_v2_v3(self, good_objects_1_1: Path):
+        """spec-ex-full v2→v3: image.tiff reinstated, empty.txt deleted."""
+        obj_path = good_objects_1_1 / "spec-ex-full"
+        fsys = LocalFS(obj_path)
+        obj = Object(fsys, "")
+        diff = obj.diff_versions(VNum(2), VNum(3))
+        by_path = {e.path: e for e in diff}
+
+        assert by_path["image.tiff"].action == "added"
+        assert by_path["empty.txt"].action == "deleted"
+
+    def test_diff_rename_detection(self, good_objects_1_1: Path):
+        """v1→v2: poe.txt renamed to poe-nevermore.txt (same digest)."""
+        obj_path = good_objects_1_1 / "updates_all_actions"
+        fsys = LocalFS(obj_path)
+        obj = Object(fsys, "")
+        diff = obj.diff_versions(VNum(1), VNum(2))
+        renames = [e for e in diff if e.action == "renamed"]
+        assert len(renames) == 1
+        rename = renames[0]
+        assert rename.path == "my_content/poe-nevermore.txt"
+        assert rename.renamed_from == "my_content/poe.txt"
+
+    def test_diff_entry_fields(self, good_objects_1_1: Path):
+        """DiffEntry has expected fields for an added file."""
+        obj_path = good_objects_1_1 / "spec-ex-full"
+        fsys = LocalFS(obj_path)
+        obj = Object(fsys, "")
+        diff = obj.diff_versions(VNum(1), VNum(2))
+        added = [e for e in diff if e.action == "added"]
+        assert len(added) == 1
+        entry = added[0]
+        assert isinstance(entry, DiffEntry)
+        assert entry.digest_before is None
+        assert entry.digest_after is not None
+        assert entry.renamed_from is None
+
+    def test_diff_deleted_entry_fields(self, good_objects_1_1: Path):
+        """DiffEntry for deleted file has digest_before but no digest_after."""
+        obj_path = good_objects_1_1 / "spec-ex-full"
+        fsys = LocalFS(obj_path)
+        obj = Object(fsys, "")
+        diff = obj.diff_versions(VNum(1), VNum(2))
+        deleted = [e for e in diff if e.action == "deleted"]
+        assert len(deleted) == 1
+        entry = deleted[0]
+        assert entry.digest_before is not None
+        assert entry.digest_after is None
+        assert entry.renamed_from is None
+
+    def test_diff_updates_all_actions_v2_v3(self, good_objects_1_1: Path):
+        """v2→v3: a_second_copy removed, poe-nevermore modified."""
+        obj_path = good_objects_1_1 / "updates_all_actions"
+        fsys = LocalFS(obj_path)
+        obj = Object(fsys, "")
+        diff = obj.diff_versions(VNum(2), VNum(3))
+        by_path = {e.path: e for e in diff}
+
+        assert by_path["my_content/a_second_copy_of_dracula.txt"].action == "deleted"
+        assert by_path["my_content/poe-nevermore.txt"].action == "modified"
