@@ -48,6 +48,7 @@ class UpdatePlan:
     steps: list[PlanStep]
     new_inv: StoredInventory
     old_inv: StoredInventory | None
+    old_sidecar_alg: str = ""  # Non-empty when algorithm migration happened
 
 
 # --- Wire format (msgspec structs for serialization) ---
@@ -79,6 +80,7 @@ class _PlanState(msgspec.Struct):
     steps: list[_StepState]
     new_inv: _StoredInvState
     old_inv: _StoredInvState | None = None
+    old_sidecar_alg: str = ""
 
 
 def _inv_to_state(stored: StoredInventory) -> _StoredInvState:
@@ -113,6 +115,7 @@ def serialize(plan: UpdatePlan) -> bytes:
         steps=step_states,
         new_inv=_inv_to_state(plan.new_inv),
         old_inv=_inv_to_state(plan.old_inv) if plan.old_inv else None,
+        old_sidecar_alg=plan.old_sidecar_alg,
     )
     return msgspec.json.encode(state)
 
@@ -136,6 +139,7 @@ def deserialize(data: bytes) -> UpdatePlan:
         steps=steps,
         new_inv=_state_to_inv(state.new_inv),
         old_inv=_state_to_inv(state.old_inv) if state.old_inv else None,
+        old_sidecar_alg=state.old_sidecar_alg,
     )
 
 
@@ -298,6 +302,23 @@ def prepare_steps(
             revert=lambda: _try_remove(fsys, rsidecar_path),
         )
     )
+
+    # 9. Remove old root sidecar on algorithm migration
+    if plan.old_sidecar_alg:
+        old_sidecar_path = _join(obj_dir, f"inventory.json.{plan.old_sidecar_alg}")
+
+        def _remove_old_sidecar() -> int:
+            with contextlib.suppress(FileNotFoundError):
+                fsys.remove(old_sidecar_path)
+            return 0
+
+        steps.append(
+            PlanStep(
+                name="remove-old-sidecar",
+                run=_remove_old_sidecar,
+                revert=_noop_revert,
+            )
+        )
 
     plan.steps = steps
 
