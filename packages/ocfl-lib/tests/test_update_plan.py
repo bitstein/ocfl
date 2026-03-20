@@ -1,7 +1,10 @@
 """Tests for update_plan module."""
 
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import pytest
 
 from ocfl_lib.digest import DigestAlgorithm
 from ocfl_lib.fs.local import LocalFS
@@ -15,6 +18,7 @@ from ocfl_lib.update_plan import (
     PlanStep,
     UpdatePlan,
     deserialize,
+    execute_plan,
     prepare_steps,
     serialize,
 )
@@ -202,20 +206,12 @@ class _DictContentSource:
     """ContentSource backed by a dict of digest → bytes."""
 
     def __init__(self, files: dict[str, bytes]) -> None:
-        self._files = files
+        self._tmpdir = Path(tempfile.mkdtemp())
+        self._fs = LocalFS(self._tmpdir)
+        for d, data in files.items():
+            (self._tmpdir / d).write_bytes(data)
 
     def get_content(self, digest: str) -> tuple[FS, str]:
-        """Return an FS and path that will yield the content bytes."""
-        # Use a simple in-memory FS-like wrapper via a temp approach
-        # For testing, we store to a temp dir on first access
-        if not hasattr(self, "_fs"):
-            import tempfile
-
-            self._tmpdir = Path(tempfile.mkdtemp())
-            self._fs = LocalFS(self._tmpdir)
-            for d, data in self._files.items():
-                fpath = self._tmpdir / d
-                fpath.write_bytes(data)
         return (self._fs, digest)
 
 
@@ -388,3 +384,146 @@ class TestPrepareSteps:
         copies = [s for s in plan.steps if s.name == "content-copy"]
         assert len(copies) == 3
         assert all(s.is_async for s in copies)
+
+
+class TestExecutePlan:
+    def test_creates_valid_object(self, tmp_path: Path):
+        """execute_plan on empty dir should produce a valid OCFL object."""
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"aabbcc": b"hello"})
+
+        prepare_steps(plan, fsys, "obj1", source)
+        execute_plan(plan)
+
+        # Verify on-disk structure
+        obj_dir = tmp_path / "obj1"
+        assert obj_dir.is_dir()
+        assert (obj_dir / "0=ocfl_object_1.1").is_file()
+        assert (obj_dir / "inventory.json").is_file()
+        assert (obj_dir / "v1" / "content" / "file.txt").read_bytes() == b"hello"
+        # Root and version inventories match
+        assert (obj_dir / "inventory.json").read_bytes() == new_inv.raw_bytes
+        assert (obj_dir / "v1" / "inventory.json").read_bytes() == new_inv.raw_bytes
+        # Sidecar exists
+        assert (obj_dir / new_inv.sidecar_filename).is_file()
+        assert (obj_dir / "v1" / new_inv.sidecar_filename).is_file()
+
+    def test_all_steps_marked_completed(self, tmp_path: Path):
+        """After execution, all steps should be marked completed."""
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"aabbcc": b"hello"})
+
+        prepare_steps(plan, fsys, "obj1", source)
+        execute_plan(plan)
+
+        for step in plan.steps:
+            assert step.completed, f"step {step.name!r} not completed"
+
+    def test_skips_completed_steps(self, tmp_path: Path):
+        """Steps already marked completed should be skipped."""
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"aabbcc": b"hello"})
+
+        prepare_steps(plan, fsys, "obj1", source)
+
+        # Mark first few steps completed and run them manually
+        for step in plan.steps[:3]:
+            assert step.run is not None
+            step.run()
+            step.completed = True
+
+        # Replace run on completed steps with a bomb
+        for step in plan.steps[:3]:
+
+            def _bomb() -> int:
+                raise AssertionError("should not be called")
+
+            step.run = _bomb
+
+        # execute_plan should skip those and finish the rest
+        execute_plan(plan)
+
+        for step in plan.steps:
+            assert step.completed
+
+    def test_step_failure_sets_error(self, tmp_path: Path):
+        """If a step fails, its error field is set and exception raised."""
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"aabbcc": b"hello"})
+
+        prepare_steps(plan, fsys, "obj1", source)
+
+        # Replace a step's run with a failing callable
+        plan.steps[3].run = _failing_step
+
+        with pytest.raises(RuntimeError, match="disk full"):
+            execute_plan(plan)
+
+        assert plan.steps[3].error == "disk full"
+        # Steps before the failure should be completed
+        for step in plan.steps[:3]:
+            assert step.completed
+
+    def test_update_existing_object(self, tmp_path: Path):
+        """Execute plan for v2 on an existing v1 object."""
+        # First create v1
+        old_inv = _build_v1_inventory()
+        plan1 = UpdatePlan(steps=[], new_inv=old_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source1 = _DictContentSource({"aabbcc": b"hello"})
+        prepare_steps(plan1, fsys, "obj1", source1)
+        execute_plan(plan1)
+
+        # Now create v2
+        new_inv = _build_v2_inventory(old_inv)
+        plan2 = UpdatePlan(steps=[], new_inv=new_inv, old_inv=old_inv)
+        source2 = _DictContentSource({"ddeeff": b"world"})
+        prepare_steps(plan2, fsys, "obj1", source2)
+        execute_plan(plan2)
+
+        # v2 content exists
+        assert (
+            tmp_path / "obj1" / "v2" / "content" / "new.txt"
+        ).read_bytes() == b"world"
+        # Root inventory updated
+        assert (tmp_path / "obj1" / "inventory.json").read_bytes() == new_inv.raw_bytes
+
+    def test_concurrent_content_copies(self, tmp_path: Path):
+        """Multiple content copies should run concurrently with max_workers."""
+        files = {
+            "a.txt": "d1",
+            "b.txt": "d2",
+            "c.txt": "d3",
+        }
+        new_inv = _build_v1_inventory(files=files)
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource(
+            {
+                "d1": b"aaa",
+                "d2": b"bbb",
+                "d3": b"ccc",
+            }
+        )
+
+        prepare_steps(plan, fsys, "obj1", source)
+        execute_plan(plan, max_workers=2)
+
+        # All files exist
+        assert (tmp_path / "obj1" / "v1" / "content" / "a.txt").read_bytes() == b"aaa"
+        assert (tmp_path / "obj1" / "v1" / "content" / "b.txt").read_bytes() == b"bbb"
+        assert (tmp_path / "obj1" / "v1" / "content" / "c.txt").read_bytes() == b"ccc"
+        for step in plan.steps:
+            assert step.completed
+
+
+def _failing_step() -> int:
+    raise RuntimeError("disk full")

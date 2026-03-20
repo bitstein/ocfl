@@ -301,3 +301,65 @@ def prepare_steps(
 def _try_remove(fsys: WriteFS, path: str) -> None:
     with contextlib.suppress(FileNotFoundError):
         fsys.remove(path)
+
+
+# --- Plan execution ---
+
+
+def execute_plan(
+    plan: UpdatePlan,
+    *,
+    max_workers: int | None = None,
+) -> None:
+    """Execute all steps in the plan.
+
+    Async steps (content copies) run concurrently in a ThreadPoolExecutor.
+    Sync steps run sequentially after the async batch.
+    Steps already marked completed are skipped.
+    On failure: sets step.error and re-raises.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    # Partition steps into pre-async sync, async, and post-async sync
+    pre_async: list[PlanStep] = []
+    async_steps: list[PlanStep] = []
+    post_async: list[PlanStep] = []
+    seen_async = False
+    for step in plan.steps:
+        if step.completed:
+            continue
+        if step.is_async:
+            seen_async = True
+            async_steps.append(step)
+        elif not seen_async:
+            pre_async.append(step)
+        else:
+            post_async.append(step)
+
+    # Execute pre-async sync steps (object-root, declaration, version-dir)
+    for step in pre_async:
+        _run_step(step)
+
+    # Execute async steps (content copies) concurrently
+    if async_steps:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_run_step, s): s for s in async_steps}
+            for future in futures:
+                future.result()  # re-raises on error
+
+    # Execute post-async sync steps (inventories, sidecars)
+    for step in post_async:
+        _run_step(step)
+
+
+def _run_step(step: PlanStep) -> None:
+    """Execute a single step, marking it completed or setting error."""
+    if step.completed:
+        return
+    assert step.run is not None, f"step {step.name!r} has no run callable"
+    try:
+        step.size = step.run()
+        step.completed = True
+    except Exception as exc:
+        step.error = str(exc)
+        raise
