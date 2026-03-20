@@ -204,10 +204,11 @@ class TestContentSourceProtocol:
 
 
 class _DictContentSource:
-    """ContentSource backed by a dict of digest → bytes."""
+    """ContentSource backed by a dict of digest → bytes in a temp dir."""
 
     def __init__(self, files: dict[str, bytes]) -> None:
-        self._tmpdir = Path(tempfile.mkdtemp())
+        self._tmpobj = tempfile.TemporaryDirectory()
+        self._tmpdir = Path(self._tmpobj.name)
         self._fs = LocalFS(self._tmpdir)
         for d, data in files.items():
             (self._tmpdir / d).write_bytes(data)
@@ -636,3 +637,5 @@ class TestRevertPlan:
         # v2 dir removed but v1 still intact
         assert not (tmp_path / "obj1" / "v2").exists()
         assert (tmp_path / "obj1" / "v1" / "content" / "file.txt").is_file()
+        # Declaration file preserved (not deleted by revert)
+        assert (tmp_path / "obj1" / "0=ocfl_object_1.1").is_file()

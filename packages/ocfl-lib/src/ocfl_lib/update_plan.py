@@ -199,9 +199,13 @@ def prepare_steps(
         fsys.mkdir(obj_dir)
         return fs_utils.write_bytes(fsys, namaste_path, namaste_bytes)
 
-    def _revert_declaration() -> None:
-        with contextlib.suppress(FileNotFoundError):
-            fsys.remove(namaste_path)
+    if is_new:
+
+        def _revert_declaration() -> None:
+            with contextlib.suppress(FileNotFoundError):
+                fsys.remove(namaste_path)
+    else:
+        _revert_declaration = _noop_revert
 
     steps.append(
         PlanStep(
