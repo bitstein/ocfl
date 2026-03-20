@@ -273,7 +273,8 @@ class Object:
         Does NOT embed ContentSource in the plan. Use apply_update_plan()
         to execute with a ContentSource.
         """
-        prev = self._stored_inv.inventory if self._stored_inv else None
+        old_stored = self.inventory if self.exists else None
+        prev = old_stored.inventory if old_stored else None
 
         builder = InventoryBuilder(prev=prev)
         if id is not None:
@@ -297,7 +298,7 @@ class Object:
         return UpdatePlan(
             steps=[],
             new_inv=new_stored,
-            old_inv=self._stored_inv,
+            old_inv=old_stored,
         )
 
     def apply_update_plan(

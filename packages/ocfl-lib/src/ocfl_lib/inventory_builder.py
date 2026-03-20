@@ -107,8 +107,11 @@ class InventoryBuilder:
             for alg_name, dm in prev.fixity.items():
                 fixity[alg_name] = {d: list(ps) for d, ps in dm.items()}
 
+        head_vnum = VNum.parse(prev.head) if prev else VNum.first()
+
         for state, created, message, user in self._pending_versions:
             vnum = next_vnum
+            head_vnum = vnum
             vnum_str = str(vnum)
 
             # Add new content to manifest
@@ -142,7 +145,7 @@ class InventoryBuilder:
             id=self._id,
             type=self._spec.inventory_type_url,
             digest_algorithm=self._digest_alg.ocfl_name,
-            head=str(VNum.parse(max(versions.keys()))),
+            head=str(head_vnum),
             manifest=manifest,
             versions=versions,
             content_directory=self._content_dir,

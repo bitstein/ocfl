@@ -324,6 +324,41 @@ class TestObjectUpdate:
         assert info.user.address == "mailto:alice@example.org"
         assert info.created == "2024-01-01T00:00:00Z"
 
+    def test_update_fresh_instance_on_existing_object(self, tmp_path: Path):
+        """Fresh Object instance on existing dir loads inventory before update."""
+        src1 = _make_src_dir(tmp_path, {"file.txt": "v1"})
+        obj_dir = tmp_path / "obj"
+        obj_dir.mkdir()
+
+        src_fs = LocalFS(src1.parent)
+        stage1 = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+
+        obj_fs = LocalFS(obj_dir)
+        obj1 = Object(obj_fs, "")
+        obj1.update(
+            obj_fs,
+            stage1,
+            id="test:1",
+            spec=Spec.V1_1,
+            created="2024-01-01T00:00:00Z",
+        )
+
+        # Create entirely new Object instance (inventory not cached)
+        obj2 = Object(obj_fs, "")
+        assert obj2.exists
+
+        src2 = tmp_path / "src2"
+        src2.mkdir()
+        (src2 / "file.txt").write_text("v2")
+        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+
+        obj2.update(obj_fs, stage2, created="2024-06-01T00:00:00Z")
+        assert obj2.head == VNum(2)  # NOT v1
+
+        result = ValidationResult()
+        validate_object(obj_fs, "", result)
+        assert result.is_valid
+
 
 class TestTwoStepWrite:
     """11.3: Object.new_update_plan() / apply_update_plan()."""
