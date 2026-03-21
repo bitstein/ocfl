@@ -305,3 +305,120 @@ def rm(
 
     store.save_inventory(root_path, object_id, _update_head_state(inv, state))
     store.save_content_map(root_path, object_id, content_map)
+
+
+@stage_app.command("ls")
+def ls_cmd(
+    ctx: typer.Context,
+    object_id: Annotated[str, typer.Argument(help="Object ID.")],
+    digests: Annotated[
+        bool, typer.Option("--digests", help="Show digests alongside paths.")
+    ] = False,
+) -> None:
+    """List files in the staged head version."""
+    store: StagingStore = ctx.obj["staging"]
+    root_path = _resolve_root_path(ctx)
+
+    if not store.exists(root_path, object_id):
+        err(f"no staging exists for {object_id!r}")
+        raise typer.Exit(1)
+
+    inv = store.load_inventory(root_path, object_id)
+    state = inv.versions[inv.head].state
+
+    # Collect (path, digest) pairs sorted by path
+    entries: list[tuple[str, str]] = []
+    for d, paths in state.items():
+        for p in paths:
+            entries.append((p, d))
+    entries.sort()
+
+    if ctx.obj.get("json"):
+        from ocfl_cli._common import output_json
+
+        if digests:
+            output_json([{"path": p, "digest": d} for p, d in entries])
+        else:
+            output_json([p for p, _ in entries])
+    else:
+        for p, d in entries:
+            if digests:
+                typer.echo(f"{d}  {p}")
+            else:
+                typer.echo(p)
+
+
+@stage_app.command()
+def status(
+    ctx: typer.Context,
+    object_id: Annotated[str, typer.Argument(help="Object ID.")],
+) -> None:
+    """Show changes in staged version vs committed head."""
+    from ocfl_lib.digest_map import to_path_map
+    from ocfl_lib.spec import VNum
+
+    store: StagingStore = ctx.obj["staging"]
+    root_path = _resolve_root_path(ctx)
+
+    if not store.exists(root_path, object_id):
+        err(f"no staging exists for {object_id!r}")
+        raise typer.Exit(1)
+
+    inv = store.load_inventory(root_path, object_id)
+    head = inv.head
+
+    # Get staged state and prior state (version before head)
+    staged_pm = to_path_map(inv.versions[head].state)
+    head_vnum = VNum.parse(head)
+    if head_vnum.number > 1:
+        prev_v = str(VNum(head_vnum.number - 1))
+        prior_pm = to_path_map(inv.versions[prev_v].state)
+    else:
+        prior_pm: dict[str, str] = {}
+
+    # Compute diff
+    all_paths = set(staged_pm) | set(prior_pm)
+    changes: list[dict[str, str]] = []
+    added: dict[str, str] = {}
+    removed: dict[str, str] = {}
+
+    for p in sorted(all_paths):
+        in_prior = p in prior_pm
+        in_staged = p in staged_pm
+        if in_staged and not in_prior:
+            added[p] = staged_pm[p]
+        elif in_prior and not in_staged:
+            removed[p] = prior_pm[p]
+        elif prior_pm[p] != staged_pm[p]:
+            changes.append({"path": p, "action": "modified"})
+
+    # Rename detection: pair added/removed sharing a digest
+    removed_by_digest: dict[str, list[str]] = {}
+    for p, d in removed.items():
+        removed_by_digest.setdefault(d, []).append(p)
+
+    for p, d in sorted(added.items()):
+        if removed_by_digest.get(d):
+            old_path = removed_by_digest[d].pop(0)
+            changes.append({"path": p, "action": "renamed", "renamed_from": old_path})
+            removed.pop(old_path, None)
+        else:
+            changes.append({"path": p, "action": "added"})
+
+    for p in sorted(removed):
+        changes.append({"path": p, "action": "deleted"})
+
+    changes.sort(key=lambda c: c["path"])
+
+    if ctx.obj.get("json"):
+        from ocfl_cli._common import output_json
+
+        output_json(changes)
+    else:
+        action_prefix = {"added": "A", "deleted": "D", "modified": "M", "renamed": "R"}
+        for c in changes:
+            prefix = action_prefix.get(c["action"], "?")
+            line = f"{prefix} {c['path']}"
+            if c.get("renamed_from"):
+                line += f" (from {c['renamed_from']})"
+            typer.echo(line)

@@ -1,6 +1,5 @@
 """Tests for ocfl stage mv and ocfl stage rm."""
 
-
 import pytest
 from typer.testing import CliRunner
 
