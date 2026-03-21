@@ -12,6 +12,7 @@ from ocfl_cli.commands.log import log
 from ocfl_cli.commands.ls import ls
 from ocfl_cli.commands.purge import purge
 from ocfl_cli.commands.show import show
+from ocfl_cli.commands.stage import stage_app
 from ocfl_cli.commands.validate import validate
 
 app = typer.Typer(
@@ -29,6 +30,7 @@ app.command()(ls)
 app.command()(purge)
 app.command()(show)
 app.command()(validate)
+app.add_typer(stage_app)
 
 
 @app.callback()
