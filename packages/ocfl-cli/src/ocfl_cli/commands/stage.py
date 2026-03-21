@@ -511,3 +511,19 @@ def commit(
 
     # Purge staging on success
     store.purge(root_path, object_id)
+
+
+@stage_app.command()
+def reset(
+    ctx: typer.Context,
+    object_id: Annotated[str, typer.Argument(help="Object ID.")],
+) -> None:
+    """Delete staging area for an object."""
+    store: StagingStore = ctx.obj["staging"]
+    root_path = _resolve_root_path(ctx)
+
+    if not store.exists(root_path, object_id):
+        typer.echo(f"No staging exists for {object_id!r}", err=True)
+        return
+
+    store.purge(root_path, object_id)
