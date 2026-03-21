@@ -159,7 +159,7 @@ class TestStageCommit:
 
 class TestSignalHandling:
     def test_keyboard_interrupt_shows_message(self, runner, storage_root, tmp_path):
-        """KeyboardInterrupt during commit shows 'interrupted' feedback."""
+        """KeyboardInterrupt during commit shows feedback."""
         staging = tmp_path / "staging"
         src = tmp_path / "file.txt"
         src.write_text("content")

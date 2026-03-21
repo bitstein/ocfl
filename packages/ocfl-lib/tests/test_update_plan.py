@@ -820,9 +820,12 @@ class TestExhaustiveFaultTolerance:
             assert not (tmp_path / "obj1" / "v2").exists(), (
                 f"v2 dir remains after fail at step {fail_idx}"
             )
+            # Note: root-inv revert removes the file rather than restoring
+            # old version. This is a known limitation — the object needs
+            # re-validation/repair after a reverted update.
 
-    def test_resume_after_fail_at_each_step(self, tmp_path: Path):
-        """Fail at step N → serialize → resume → completes successfully."""
+    def test_revert_and_redo_after_fail_at_each_step(self, tmp_path: Path):
+        """Fail at step N → revert → redo from scratch → valid object."""
         files = {"a.txt": "d1", "b.txt": "d2"}
         new_inv = _build_v1_inventory(files=files)
         source_files = {"d1": b"aaa", "d2": b"bbb"}
@@ -901,6 +904,12 @@ class TestExhaustiveFaultTolerance:
 
             with pytest.raises(KeyboardInterrupt):
                 execute_plan(plan)
+
+            # Steps after the interrupted one should not have executed
+            for step in plan.steps[fail_idx + 1 :]:
+                assert not step.completed, (
+                    f"step {step.name!r} ran after interrupt at step {fail_idx}"
+                )
 
             revert_plan(plan)
 

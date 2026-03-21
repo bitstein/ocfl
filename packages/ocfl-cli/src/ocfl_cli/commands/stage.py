@@ -506,7 +506,7 @@ def commit(
             created=created,
         )
     except KeyboardInterrupt:
-        err("interrupted, reverting...")
+        err("commit interrupted")
         raise typer.Exit(1) from None
     except Exception as exc:
         err(str(exc))
