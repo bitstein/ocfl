@@ -640,6 +640,10 @@ class TestRevertPlan:
         assert (tmp_path / "obj1" / "v1" / "content" / "file.txt").is_file()
         # Declaration file preserved (not deleted by revert)
         assert (tmp_path / "obj1" / "0=ocfl_object_1.1").is_file()
+        # Root inventory restored to v1
+        assert (tmp_path / "obj1" / "inventory.json").read_bytes() == old_inv.raw_bytes
+        # Root sidecar restored
+        assert (tmp_path / "obj1" / old_inv.sidecar_filename).is_file()
 
 
 class TestPlanResume:
@@ -797,10 +801,6 @@ class TestExhaustiveFaultTolerance:
         total_steps = len(plan_count.steps)
 
         for fail_idx in range(total_steps):
-            # Restore v1 state before each attempt
-            # (revert should do this, but reset root inv/sidecar to be safe)
-            (tmp_path / "obj1" / "inventory.json").write_bytes(v1_inv_bytes)
-
             plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=old_inv)
             source = _DictContentSource({"d2": b"bbb"})
             prepare_steps(plan, fsys, "obj1", source)
@@ -820,9 +820,12 @@ class TestExhaustiveFaultTolerance:
             assert not (tmp_path / "obj1" / "v2").exists(), (
                 f"v2 dir remains after fail at step {fail_idx}"
             )
-            # Note: root-inv revert removes the file rather than restoring
-            # old version. This is a known limitation — the object needs
-            # re-validation/repair after a reverted update.
+            # Root inventory restored to v1
+            assert (
+                tmp_path / "obj1" / "inventory.json"
+            ).read_bytes() == v1_inv_bytes, (
+                f"root inventory not restored after fail at step {fail_idx}"
+            )
 
     def test_revert_and_redo_after_fail_at_each_step(self, tmp_path: Path):
         """Fail at step N → revert → redo from scratch → valid object."""

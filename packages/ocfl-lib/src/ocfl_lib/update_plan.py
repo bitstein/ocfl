@@ -288,22 +288,44 @@ def prepare_steps(
 
     # 7. Root inventory.json
     rinv_path = _join(obj_dir, "inventory.json")
+    if old_inv is not None:
+        old_rinv_bytes = old_inv.raw_bytes
+
+        def _revert_root_inv() -> None:
+            fs_utils.write_bytes(fsys, rinv_path, old_rinv_bytes)
+    else:
+
+        def _revert_root_inv() -> None:
+            _try_remove(fsys, rinv_path)
+
     steps.append(
         PlanStep(
             name="root-inv",
             run=lambda: fs_utils.write_bytes(fsys, rinv_path, new_inv.raw_bytes),
-            revert=lambda: _try_remove(fsys, rinv_path),
+            revert=_revert_root_inv,
         )
     )
 
     # 8. Root sidecar (last step — marks completion)
     rsidecar_path = _join(obj_dir, new_inv.sidecar_filename)
     rsidecar_bytes = new_inv.sidecar_content.encode()
+    if old_inv is not None:
+        old_sidecar_path = _join(obj_dir, old_inv.sidecar_filename)
+        old_sidecar_bytes = old_inv.sidecar_content.encode()
+
+        def _revert_root_sidecar() -> None:
+            _try_remove(fsys, rsidecar_path)
+            fs_utils.write_bytes(fsys, old_sidecar_path, old_sidecar_bytes)
+    else:
+
+        def _revert_root_sidecar() -> None:
+            _try_remove(fsys, rsidecar_path)
+
     steps.append(
         PlanStep(
             name="root-sidecar",
             run=lambda: fs_utils.write_bytes(fsys, rsidecar_path, rsidecar_bytes),
-            revert=lambda: _try_remove(fsys, rsidecar_path),
+            revert=_revert_root_sidecar,
         )
     )
 
