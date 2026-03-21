@@ -331,11 +331,11 @@ def prepare_steps(
 
     # 9. Remove old root sidecar on algorithm migration
     if plan.old_sidecar_alg:
-        old_sidecar_path = _join(obj_dir, f"inventory.json.{plan.old_sidecar_alg}")
+        migrated_sidecar_path = _join(obj_dir, f"inventory.json.{plan.old_sidecar_alg}")
 
         def _remove_old_sidecar() -> int:
             with contextlib.suppress(FileNotFoundError):
-                fsys.remove(old_sidecar_path)
+                fsys.remove(migrated_sidecar_path)
             return 0
 
         steps.append(
