@@ -107,7 +107,7 @@ def new(
         if digest:
             try:
                 alg = DigestAlgorithm.from_ocfl_name(digest)
-            except (KeyError, ValueError):
+            except KeyError, ValueError:
                 err(f"unknown digest algorithm: {digest!r}")
                 raise typer.Exit(1) from None
 
@@ -505,6 +505,9 @@ def commit(
             user=user,
             created=created,
         )
+    except KeyboardInterrupt:
+        err("interrupted, reverting...")
+        raise typer.Exit(1) from None
     except Exception as exc:
         err(str(exc))
         raise typer.Exit(1) from None

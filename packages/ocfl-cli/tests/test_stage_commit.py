@@ -1,6 +1,7 @@
 """Tests for ocfl stage commit."""
 
 import time
+from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
@@ -154,3 +155,80 @@ class TestStageCommit:
         staging = tmp_path / "staging"
         result = _invoke(runner, storage_root, staging, "commit", "obj:nope")
         assert result.exit_code == 1
+
+
+class TestSignalHandling:
+    def test_keyboard_interrupt_shows_message(self, runner, storage_root, tmp_path):
+        """KeyboardInterrupt during commit shows 'interrupted' feedback."""
+        staging = tmp_path / "staging"
+        src = tmp_path / "file.txt"
+        src.write_text("content")
+
+        _invoke(runner, storage_root, staging, "new", "obj:interrupted")
+        _invoke(runner, storage_root, staging, "add", "obj:interrupted", str(src))
+
+        with patch("ocfl_lib.StorageRoot.commit", side_effect=KeyboardInterrupt):
+            result = _invoke(runner, storage_root, staging, "commit", "obj:interrupted")
+
+        assert result.exit_code == 1
+        assert "interrupted" in result.output.lower()
+
+    def test_keyboard_interrupt_preserves_staging(self, runner, storage_root, tmp_path):
+        """Staging survives KeyboardInterrupt for retry."""
+        staging = tmp_path / "staging"
+        src = tmp_path / "file.txt"
+        src.write_text("content")
+
+        _invoke(runner, storage_root, staging, "new", "obj:retry")
+        _invoke(runner, storage_root, staging, "add", "obj:retry", str(src))
+
+        with patch("ocfl_lib.StorageRoot.commit", side_effect=KeyboardInterrupt):
+            _invoke(runner, storage_root, staging, "commit", "obj:retry")
+
+        store = StagingStore(staging)
+        root_path = str(storage_root.resolve())
+        assert store.exists(root_path, "obj:retry")
+
+    def test_keyboard_interrupt_leaves_object_clean(
+        self, runner, storage_root, tmp_path
+    ):
+        """Object state is clean after interrupted commit (no partial writes)."""
+        staging = tmp_path / "staging"
+        src = tmp_path / "file.txt"
+        src.write_text("content")
+
+        _invoke(runner, storage_root, staging, "new", "obj:clean")
+        _invoke(runner, storage_root, staging, "add", "obj:clean", str(src))
+
+        with patch("ocfl_lib.StorageRoot.commit", side_effect=KeyboardInterrupt):
+            _invoke(runner, storage_root, staging, "commit", "obj:clean")
+
+        # Object should not exist (new object, fully reverted)
+        fs = LocalFS(storage_root)
+        sr = StorageRoot(fs)
+        assert not sr.get_object("obj:clean").exists
+
+    def test_retry_after_interrupt(self, runner, storage_root, tmp_path):
+        """After interrupted commit, retry succeeds."""
+        staging = tmp_path / "staging"
+        src = tmp_path / "file.txt"
+        src.write_text("content")
+
+        _invoke(runner, storage_root, staging, "new", "obj:retried")
+        _invoke(runner, storage_root, staging, "add", "obj:retried", str(src))
+
+        # First attempt: interrupted
+        with patch("ocfl_lib.StorageRoot.commit", side_effect=KeyboardInterrupt):
+            _invoke(runner, storage_root, staging, "commit", "obj:retried")
+
+        # Retry succeeds
+        result = _invoke(
+            runner, storage_root, staging, "commit", "obj:retried", "-m", "retry"
+        )
+        assert result.exit_code == 0, result.output
+
+        fs = LocalFS(storage_root)
+        sr = StorageRoot(fs)
+        obj = sr.get_object("obj:retried")
+        assert obj.exists
+        assert obj.head.number == 1
