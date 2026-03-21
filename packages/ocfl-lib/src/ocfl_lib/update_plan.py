@@ -49,6 +49,7 @@ class UpdatePlan:
     new_inv: StoredInventory
     old_inv: StoredInventory | None
     old_sidecar_alg: str = ""  # Non-empty when algorithm migration happened
+    revert_inv: StoredInventory | None = None  # Original pre-migration inv for revert
 
 
 # --- Wire format (msgspec structs for serialization) ---
@@ -81,6 +82,7 @@ class _PlanState(msgspec.Struct):
     new_inv: _StoredInvState
     old_inv: _StoredInvState | None = None
     old_sidecar_alg: str = ""
+    revert_inv: _StoredInvState | None = None
 
 
 def _inv_to_state(stored: StoredInventory) -> _StoredInvState:
@@ -116,6 +118,7 @@ def serialize(plan: UpdatePlan) -> bytes:
         new_inv=_inv_to_state(plan.new_inv),
         old_inv=_inv_to_state(plan.old_inv) if plan.old_inv else None,
         old_sidecar_alg=plan.old_sidecar_alg,
+        revert_inv=_inv_to_state(plan.revert_inv) if plan.revert_inv else None,
     )
     return msgspec.json.encode(state)
 
@@ -140,6 +143,7 @@ def deserialize(data: bytes) -> UpdatePlan:
         new_inv=_state_to_inv(state.new_inv),
         old_inv=_state_to_inv(state.old_inv) if state.old_inv else None,
         old_sidecar_alg=state.old_sidecar_alg,
+        revert_inv=_state_to_inv(state.revert_inv) if state.revert_inv else None,
     )
 
 
@@ -177,6 +181,7 @@ def prepare_steps(
     """
     new_inv = plan.new_inv
     old_inv = plan.old_inv
+    revert_src = plan.revert_inv or old_inv  # Original inv for revert data
     inv = new_inv.inventory
     spec = Spec.from_inventory_type(inv.type)
     vnum = VNum.parse(inv.head)
@@ -288,11 +293,11 @@ def prepare_steps(
 
     # 7. Root inventory.json
     rinv_path = _join(obj_dir, "inventory.json")
-    if old_inv is not None:
-        old_rinv_bytes = old_inv.raw_bytes
+    if revert_src is not None:
+        revert_rinv_bytes = revert_src.raw_bytes
 
         def _revert_root_inv() -> None:
-            fs_utils.write_bytes(fsys, rinv_path, old_rinv_bytes)
+            fs_utils.write_bytes(fsys, rinv_path, revert_rinv_bytes)
     else:
 
         def _revert_root_inv() -> None:
@@ -309,13 +314,13 @@ def prepare_steps(
     # 8. Root sidecar (last step — marks completion)
     rsidecar_path = _join(obj_dir, new_inv.sidecar_filename)
     rsidecar_bytes = new_inv.sidecar_content.encode()
-    if old_inv is not None:
-        old_sidecar_path = _join(obj_dir, old_inv.sidecar_filename)
-        old_sidecar_bytes = old_inv.sidecar_content.encode()
+    if revert_src is not None:
+        revert_sidecar_path = _join(obj_dir, revert_src.sidecar_filename)
+        revert_sidecar_bytes = revert_src.sidecar_content.encode()
 
         def _revert_root_sidecar() -> None:
             _try_remove(fsys, rsidecar_path)
-            fs_utils.write_bytes(fsys, old_sidecar_path, old_sidecar_bytes)
+            fs_utils.write_bytes(fsys, revert_sidecar_path, revert_sidecar_bytes)
     else:
 
         def _revert_root_sidecar() -> None:

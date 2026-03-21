@@ -339,10 +339,12 @@ class Object:
 
         # Detect algorithm migration
         old_sidecar_alg = ""
+        revert_stored = None
         if prev:
             prev_alg = DigestAlgorithm.from_ocfl_name(prev.digest_algorithm)
             if prev_alg != stage.digest_algorithm:
                 old_sidecar_alg = prev_alg.ocfl_name
+                revert_stored = old_stored  # Preserve original for revert
                 prev = _migrate_algorithm(
                     prev, self._fsys, self._path, stage.digest_algorithm
                 )
@@ -375,6 +377,7 @@ class Object:
             new_inv=new_stored,
             old_inv=old_stored,
             old_sidecar_alg=old_sidecar_alg,
+            revert_inv=revert_stored,
         )
 
     def apply_update_plan(

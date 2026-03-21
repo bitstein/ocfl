@@ -171,6 +171,35 @@ class TestSerialization:
         assert restored.old_inv.raw_bytes == old_inv.raw_bytes
         assert restored.new_inv.raw_bytes == new_inv.raw_bytes
 
+    def test_revert_inv_round_trip(self):
+        """revert_inv survives serialization round-trip."""
+        revert_inv = _make_stored_inventory(obj_id="test:revert")
+        old_inv = _make_stored_inventory(obj_id="test:migrated")
+        new_inv = _make_stored_inventory(obj_id="test:new")
+        plan = UpdatePlan(
+            steps=[],
+            new_inv=new_inv,
+            old_inv=old_inv,
+            revert_inv=revert_inv,
+        )
+
+        data = serialize(plan)
+        restored = deserialize(data)
+        assert restored.revert_inv is not None
+        assert restored.revert_inv.raw_bytes == revert_inv.raw_bytes
+        assert restored.revert_inv.digest == revert_inv.digest
+
+    def test_revert_inv_none_by_default(self):
+        """revert_inv is None when not set."""
+        plan = UpdatePlan(
+            steps=[],
+            new_inv=_make_stored_inventory(),
+            old_inv=None,
+        )
+        data = serialize(plan)
+        restored = deserialize(data)
+        assert restored.revert_inv is None
+
     def test_step_error_fields_preserved(self):
         steps = [
             PlanStep(name="failed", error="disk full", completed=True),

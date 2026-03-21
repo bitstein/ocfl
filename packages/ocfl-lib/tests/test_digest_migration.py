@@ -278,3 +278,59 @@ class TestAlgorithmMigration:
         # v2 directory should be cleaned up by revert
         obj_dir = tmp_path / "obj"
         assert not (obj_dir / "v2").exists()
+
+        # Root inventory must be restored to original SHA256 bytes
+        original_inv_bytes = (obj_dir / "v1" / "inventory.json").read_bytes()
+        assert (obj_dir / "inventory.json").read_bytes() == original_inv_bytes
+
+        # Original SHA256 sidecar must be restored
+        assert (obj_dir / "inventory.json.sha256").is_file()
+        # New SHA512 sidecar must not exist
+        assert not (obj_dir / "inventory.json.sha512").exists()
+
+        # Object should still validate
+        result = ValidationResult()
+        validate_object(obj._fsys, "", result)
+        assert result.is_valid, result.errors
+
+    def test_migration_revert_restores_original_inventory(self, tmp_path: Path):
+        """Revert after late-step failure restores original-algorithm inventory."""
+        from ocfl_lib.update_plan import execute_plan, prepare_steps, revert_plan
+
+        obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
+
+        # Save original on-disk inventory bytes (SHA256)
+        obj_dir = tmp_path / "obj"
+        orig_inv_bytes = (obj_dir / "inventory.json").read_bytes()
+
+        # Build migration stage (SHA256 → SHA512)
+        src2_root = tmp_path / "src2_parent"
+        src2_root.mkdir()
+        src2 = _make_src_dir(src2_root, {"file.txt": "hello"})
+        stage = stage_dir(LocalFS(src2.parent), "src2", DigestAlgorithm.SHA512)
+
+        # Use two-step API to inject failure at root-sidecar step
+        plan = obj.new_update_plan(stage, created="2024-06-01T00:00:00Z")
+        prepare_steps(plan, obj_fs, "", stage.content_source)
+
+        # Find and replace root-sidecar run with failure
+        def _fail() -> int:
+            raise RuntimeError("injected")
+
+        for step in plan.steps:
+            if step.name == "root-sidecar":
+                step.run = _fail
+
+        import pytest
+
+        with pytest.raises(RuntimeError, match="injected"):
+            execute_plan(plan)
+
+        revert_plan(plan)
+
+        # Root inventory must be original SHA256 bytes
+        assert (obj_dir / "inventory.json").read_bytes() == orig_inv_bytes
+        # Original SHA256 sidecar must be restored
+        assert (obj_dir / "inventory.json.sha256").is_file()
+        # New SHA512 sidecar must not exist
+        assert not (obj_dir / "inventory.json.sha512").exists()
