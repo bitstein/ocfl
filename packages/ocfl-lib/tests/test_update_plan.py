@@ -1,5 +1,6 @@
 """Tests for update_plan module."""
 
+import shutil
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -735,3 +736,174 @@ class TestPlanResume:
         # Execute again — should be a no-op
         execute_plan(restored)
         assert (tmp_path / "obj1" / "inventory.json").read_bytes() == new_inv.raw_bytes
+
+
+class TestExhaustiveFaultTolerance:
+    """ocfl-go style: fail at every step index, verify revert + clean state."""
+
+    def test_fail_at_each_step_new_object(self, tmp_path: Path):
+        """For each step index: fail → revert → verify obj dir removed."""
+        files = {"a.txt": "d1", "b.txt": "d2"}
+        new_inv = _build_v1_inventory(files=files)
+        source_files = {"d1": b"aaa", "d2": b"bbb"}
+
+        # First, count total steps
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path / "count")
+        source = _DictContentSource(source_files)
+        prepare_steps(plan, fsys, "obj1", source)
+        total_steps = len(plan.steps)
+
+        for fail_idx in range(total_steps):
+            obj_dir = tmp_path / f"fail_{fail_idx}"
+            fsys = LocalFS(obj_dir)
+            plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+            source = _DictContentSource(source_files)
+            prepare_steps(plan, fsys, "obj1", source)
+
+            # Replace run callable at fail_idx
+            plan.steps[fail_idx].run = _failing_step
+
+            with pytest.raises(RuntimeError, match="disk full"):
+                execute_plan(plan)
+
+            # Revert completed steps
+            revert_plan(plan)
+
+            # New object: entire obj dir should be gone
+            assert not (obj_dir / "obj1").exists(), (
+                f"obj dir remains after fail at step {fail_idx} "
+                f"({plan.steps[fail_idx].name})"
+            )
+
+    def test_fail_at_each_step_existing_object(self, tmp_path: Path):
+        """Fail at each step during v2 update → revert → v1 intact."""
+        # Create v1 first
+        old_inv = _build_v1_inventory(files={"a.txt": "d1"})
+        plan1 = UpdatePlan(steps=[], new_inv=old_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source1 = _DictContentSource({"d1": b"aaa"})
+        prepare_steps(plan1, fsys, "obj1", source1)
+        execute_plan(plan1)
+
+        # Save v1 state for comparison
+        v1_inv_bytes = (tmp_path / "obj1" / "inventory.json").read_bytes()
+
+        # Build v2 plan to count steps
+        new_inv = _build_v2_inventory(old_inv, new_files={"a.txt": "d1", "b.txt": "d2"})
+        plan_count = UpdatePlan(steps=[], new_inv=new_inv, old_inv=old_inv)
+        source_count = _DictContentSource({"d2": b"bbb"})
+        prepare_steps(plan_count, fsys, "obj1", source_count)
+        total_steps = len(plan_count.steps)
+
+        for fail_idx in range(total_steps):
+            # Restore v1 state before each attempt
+            # (revert should do this, but reset root inv/sidecar to be safe)
+            (tmp_path / "obj1" / "inventory.json").write_bytes(v1_inv_bytes)
+
+            plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=old_inv)
+            source = _DictContentSource({"d2": b"bbb"})
+            prepare_steps(plan, fsys, "obj1", source)
+
+            plan.steps[fail_idx].run = _failing_step
+
+            with pytest.raises(RuntimeError, match="disk full"):
+                execute_plan(plan)
+
+            revert_plan(plan)
+
+            # v1 must be intact
+            assert (tmp_path / "obj1" / "v1" / "content" / "a.txt").is_file(), (
+                f"v1 content missing after fail at step {fail_idx}"
+            )
+            # v2 dir should not exist
+            assert not (tmp_path / "obj1" / "v2").exists(), (
+                f"v2 dir remains after fail at step {fail_idx}"
+            )
+
+    def test_resume_after_fail_at_each_step(self, tmp_path: Path):
+        """Fail at step N → serialize → resume → completes successfully."""
+        files = {"a.txt": "d1", "b.txt": "d2"}
+        new_inv = _build_v1_inventory(files=files)
+        source_files = {"d1": b"aaa", "d2": b"bbb"}
+
+        # Count steps
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path / "count")
+        source = _DictContentSource(source_files)
+        prepare_steps(plan, fsys, "obj1", source)
+        total_steps = len(plan.steps)
+
+        for fail_idx in range(total_steps):
+            obj_dir = tmp_path / f"resume_{fail_idx}"
+            fsys = LocalFS(obj_dir)
+            plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+            source = _DictContentSource(source_files)
+            prepare_steps(plan, fsys, "obj1", source)
+
+            # Fail at this step
+            plan.steps[fail_idx].run = _failing_step
+
+            with pytest.raises(RuntimeError, match="disk full"):
+                execute_plan(plan)
+
+            # Verify serialization round-trips mid-failure state
+            data = serialize(plan)
+            deserialize(data)  # validates no crash on partial state
+
+            # Revert the failed attempt
+            revert_plan(plan)
+
+            # Resume from scratch with fresh plan
+            fresh_plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+            source2 = _DictContentSource(source_files)
+            prepare_steps(fresh_plan, fsys, "obj1", source2)
+            execute_plan(fresh_plan)
+
+            # Object must be valid
+            assert (
+                obj_dir / "obj1" / "inventory.json"
+            ).read_bytes() == new_inv.raw_bytes, (
+                f"inventory mismatch after resume from fail at step {fail_idx}"
+            )
+            assert (
+                obj_dir / "obj1" / "v1" / "content" / "a.txt"
+            ).read_bytes() == b"aaa"
+            assert (
+                obj_dir / "obj1" / "v1" / "content" / "b.txt"
+            ).read_bytes() == b"bbb"
+
+            # Clean up for next iteration
+            shutil.rmtree(obj_dir / "obj1")
+
+    def test_keyboard_interrupt_at_each_step(self, tmp_path: Path):
+        """KeyboardInterrupt at each step → revert → clean state."""
+        new_inv = _build_v1_inventory()
+        source_files = {"aabbcc": b"hello"}
+
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path / "count")
+        source = _DictContentSource(source_files)
+        prepare_steps(plan, fsys, "obj1", source)
+        total_steps = len(plan.steps)
+
+        def _interrupt() -> int:
+            raise KeyboardInterrupt
+
+        for fail_idx in range(total_steps):
+            obj_dir = tmp_path / f"intr_{fail_idx}"
+            fsys = LocalFS(obj_dir)
+            plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+            source = _DictContentSource(source_files)
+            prepare_steps(plan, fsys, "obj1", source)
+
+            plan.steps[fail_idx].run = _interrupt
+
+            with pytest.raises(KeyboardInterrupt):
+                execute_plan(plan)
+
+            revert_plan(plan)
+
+            assert not (obj_dir / "obj1").exists(), (
+                f"obj dir remains after KeyboardInterrupt at step {fail_idx}"
+            )
