@@ -10,6 +10,7 @@ from ocfl_cli._common import err, open_root
 from ocfl_cli.staging import StagingStore
 
 if TYPE_CHECKING:
+    from ocfl_lib.fs.protocols import FS
     from ocfl_lib.inventory import Inventory
 
 stage_app = typer.Typer(
@@ -422,3 +423,91 @@ def status(
             if c.get("renamed_from"):
                 line += f" (from {c['renamed_from']})"
             typer.echo(line)
+
+
+@stage_app.command()
+def commit(
+    ctx: typer.Context,
+    object_id: Annotated[str, typer.Argument(help="Object ID.")],
+    message: Annotated[
+        str | None, typer.Option("-m", "--message", help="Version message.")
+    ] = None,
+    name: Annotated[str | None, typer.Option("--name", help="Creator name.")] = None,
+    address: Annotated[
+        str | None, typer.Option("--address", help="Creator address.")
+    ] = None,
+    created: Annotated[
+        str | None, typer.Option("--created", help="Created timestamp (ISO 8601).")
+    ] = None,
+) -> None:
+    """Commit staged changes to the storage root."""
+    from ocfl_lib import DigestAlgorithm, LocalFS
+    from ocfl_lib.inventory import UserInfo
+    from ocfl_lib.stage import Stage
+
+    store: StagingStore = ctx.obj["staging"]
+    sr, fs = open_root(ctx.obj.get("root"))
+    root_path = _resolve_root_path(ctx)
+
+    if not store.exists(root_path, object_id):
+        err(f"no staging exists for {object_id!r}")
+        raise typer.Exit(1)
+
+    inv = store.load_inventory(root_path, object_id)
+    content_map = store.load_content_map(root_path, object_id)
+    alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
+    head = inv.head
+
+    # Pre-commit validation: verify all content.json files still exist and are unchanged
+    for _digest, entry in content_map.items():
+        file_path = Path(entry["path"])
+        if not file_path.exists():
+            err(f"source file missing: {file_path}")
+            raise typer.Exit(1)
+        stat = file_path.stat()
+        if stat.st_size != entry["size"] or stat.st_mtime != entry["mtime"]:
+            err(f"source file changed since staging: {file_path}")
+            raise typer.Exit(1)
+
+    # Build ContentSource backed by content.json local file references
+    class _StagingContentSource:
+        def __init__(self, cm: dict, root: Path) -> None:
+            self._cm = cm
+            self._root = root
+
+        def get_content(self, digest: str) -> tuple[FS, str]:
+            if digest in self._cm:
+                file_path = Path(self._cm[digest]["path"])
+                local_fs = LocalFS(file_path.parent)
+                return local_fs, file_path.name
+            raise KeyError(digest)
+
+    content_source = _StagingContentSource(content_map, Path(root_path))
+
+    # Build Stage from staged inventory head state
+    state = inv.versions[head].state
+    stage_obj = Stage(
+        state=state,
+        digest_algorithm=alg,
+        content_source=content_source,
+    )
+
+    user = None
+    if name:
+        user = UserInfo(name=name, address=address)
+
+    try:
+        sr.commit(
+            fs,
+            object_id,
+            stage_obj,
+            message=message,
+            user=user,
+            created=created,
+        )
+    except Exception as exc:
+        err(str(exc))
+        raise typer.Exit(1) from None
+
+    # Purge staging on success
+    store.purge(root_path, object_id)
