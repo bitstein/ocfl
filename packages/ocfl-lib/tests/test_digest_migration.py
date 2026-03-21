@@ -304,10 +304,8 @@ class TestAlgorithmMigration:
         orig_inv_bytes = (obj_dir / "inventory.json").read_bytes()
 
         # Build migration stage (SHA256 → SHA512)
-        src2_root = tmp_path / "src2_parent"
-        src2_root.mkdir()
-        src2 = _make_src_dir(src2_root, {"file.txt": "hello"})
-        stage = stage_dir(LocalFS(src2.parent), "src2", DigestAlgorithm.SHA512)
+        src2 = _make_src_dir(tmp_path, {"file.txt": "hello"})
+        stage = stage_dir(LocalFS(src2.parent), src2.name, DigestAlgorithm.SHA512)
 
         # Use two-step API to inject failure at root-sidecar step
         plan = obj.new_update_plan(stage, created="2024-06-01T00:00:00Z")
