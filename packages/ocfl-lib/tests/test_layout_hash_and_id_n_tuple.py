@@ -1,11 +1,13 @@
 """Tests for 0003-hash-and-id-n-tuple-storage-layout."""
 
+import msgspec
 import pytest
 
 from ocfl_lib.layout import Layout
 from ocfl_lib.layout.ext0003_hash_and_id_n_tuple import (
     HashAndIdNTupleConfig,
     HashAndIdNTupleLayout,
+    _percent_encode,
 )
 
 
@@ -59,18 +61,12 @@ class TestHashAndIdNTupleLayout:
     # -- Percent encoding --
 
     def test_encode_dot(self):
-        from ocfl_lib.layout.ext0003_hash_and_id_n_tuple import _percent_encode
-
         assert _percent_encode(".") == "%2e"
 
     def test_encode_cedilla(self):
-        from ocfl_lib.layout.ext0003_hash_and_id_n_tuple import _percent_encode
-
         assert _percent_encode("\u00e7") == "%c3%a7"
 
     def test_encode_safe_chars_unchanged(self):
-        from ocfl_lib.layout.ext0003_hash_and_id_n_tuple import _percent_encode
-
         assert _percent_encode("abc-XYZ_012") == "abc-XYZ_012"
 
     # -- Truncation at 100 chars --
@@ -111,8 +107,6 @@ class TestHashAndIdNTupleLayout:
     # -- Config --
 
     def test_config_defaults(self):
-        import msgspec
-
         cfg = HashAndIdNTupleConfig()
         data = msgspec.json.decode(msgspec.json.encode(cfg))
         assert data["extensionName"] == "0003-hash-and-id-n-tuple-storage-layout"

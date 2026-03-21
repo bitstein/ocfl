@@ -1,5 +1,6 @@
 """Tests for StorageRoot write operations."""
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -68,8 +69,6 @@ class TestStorageRootInit:
 
     def test_init_with_layout_description(self, tmp_path: Path):
         """Layout description written to ocfl_layout.json."""
-        import json
-
         layout = FlatDirectLayout()
         fsys = LocalFS(tmp_path)
         StorageRoot.init(fsys, fsys, layout=layout, layout_description="flat direct")

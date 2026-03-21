@@ -56,8 +56,6 @@ class TestFlatOmitPrefixLayout:
     # -- Config --
 
     def test_config_struct(self):
-        import msgspec
-
         cfg = FlatOmitPrefixConfig(delimiter=":")
         data = msgspec.json.decode(msgspec.json.encode(cfg))
         assert data["extensionName"] == "0006-flat-omit-prefix-storage-layout"

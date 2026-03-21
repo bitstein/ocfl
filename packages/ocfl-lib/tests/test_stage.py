@@ -2,6 +2,8 @@
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from ocfl_lib.digest import DigestAlgorithm, file_digest, multi_digest
 
 if TYPE_CHECKING:
@@ -247,8 +249,6 @@ class TestStageOverlay:
     def test_overlay_algorithm_mismatch_raises(self):
         s1 = _make_stage({"d1": ["a.txt"]}, alg=DigestAlgorithm.SHA512)
         s2 = _make_stage({"d2": ["b.txt"]}, alg=DigestAlgorithm.SHA256)
-        import pytest
-
         with pytest.raises(ValueError, match="digest_algorithm"):
             s1.overlay(s2)
 
@@ -346,7 +346,5 @@ class TestVersionStage:
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
-        import pytest
-
         with pytest.raises(KeyError):
             obj.version_stage(VNum(99))

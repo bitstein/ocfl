@@ -1,5 +1,6 @@
 """Tests for 0004-hashed-n-tuple-storage-layout."""
 
+import msgspec
 import pytest
 
 from ocfl_lib.layout import Layout
@@ -74,8 +75,6 @@ class TestHashedNTupleLayout:
     # -- config --
 
     def test_config_defaults(self):
-        import msgspec
-
         cfg = HashedNTupleConfig()
         data = msgspec.json.encode(cfg)
         decoded = msgspec.json.decode(data)

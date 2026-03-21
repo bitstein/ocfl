@@ -10,6 +10,7 @@ from ocfl_lib.inventory import UserInfo
 from ocfl_lib.object import Object
 from ocfl_lib.spec import Spec, VNum
 from ocfl_lib.stage import Stage, stage_dir
+from ocfl_lib.update_plan import deserialize, serialize
 from ocfl_lib.validation.object import validate_object
 from ocfl_lib.validation.result import ValidationResult
 
@@ -394,8 +395,6 @@ class TestTwoStepWrite:
 
     def test_plan_serializable(self, tmp_path: Path):
         """Plan can be serialized, deserialized, and applied."""
-        from ocfl_lib.update_plan import deserialize, serialize
-
         src = _make_src_dir(tmp_path, {"file.txt": "hello"})
         obj_dir = tmp_path / "obj"
         obj_dir.mkdir()

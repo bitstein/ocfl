@@ -1,5 +1,6 @@
 """Tests for OCFL storage root validation."""
 
+import hashlib
 import json
 from typing import TYPE_CHECKING
 
@@ -37,8 +38,6 @@ class TestValidRoot:
         }
         inv_bytes = json.dumps(inv, sort_keys=True, separators=(",", ":")).encode()
         (obj / "inventory.json").write_bytes(inv_bytes)
-        import hashlib
-
         digest = hashlib.sha512(inv_bytes).hexdigest()
         (obj / "inventory.json.sha512").write_text(f"{digest} inventory.json\n")
         v1 = obj / "v1"

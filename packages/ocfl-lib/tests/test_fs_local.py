@@ -1,5 +1,6 @@
 """Tests for LocalFS backend."""
 
+from io import BytesIO
 from typing import TYPE_CHECKING
 
 import pytest
@@ -83,21 +84,15 @@ class TestReadDir:
 
 class TestWrite:
     def test_write_new_file(self, fs: LocalFS, fs_dir: Path):
-        from io import BytesIO
-
         n = fs.write("new.txt", BytesIO(b"content"))
         assert n == 7
         assert (fs_dir / "new.txt").read_bytes() == b"content"
 
     def test_write_overwrite(self, fs: LocalFS, fs_dir: Path):
-        from io import BytesIO
-
         fs.write("a.txt", BytesIO(b"replaced"))
         assert (fs_dir / "a.txt").read_bytes() == b"replaced"
 
     def test_write_nested(self, fs: LocalFS, fs_dir: Path):
-        from io import BytesIO
-
         fs.mkdir("newdir")
         n = fs.write("newdir/f.txt", BytesIO(b"data"))
         assert n == 4
@@ -210,8 +205,6 @@ class TestPathValidation:
             fs.open_file("sub/../../etc/passwd")
 
     def test_reject_dotdot_write(self, fs: LocalFS):
-        from io import BytesIO
-
         with pytest.raises(ValueError, match="outside"):
             fs.write("../escape.txt", BytesIO(b"bad"))
 

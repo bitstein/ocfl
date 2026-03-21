@@ -1,5 +1,6 @@
 """Tests for 0007-n-tuple-omit-prefix-storage-layout."""
 
+import msgspec
 import pytest
 
 from ocfl_lib.layout import Layout
@@ -90,8 +91,6 @@ class TestNTupleOmitPrefixLayout:
     # -- Config --
 
     def test_config_defaults(self):
-        import msgspec
-
         cfg = NTupleOmitPrefixConfig()
         data = msgspec.json.decode(msgspec.json.encode(cfg))
         assert data["extensionName"] == "0007-n-tuple-omit-prefix-storage-layout"

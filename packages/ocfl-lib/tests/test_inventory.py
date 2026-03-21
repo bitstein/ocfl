@@ -1,11 +1,12 @@
 """Tests for inventory model."""
 
 import json
+import pathlib
 
 import msgspec
 import pytest
 
-from ocfl_lib.digest import DigestAlgorithm
+from ocfl_lib.digest import DigestAlgorithm, bytes_digest
 from ocfl_lib.inventory import (
     Inventory,
     StoredInventory,
@@ -139,8 +140,6 @@ class TestInventory:
 
     def test_decode_full_fixture(self):
         """Decode a real OCFL fixture inventory."""
-        import pathlib
-
         fixture = (
             pathlib.Path(__file__).parents[3]
             / "tests"
@@ -235,8 +234,6 @@ class TestStoredInventory:
 
     def test_from_bytes_digest_matches(self):
         """Stored digest matches independent computation."""
-        from ocfl_lib.digest import bytes_digest
-
         raw = _inv_json()
         si = StoredInventory.from_bytes(raw, DigestAlgorithm.SHA512)
         expected = bytes_digest(raw, DigestAlgorithm.SHA512)
@@ -258,8 +255,6 @@ class TestStoredInventory:
         assert "  " not in text
 
     def test_from_inventory_digest_correct(self):
-        from ocfl_lib.digest import bytes_digest
-
         inv = msgspec.json.decode(_inv_json(), type=Inventory)
         si = StoredInventory.from_inventory(inv, DigestAlgorithm.SHA256)
         expected = bytes_digest(si.raw_bytes, DigestAlgorithm.SHA256)
@@ -290,8 +285,6 @@ class TestStoredInventory:
 
     def test_byte_preservation_from_fixture(self):
         """Bytes read from disk are preserved exactly through StoredInventory."""
-        import pathlib
-
         fixture = (
             pathlib.Path(__file__).parents[3]
             / "tests"

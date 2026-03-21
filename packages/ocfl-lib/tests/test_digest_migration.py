@@ -2,11 +2,14 @@
 
 from typing import TYPE_CHECKING
 
-from ocfl_lib.digest import DigestAlgorithm
+import pytest
+
+from ocfl_lib.digest import DigestAlgorithm, bytes_digest
 from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.object import Object
 from ocfl_lib.spec import Spec, VNum
-from ocfl_lib.stage import stage_dir
+from ocfl_lib.stage import Stage, stage_dir
+from ocfl_lib.update_plan import execute_plan, prepare_steps, revert_plan
 from ocfl_lib.validation.object import validate_object
 from ocfl_lib.validation.result import ValidationResult
 
@@ -249,11 +252,6 @@ class TestAlgorithmMigration:
 
     def test_migration_error_reverts(self, tmp_path: Path):
         """update() auto-reverts on error during migration write."""
-        import pytest
-
-        from ocfl_lib.digest import bytes_digest
-        from ocfl_lib.stage import Stage
-
         obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
 
         new_digest = bytes_digest(b"brand_new", DigestAlgorithm.SHA512)
@@ -295,8 +293,6 @@ class TestAlgorithmMigration:
 
     def test_migration_revert_restores_original_inventory(self, tmp_path: Path):
         """Revert after late-step failure restores original-algorithm inventory."""
-        from ocfl_lib.update_plan import execute_plan, prepare_steps, revert_plan
-
         obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
 
         # Save original on-disk inventory bytes (SHA256)
@@ -318,8 +314,6 @@ class TestAlgorithmMigration:
         for step in plan.steps:
             if step.name == "root-sidecar":
                 step.run = _fail
-
-        import pytest
 
         with pytest.raises(RuntimeError, match="injected"):
             execute_plan(plan)

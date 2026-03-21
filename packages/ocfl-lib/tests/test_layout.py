@@ -60,8 +60,6 @@ class TestLayoutRegistry:
         assert configs_seen == [{"key": "val"}]
 
     def test_unknown_layout_raises(self):
-        import pytest
-
         reg = LayoutRegistry()
         with pytest.raises(KeyError, match="nonexistent"):
             reg.get_layout("nonexistent")

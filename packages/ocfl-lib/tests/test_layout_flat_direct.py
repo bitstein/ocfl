@@ -1,9 +1,10 @@
 """Tests for 0002-flat-direct-storage-layout."""
 
+import msgspec
 import pytest
 
 from ocfl_lib.layout import Layout
-from ocfl_lib.layout.ext0002_flat_direct import FlatDirectLayout
+from ocfl_lib.layout.ext0002_flat_direct import FlatDirectConfig, FlatDirectLayout
 
 
 class TestFlatDirectLayout:
@@ -43,10 +44,6 @@ class TestFlatDirectLayout:
     # -- config --
 
     def test_config_struct(self):
-        import msgspec
-
-        from ocfl_lib.layout.ext0002_flat_direct import FlatDirectConfig
-
         cfg = FlatDirectConfig()
         data = msgspec.json.encode(cfg)
         decoded = msgspec.json.decode(data, type=FlatDirectConfig)
