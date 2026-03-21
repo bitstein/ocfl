@@ -1,6 +1,5 @@
 """Tests for ocfl stage add."""
 
-
 import pytest
 from typer.testing import CliRunner
 

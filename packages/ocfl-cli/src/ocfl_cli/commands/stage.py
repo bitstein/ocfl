@@ -2,12 +2,15 @@
 
 import os
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
 from ocfl_cli._common import err, open_root
 from ocfl_cli.staging import StagingStore
+
+if TYPE_CHECKING:
+    from ocfl_lib.inventory import Inventory
 
 stage_app = typer.Typer(
     name="stage",
@@ -25,6 +28,28 @@ _DEFAULT_STAGING_ROOT = (
 def _resolve_root_path(ctx: typer.Context) -> str:
     """Resolve absolute root path string for staging path hashing."""
     return str(Path(ctx.obj.get("root") or Path.cwd()).resolve())
+
+
+def _update_head_state(inv: Inventory, state: dict[str, list[str]]) -> Inventory:
+    """Return new Inventory with updated head version state."""
+    from ocfl_lib.inventory import Inventory, VersionInfo
+
+    head = inv.head
+    vi = inv.versions[head]
+    updated_versions = dict(inv.versions)
+    updated_versions[head] = VersionInfo(
+        created=vi.created, state=state, message=vi.message, user=vi.user
+    )
+    return Inventory(
+        id=inv.id,
+        type=inv.type,
+        digest_algorithm=inv.digest_algorithm,
+        head=inv.head,
+        manifest=inv.manifest,
+        versions=updated_versions,
+        content_directory=inv.content_directory,
+        fixity=inv.fixity,
+    )
 
 
 @stage_app.callback()
@@ -177,26 +202,106 @@ def add(
                 logical = f"{as_path}/{rel}" if as_path else rel
                 _add_file(child, logical)
 
-    # Update the inventory's head version state
+    store.save_inventory(root_path, object_id, _update_head_state(inv, state))
+    store.save_content_map(root_path, object_id, content_map)
 
-    new_version_info = inv.versions[head]
-    updated_versions = dict(inv.versions)
-    updated_versions[head] = type(new_version_info)(
-        created=new_version_info.created,
-        state=state,
-        message=new_version_info.message,
-        user=new_version_info.user,
-    )
-    updated_inv = type(inv)(
-        id=inv.id,
-        type=inv.type,
-        digest_algorithm=inv.digest_algorithm,
-        head=inv.head,
-        manifest=inv.manifest,
-        versions=updated_versions,
-        content_directory=inv.content_directory,
-        fixity=inv.fixity,
-    )
 
-    store.save_inventory(root_path, object_id, updated_inv)
+@stage_app.command()
+def mv(
+    ctx: typer.Context,
+    object_id: Annotated[str, typer.Argument(help="Object ID.")],
+    src_path: Annotated[str, typer.Argument(help="Source logical path.")],
+    dst_path: Annotated[str, typer.Argument(help="Destination logical path.")],
+) -> None:
+    """Rename a logical path in the staged version."""
+    store: StagingStore = ctx.obj["staging"]
+    root_path = _resolve_root_path(ctx)
+
+    if not store.exists(root_path, object_id):
+        err(f"no staging exists for {object_id!r}")
+        raise typer.Exit(1)
+
+    inv = store.load_inventory(root_path, object_id)
+    state = dict(inv.versions[inv.head].state)
+
+    # Find which digest owns src_path
+    found_digest = None
+    for d, paths in state.items():
+        if src_path in paths:
+            found_digest = d
+            break
+
+    if found_digest is None:
+        err(f"path not found: {src_path!r}")
+        raise typer.Exit(1)
+
+    # Rename: remove src, add dst
+    state[found_digest].remove(src_path)
+    if not state[found_digest]:
+        state[found_digest] = [dst_path]
+    else:
+        state[found_digest].append(dst_path)
+
+    store.save_inventory(root_path, object_id, _update_head_state(inv, state))
+
+
+@stage_app.command()
+def rm(
+    ctx: typer.Context,
+    object_id: Annotated[str, typer.Argument(help="Object ID.")],
+    paths: Annotated[list[str], typer.Argument(help="Logical path(s) to remove.")],
+    recursive: Annotated[
+        bool, typer.Option("-r", help="Remove all paths with matching prefix.")
+    ] = False,
+) -> None:
+    """Remove logical paths from the staged version."""
+    store: StagingStore = ctx.obj["staging"]
+    root_path = _resolve_root_path(ctx)
+
+    if not store.exists(root_path, object_id):
+        err(f"no staging exists for {object_id!r}")
+        raise typer.Exit(1)
+
+    inv = store.load_inventory(root_path, object_id)
+    state = {d: list(ps) for d, ps in inv.versions[inv.head].state.items()}
+    content_map = store.load_content_map(root_path, object_id)
+
+    removed_any = False
+    for target in paths:
+        if recursive:
+            prefix = target.rstrip("/") + "/"
+            for d in list(state):
+                before = len(state[d])
+                state[d] = [
+                    p for p in state[d] if p != target and not p.startswith(prefix)
+                ]
+                if len(state[d]) < before:
+                    removed_any = True
+                if not state[d]:
+                    del state[d]
+        else:
+            found = False
+            for d in list(state):
+                if target in state[d]:
+                    state[d].remove(target)
+                    if not state[d]:
+                        del state[d]
+                    found = True
+                    removed_any = True
+                    break
+            if not found:
+                err(f"path not found: {target!r}")
+                raise typer.Exit(1)
+
+    if not removed_any:
+        err("no matching paths found")
+        raise typer.Exit(1)
+
+    # Clean unreferenced digests from content map
+    referenced_digests = set(state.keys())
+    for d in list(content_map):
+        if d not in referenced_digests:
+            del content_map[d]
+
+    store.save_inventory(root_path, object_id, _update_head_state(inv, state))
     store.save_content_map(root_path, object_id, content_map)
