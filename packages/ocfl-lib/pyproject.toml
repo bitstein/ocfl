@@ -7,6 +7,14 @@ dependencies = [
     "msgspec>=0.20.0",
 ]
 
+[project.optional-dependencies]
+s3 = [
+    "boto3>=1.35.0",
+]
+test = [
+    "moto[s3]>=5.0.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
