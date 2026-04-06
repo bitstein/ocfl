@@ -414,11 +414,22 @@ dependencies = [
     { name = "typer" },
 ]
 
+[package.optional-dependencies]
+s3 = [
+    { name = "ocfl-lib", extra = ["s3"] },
+]
+test = [
+    { name = "moto", extra = ["s3"] },
+]
+
 [package.metadata]
 requires-dist = [
+    { name = "moto", extras = ["s3"], marker = "extra == 'test'", specifier = ">=5.0.0" },
     { name = "ocfl-lib", editable = "packages/ocfl-lib" },
+    { name = "ocfl-lib", extras = ["s3"], marker = "extra == 's3'", editable = "packages/ocfl-lib" },
     { name = "typer", specifier = ">=0.15" },
 ]
+provides-extras = ["s3", "test"]
 
 [[package]]
 name = "ocfl-lib"

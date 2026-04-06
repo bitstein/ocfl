@@ -8,5 +8,13 @@ dependencies = ["ocfl-lib", "typer>=0.15"]
 [project.scripts]
 ocfl = "ocfl_cli:main"
 
+[project.optional-dependencies]
+s3 = [
+    "ocfl-lib[s3]",
+]
+test = [
+    "moto[s3]>=5.0.0",
+]
+
 [tool.uv.sources]
 ocfl-lib = { workspace = true }

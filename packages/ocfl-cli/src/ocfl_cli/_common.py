@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -11,21 +12,33 @@ import typer
 from ocfl_lib import LocalFS, StorageRoot, VNum
 
 
-def resolve_root(root: str | None) -> Path:
-    """Resolve storage root path from flag, env var, or cwd."""
-    if root is not None:
-        return Path(root).resolve()
-    env = os.environ.get("OCFL_ROOT")
-    if env:
-        return Path(env).resolve()
-    return Path.cwd()
+def resolve_root(root: str | None) -> str:
+    """Resolve storage root from flag, env var, or cwd. URIs pass through."""
+    raw = root if root is not None else os.environ.get("OCFL_ROOT")
+    if raw is None:
+        return str(Path.cwd())
+    if "://" in raw:
+        return raw
+    return str(Path(raw).resolve())
 
 
-def open_root(root: str | None) -> tuple[StorageRoot, LocalFS]:
+def _make_fs(location: str):
+    """Create FS backend for *location* (local path or s3:// URI)."""
+    if location.startswith("s3://"):
+        parsed = urllib.parse.urlparse(location)
+        bucket = parsed.hostname or ""
+        prefix = parsed.path.lstrip("/")
+        from ocfl_lib.fs.s3 import S3FS
+
+        return S3FS(bucket, prefix)
+    return LocalFS(Path(location))
+
+
+def open_root(root: str | None) -> tuple[StorageRoot, Any]:
     """Open an existing storage root. Exits on error."""
-    path = resolve_root(root)
+    location = resolve_root(root)
     try:
-        fs = LocalFS(path)
+        fs = _make_fs(location)
         sr = StorageRoot(fs)
         return sr, fs
     except (ValueError, OSError) as e:

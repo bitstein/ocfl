@@ -5,8 +5,8 @@ from typing import Annotated
 
 import typer
 
-from ocfl_cli._common import err, resolve_root
-from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
+from ocfl_cli._common import _make_fs, err, resolve_root
+from ocfl_lib import Spec, StorageRoot, get_layout
 
 
 def init(
@@ -51,7 +51,7 @@ def init(
         raise typer.Exit(1) from None
 
     try:
-        fs = LocalFS(root_path)
+        fs = _make_fs(root_path)
         StorageRoot.init(
             fs,
             fs,
