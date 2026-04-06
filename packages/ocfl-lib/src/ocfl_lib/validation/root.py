@@ -136,20 +136,7 @@ def _walk_and_validate(
     """Walk storage root hierarchy, find objects, validate them."""
     from ocfl_lib.validation.result import ValidationResult as VR
 
-    # Find objects by looking for NAMASTE object declarations
-    obj_paths: list[str] = []
-
-    try:
-        for ref in fsys.walk_files(root_path):
-            n = Namaste.parse(ref.path.split("/")[-1])
-            if n is not None and n.kind == "object":
-                # Object root is the parent dir of the declaration
-                parts = ref.path.split("/")
-                obj_dir = "/".join(parts[:-1]) if len(parts) > 1 else ""
-                if obj_dir not in obj_paths:
-                    obj_paths.append(obj_dir)
-    except FileNotFoundError, OSError:
-        return
+    obj_paths = _walk_hierarchy(fsys, root_path, result)
 
     for obj_path in obj_paths:
         summary.num_objects += 1
@@ -166,6 +153,59 @@ def _walk_and_validate(
             summary.object_errors.append((obj_path, obj_result))
             if len(summary.object_errors) >= max_errors:
                 break
+
+
+def _walk_hierarchy(
+    fsys: FileWalker,
+    root_path: str,
+    result: ValidationResult,
+) -> list[str]:
+    """Walk root hierarchy via read_dir. Emit E073 (empty dirs) and E072
+    (non-object dirs with files). Return discovered object root paths.
+
+    Matches ocfl-py's storage_root.py traversal approach.
+    """
+    obj_paths: list[str] = []
+    root_skip_dirs = {"extensions"}
+    queue = [root_path]
+
+    while queue:
+        dir_path = queue.pop()
+        try:
+            entries = list(fsys.read_dir(dir_path))
+        except (FileNotFoundError, OSError):
+            continue
+
+        is_root = dir_path == root_path
+
+        # Check if this dir is an object root (has object NAMASTE)
+        has_obj_namaste = any(
+            (n := Namaste.parse(e.name)) is not None and n.kind == "object"
+            for e in entries
+        )
+        if has_obj_namaste:
+            obj_paths.append(dir_path)
+            continue  # don't descend into objects
+
+        sub_dirs = [e for e in entries if e.is_dir]
+        files = [e for e in entries if e.is_file]
+
+        if is_root:
+            sub_dirs = [e for e in sub_dirs if e.name not in root_skip_dirs]
+        else:
+            # E073: empty directories must not appear under a storage root
+            if not entries:
+                result.error("E073", path=dir_path)
+                continue
+
+            # E072: hierarchy must not contain files not part of an object
+            if files:
+                result.error("E072", path=dir_path)
+
+        for d in sub_dirs:
+            queue.append(_join(dir_path, d.name))
+
+    return obj_paths
 
 
 def _join(*parts: str) -> str:

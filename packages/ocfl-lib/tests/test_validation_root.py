@@ -89,6 +89,35 @@ class TestRootExtensions:
         assert r.has_code("W901")
 
 
+class TestE073EmptyDir:
+    def test_empty_dir_in_hierarchy_emits_E073(self, tmp_path: Path):
+        (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
+        (tmp_path / "empty_dir").mkdir()
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_root(fsys, "", r, validate_objects=True)
+        assert r.has_code("E073")
+
+    def test_no_empty_dirs_no_E073(self, tmp_path: Path):
+        (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_root(fsys, "", r, validate_objects=True)
+        assert not r.has_code("E073")
+
+
+class TestE072FilesInHierarchy:
+    def test_files_in_non_object_dir_emits_E072(self, tmp_path: Path):
+        (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
+        subdir = tmp_path / "some_dir"
+        subdir.mkdir()
+        (subdir / "stray.txt").write_text("bad")
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_root(fsys, "", r, validate_objects=True)
+        assert r.has_code("E072")
+
+
 class TestRootSummary:
     def test_summary_counts(self, tmp_path: Path):
         (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")

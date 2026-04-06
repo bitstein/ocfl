@@ -85,10 +85,12 @@ class TestRoundTripAllLayouts:
         layout = _make_layout(layout_name)
         obj_id = _LAYOUT_ID_BASE[layout_name]
 
-        fsys = LocalFS(tmp_path)
+        root_dir = tmp_path / "root"
+        root_dir.mkdir()
+        fsys = LocalFS(root_dir)
         root = StorageRoot.init(fsys, fsys, layout=layout)
 
-        # v1: two files
+        # v1: two files (source outside root)
         src1 = tmp_path / "src1"
         src1.mkdir()
         _write_files(src1, {"hello.txt": "hello", "dir/nested.txt": "nested"})
@@ -160,7 +162,9 @@ class TestRoundTripAllLayouts:
     def test_multiple_objects_per_root(self, tmp_path: Path, layout_name: str):
         """Multiple objects in one root, all discoverable via objects()."""
         layout = _make_layout(layout_name)
-        fsys = LocalFS(tmp_path)
+        root_dir = tmp_path / "root"
+        root_dir.mkdir()
+        fsys = LocalFS(root_dir)
         root = StorageRoot.init(fsys, fsys, layout=layout)
 
         base = _LAYOUT_ID_BASE[layout_name]
@@ -448,7 +452,9 @@ class TestSpecVersions:
     @pytest.mark.parametrize("spec", [Spec.V1_0, Spec.V1_1])
     def test_spec_round_trip(self, tmp_path: Path, spec: Spec):
         """Create and validate with each spec version."""
-        fsys = LocalFS(tmp_path)
+        root_dir = tmp_path / "root"
+        root_dir.mkdir()
+        fsys = LocalFS(root_dir)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout(), spec=spec)
         assert root.spec == spec
 
@@ -466,7 +472,7 @@ class TestSpecVersions:
 
         # NAMASTE matches spec
         expected_namaste = f"0=ocfl_{spec.value}"
-        assert (tmp_path / expected_namaste).exists()
+        assert (root_dir / expected_namaste).exists()
 
     def test_sha256_round_trip(self, tmp_path: Path):
         """Full round-trip with SHA256 as primary digest."""
@@ -588,7 +594,9 @@ class TestEdgeCases:
 
     def test_reopen_root_and_continue(self, tmp_path: Path):
         """Close and reopen storage root, then commit more."""
-        fsys = LocalFS(tmp_path)
+        root_dir = tmp_path / "root"
+        root_dir.mkdir()
+        fsys = LocalFS(root_dir)
         layout = HashedNTupleLayout()
         root = StorageRoot.init(fsys, fsys, layout=layout)
 
@@ -699,7 +707,9 @@ class TestEdgeCases:
     def test_non_default_layout_config(self, tmp_path: Path):
         """Layout with non-default config round-trips through disk."""
         layout = HashedNTupleLayout(tuple_size=2, number_of_tuples=2)
-        fsys = LocalFS(tmp_path)
+        root_dir = tmp_path / "root"
+        root_dir.mkdir()
+        fsys = LocalFS(root_dir)
         StorageRoot.init(fsys, fsys, layout=layout)
 
         # Reopen and verify config persisted
