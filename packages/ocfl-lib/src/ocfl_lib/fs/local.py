@@ -2,11 +2,43 @@
 
 import os
 import shutil
+import stat
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO
 
-from ocfl_lib.fs.protocols import FileRef, FsEntry
+from ocfl_lib.fs.protocols import FileRef, FsEntry, OcflFileTypeError
+
+
+def _classify(mode: int) -> str:
+    if stat.S_ISLNK(mode):
+        return "symlink"
+    if stat.S_ISFIFO(mode):
+        return "fifo"
+    if stat.S_ISSOCK(mode):
+        return "socket"
+    if stat.S_ISBLK(mode):
+        return "block_device"
+    if stat.S_ISCHR(mode):
+        return "char_device"
+    return "unknown"
+
+
+def _check_entry_type(entry: os.DirEntry[str]) -> tuple[bool, bool]:
+    """Return (is_dir, is_file) for a scandir entry, refusing symlinks.
+
+    Raises OcflFileTypeError for symlinks, FIFOs, sockets, and devices.
+    """
+    is_dir = entry.is_dir(follow_symlinks=False)
+    is_file = entry.is_file(follow_symlinks=False)
+    if not is_dir and not is_file:
+        st = entry.stat(follow_symlinks=False)
+        kind = _classify(st.st_mode)
+        raise OcflFileTypeError(
+            f"unsupported file type at {entry.path}: {kind}; "
+            "only regular files and directories are allowed"
+        )
+    return is_dir, is_file
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -36,16 +68,18 @@ class LocalFS:
         return open(self._resolve(name), "rb")
 
     def read_dir(self, name: str) -> Iterator[FsEntry]:
-        """List directory entries."""
+        """List directory entries. Raises OcflFileTypeError on symlinks etc."""
         path = self._resolve(name)
         with os.scandir(path) as it:
             for entry in it:
-                is_file = entry.is_file()
+                is_dir, is_file = _check_entry_type(entry)
                 yield FsEntry(
                     name=entry.name,
-                    is_dir=entry.is_dir(),
+                    is_dir=is_dir,
                     is_file=is_file,
-                    size=entry.stat().st_size if is_file else None,
+                    size=entry.stat(follow_symlinks=False).st_size
+                    if is_file
+                    else None,
                 )
 
     # -- WriteFS --
@@ -105,13 +139,23 @@ class LocalFS:
         return f"LocalFS({self._root})"
 
     def walk_files(self, name: str) -> Iterator[FileRef]:
-        """Recursively yield FileRef for every file under name."""
+        """Recursively yield FileRef for every file under name.
+
+        Raises OcflFileTypeError if any entry is a symlink, FIFO, socket,
+        or device node.
+        """
         base = self._resolve(name)
-        for dirpath, _dirnames, filenames in os.walk(base):
-            for fname in filenames:
-                full = Path(dirpath) / fname
-                rel = full.relative_to(self._root)
-                yield FileRef(
-                    path=rel.as_posix(),
-                    size=full.stat().st_size,
-                )
+        yield from self._walk(base)
+
+    def _walk(self, path: Path) -> Iterator[FileRef]:
+        with os.scandir(path) as it:
+            for entry in it:
+                is_dir, is_file = _check_entry_type(entry)
+                if is_dir:
+                    yield from self._walk(Path(entry.path))
+                elif is_file:
+                    rel = Path(entry.path).relative_to(self._root)
+                    yield FileRef(
+                        path=rel.as_posix(),
+                        size=entry.stat(follow_symlinks=False).st_size,
+                    )

@@ -215,3 +215,28 @@ class TestPathValidation:
     def test_reject_absolute_mkdir(self, fs: LocalFS):
         with pytest.raises(ValueError, match="absolute"):
             fs.mkdir("/tmp/evil")
+
+
+class TestFileTypeRejection:
+    def test_read_dir_rejects_symlink(self, fs: LocalFS, fs_dir: Path):
+        (fs_dir / "link").symlink_to(fs_dir / "a.txt")
+        from ocfl_lib.fs.protocols import OcflFileTypeError
+
+        with pytest.raises(OcflFileTypeError, match="symlink"):
+            list(fs.read_dir("."))
+
+    def test_walk_files_rejects_symlink(self, fs: LocalFS, fs_dir: Path):
+        (fs_dir / "sub" / "link").symlink_to(fs_dir / "a.txt")
+        from ocfl_lib.fs.protocols import OcflFileTypeError
+
+        with pytest.raises(OcflFileTypeError, match="symlink"):
+            list(fs.walk_files("."))
+
+    def test_read_dir_rejects_fifo(self, fs: LocalFS, fs_dir: Path):
+        import os
+
+        os.mkfifo(fs_dir / "pipe")
+        from ocfl_lib.fs.protocols import OcflFileTypeError
+
+        with pytest.raises(OcflFileTypeError, match="fifo"):
+            list(fs.read_dir("."))

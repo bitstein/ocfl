@@ -7,6 +7,14 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
+class OcflFileTypeError(ValueError):
+    """Raised when a non-regular, non-directory entry is encountered.
+
+    Archives must contain only regular files and directories. Symlinks,
+    FIFOs, sockets, and device nodes are rejected.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class FileRef:
     """Reference to a file: path relative to FS root, size in bytes."""
