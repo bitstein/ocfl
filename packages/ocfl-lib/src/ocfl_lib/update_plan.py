@@ -18,6 +18,19 @@ if TYPE_CHECKING:
     from ocfl_lib.fs.protocols import FS, WriteFS
 
 
+class RevertError(Exception):
+    """One or more revert steps failed.
+
+    Attribute `failures` is a list of (step_name, error_message) tuples.
+    Raised by revert_plan when any completed step's revert callable raises.
+    """
+
+    def __init__(self, failures: list[tuple[str, str]]) -> None:
+        self.failures = failures
+        detail = "; ".join(f"{name}: {err}" for name, err in failures)
+        super().__init__(f"revert failed for {len(failures)} step(s): {detail}")
+
+
 @runtime_checkable
 class ContentSource(Protocol):
     """Protocol for resolving content by digest."""
@@ -195,11 +208,16 @@ def prepare_steps(
 
     # 1. Object root (v1 only)
     if is_new:
+
+        def _revert_object_root() -> None:
+            with contextlib.suppress(FileNotFoundError):
+                fsys.remove_all(obj_dir)
+
         steps.append(
             PlanStep(
                 name="object-root",
                 run=_noop_run,
-                revert=lambda: fsys.remove_all(obj_dir),
+                revert=_revert_object_root,
             )
         )
 
@@ -233,11 +251,15 @@ def prepare_steps(
         fsys.mkdir(version_dir)
         return 0
 
+    def _revert_version_dir() -> None:
+        with contextlib.suppress(FileNotFoundError):
+            fsys.remove_all(version_dir)
+
     steps.append(
         PlanStep(
             name="version-dir",
             run=_make_version_dir,
-            revert=lambda: fsys.remove_all(version_dir),
+            revert=_revert_version_dir,
         )
     )
 
@@ -452,7 +474,9 @@ def revert_plan(plan: UpdatePlan) -> None:
 
     Calls each completed step's revert callable. On revert failure,
     sets step.revert_error and continues reverting remaining steps.
+    Raises RevertError if any revert failed (after all reverts attempted).
     """
+    failures: list[tuple[str, str]] = []
     for step in reversed(plan.steps):
         if not step.completed:
             continue
@@ -462,3 +486,6 @@ def revert_plan(plan: UpdatePlan) -> None:
             step.revert()
         except Exception as exc:
             step.revert_error = str(exc)
+            failures.append((step.name, str(exc)))
+    if failures:
+        raise RevertError(failures)

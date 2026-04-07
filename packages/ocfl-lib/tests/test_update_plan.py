@@ -17,6 +17,7 @@ from ocfl_lib.inventory_builder import InventoryBuilder
 from ocfl_lib.update_plan import (
     ContentSource,
     PlanStep,
+    RevertError,
     UpdatePlan,
     deserialize,
     execute_plan,
@@ -244,6 +245,25 @@ class _DictContentSource:
             (self._tmpdir / d).write_bytes(data)
 
     def get_content(self, digest: str) -> tuple[FS, str]:
+        return (self._fs, digest)
+
+
+class _FailingContentSource:
+    """ContentSource that raises for designated digests, otherwise serves bytes."""
+
+    def __init__(
+        self, files: dict[str, bytes], fail_digests: set[str]
+    ) -> None:
+        self._tmpobj = tempfile.TemporaryDirectory()
+        self._tmpdir = Path(self._tmpobj.name)
+        self._fs = LocalFS(self._tmpdir)
+        for d, data in files.items():
+            (self._tmpdir / d).write_bytes(data)
+        self._fail = fail_digests
+
+    def get_content(self, digest: str) -> tuple[FS, str]:
+        if digest in self._fail:
+            raise RuntimeError(f"injected failure for {digest}")
         return (self._fs, digest)
 
 
@@ -561,6 +581,87 @@ def _failing_step() -> int:
     raise RuntimeError("disk full")
 
 
+class TestConcurrentFailureModes:
+    """§4.3 — failure modes during parallel content copies."""
+
+    def test_async_failure_mid_batch_reverts_siblings(self, tmp_path: Path):
+        """One copy fails while siblings succeed: full revert leaves no orphans."""
+        files = {f"f{i}.txt": f"d{i}" for i in range(6)}
+        new_inv = _build_v1_inventory(files=files)
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _FailingContentSource(
+            {f"d{i}": f"x{i}".encode() for i in range(6)},
+            fail_digests={"d3"},
+        )
+        prepare_steps(plan, fsys, "obj1", source)
+
+        with pytest.raises(RuntimeError, match="injected failure for d3"):
+            execute_plan(plan, max_workers=4)
+
+        # Failed step recorded
+        failed = [s for s in plan.steps if s.error]
+        assert any("d3" in s.error for s in failed)
+
+        # Revert: object exists with partial content
+        revert_plan(plan)
+        assert not (tmp_path / "obj1").exists()
+
+    def test_two_async_failures_both_recorded(self, tmp_path: Path):
+        """Two simultaneous failures: both step.error fields set, exception raised."""
+        files = {f"f{i}.txt": f"d{i}" for i in range(8)}
+        new_inv = _build_v1_inventory(files=files)
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _FailingContentSource(
+            {f"d{i}": f"x{i}".encode() for i in range(8)},
+            fail_digests={"d2", "d5"},
+        )
+        prepare_steps(plan, fsys, "obj1", source)
+
+        with pytest.raises(RuntimeError, match="injected failure"):
+            execute_plan(plan, max_workers=4)
+
+        # Both failed steps have error recorded
+        errored_digests = {
+            s.content_digest for s in plan.steps if s.error and s.content_digest
+        }
+        assert "d2" in errored_digests
+        assert "d5" in errored_digests
+
+        revert_plan(plan)
+        assert not (tmp_path / "obj1").exists()
+
+    def test_sync_failure_after_async_success_reverts_content(
+        self, tmp_path: Path
+    ):
+        """A post-async sync step (e.g. inventory write) fails after content
+        copies completed. Revert must clean up the copied content."""
+        files = {f"f{i}.txt": f"d{i}" for i in range(4)}
+        new_inv = _build_v1_inventory(files=files)
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource(
+            {f"d{i}": f"x{i}".encode() for i in range(4)}
+        )
+        prepare_steps(plan, fsys, "obj1", source)
+
+        # Inject failure into the post-async version-inv step
+        vinv_step = next(s for s in plan.steps if s.name == "version-inv")
+        vinv_step.run = _failing_step
+
+        with pytest.raises(RuntimeError, match="disk full"):
+            execute_plan(plan)
+
+        # Content was copied
+        assert any(
+            s.completed and s.name == "content-copy" for s in plan.steps
+        )
+        # Revert removes everything
+        revert_plan(plan)
+        assert not (tmp_path / "obj1").exists()
+
+
 class TestRevertPlan:
     def test_revert_full_execution(self, tmp_path: Path):
         """Reverting a fully executed plan should clean up everything."""
@@ -618,7 +719,8 @@ class TestRevertPlan:
         assert not (tmp_path / "obj1").exists()
 
     def test_revert_continues_on_error(self, tmp_path: Path):
-        """Revert should continue even if one step's revert fails."""
+        """Revert should continue past a failing step, then raise RevertError
+        listing the failures so the caller knows cleanup was incomplete."""
         new_inv = _build_v1_inventory()
         plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
         fsys = LocalFS(tmp_path)
@@ -633,12 +735,14 @@ class TestRevertPlan:
 
         plan.steps[3].revert = _bad_revert
 
-        # Should not raise, but should set revert_error
-        revert_plan(plan)
+        with pytest.raises(RevertError) as exc_info:
+            revert_plan(plan)
 
         assert plan.steps[3].revert_error == "cleanup failed"
-        # Other steps should still have been reverted
-        # (object-root revert removes everything)
+        assert ("content-copy", "cleanup failed") in exc_info.value.failures or any(
+            err == "cleanup failed" for _, err in exc_info.value.failures
+        )
+        # Other steps were still reverted (object-root revert removed everything)
         assert not (tmp_path / "obj1").exists()
 
     def test_revert_update_preserves_old_object(self, tmp_path: Path):

@@ -12,6 +12,7 @@ from ocfl_lib.inventory_builder import InventoryBuilder
 from ocfl_lib.spec import INVENTORY_FILENAME, Namaste, Spec, VNum
 from ocfl_lib.update_plan import (
     ContentSource,
+    RevertError,
     UpdatePlan,
     execute_plan,
     prepare_steps,
@@ -313,8 +314,11 @@ class Object:
 
         try:
             execute_plan(plan)
-        except BaseException:
-            revert_plan(plan)
+        except BaseException as exc:
+            try:
+                revert_plan(plan)
+            except RevertError as rev_exc:
+                raise rev_exc from exc
             raise
 
         self._stored_inv = plan.new_inv
