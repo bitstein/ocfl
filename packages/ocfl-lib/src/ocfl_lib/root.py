@@ -118,7 +118,7 @@ class StorageRoot:
             parent = _join(self._path, "/".join(parts[:i]))
             try:
                 entries = list(self._fsys.read_dir(parent))
-            except FileNotFoundError, OSError:
+            except OSError:
                 break
             if entries:
                 break
@@ -169,7 +169,7 @@ class StorageRoot:
                 if n is not None and n.kind == "object" and parent not in seen:
                     seen.add(parent)
                     yield parent
-        except FileNotFoundError, OSError:
+        except OSError:
             return
 
     def objects(self) -> Iterator[Object]:
@@ -198,7 +198,7 @@ class StorageRoot:
         """Find and parse the root NAMASTE declaration."""
         try:
             entries = list(self._fsys.read_dir(self._path))
-        except (FileNotFoundError, OSError) as e:
+        except OSError as e:
             raise ValueError("no OCFL root declaration found") from e
 
         decls = []

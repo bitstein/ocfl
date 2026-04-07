@@ -46,7 +46,7 @@ def validate_object(
     # 1. Read root entries
     try:
         entries = list(fsys.read_dir(path))
-    except FileNotFoundError, OSError:
+    except OSError:
         result.error("E003e", path=path or ".")
         return
 
@@ -81,14 +81,14 @@ def validate_object(
             content = fs_utils.read_text(fsys, decl_path)
             if content != namaste.content:
                 result.error("E007", filename=namaste.filename)
-        except FileNotFoundError, OSError:
+        except OSError:
             pass
 
     # 3. Read and validate root inventory.json
     inv_path = _join(path, "inventory.json")
     try:
         inv_bytes = fs_utils.read_all(fsys, inv_path)
-    except FileNotFoundError, OSError:
+    except OSError:
         result.error("E063")
         return
 
@@ -160,7 +160,7 @@ def validate_object(
                 result.error("E067", entry=entry.name)
             elif entry.name not in _KNOWN_EXTENSIONS:
                 result.warning("W013", entry=entry.name)
-    except FileNotFoundError, OSError:
+    except OSError:
         pass
 
     # 8. Validate each version directory
@@ -194,7 +194,7 @@ def validate_object(
                 # Strip object path prefix to get manifest-relative path
                 rel = ref.path[prefix_len:] if prefix_len else ref.path
                 actual_files.add(rel)
-        except FileNotFoundError, OSError:
+        except OSError:
             pass
 
     extra = actual_files - manifest_paths
@@ -228,7 +228,7 @@ def _validate_version_dir(
     """Validate a single version directory."""
     try:
         entries = list(fsys.read_dir(vdir))
-    except FileNotFoundError, OSError:
+    except OSError:
         result.error("E046a", version_dir=vkey)
         return
 
@@ -262,7 +262,7 @@ def _validate_version_dir(
     vinv_path = _join(vdir, "inventory.json")
     try:
         vinv_bytes = fs_utils.read_all(fsys, vinv_path)
-    except FileNotFoundError, OSError:
+    except OSError:
         result.warning("W010", where=vkey)
         return
 
@@ -394,7 +394,7 @@ def _validate_sidecar(
     """Validate inventory sidecar digest file."""
     try:
         sidecar_text = fs_utils.read_text(fsys, sidecar_path)
-    except FileNotFoundError, OSError:
+    except OSError:
         result.error("E058a", where=where, path=sidecar_path)
         return
 
@@ -449,7 +449,7 @@ def _verify_digests(
                         content_path=content_path,
                         content_digest=actual,
                     )
-            except FileNotFoundError, OSError, ValueError:
+            except (OSError, ValueError):
                 pass
 
 
@@ -488,7 +488,7 @@ def _verify_fixity_digests(
                             content_path=content_path,
                             content_digest=actual,
                         )
-                except FileNotFoundError, OSError, ValueError:
+                except (OSError, ValueError):
                     pass
 
 

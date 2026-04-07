@@ -50,7 +50,7 @@ def validate_root(
     # 1. Root NAMASTE declaration
     try:
         entries = list(fsys.read_dir(path))
-    except FileNotFoundError, OSError:
+    except OSError:
         result.error("E069a", assumed_version="1.1")
         return summary
 
@@ -76,7 +76,7 @@ def validate_root(
             content = fs_utils.read_text(fsys, decl_path)
             if content != decl.content:
                 result.error("E069e", filename=decl.filename)
-        except FileNotFoundError, OSError:
+        except OSError:
             pass
 
     # 2. ocfl_layout.json
@@ -95,7 +95,7 @@ def validate_root(
 
         if layout_data is not None and not isinstance(layout_data, dict):
             result.error("E071", path=path or ".")
-    except FileNotFoundError, OSError:
+    except OSError:
         pass  # ocfl_layout.json is optional
 
     # 3. extensions/ directory
@@ -107,7 +107,7 @@ def validate_root(
                 result.error("E086", entry=entry.name)
             elif entry.name not in _KNOWN_ROOT_EXTENSIONS:
                 result.warning("W901", entry=entry.name)
-    except FileNotFoundError, OSError:
+    except OSError:
         pass
 
     # 4. Walk hierarchy for objects and validate
@@ -173,7 +173,7 @@ def _walk_hierarchy(
         dir_path = queue.pop()
         try:
             entries = list(fsys.read_dir(dir_path))
-        except (FileNotFoundError, OSError):
+        except OSError:
             continue
 
         is_root = dir_path == root_path
