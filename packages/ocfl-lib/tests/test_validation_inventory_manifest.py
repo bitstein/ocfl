@@ -1,5 +1,9 @@
 """Tests for inventory validation — manifest checks."""
 
+import unicodedata
+
+import pytest
+
 from ocfl_lib.validation.inventory import validate_inventory
 from ocfl_lib.validation.result import ValidationResult
 
@@ -153,3 +157,170 @@ class TestManifestPathSegments:
         r = ValidationResult()
         validate_inventory(_inv_with_manifest({_D1: ["v1/content/file.txt/"]}), r)
         assert r.has_code("E100")
+
+
+class TestManifestTraversalGaps:
+    """Adversarial path traversal — verify existing checks cover gaps."""
+
+    def test_absolute_path_rejected(self):
+        r = ValidationResult()
+        validate_inventory(_inv_with_manifest({_D1: ["/etc/passwd"]}), r)
+        assert r.has_code("E100")
+
+    def test_backslash_treated_as_literal(self):
+        # Characterization: backslash is a valid filename char on POSIX,
+        # not a path separator. Accepted as part of segment.
+        r = ValidationResult()
+        validate_inventory(
+            _inv_with_manifest({_D1: ["v1/content/foo\\bar"]}), r
+        )
+        assert not r.has_code("E099")
+        assert not r.has_code("E100")
+
+    def test_url_encoded_dotdot_treated_as_literal(self):
+        # Characterization: %2e%2e is a literal segment, not decoded.
+        r = ValidationResult()
+        validate_inventory(
+            _inv_with_manifest({_D1: ["v1/content/%2e%2e/file.txt"]}), r
+        )
+        assert not r.has_code("E099")
+
+
+class TestManifestNullBytes:
+    """Null byte rejection — TODO: implement in _validate_manifest."""
+
+    @pytest.mark.xfail(reason="null byte rejection not yet implemented", strict=True)
+    def test_null_byte_in_manifest_path(self):
+        r = ValidationResult()
+        validate_inventory(
+            _inv_with_manifest({_D1: ["v1/content/foo\x00bar"]}), r
+        )
+        assert r.has_code("E099") or r.has_code("E100")
+
+    @pytest.mark.xfail(reason="null byte rejection not yet implemented", strict=True)
+    def test_null_byte_in_logical_state_path(self):
+        r = ValidationResult()
+        versions = {
+            "v1": {
+                "created": "2024-01-01T00:00:00Z",
+                "state": {_D1: ["foo\x00bar.txt"]},
+            },
+        }
+        validate_inventory(
+            _inv_with_manifest(
+                {_D1: ["v1/content/file.txt"]}, versions=versions
+            ),
+            r,
+        )
+        assert r.has_code("E053") or r.has_code("E052")
+
+    @pytest.mark.xfail(reason="null byte rejection not yet implemented", strict=True)
+    def test_null_byte_in_object_id(self):
+        r = ValidationResult()
+        inv = _inv_with_manifest({_D1: ["v1/content/file.txt"]})
+        inv["id"] = "http://example.org/obj\x00evil"
+        validate_inventory(inv, r)
+        assert r.has_code("E037a")
+
+
+class TestAbsurdLengthCaps:
+    """Sanity caps — TODO: implement length limits."""
+
+    @pytest.mark.xfail(reason="length caps not yet implemented", strict=True)
+    def test_object_id_over_1kb(self):
+        r = ValidationResult()
+        inv = _inv_with_manifest({_D1: ["v1/content/file.txt"]})
+        inv["id"] = "http://example.org/" + ("x" * 2048)
+        validate_inventory(inv, r)
+        assert r.has_code("E037a")
+
+    @pytest.mark.xfail(reason="length caps not yet implemented", strict=True)
+    def test_manifest_path_over_4kb(self):
+        r = ValidationResult()
+        long_seg = "x" * 5000
+        validate_inventory(
+            _inv_with_manifest({_D1: [f"v1/content/{long_seg}"]}), r
+        )
+        assert r.has_code("E099") or r.has_code("E100")
+
+    @pytest.mark.xfail(reason="length caps not yet implemented", strict=True)
+    def test_logical_path_over_4kb(self):
+        r = ValidationResult()
+        long_seg = "x" * 5000
+        versions = {
+            "v1": {
+                "created": "2024-01-01T00:00:00Z",
+                "state": {_D1: [long_seg]},
+            },
+        }
+        validate_inventory(
+            _inv_with_manifest(
+                {_D1: ["v1/content/file.txt"]}, versions=versions
+            ),
+            r,
+        )
+        assert r.has_code("E052") or r.has_code("E053")
+
+    @pytest.mark.xfail(reason="length caps not yet implemented", strict=True)
+    def test_message_over_64kb(self):
+        r = ValidationResult()
+        versions = {
+            "v1": {
+                "created": "2024-01-01T00:00:00Z",
+                "state": {_D1: ["file.txt"]},
+                "message": "x" * (64 * 1024 + 1),
+            },
+        }
+        validate_inventory(
+            _inv_with_manifest(
+                {_D1: ["v1/content/file.txt"]}, versions=versions
+            ),
+            r,
+        )
+        assert r.has_code("E094")
+
+    @pytest.mark.xfail(reason="length caps not yet implemented", strict=True)
+    def test_user_name_over_1kb(self):
+        r = ValidationResult()
+        versions = {
+            "v1": {
+                "created": "2024-01-01T00:00:00Z",
+                "state": {_D1: ["file.txt"]},
+                "user": {"name": "x" * 2048, "address": "mailto:a@b.c"},
+            },
+        }
+        validate_inventory(
+            _inv_with_manifest(
+                {_D1: ["v1/content/file.txt"]}, versions=versions
+            ),
+            r,
+        )
+        assert r.has_code("E054b")
+
+
+class TestUnicodeNormalizationCharacterization:
+    """Pin current behavior: NFC and NFD are treated as DISTINCT.
+
+    TODO: revisit policy — see REVIEW_PLAN.md. Other OCFL impls (ocfl-go,
+    ocfl-py, gocfl, rocfl) all do byte-exact compare; matching the field.
+    """
+
+    def test_nfc_and_nfd_treated_as_distinct_paths(self):
+        nfc = unicodedata.normalize("NFC", "café.txt")
+        nfd = unicodedata.normalize("NFD", "café.txt")
+        assert nfc != nfd
+        r = ValidationResult()
+        manifest = {
+            _D1: [f"v1/content/{nfc}"],
+            _D2: [f"v1/content/{nfd}"],
+        }
+        versions = {
+            "v1": {
+                "created": "2024-01-01T00:00:00Z",
+                "state": {_D1: [nfc], _D2: [nfd]},
+            },
+        }
+        validate_inventory(_inv_with_manifest(manifest, versions=versions), r)
+        # Currently no duplicate detected — pinning this behavior.
+        assert not r.has_code("E101a")
+        assert not r.has_code("E095a")
