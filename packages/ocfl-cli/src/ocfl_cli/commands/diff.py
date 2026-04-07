@@ -3,10 +3,18 @@
 from typing import Annotated
 
 import typer
+from rich.text import Text
 
+from ocfl_cli import _style
 from ocfl_cli._common import err, open_root, output_json, parse_version
 
 _ACTION_SYMBOLS = {"added": "A", "deleted": "D", "modified": "M", "renamed": "R"}
+_SYM_STYLE = {
+    "A": _style.added,
+    "D": _style.deleted,
+    "M": _style.modified,
+    "R": _style.renamed,
+}
 
 
 def diff(
@@ -45,7 +53,9 @@ def diff(
     else:
         for e in entries:
             sym = _ACTION_SYMBOLS.get(e.action, "?")
-            line = f"{sym}  {e.path}"
+            styler = _SYM_STYLE.get(sym)
+            styled_sym = styler(sym) if styler else Text(sym)
+            parts: list = [styled_sym, "  ", e.path]
             if e.renamed_from:
-                line += f"  (from {e.renamed_from})"
-            typer.echo(line)
+                parts.append(f"  (from {e.renamed_from})")
+            _style.echo(Text.assemble(*parts))

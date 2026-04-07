@@ -3,7 +3,9 @@
 from typing import Annotated
 
 import typer
+from rich.text import Text
 
+from ocfl_cli import _style
 from ocfl_cli._common import err, open_root, output_json
 
 
@@ -52,7 +54,9 @@ def log(
     else:
         for v in versions:
             info = obj.version_info(v)
-            typer.echo(f"{v}  {info.created}")
+            _style.echo(
+                Text.assemble(_style.version(str(v)), "  ", _style.date(info.created))
+            )
             if info.message:
                 typer.echo(f"    {info.message}")
             if info.user:

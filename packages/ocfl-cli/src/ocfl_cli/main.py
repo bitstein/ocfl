@@ -4,6 +4,7 @@ from typing import Annotated
 
 import typer
 
+from ocfl_cli import _style
 from ocfl_cli.commands.diff import diff
 from ocfl_cli.commands.export import export
 from ocfl_cli.commands.info import info
@@ -54,10 +55,17 @@ def main(
         bool,
         typer.Option("--verbose", "-v", help="Show verbose output."),
     ] = False,
+    no_color: Annotated[
+        bool,
+        typer.Option("--no-color", help="Disable colored output."),
+    ] = False,
 ) -> None:
     """CLI for managing an OCFL archive."""
+    if no_color:
+        _style.set_no_color()
     ctx.ensure_object(dict)
     ctx.obj["root"] = root
     ctx.obj["json"] = json_output
     ctx.obj["quiet"] = quiet
     ctx.obj["verbose"] = verbose
+    ctx.obj["no_color"] = no_color

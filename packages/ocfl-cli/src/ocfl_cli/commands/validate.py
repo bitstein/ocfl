@@ -4,6 +4,7 @@ from typing import Annotated
 
 import typer
 
+from ocfl_cli import _style
 from ocfl_cli._common import _make_fs, err, open_root, output_json, resolve_root
 from ocfl_lib import ValidationResult, validate_object, validate_root
 
@@ -88,9 +89,17 @@ def _output_result(result: ValidationResult, json_mode: bool) -> None:
         for e in result.errors:
             err(f"[{e.code}] {e.message}")
         for w in result.warnings:
-            typer.echo(f"Warning: [{w.code}] {w.message}", err=True)
+            _style.echo(
+                _style.warning(f"Warning: [{w.code}] {w.message}"), err=True
+            )
         if result.is_valid:
-            typer.echo(
-                "Valid"
-                + (f" ({result.num_warnings} warnings)" if result.warnings else "")
+            _style.echo(
+                _style.valid(
+                    "Valid"
+                    + (
+                        f" ({result.num_warnings} warnings)"
+                        if result.warnings
+                        else ""
+                    )
+                )
             )

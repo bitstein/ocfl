@@ -3,7 +3,9 @@
 from typing import TYPE_CHECKING, Annotated
 
 import typer
+from rich.text import Text
 
+from ocfl_cli import _style
 from ocfl_cli._common import err, open_root, output_json, parse_version
 from ocfl_lib.digest_map import to_path_map
 
@@ -72,6 +74,6 @@ def _ls_object(
     else:
         for path, digest in sorted(path_map.items()):
             if digests:
-                typer.echo(f"{digest}  {path}")
+                _style.echo(Text.assemble(_style.digest(digest), "  ", path))
             else:
                 typer.echo(path)

@@ -3,7 +3,9 @@
 from typing import Annotated
 
 import typer
+from rich.text import Text
 
+from ocfl_cli import _style
 from ocfl_cli._common import err, open_root, output_json
 
 
@@ -34,8 +36,8 @@ def _info_root(ctx: typer.Context, json_mode: bool) -> None:
         }
         output_json(data)
     else:
-        typer.echo(f"Spec:   {root.spec}")
-        typer.echo(f"Layout: {layout_name or '(none)'}")
+        _style.echo(Text.assemble(_style.key("Spec:   "), str(root.spec)))
+        _style.echo(Text.assemble(_style.key("Layout: "), layout_name or "(none)"))
 
 
 def _info_object(ctx: typer.Context, object_id: str, json_mode: bool) -> None:
@@ -63,8 +65,8 @@ def _info_object(ctx: typer.Context, object_id: str, json_mode: bool) -> None:
             }
         )
     else:
-        typer.echo(f"ID:        {inv.id}")
-        typer.echo(f"Spec:      {obj.spec}")
-        typer.echo(f"Algorithm: {inv.digest_algorithm}")
-        typer.echo(f"Head:      {inv.head}")
-        typer.echo(f"Versions:  {num_versions}")
+        _style.echo(Text.assemble(_style.key("ID:        "), inv.id))
+        _style.echo(Text.assemble(_style.key("Spec:      "), str(obj.spec)))
+        _style.echo(Text.assemble(_style.key("Algorithm: "), inv.digest_algorithm))
+        _style.echo(Text.assemble(_style.key("Head:      "), inv.head))
+        _style.echo(Text.assemble(_style.key("Versions:  "), str(num_versions)))

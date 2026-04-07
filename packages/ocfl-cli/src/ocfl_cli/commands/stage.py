@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 import typer
+from rich.text import Text
 
+from ocfl_cli import _style
 from ocfl_cli._common import err, open_root
 from ocfl_cli.staging import StagingStore
 
@@ -344,7 +346,7 @@ def ls_cmd(
     else:
         for p, d in entries:
             if digests:
-                typer.echo(f"{d}  {p}")
+                _style.echo(Text.assemble(_style.digest(d), "  ", p))
             else:
                 typer.echo(p)
 
@@ -417,12 +419,20 @@ def status(
         output_json(changes)
     else:
         action_prefix = {"added": "A", "deleted": "D", "modified": "M", "renamed": "R"}
+        sym_style = {
+            "A": _style.added,
+            "D": _style.deleted,
+            "M": _style.modified,
+            "R": _style.renamed,
+        }
         for c in changes:
             prefix = action_prefix.get(c["action"], "?")
-            line = f"{prefix} {c['path']}"
+            styler = sym_style.get(prefix)
+            styled_sym = styler(prefix) if styler else Text(prefix)
+            parts: list = [styled_sym, " ", c["path"]]
             if c.get("renamed_from"):
-                line += f" (from {c['renamed_from']})"
-            typer.echo(line)
+                parts.append(f" (from {c['renamed_from']})")
+            _style.echo(Text.assemble(*parts))
 
 
 @stage_app.command()

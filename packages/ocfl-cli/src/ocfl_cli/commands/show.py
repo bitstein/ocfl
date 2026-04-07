@@ -3,13 +3,21 @@
 from typing import Annotated
 
 import typer
+from rich.text import Text
 
+from ocfl_cli import _style
 from ocfl_cli._common import err, open_root, output_json, parse_version
 from ocfl_lib import VNum
 from ocfl_lib.digest_map import to_path_map
 from ocfl_lib.object import DiffEntry
 
 _ACTION_SYMBOLS = {"added": "A", "deleted": "D", "modified": "M", "renamed": "R"}
+_SYM_STYLE = {
+    "A": _style.added,
+    "D": _style.deleted,
+    "M": _style.modified,
+    "R": _style.renamed,
+}
 
 
 def show(
@@ -64,7 +72,9 @@ def show(
             }
         )
     else:
-        typer.echo(f"{v}  {info.created}")
+        _style.echo(
+            Text.assemble(_style.version(str(v)), "  ", _style.date(info.created))
+        )
         if info.message:
             typer.echo(f"    {info.message}")
         if info.user:
@@ -75,7 +85,9 @@ def show(
         typer.echo()
         for c in changes:
             sym = _ACTION_SYMBOLS.get(c.action, "?")
-            line = f"  {sym}  {c.path}"
+            styler = _SYM_STYLE.get(sym)
+            styled_sym = styler(sym) if styler else Text(sym)
+            parts: list = ["  ", styled_sym, "  ", c.path]
             if c.renamed_from:
-                line += f"  (from {c.renamed_from})"
-            typer.echo(line)
+                parts.append(f"  (from {c.renamed_from})")
+            _style.echo(Text.assemble(*parts))
