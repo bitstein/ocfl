@@ -2,8 +2,6 @@
 
 import unicodedata
 
-import pytest
-
 from ocfl_lib.validation.inventory import validate_inventory
 from ocfl_lib.validation.result import ValidationResult
 
@@ -187,17 +185,13 @@ class TestManifestTraversalGaps:
 
 
 class TestManifestNullBytes:
-    """Null byte rejection — TODO: implement in _validate_manifest."""
-
-    @pytest.mark.xfail(reason="null byte rejection not yet implemented", strict=True)
     def test_null_byte_in_manifest_path(self):
         r = ValidationResult()
         validate_inventory(
             _inv_with_manifest({_D1: ["v1/content/foo\x00bar"]}), r
         )
-        assert r.has_code("E099") or r.has_code("E100")
+        assert r.has_code("L001")
 
-    @pytest.mark.xfail(reason="null byte rejection not yet implemented", strict=True)
     def test_null_byte_in_logical_state_path(self):
         r = ValidationResult()
         versions = {
@@ -212,38 +206,32 @@ class TestManifestNullBytes:
             ),
             r,
         )
-        assert r.has_code("E053") or r.has_code("E052")
+        assert r.has_code("L001")
 
-    @pytest.mark.xfail(reason="null byte rejection not yet implemented", strict=True)
     def test_null_byte_in_object_id(self):
         r = ValidationResult()
         inv = _inv_with_manifest({_D1: ["v1/content/file.txt"]})
         inv["id"] = "http://example.org/obj\x00evil"
         validate_inventory(inv, r)
-        assert r.has_code("E037a")
+        assert r.has_code("L001")
 
 
 class TestAbsurdLengthCaps:
-    """Sanity caps — TODO: implement length limits."""
-
-    @pytest.mark.xfail(reason="length caps not yet implemented", strict=True)
     def test_object_id_over_1kb(self):
         r = ValidationResult()
         inv = _inv_with_manifest({_D1: ["v1/content/file.txt"]})
         inv["id"] = "http://example.org/" + ("x" * 2048)
         validate_inventory(inv, r)
-        assert r.has_code("E037a")
+        assert r.has_code("L002")
 
-    @pytest.mark.xfail(reason="length caps not yet implemented", strict=True)
     def test_manifest_path_over_4kb(self):
         r = ValidationResult()
         long_seg = "x" * 5000
         validate_inventory(
             _inv_with_manifest({_D1: [f"v1/content/{long_seg}"]}), r
         )
-        assert r.has_code("E099") or r.has_code("E100")
+        assert r.has_code("L002")
 
-    @pytest.mark.xfail(reason="length caps not yet implemented", strict=True)
     def test_logical_path_over_4kb(self):
         r = ValidationResult()
         long_seg = "x" * 5000
@@ -259,9 +247,8 @@ class TestAbsurdLengthCaps:
             ),
             r,
         )
-        assert r.has_code("E052") or r.has_code("E053")
+        assert r.has_code("L002")
 
-    @pytest.mark.xfail(reason="length caps not yet implemented", strict=True)
     def test_message_over_64kb(self):
         r = ValidationResult()
         versions = {
@@ -277,9 +264,8 @@ class TestAbsurdLengthCaps:
             ),
             r,
         )
-        assert r.has_code("E094")
+        assert r.has_code("L002")
 
-    @pytest.mark.xfail(reason="length caps not yet implemented", strict=True)
     def test_user_name_over_1kb(self):
         r = ValidationResult()
         versions = {
@@ -295,7 +281,7 @@ class TestAbsurdLengthCaps:
             ),
             r,
         )
-        assert r.has_code("E054b")
+        assert r.has_code("L002")
 
 
 class TestUnicodeNormalizationCharacterization:

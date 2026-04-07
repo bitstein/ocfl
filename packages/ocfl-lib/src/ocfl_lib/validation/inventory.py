@@ -7,6 +7,13 @@ import msgspec
 
 from ocfl_lib.digest import DigestAlgorithm
 from ocfl_lib.inventory import Inventory
+from ocfl_lib.validation.limits import (
+    MAX_MESSAGE,
+    MAX_OBJECT_ID,
+    MAX_PATH,
+    MAX_USER_NAME,
+    contains_null,
+)
 
 if TYPE_CHECKING:
     from ocfl_lib.validation.result import ValidationResult
@@ -98,8 +105,19 @@ def _validate_structure(
     id_val = data["id"]
     if not isinstance(id_val, str) or not id_val:
         result.error("E037a", where=where)
-    elif not _URI_RE.match(id_val):
-        result.warning("W005", where=where, id=id_val)
+    else:
+        if contains_null(id_val):
+            result.error("L001", where=where, field="id")
+        if len(id_val) > MAX_OBJECT_ID:
+            result.error(
+                "L002",
+                where=where,
+                field="id",
+                limit=MAX_OBJECT_ID,
+                actual=len(id_val),
+            )
+        if not _URI_RE.match(id_val):
+            result.warning("W005", where=where, id=id_val)
 
     # type validation
     type_val = data["type"]
@@ -208,6 +226,20 @@ def _validate_manifest(
         for path in paths:
             if not isinstance(path, str):
                 result.error("E091", where=where, digest=digest)
+                continue
+
+            # Null byte + length sanity checks (non-spec)
+            if contains_null(path):
+                result.error("L001", where=where, field="manifest path")
+                continue
+            if len(path) > MAX_PATH:
+                result.error(
+                    "L002",
+                    where=where,
+                    field="manifest path",
+                    limit=MAX_PATH,
+                    actual=len(path),
+                )
                 continue
 
             # Path segment validation
@@ -348,6 +380,14 @@ def _validate_versions(
             result.warning("W007a", where=where, version=vkey)
         elif not isinstance(vblock["message"], str):
             result.error("E094", where=where, version=vkey)
+        elif len(vblock["message"]) > MAX_MESSAGE:
+            result.error(
+                "L002",
+                where=where,
+                field=f"{vkey} message",
+                limit=MAX_MESSAGE,
+                actual=len(vblock["message"]),
+            )
 
         # user
         if "user" not in vblock:
@@ -408,6 +448,20 @@ def _validate_version_state(
             if not isinstance(path, str):
                 continue
 
+            # Null byte + length sanity checks (non-spec)
+            if contains_null(path):
+                result.error("L001", where=where, field="logical path")
+                continue
+            if len(path) > MAX_PATH:
+                result.error(
+                    "L002",
+                    where=where,
+                    field="logical path",
+                    limit=MAX_PATH,
+                    actual=len(path),
+                )
+                continue
+
             # Check for leading/trailing slash
             if path.startswith("/") or path.endswith("/"):
                 result.error("E052", where=where, version=version, path=path)
@@ -449,6 +503,14 @@ def _validate_user(
 
     if "name" not in user or not isinstance(user.get("name"), str):
         result.error("E054b", where=where, version=version)
+    elif len(user["name"]) > MAX_USER_NAME:
+        result.error(
+            "L002",
+            where=where,
+            field=f"{version} user name",
+            limit=MAX_USER_NAME,
+            actual=len(user["name"]),
+        )
 
     if "address" not in user:
         result.warning("W008", where=where, version=version)
