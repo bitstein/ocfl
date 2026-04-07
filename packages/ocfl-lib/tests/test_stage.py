@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ocfl_lib.digest import DigestAlgorithm, file_digest, multi_digest
+from ocfl_lib.fs.protocols import FS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,10 +27,10 @@ class _DummyFS:
 class _DummyContentSource:
     """Minimal ContentSource for testing."""
 
-    def __init__(self, files: dict[str, tuple[object, str]]):
+    def __init__(self, files: dict[str, tuple[FS, str]]):
         self._files = files
 
-    def get_content(self, digest: str) -> tuple[object, str]:
+    def get_content(self, digest: str) -> tuple[FS, str]:
         return self._files[digest]
 
 
@@ -212,7 +213,7 @@ class TestStageDir:
 def _make_stage(
     state: dict[str, list[str]],
     alg: DigestAlgorithm = DigestAlgorithm.SHA512,
-    files: dict[str, tuple[object, str]] | None = None,
+    files: dict[str, tuple[FS, str]] | None = None,
     fixity: dict[str, dict[DigestAlgorithm, str]] | None = None,
 ) -> Stage:
     """Helper to build a Stage with dummy sources."""

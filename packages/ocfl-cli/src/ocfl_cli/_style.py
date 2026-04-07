@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import IO
+from typing import IO, Any
 
 from rich.console import Console
 from rich.text import Text
@@ -26,7 +26,7 @@ _STYLES: dict[str, str] = {
 }
 
 
-def _should_color(stream: IO) -> bool:
+def _should_color(stream: Any) -> bool:
     """Honor NO_COLOR (disable), FORCE_COLOR (enable), else TTY detection."""
     if os.environ.get("NO_COLOR"):
         return False

@@ -45,7 +45,7 @@ class NTupleOmitPrefixLayout:
         return EXTENSION_NAME
 
     @property
-    def config(self) -> dict | None:
+    def config(self) -> dict:
         cfg = NTupleOmitPrefixConfig(
             delimiter=self._delimiter,
             tuple_size=self._tuple_size,

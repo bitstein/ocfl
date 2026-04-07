@@ -48,7 +48,7 @@ class TestLayoutRegistry:
         assert layout.name == "dummy-layout"
 
     def test_get_with_config(self):
-        configs_seen: list[dict] = []
+        configs_seen: list[dict | None] = []
 
         def factory(config: dict | None = None) -> _DummyLayout:
             configs_seen.append(config)

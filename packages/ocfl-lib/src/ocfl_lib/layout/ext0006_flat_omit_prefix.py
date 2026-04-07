@@ -23,7 +23,7 @@ class FlatOmitPrefixLayout:
         return EXTENSION_NAME
 
     @property
-    def config(self) -> dict | None:
+    def config(self) -> dict:
         cfg = FlatOmitPrefixConfig(delimiter=self._delimiter)
         return msgspec.to_builtins(cfg)
 

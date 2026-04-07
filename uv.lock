@@ -383,6 +383,15 @@ wheels = [
 ]
 
 [[package]]
+name = "mypy-boto3-s3"
+version = "1.42.80"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/81/4e/f0f2c0fca253daf2db6230f96899dd0b3b7b592d99f60f07e5b3cc058584/mypy_boto3_s3-1.42.80.tar.gz", hash = "sha256:f3c1d19e8f7346402e341d0395d492b67801f80614bad5d7fa8b5f4db5e4b65d", size = 76540, upload-time = "2026-03-31T19:37:26.133Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/28/32/aa321332f62f6c8ce174ad3c3edab6235c0ab36c77dae930fea9e41e69bd/mypy_boto3_s3-1.42.80-py3-none-any.whl", hash = "sha256:23d59dee7650c18c62ebbdc96b11bbfd8b1547341f46c88d1aa8d140276a4276", size = 83751, upload-time = "2026-03-31T19:37:22.112Z" },
+]
+
+[[package]]
 name = "ocfl"
 version = "0.1.0"
 source = { virtual = "." }
@@ -447,6 +456,11 @@ test = [
     { name = "moto", extra = ["s3"] },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "mypy-boto3-s3" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "boto3", marker = "extra == 's3'", specifier = ">=1.35.0" },
@@ -454,6 +468,9 @@ requires-dist = [
     { name = "msgspec", specifier = ">=0.20.0" },
 ]
 provides-extras = ["s3", "test"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "mypy-boto3-s3", specifier = ">=1.42.80" }]
 
 [[package]]
 name = "packaging"

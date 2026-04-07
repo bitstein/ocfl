@@ -288,7 +288,7 @@ class TestAlgorithmMigration:
 
         # Object should still validate
         result = ValidationResult()
-        validate_object(obj._fsys, "", result)
+        validate_object(obj_fs, "", result)
         assert result.is_valid, result.errors
 
     def test_migration_revert_restores_original_inventory(self, tmp_path: Path):

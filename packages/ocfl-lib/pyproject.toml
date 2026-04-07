@@ -21,3 +21,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ocfl_lib"]
+
+[dependency-groups]
+dev = [
+    "mypy-boto3-s3>=1.42.80",
+]

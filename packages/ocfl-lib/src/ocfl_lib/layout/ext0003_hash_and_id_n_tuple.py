@@ -60,7 +60,7 @@ class HashAndIdNTupleLayout:
         return EXTENSION_NAME
 
     @property
-    def config(self) -> dict | None:
+    def config(self) -> dict:
         cfg = HashAndIdNTupleConfig(
             digest_algorithm=self._alg.ocfl_name,
             tuple_size=self._tuple_size,
