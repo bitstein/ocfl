@@ -86,6 +86,7 @@ class LocalFS:
     def write(self, name: str, data: BinaryIO) -> int:
         """Write data to a file atomically."""
         target = self._resolve(name)
+        target.parent.mkdir(parents=True, exist_ok=True)
         fd = None
         tmp_path = None
         try:

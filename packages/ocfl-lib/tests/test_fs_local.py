@@ -240,3 +240,12 @@ class TestFileTypeRejection:
 
         with pytest.raises(OcflFileTypeError, match="fifo"):
             list(fs.read_dir("."))
+
+
+def test_write_creates_parent_dirs(tmp_path):
+    from io import BytesIO
+
+    fsys = LocalFS(tmp_path)
+    n = fsys.write("a/b/c/file.txt", BytesIO(b"hi"))
+    assert n == 2
+    assert (tmp_path / "a/b/c/file.txt").read_bytes() == b"hi"
