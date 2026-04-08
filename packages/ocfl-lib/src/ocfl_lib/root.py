@@ -108,6 +108,12 @@ class StorageRoot:
 
         Resolves ID via layout, verifies object exists, removes object dir,
         and cleans empty parent directories up the hierarchy.
+
+        NOT atomic. If ``remove_all`` fails partway through (permission
+        error, network failure), the object directory may be left in a
+        partially-deleted state with no automatic recovery. Treat purge
+        failures as requiring manual investigation.
+
         Raises ObjectNotFound if missing, LayoutNotConfigured if no layout.
         """
         obj = self.get_object(object_id)

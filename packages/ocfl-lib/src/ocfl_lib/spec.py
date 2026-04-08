@@ -37,7 +37,28 @@ _VNUM_RE = re.compile(r"^v(0*[1-9]\d*)$")
 @functools.total_ordering
 @dataclass(frozen=True, order=False)
 class VNum:
-    """OCFL version number (e.g. v1, v002)."""
+    """OCFL version number (e.g. v1, v002).
+
+    Per the OCFL spec, a version number is a positive integer (E105).
+    Padding is a directory naming convention, not part of the version's
+    identity. ``VNum(1, 0)`` and ``VNum(1, 5)`` are the same version with
+    different display formatting:
+
+        >>> VNum(1, 0) == VNum(1, 5)
+        True
+        >>> hash(VNum(1, 0)) == hash(VNum(1, 5))
+        True
+        >>> str(VNum(1, 0)), str(VNum(1, 5))
+        ('v1', 'v00001')
+        >>> len({VNum(1, 0), VNum(1, 5)})
+        1
+
+    The spec requires that all versions within a single object share the
+    same padding (E012/E013); validation enforces this. Padding is
+    preserved as a presentation field for round-trip stability (E014):
+    parsing ``v001`` and stringifying yields ``v001``. Ordering compares
+    only ``number``.
+    """
 
     number: int
     padding: int = 0

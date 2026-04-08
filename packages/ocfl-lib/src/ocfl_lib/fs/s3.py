@@ -1,4 +1,10 @@
-"""S3 filesystem backend for OCFL."""
+"""S3 filesystem backend.
+
+This module is not part of the stable API. It is implemented and tested,
+but the public surface (``fs/__init__.py``) does not export it. Code that
+imports directly from this module accepts that the API may change without
+notice.
+"""
 
 import io
 import posixpath

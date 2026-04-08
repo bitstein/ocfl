@@ -80,7 +80,7 @@ class TestVNumParse:
 
 
 class TestVNumStr:
-    @pytest.mark.parametrize("s", ["v1", "v2", "v001", "v099", "v100"])
+    @pytest.mark.parametrize("s", ["v1", "v2", "v001", "v099", "v100", "v00042"])
     def test_round_trip(self, s: str):
         assert str(VNum.parse(s)) == s
 
