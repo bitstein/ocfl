@@ -1,6 +1,6 @@
 """Layout registry: maps extension names to factory functions."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -17,7 +17,7 @@ class LayoutRegistry:
     def register(self, name: str, factory: Callable[..., Layout]) -> None:
         self._factories[name] = factory
 
-    def get_layout(self, name: str, *, config: dict | None = None) -> Layout:
+    def get_layout(self, name: str, *, config: dict[str, Any] | None = None) -> Layout:
         try:
             factory = self._factories[name]
         except KeyError:

@@ -22,7 +22,9 @@ def read_layout_config(fsys: FS, layout_name: str) -> dict[str, Any]:
     return msgspec.json.decode(data)
 
 
-def write_layout_config(fsys: WriteFS, layout_name: str, config: dict) -> None:
+def write_layout_config(
+    fsys: WriteFS, layout_name: str, config: dict[str, Any]
+) -> None:
     """Write config dict to extensions/{layout_name}/config.json."""
     dir_path = f"{_EXTENSIONS_DIR}/{layout_name}"
     fsys.mkdir(dir_path)
