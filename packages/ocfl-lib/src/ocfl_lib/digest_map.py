@@ -72,10 +72,20 @@ def _rename_path(path: str, src: str, dst: str) -> str:
 
 
 def rename_paths(dm: DigestMap, src: str, dst: str) -> DigestMap:
-    """Replace path prefix src with dst (component-aware)."""
-    return {
+    """Replace path prefix src with dst (component-aware).
+
+    Raises ValueError if rename would produce duplicate paths.
+    """
+    result: DigestMap = {
         digest: [_rename_path(p, src, dst) for p in ps] for digest, ps in dm.items()
     }
+    seen: set[str] = set()
+    for ps in result.values():
+        for p in ps:
+            if p in seen:
+                raise ValueError(f"rename collision at path {p!r}")
+            seen.add(p)
+    return result
 
 
 def remove_path(dm: DigestMap, path: str) -> DigestMap:

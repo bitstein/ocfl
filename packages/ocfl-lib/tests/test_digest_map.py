@@ -153,6 +153,14 @@ class TestRenamePaths:
     def test_empty(self):
         assert rename_paths({}, "a", "b") == {}
 
+    def test_collision_within_call_raises(self):
+        import pytest
+
+        dm: DigestMap = {"abc": ["x/a.txt"], "def": ["y/a.txt"]}
+        # rename y -> x causes both to land at x/a.txt
+        with pytest.raises(ValueError, match="collision"):
+            rename_paths(dm, "y", "x")
+
 
 class TestRemovePath:
     def test_removes_path(self):
