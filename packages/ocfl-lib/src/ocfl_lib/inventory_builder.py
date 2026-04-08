@@ -115,7 +115,7 @@ class InventoryBuilder:
             vnum_str = str(vnum)
 
             # Add new content to manifest
-            for digest, logical_paths in state.items():
+            for digest, logical_paths in sorted(state.items()):
                 if digest not in existing_digests:
                     # Use first logical path for content path
                     logical = logical_paths[0]

@@ -49,6 +49,7 @@ def _migrate_algorithm(
     new_manifest: dict[str, list[str]] = {}
     for old_digest, content_paths in prev.manifest.items():
         new_manifest[old_to_new[old_digest]] = list(content_paths)
+    new_manifest = dict(sorted(new_manifest.items()))
 
     # Remap all version states
     new_versions: dict[str, VersionInfo] = {}
@@ -62,7 +63,7 @@ def _migrate_algorithm(
                 new_state[nd] = list(logical_paths)
         new_versions[vkey] = VersionInfo(
             created=vinfo.created,
-            state=new_state,
+            state=dict(sorted(new_state.items())),
             message=vinfo.message,
             user=vinfo.user,
         )
