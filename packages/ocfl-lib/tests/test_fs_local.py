@@ -249,3 +249,18 @@ def test_write_creates_parent_dirs(tmp_path):
     n = fsys.write("a/b/c/file.txt", BytesIO(b"hi"))
     assert n == 2
     assert (tmp_path / "a/b/c/file.txt").read_bytes() == b"hi"
+
+
+def test_write_sets_mode_0644(tmp_path):
+    import os
+    import stat
+    from io import BytesIO
+
+    old_umask = os.umask(0o077)
+    try:
+        fsys = LocalFS(tmp_path)
+        fsys.write("f.txt", BytesIO(b"x"))
+        mode = stat.S_IMODE((tmp_path / "f.txt").stat().st_mode)
+        assert mode == 0o644
+    finally:
+        os.umask(old_umask)

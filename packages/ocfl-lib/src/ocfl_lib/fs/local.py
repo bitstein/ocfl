@@ -97,6 +97,7 @@ class LocalFS:
                 total += len(chunk)
             os.close(fd)
             fd = None
+            os.chmod(tmp_path, 0o644)
             os.replace(tmp_path, target)
             return total
         except BaseException:
