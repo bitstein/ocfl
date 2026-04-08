@@ -350,3 +350,25 @@ class TestValidationFailures:
         b.build()
         with pytest.raises(ValueError, match="already"):
             b.build()
+
+
+class TestMixedCaseDedupe:
+    def test_mixed_case_digest_dedupes(self):
+        """Same digest in different case across versions reuses content path."""
+        state1: DigestMap = {"ABC": ["file.txt"]}
+        inv1 = (
+            InventoryBuilder()
+            .id("test")
+            .add_version(state1, created="2024-01-01T00:00:00Z")
+            .build()
+        )
+        assert "ABC" in inv1.manifest
+
+        state2: DigestMap = {"abc": ["file2.txt"]}
+        inv2 = (
+            InventoryBuilder(prev=inv1)
+            .add_version(state2, created="2024-02-01T00:00:00Z")
+            .build()
+        )
+        # Should reuse v1 manifest entry, no new content path
+        assert len(inv2.manifest) == 1

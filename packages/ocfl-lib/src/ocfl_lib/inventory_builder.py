@@ -102,8 +102,8 @@ class InventoryBuilder:
             versions = {}
             next_vnum = VNum.first()
 
-        # Build existing manifest path→digest for dedup
-        existing_digests = set(manifest.keys())
+        # Build existing manifest digest set for dedup (case-insensitive)
+        existing_digests = {d.lower() for d in manifest}
 
         # Collect fixity for new digests
         fixity: dict[str, dict[str, list[str]]] = {}
@@ -120,14 +120,14 @@ class InventoryBuilder:
 
             # Add new content to manifest
             for digest, logical_paths in sorted(state.items()):
-                if digest not in existing_digests:
+                if digest.lower() not in existing_digests:
                     # Use first logical path for content path
                     logical = logical_paths[0]
                     if self._content_path_func:
                         logical = self._content_path_func(logical)
                     content_path = f"{vnum_str}/{content_dir}/{logical}"
                     manifest[digest] = [content_path]
-                    existing_digests.add(digest)
+                    existing_digests.add(digest.lower())
 
                     # Query fixity for new digest
                     if self._fixity_source is not None:
