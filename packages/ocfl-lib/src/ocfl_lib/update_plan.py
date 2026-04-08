@@ -1,4 +1,21 @@
-"""UpdatePlan data structures, serialization, and step construction."""
+"""UpdatePlan data structures, serialization, and step construction.
+
+## Cancellation and recovery
+
+``ocfl_lib`` is a transactional library: ``Object.update`` auto-reverts on
+any ``Exception``, leaving the object directory in its pre-update state
+before re-raising. Same convention as SQLAlchemy, SQLite's ``with conn:``,
+and Django's ``atomic()``.
+
+``BaseException`` (including ``KeyboardInterrupt``, ``SystemExit``,
+``MemoryError``) propagates without cleanup. Callers that want to revert
+on Ctrl-C must use the explicit form (``new_update_plan`` + ``prepare_steps``
++ ``execute_plan`` + ``revert_plan``) and handle the interrupt themselves.
+The CLI does this in ``ocfl_cli/commands/stage.py:commit``.
+
+A process killed hard (SIGKILL, power loss, OOM) cannot be cleanly
+recovered: partial state sits on disk and requires manual cleanup.
+"""
 
 import base64
 import contextlib
@@ -8,7 +25,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import msgspec
 
 from ocfl_lib.digest import DigestAlgorithm
-from ocfl_lib.errors import RevertError
+from ocfl_lib.errors import RevertCompletedError, RevertError
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.inventory import StoredInventory
 from ocfl_lib.spec import Namaste, Spec, VNum
@@ -475,7 +492,13 @@ def revert_plan(plan: UpdatePlan) -> None:
     Calls each completed step's revert callable. On revert failure,
     sets step.revert_error and continues reverting remaining steps.
     Raises RevertError if any revert failed (after all reverts attempted).
+    Raises RevertCompletedError if every step is already completed
+    (refuses to undo a successful commit).
     """
+    if plan.steps and all(s.completed for s in plan.steps):
+        raise RevertCompletedError(
+            "refusing to revert: all plan steps completed successfully"
+        )
     failures: list[tuple[str, str]] = []
     for step in reversed(plan.steps):
         if not step.completed:

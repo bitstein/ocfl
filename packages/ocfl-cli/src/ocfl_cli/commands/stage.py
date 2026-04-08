@@ -10,6 +10,7 @@ from rich.text import Text
 from ocfl_cli import _style
 from ocfl_cli._common import err, open_root
 from ocfl_cli.staging import StagingStore
+from ocfl_lib.update_plan import execute_plan, prepare_steps, revert_plan
 
 if TYPE_CHECKING:
     from ocfl_lib.fs.protocols import FS
@@ -109,7 +110,7 @@ def new(
         if digest:
             try:
                 alg = DigestAlgorithm.from_ocfl_name(digest)
-            except KeyError, ValueError:
+            except (KeyError, ValueError):
                 err(f"unknown digest algorithm: {digest!r}")
                 raise typer.Exit(1) from None
 
@@ -506,20 +507,26 @@ def commit(
     if name:
         user = UserInfo(name=name, address=address)
 
+    obj = sr.get_object(object_id)
+    plan = obj.new_update_plan(
+        stage_obj,
+        id=object_id if not obj.exists else None,
+        spec=sr.spec if not obj.exists else None,
+        message=message,
+        user=user,
+        created=created,
+    )
+    prepare_steps(plan, fs, obj._path, content_source)
+
     try:
-        sr.commit(
-            fs,
-            object_id,
-            stage_obj,
-            message=message,
-            user=user,
-            created=created,
-        )
+        execute_plan(plan)
     except KeyboardInterrupt:
-        err("commit interrupted")
-        raise typer.Exit(1) from None
+        err("commit interrupted, reverting...")
+        revert_plan(plan)
+        raise typer.Exit(130) from None
     except Exception as exc:
         err(str(exc))
+        revert_plan(plan)
         raise typer.Exit(1) from None
 
     # Purge staging on success

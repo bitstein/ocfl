@@ -316,7 +316,7 @@ class Object:
 
         try:
             execute_plan(plan)
-        except BaseException as exc:
+        except Exception as exc:
             try:
                 revert_plan(plan)
             except RevertError as rev_exc:

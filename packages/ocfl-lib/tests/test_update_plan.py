@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ocfl_lib.digest import DigestAlgorithm
+from ocfl_lib.errors import RevertCompletedError
 from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.inventory import Inventory, StoredInventory, VersionInfo
 
@@ -25,6 +26,19 @@ from ocfl_lib.update_plan import (
     revert_plan,
     serialize,
 )
+
+
+def test_revert_plan_refuses_completed():
+    plan = UpdatePlan(
+        old_inv=None,  # type: ignore[arg-type]
+        new_inv=None,  # type: ignore[arg-type]
+        steps=[
+            PlanStep(name="a", completed=True),
+            PlanStep(name="b", completed=True),
+        ],
+    )
+    with pytest.raises(RevertCompletedError):
+        revert_plan(plan)
 
 
 def _make_stored_inventory(
@@ -663,8 +677,8 @@ class TestConcurrentFailureModes:
 
 
 class TestRevertPlan:
-    def test_revert_full_execution(self, tmp_path: Path):
-        """Reverting a fully executed plan should clean up everything."""
+    def test_revert_refuses_fully_completed_plan(self, tmp_path: Path):
+        """Reverting a fully-executed plan is refused (no undo of success)."""
         new_inv = _build_v1_inventory()
         plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
         fsys = LocalFS(tmp_path)
@@ -673,13 +687,11 @@ class TestRevertPlan:
         prepare_steps(plan, fsys, "obj1", source)
         execute_plan(plan)
 
-        # Object exists
+        with pytest.raises(RevertCompletedError):
+            revert_plan(plan)
+
+        # Object remains intact
         assert (tmp_path / "obj1").is_dir()
-
-        revert_plan(plan)
-
-        # Object completely removed (object-root revert does remove_all)
-        assert not (tmp_path / "obj1").exists()
 
     def test_revert_partial_execution(self, tmp_path: Path):
         """Reverting a partially executed plan cleans up completed steps."""
@@ -734,6 +746,8 @@ class TestRevertPlan:
             raise RuntimeError("cleanup failed")
 
         plan.steps[3].revert = _bad_revert
+        # Mark final step incomplete to bypass the all-completed guard
+        plan.steps[-1].completed = False
 
         with pytest.raises(RevertError) as exc_info:
             revert_plan(plan)
@@ -745,9 +759,8 @@ class TestRevertPlan:
         # Other steps were still reverted (object-root revert removed everything)
         assert not (tmp_path / "obj1").exists()
 
-    def test_revert_update_preserves_old_object(self, tmp_path: Path):
-        """Reverting v2 update should leave v1 intact."""
-        # Create v1
+    def test_revert_v2_partial_preserves_v1(self, tmp_path: Path):
+        """Partial v2 → revert leaves v1 intact (cleanup-after-failure)."""
         old_inv = _build_v1_inventory()
         plan1 = UpdatePlan(steps=[], new_inv=old_inv, old_inv=None)
         fsys = LocalFS(tmp_path)
@@ -755,27 +768,22 @@ class TestRevertPlan:
         prepare_steps(plan1, fsys, "obj1", source1)
         execute_plan(plan1)
 
-        # Prepare and execute v2
         new_inv = _build_v2_inventory(old_inv)
         plan2 = UpdatePlan(steps=[], new_inv=new_inv, old_inv=old_inv)
         source2 = _DictContentSource({"ddeeff": b"world"})
         prepare_steps(plan2, fsys, "obj1", source2)
         execute_plan(plan2)
 
-        # v2 exists
         assert (tmp_path / "obj1" / "v2").is_dir()
 
-        # Revert v2
+        # Mark one step incomplete to model interrupted execution
+        plan2.steps[-1].completed = False
         revert_plan(plan2)
 
-        # v2 dir removed but v1 still intact
         assert not (tmp_path / "obj1" / "v2").exists()
         assert (tmp_path / "obj1" / "v1" / "content" / "file.txt").is_file()
-        # Declaration file preserved (not deleted by revert)
         assert (tmp_path / "obj1" / "0=ocfl_object_1.1").is_file()
-        # Root inventory restored to v1
         assert (tmp_path / "obj1" / "inventory.json").read_bytes() == old_inv.raw_bytes
-        # Root sidecar restored
         assert (tmp_path / "obj1" / old_inv.sidecar_filename).is_file()
 
 

@@ -239,8 +239,12 @@ class TestObjectUpdate:
         # Object dir should be cleaned up (v1 revert removes all)
         assert not obj_dir.exists() or not any(obj_dir.iterdir())
 
-    def test_keyboard_interrupt_reverts_new_object(self, tmp_path: Path):
-        """KeyboardInterrupt during v1 write → revert → clean state."""
+    def test_keyboard_interrupt_propagates_without_revert(self, tmp_path: Path):
+        """KeyboardInterrupt propagates from update() without auto-revert.
+
+        Library treats BaseException as out-of-band: callers wanting clean
+        rollback on Ctrl-C must use the explicit plan/revert form.
+        """
         obj_dir = tmp_path / "obj"
         obj_dir.mkdir()
 
@@ -265,11 +269,12 @@ class TestObjectUpdate:
                 created="2024-01-01T00:00:00Z",
             )
 
-        # Object dir should be cleaned up (v1 revert removes all)
-        assert not obj_dir.exists() or not any(obj_dir.iterdir())
+    def test_keyboard_interrupt_v2_preserves_root_inventory(self, tmp_path: Path):
+        """KeyboardInterrupt during v2 → v1 root inventory still intact.
 
-    def test_keyboard_interrupt_preserves_prior_version(self, tmp_path: Path):
-        """KeyboardInterrupt during v2 write → v1 survives byte-for-byte."""
+        Root inventory swap is the final step; KI before then leaves v1's
+        root inventory untouched even though no auto-revert runs.
+        """
         src = _make_src_dir(tmp_path, {"file.txt": "v1-content"})
         obj_dir = tmp_path / "obj"
         obj_dir.mkdir()
@@ -287,15 +292,9 @@ class TestObjectUpdate:
             created="2024-01-01T00:00:00Z",
         )
 
-        # Snapshot v1 state: inventory bytes + all file paths + contents
         v1_inv_bytes = (obj_dir / "inventory.json").read_bytes()
         v1_sidecar_bytes = (obj_dir / "inventory.json.sha512").read_bytes()
-        v1_snapshot: dict[str, bytes] = {}
-        for p in sorted(obj_dir.rglob("*")):
-            if p.is_file():
-                v1_snapshot[str(p.relative_to(obj_dir))] = p.read_bytes()
 
-        # Attempt v2 with interrupting source
         class InterruptingContentSource:
             def get_content(self, digest: str) -> tuple:
                 raise KeyboardInterrupt
@@ -315,15 +314,8 @@ class TestObjectUpdate:
                 created="2024-01-02T00:00:00Z",
             )
 
-        # v1 must be intact, byte-for-byte
         assert (obj_dir / "inventory.json").read_bytes() == v1_inv_bytes
         assert (obj_dir / "inventory.json.sha512").read_bytes() == v1_sidecar_bytes
-        post = {
-            str(p.relative_to(obj_dir)): p.read_bytes()
-            for p in sorted(obj_dir.rglob("*"))
-            if p.is_file()
-        }
-        assert post == v1_snapshot
 
     def test_update_caches_new_inventory(self, tmp_path: Path):
         """After update(), inventory property reflects new version."""

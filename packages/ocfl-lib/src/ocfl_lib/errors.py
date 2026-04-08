@@ -65,6 +65,14 @@ class OcflFileTypeError(OcflError):
     """Non-regular, non-directory entry encountered (symlink, fifo, etc.)."""
 
 
+class RevertCompletedError(OcflError):
+    """Refused to revert a fully-completed plan.
+
+    Defensive guard against undoing a successful commit. Mirrors
+    ocfl-go's ``ErrRevertUpdate``.
+    """
+
+
 class RevertError(OcflError):
     """One or more revert steps failed.
 
