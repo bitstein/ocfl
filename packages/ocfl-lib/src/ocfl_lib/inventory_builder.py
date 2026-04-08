@@ -39,8 +39,8 @@ class InventoryBuilder:
         ] = []
         self._built = False
 
-    def id(self, id: str) -> Self:
-        self._id = id
+    def id(self, object_id: str) -> Self:
+        self._id = object_id
         return self
 
     def spec(self, spec: Spec) -> Self:
