@@ -21,6 +21,8 @@ from ocfl_lib.update_plan import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from ocfl_lib.fs.protocols import FS, WriteFS
     from ocfl_lib.stage import Stage
 
@@ -138,7 +140,7 @@ class Object:
     def head(self) -> VNum:
         return VNum.parse(self.inventory.inventory.head)
 
-    def versions(self) -> list[VNum]:
+    def versions(self) -> Sequence[VNum]:
         """Sorted list of all version numbers."""
         vnums = [VNum.parse(k) for k in self.inventory.inventory.versions]
         vnums.sort()
@@ -198,7 +200,7 @@ class Object:
         full_path = _join(self._path, cp)
         return self._fsys.open_file(full_path)
 
-    def diff_versions(self, v1: VNum, v2: VNum) -> list[DiffEntry]:
+    def diff_versions(self, v1: VNum, v2: VNum) -> Sequence[DiffEntry]:
         """Compute changes between two versions.
 
         Detects added, deleted, modified, and renamed files.
