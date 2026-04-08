@@ -94,6 +94,22 @@ class S3FS:
 
     # -- FS --
 
+    def exists(self, name: str) -> bool:
+        """Return True if an object or prefix exists at name."""
+        key = self._resolve(name)
+        try:
+            self._client.head_object(Bucket=self._bucket, Key=key)
+            return True
+        except ClientError as e:
+            if not _not_found(e):
+                raise
+        # Fall back: check for prefix listing
+        prefix = f"{key}/" if key else ""
+        resp = self._client.list_objects_v2(
+            Bucket=self._bucket, Prefix=prefix, MaxKeys=1
+        )
+        return resp.get("KeyCount", 0) > 0
+
     def open_file(self, name: str) -> BinaryIO:
         """Open a file for reading."""
         key = self._resolve(name)

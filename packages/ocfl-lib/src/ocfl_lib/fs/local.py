@@ -68,6 +68,10 @@ class LocalFS:
         """Open a file for reading."""
         return open(self._resolve(name), "rb")
 
+    def exists(self, name: str) -> bool:
+        """Return True if a file or directory exists at name."""
+        return self._resolve(name).exists()
+
     def read_dir(self, name: str) -> Iterator[FsEntry]:
         """List directory entries. Raises OcflFileTypeError on symlinks etc."""
         path = self._resolve(name)

@@ -23,6 +23,9 @@ class _DummyFS:
     def read_dir(self, name):
         raise NotImplementedError
 
+    def exists(self, name):
+        return False
+
 
 class _DummyContentSource:
     """Minimal ContentSource for testing."""

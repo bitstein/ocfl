@@ -264,3 +264,14 @@ def test_write_sets_mode_0644(tmp_path):
         assert mode == 0o644
     finally:
         os.umask(old_umask)
+
+
+def test_exists_local(tmp_path):
+    from io import BytesIO
+
+    fsys = LocalFS(tmp_path)
+    assert fsys.exists("nope") is False
+    fsys.write("a.txt", BytesIO(b"x"))
+    assert fsys.exists("a.txt") is True
+    (tmp_path / "d").mkdir()
+    assert fsys.exists("d") is True

@@ -80,6 +80,9 @@ class TestProtocolsRuntimeCheckable:
             def read_dir(self, name: str) -> Iterator[FsEntry]:
                 yield from ()
 
+            def exists(self, name: str) -> bool:
+                return False
+
         assert isinstance(MyFS(), FS)
 
     def test_write_fs_protocol(self):
@@ -89,6 +92,9 @@ class TestProtocolsRuntimeCheckable:
 
             def read_dir(self, name: str) -> Iterator[FsEntry]:
                 yield from ()
+
+            def exists(self, name: str) -> bool:
+                return False
 
             def write(self, name: str, data: BinaryIO) -> int:
                 return 0
@@ -112,6 +118,9 @@ class TestProtocolsRuntimeCheckable:
 
             def read_dir(self, name: str) -> Iterator[FsEntry]:
                 yield from ()
+
+            def exists(self, name: str) -> bool:
+                return False
 
             def write(self, name: str, data: BinaryIO) -> int:
                 return 0
@@ -138,6 +147,9 @@ class TestProtocolsRuntimeCheckable:
 
             def read_dir(self, name: str) -> Iterator[FsEntry]:
                 yield from ()
+
+            def exists(self, name: str) -> bool:
+                return False
 
             def walk_files(self, name: str) -> Iterator[FileRef]:
                 yield from ()

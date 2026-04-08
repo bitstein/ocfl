@@ -342,3 +342,16 @@ class TestPrefix:
         prefixed_fs.mkdir("newdir")
         resp = s3_client.list_objects_v2(Bucket=BUCKET, Prefix="myprefix/newdir/")
         assert resp.get("KeyCount", 0) == 0
+
+
+class TestExists:
+    def test_exists_object(self, fs):
+        fs.write("file.txt", BytesIO(b"hi"))
+        assert fs.exists("file.txt") is True
+
+    def test_exists_missing(self, fs):
+        assert fs.exists("nope.txt") is False
+
+    def test_exists_prefix(self, fs):
+        fs.write("d/sub.txt", BytesIO(b"hi"))
+        assert fs.exists("d") is True
