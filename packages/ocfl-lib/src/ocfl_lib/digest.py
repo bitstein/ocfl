@@ -120,15 +120,28 @@ def digest_files(
     *,
     max_workers: int | None = None,
 ) -> dict[Path, str]:
-    """Compute digests for multiple files in parallel."""
-    from concurrent.futures import ThreadPoolExecutor
+    """Compute digests for multiple files in parallel.
+
+    Collects all errors and raises an ExceptionGroup if any file fails.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     path_list = list(paths)
     if not path_list:
         return {}
+    results: dict[Path, str] = {}
+    errors: list[Exception] = []
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        digests = pool.map(lambda p: file_digest(p, alg), path_list)
-    return dict(zip(path_list, digests, strict=True))
+        futures = {pool.submit(file_digest, p, alg): p for p in path_list}
+        for fut in as_completed(futures):
+            p = futures[fut]
+            try:
+                results[p] = fut.result()
+            except Exception as exc:
+                errors.append(exc)
+    if errors:
+        raise ExceptionGroup("digest_files failures", errors)
+    return results
 
 
 def digest_files_multi(
