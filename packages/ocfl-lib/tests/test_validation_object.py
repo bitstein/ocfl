@@ -100,3 +100,12 @@ class TestWarnObjects:
             assert r.has_code(code), (
                 f"{name}: expected {code}, got {[w.code for w in r.warnings]}"
             )
+
+
+def test_spec_tuple_orders_numerically():
+    from ocfl_lib.validation.object import _spec_tuple
+
+    # Lex compare bug: "1.10" < "1.2"; numeric: 1.10 > 1.2
+    assert _spec_tuple("1.2") < _spec_tuple("1.10")
+    assert _spec_tuple("1.0") < _spec_tuple("1.1")
+    assert _spec_tuple("2.0") > _spec_tuple("1.10")

@@ -372,7 +372,7 @@ def _check_spec_regression(
     rtype = root_inv_data.get("type", "")
     vm = _SPEC_RE.match(vtype) if isinstance(vtype, str) else None
     rm = _SPEC_RE.match(rtype) if isinstance(rtype, str) else None
-    if vm and rm and vm.group(1) < rm.group(1):
+    if vm and rm and _spec_tuple(vm.group(1)) < _spec_tuple(rm.group(1)):
         result.error(
             "E103",
             where=vkey,
@@ -380,6 +380,11 @@ def _check_spec_regression(
             prev_version_dir="root",
             prev_spec_version=rm.group(1),
         )
+
+
+def _spec_tuple(version: str) -> tuple[int, int]:
+    major, _, minor = version.partition(".")
+    return (int(major), int(minor) if minor else 0)
 
 
 def _validate_sidecar(
