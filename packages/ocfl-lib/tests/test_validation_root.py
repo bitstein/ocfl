@@ -126,3 +126,17 @@ class TestRootSummary:
         summary = validate_root(fsys, "", r, validate_objects=False)
         assert summary.num_objects == 0
         assert summary.valid_objects == 0
+        assert summary.truncated is False
+
+    def test_truncated_flag(self, tmp_path: Path):
+        (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
+        # Create 3 invalid objects (just NAMASTE, no inventory)
+        for i in range(3):
+            d = tmp_path / f"obj{i}"
+            d.mkdir()
+            (d / "0=ocfl_object_1.1").write_text("ocfl_object_1.1\n")
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        summary = validate_root(fsys, "", r, max_errors=2)
+        assert summary.truncated is True
+        assert len(summary.object_errors) == 2

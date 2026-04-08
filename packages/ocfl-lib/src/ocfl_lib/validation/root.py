@@ -33,6 +33,7 @@ class RootValidationSummary:
     num_objects: int = 0
     valid_objects: int = 0
     object_errors: list[tuple[str, Any]] = field(default_factory=list)
+    truncated: bool = False
 
 
 def validate_root(
@@ -152,6 +153,7 @@ def _walk_and_validate(
         else:
             summary.object_errors.append((obj_path, obj_result))
             if len(summary.object_errors) >= max_errors:
+                summary.truncated = True
                 break
 
 
