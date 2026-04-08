@@ -154,6 +154,37 @@ class TestVersionBlock:
         )
         assert r.has_code("E049a")
 
+    def test_created_invalid_iso_rejected(self):
+        r = ValidationResult()
+        validate_inventory(
+            _inv(
+                versions={
+                    "v1": {
+                        "created": "not-a-date",
+                        "state": {_D1: ["file.txt"]},
+                    },
+                }
+            ),
+            r,
+        )
+        assert r.has_code("E049b")
+
+    def test_created_with_offset_tz_accepted(self):
+        r = ValidationResult()
+        validate_inventory(
+            _inv(
+                versions={
+                    "v1": {
+                        "created": "2024-01-01T00:00:00+02:00",
+                        "state": {_D1: ["file.txt"]},
+                    },
+                }
+            ),
+            r,
+        )
+        assert not r.has_code("E049a")
+        assert not r.has_code("E049b")
+
     def test_missing_state(self):
         r = ValidationResult()
         validate_inventory(

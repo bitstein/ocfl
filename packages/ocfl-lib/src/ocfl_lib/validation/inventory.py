@@ -408,12 +408,19 @@ def _validate_created(
     where: str,
     version: str,
 ) -> None:
-    """Validate created datetime string."""
-    # Check for timezone
-    if not (created.endswith("Z") or "+" in created[10:] or created[-6:-5] == "-"):
+    """Validate created datetime string per OCFL: ISO 8601, with tz, ≥seconds."""
+    from datetime import datetime
+
+    try:
+        dt = datetime.fromisoformat(created)
+    except ValueError:
+        result.error("E049b", where=where, version=version)
+        return
+
+    if dt.tzinfo is None:
         result.error("E049a", where=where, version=version)
 
-    # Check granularity to seconds (has T and at least HH:MM:SS)
+    # Granularity to seconds: must contain T and HH:MM:SS
     if "T" not in created or len(created) < 19:
         result.error("E049b", where=where, version=version)
 
