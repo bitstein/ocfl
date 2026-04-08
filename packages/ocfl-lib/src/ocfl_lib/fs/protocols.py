@@ -3,16 +3,21 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, BinaryIO, Protocol, runtime_checkable
 
+from ocfl_lib.errors import OcflFileTypeError
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
-class OcflFileTypeError(ValueError):
-    """Raised when a non-regular, non-directory entry is encountered.
-
-    Archives must contain only regular files and directories. Symlinks,
-    FIFOs, sockets, and device nodes are rejected.
-    """
+__all__ = [
+    "FS",
+    "CopyFS",
+    "FileRef",
+    "FileWalker",
+    "FsEntry",
+    "OcflFileTypeError",
+    "WriteFS",
+]
 
 
 @dataclass(frozen=True, slots=True)

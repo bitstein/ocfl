@@ -343,9 +343,11 @@ class TestVersionStage:
         assert stage.state == obj.version_state(obj.head)
 
     def test_version_stage_invalid_version(self, good_objects_1_1: Path):
-        """version_stage raises KeyError for nonexistent version."""
+        """version_stage raises VersionNotFound for nonexistent version."""
+        from ocfl_lib.errors import VersionNotFound
+
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
-        with pytest.raises(KeyError):
+        with pytest.raises(VersionNotFound):
             obj.version_stage(VNum(99))

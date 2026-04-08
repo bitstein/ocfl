@@ -9,7 +9,7 @@ from typing import Any
 
 import typer
 
-from ocfl_lib import LocalFS, StorageRoot, VNum
+from ocfl_lib import LocalFS, OcflError, StorageRoot, VNum
 
 
 def resolve_root(root: str | None) -> str:
@@ -41,7 +41,7 @@ def open_root(root: str | None) -> tuple[StorageRoot, Any]:
         fs = _make_fs(location)
         sr = StorageRoot(fs)
         return sr, fs
-    except (ValueError, OSError) as e:
+    except (OcflError, OSError) as e:
         err(str(e))
         raise typer.Exit(1) from None
 

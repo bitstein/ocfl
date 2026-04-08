@@ -9,6 +9,11 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
+from ocfl_lib.errors import (
+    LayoutNotConfigured,
+    MultipleRootDeclarations,
+    NotAnOcflRoot,
+)
 from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.object import Object
 from ocfl_lib.root import StorageRoot
@@ -104,14 +109,14 @@ class TestStorageRootOpen:
 
     def test_no_namaste_raises(self, tmp_path: Path):
         fsys = LocalFS(tmp_path)
-        with pytest.raises(ValueError, match="no OCFL root declaration"):
+        with pytest.raises(NotAnOcflRoot, match="no OCFL root declaration"):
             StorageRoot(fsys)
 
     def test_multiple_namaste_raises(self, tmp_path: Path):
         (tmp_path / "0=ocfl_1.0").write_text("ocfl_1.0\n")
         (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
         fsys = LocalFS(tmp_path)
-        with pytest.raises(ValueError, match="multiple"):
+        with pytest.raises(MultipleRootDeclarations, match="multiple"):
             StorageRoot(fsys)
 
 
@@ -153,7 +158,7 @@ class TestStorageRootObjectPath:
         _make_root(tmp_path)
         fsys = LocalFS(tmp_path)
         root = StorageRoot(fsys)
-        with pytest.raises(ValueError, match="no layout"):
+        with pytest.raises(LayoutNotConfigured, match="no layout"):
             root.object_path("some-id")
 
 
@@ -174,7 +179,7 @@ class TestStorageRootGetObject:
         _make_root(tmp_path)
         fsys = LocalFS(tmp_path)
         root = StorageRoot(fsys)
-        with pytest.raises(ValueError, match="no layout"):
+        with pytest.raises(LayoutNotConfigured, match="no layout"):
             root.get_object("some-id")
 
 

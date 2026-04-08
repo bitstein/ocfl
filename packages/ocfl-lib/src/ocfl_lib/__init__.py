@@ -2,6 +2,18 @@
 
 from ocfl_lib.digest import DigestAlgorithm, bytes_digest, file_digest
 from ocfl_lib.digest_map import DigestMap, PathMap
+from ocfl_lib.errors import (
+    InventorySidecarMismatch,
+    LayoutNotConfigured,
+    MultipleRootDeclarations,
+    NotAnOcflRoot,
+    ObjectNotFound,
+    OcflError,
+    OcflFileTypeError,
+    OcflNotFoundError,
+    RevertError,
+    VersionNotFound,
+)
 from ocfl_lib.fs import FS, CopyFS, FileWalker, LocalFS, WriteFS
 from ocfl_lib.inventory import Inventory, StoredInventory, UserInfo, VersionInfo
 from ocfl_lib.inventory_builder import InventoryBuilder
@@ -25,11 +37,20 @@ __all__ = [
     "FixitySource",
     "Inventory",
     "InventoryBuilder",
+    "InventorySidecarMismatch",
     "Layout",
+    "LayoutNotConfigured",
     "LocalFS",
+    "MultipleRootDeclarations",
     "Namaste",
+    "NotAnOcflRoot",
     "Object",
+    "ObjectNotFound",
+    "OcflError",
+    "OcflFileTypeError",
+    "OcflNotFoundError",
     "PathMap",
+    "RevertError",
     "Spec",
     "Stage",
     "StorageRoot",
@@ -39,6 +60,7 @@ __all__ = [
     "VNum",
     "ValidationResult",
     "VersionInfo",
+    "VersionNotFound",
     "WriteFS",
     "bytes_digest",
     "execute_plan",

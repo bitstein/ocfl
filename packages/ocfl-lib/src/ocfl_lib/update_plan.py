@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import msgspec
 
 from ocfl_lib.digest import DigestAlgorithm
+from ocfl_lib.errors import RevertError
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.inventory import StoredInventory
 from ocfl_lib.spec import Namaste, Spec, VNum
@@ -17,18 +18,17 @@ if TYPE_CHECKING:
 
     from ocfl_lib.fs.protocols import FS, WriteFS
 
-
-class RevertError(Exception):
-    """One or more revert steps failed.
-
-    Attribute `failures` is a list of (step_name, error_message) tuples.
-    Raised by revert_plan when any completed step's revert callable raises.
-    """
-
-    def __init__(self, failures: list[tuple[str, str]]) -> None:
-        self.failures = failures
-        detail = "; ".join(f"{name}: {err}" for name, err in failures)
-        super().__init__(f"revert failed for {len(failures)} step(s): {detail}")
+__all__ = [
+    "ContentSource",
+    "PlanStep",
+    "RevertError",
+    "UpdatePlan",
+    "deserialize",
+    "execute_plan",
+    "prepare_steps",
+    "revert_plan",
+    "serialize",
+]
 
 
 @runtime_checkable
@@ -488,4 +488,4 @@ def revert_plan(plan: UpdatePlan) -> None:
             step.revert_error = str(exc)
             failures.append((step.name, str(exc)))
     if failures:
-        raise RevertError(failures)
+        raise RevertError(tuple(failures))

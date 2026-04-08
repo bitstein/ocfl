@@ -7,6 +7,7 @@ from rich.text import Text
 
 from ocfl_cli import _style
 from ocfl_cli._common import err, open_root, output_json
+from ocfl_lib import ObjectNotFound, OcflError
 
 
 def log(
@@ -26,8 +27,8 @@ def log(
     try:
         obj = root.get_object(object_id)
         if not obj.exists:
-            raise ValueError(f"object {object_id!r} not found")
-    except ValueError as e:
+            raise ObjectNotFound(object_id)
+    except OcflError as e:
         err(str(e))
         raise typer.Exit(1) from None
 

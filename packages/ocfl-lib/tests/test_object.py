@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ocfl_lib.errors import InventorySidecarMismatch, VersionNotFound
 from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.inventory import VersionInfo
 from ocfl_lib.object import DiffEntry, Object
@@ -116,7 +117,7 @@ class TestObjectReadExisting:
         (obj_dir / "inventory.json.sha512").write_text("bad_digest inventory.json\n")
         fsys = LocalFS(obj_dir)
         obj = Object(fsys, "")
-        with pytest.raises(ValueError, match="sidecar"):
+        with pytest.raises(InventorySidecarMismatch, match="sidecar"):
             _ = obj.inventory
 
     @pytest.mark.parametrize(
@@ -180,7 +181,7 @@ class TestVersionContentAccess:
         obj_path = good_objects_1_1 / "minimal_one_version_one_file"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
-        with pytest.raises(KeyError):
+        with pytest.raises(VersionNotFound):
             obj.version_info(VNum(99))
 
     def test_content_path(self, good_objects_1_1: Path):

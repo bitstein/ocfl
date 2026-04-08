@@ -6,7 +6,7 @@ import typer
 
 from ocfl_cli import _style
 from ocfl_cli._common import _make_fs, err, open_root, output_json, resolve_root
-from ocfl_lib import ValidationResult, validate_object, validate_root
+from ocfl_lib import OcflError, ValidationResult, validate_object, validate_root
 
 
 def validate(
@@ -33,7 +33,7 @@ def _validate_root(ctx: typer.Context, check_digests: bool, json_mode: bool) -> 
     path = resolve_root(ctx.obj.get("root"))
     try:
         fs = _make_fs(path)
-    except (ValueError, OSError) as e:
+    except (OcflError, OSError) as e:
         _fail(str(e), json_mode)
 
     result = ValidationResult()
@@ -53,7 +53,7 @@ def _validate_object(
 
     try:
         obj_path = root.object_path(object_id)
-    except ValueError as e:
+    except OcflError as e:
         _fail(str(e), json_mode)
 
     result = ValidationResult()

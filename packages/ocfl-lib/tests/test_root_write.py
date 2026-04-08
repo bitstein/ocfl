@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ocfl_lib.digest import DigestAlgorithm
+from ocfl_lib.errors import LayoutNotConfigured
 from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.inventory import UserInfo
 from ocfl_lib.layout import FlatDirectLayout, HashedNTupleLayout
@@ -200,7 +201,7 @@ class TestStorageRootCommit:
         src = _make_src(tmp_path, {"file.txt": "x"})
         stage = stage_dir(LocalFS(src.parent), "src", DigestAlgorithm.SHA512)
 
-        with pytest.raises(ValueError, match="no layout"):
+        with pytest.raises(LayoutNotConfigured, match="no layout"):
             root.commit(fsys, "obj", stage, created="2024-01-01T00:00:00Z")
 
     def test_commit_defaults_spec_to_root(self, tmp_path: Path):

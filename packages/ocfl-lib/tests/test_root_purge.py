@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ocfl_lib.digest import DigestAlgorithm
+from ocfl_lib.errors import LayoutNotConfigured, ObjectNotFound
 from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.layout import FlatDirectLayout, HashedNTupleLayout
 from ocfl_lib.root import StorageRoot
@@ -76,12 +77,12 @@ class TestStorageRootPurge:
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(ObjectNotFound, match="not found"):
             root.purge(fsys, "no-such-object")
 
     def test_purge_no_layout_raises(self, tmp_path: Path):
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys)
 
-        with pytest.raises(ValueError, match="no layout"):
+        with pytest.raises(LayoutNotConfigured, match="no layout"):
             root.purge(fsys, "obj-a")

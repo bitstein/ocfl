@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, BinaryIO, Literal
 
 from ocfl_lib.digest import DigestAlgorithm, stream_digest
 from ocfl_lib.digest_map import DigestMap, to_path_map
+from ocfl_lib.errors import InventorySidecarMismatch, VersionNotFound
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.inventory import Inventory, StoredInventory, UserInfo, VersionInfo
 from ocfl_lib.inventory_builder import InventoryBuilder
@@ -147,11 +148,11 @@ class Object:
         return self.version_info(v).state
 
     def version_info(self, v: VNum) -> VersionInfo:
-        """Metadata for a specific version. Raises KeyError if not found."""
+        """Metadata for a specific version. Raises VersionNotFound if absent."""
         vkey = str(v)
         versions = self.inventory.inventory.versions
         if vkey not in versions:
-            raise KeyError(f"version {vkey} not found")
+            raise VersionNotFound(vkey)
         return versions[vkey]
 
     def version_stage(self, v: VNum) -> Stage:
@@ -418,9 +419,10 @@ class Object:
 
         stored = StoredInventory.from_bytes(inv_bytes, alg)
         if stored.digest != expected_digest:
-            raise ValueError(
-                f"inventory sidecar digest mismatch in {sidecar_path}: "
-                f"expected {expected_digest[:16]}..., got {stored.digest[:16]}..."
+            raise InventorySidecarMismatch(
+                path=sidecar_path,
+                expected=expected_digest,
+                actual=stored.digest,
             )
 
         return stored

@@ -5,6 +5,12 @@ from typing import TYPE_CHECKING
 
 import msgspec
 
+from ocfl_lib.errors import (
+    LayoutNotConfigured,
+    MultipleRootDeclarations,
+    NotAnOcflRoot,
+    ObjectNotFound,
+)
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.layout import get_layout
 from ocfl_lib.object import Object
@@ -82,16 +88,16 @@ class StorageRoot:
     def object_path(self, object_id: str) -> str:
         """Resolve an object ID to its storage path relative to root.
 
-        Raises ValueError if no layout is configured.
+        Raises LayoutNotConfigured if no layout is configured.
         """
         if self._layout is None:
-            raise ValueError("no layout configured")
+            raise LayoutNotConfigured
         return self._layout.resolve(object_id)
 
     def get_object(self, object_id: str) -> Object:
         """Get an Object by ID using the configured layout.
 
-        Raises ValueError if no layout is configured.
+        Raises LayoutNotConfigured if no layout is configured.
         """
         obj_path = self.object_path(object_id)
         full_path = _join(self._path, obj_path)
@@ -102,11 +108,11 @@ class StorageRoot:
 
         Resolves ID via layout, verifies object exists, removes object dir,
         and cleans empty parent directories up the hierarchy.
-        Raises ValueError if object not found or no layout configured.
+        Raises ObjectNotFound if missing, LayoutNotConfigured if no layout.
         """
         obj = self.get_object(object_id)
         if not obj.exists:
-            raise ValueError(f"object {object_id!r} not found")
+            raise ObjectNotFound(object_id)
 
         obj_path = self.object_path(object_id)
         full_path = _join(self._path, obj_path)
@@ -139,7 +145,7 @@ class StorageRoot:
 
         Resolves id to path via layout, then delegates to Object.update().
         For new objects, spec defaults to root's spec.
-        Raises ValueError if no layout is configured.
+        Raises LayoutNotConfigured if no layout is configured.
         """
         obj_path = self.object_path(id)
         full_path = _join(self._path, obj_path)
@@ -199,7 +205,7 @@ class StorageRoot:
         try:
             entries = list(self._fsys.read_dir(self._path))
         except OSError as e:
-            raise ValueError("no OCFL root declaration found") from e
+            raise NotAnOcflRoot("no OCFL root declaration found") from e
 
         decls = []
         for entry in entries:
@@ -208,10 +214,9 @@ class StorageRoot:
                 decls.append(n)
 
         if not decls:
-            raise ValueError("no OCFL root declaration found")
+            raise NotAnOcflRoot("no OCFL root declaration found")
         if len(decls) > 1:
-            names = ", ".join(d.filename for d in decls)
-            raise ValueError(f"multiple OCFL root declarations: {names}")
+            raise MultipleRootDeclarations([d.filename for d in decls])
         return decls[0].spec
 
     def _load_layout(self) -> Layout | None:
