@@ -72,14 +72,14 @@ class StoredInventory:
     digest_algorithm: DigestAlgorithm
 
     @classmethod
-    def from_bytes(cls, data: bytes, alg: DigestAlgorithm) -> "StoredInventory":
+    def from_bytes(cls, data: bytes, alg: DigestAlgorithm) -> StoredInventory:
         """Decode inventory from raw JSON bytes, preserving exact bytes."""
         inv = msgspec.json.decode(data, type=Inventory)
         digest = bytes_digest(data, alg)
         return cls(inventory=inv, raw_bytes=data, digest=digest, digest_algorithm=alg)
 
     @classmethod
-    def from_inventory(cls, inv: Inventory, alg: DigestAlgorithm) -> "StoredInventory":
+    def from_inventory(cls, inv: Inventory, alg: DigestAlgorithm) -> StoredInventory:
         """Encode inventory to canonical compact JSON bytes."""
         raw = _encode_inventory(inv)
         digest = bytes_digest(raw, alg)

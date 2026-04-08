@@ -169,27 +169,21 @@ class TestManifestTraversalGaps:
         # Characterization: backslash is a valid filename char on POSIX,
         # not a path separator. Accepted as part of segment.
         r = ValidationResult()
-        validate_inventory(
-            _inv_with_manifest({_D1: ["v1/content/foo\\bar"]}), r
-        )
+        validate_inventory(_inv_with_manifest({_D1: ["v1/content/foo\\bar"]}), r)
         assert not r.has_code("E099")
         assert not r.has_code("E100")
 
     def test_url_encoded_dotdot_treated_as_literal(self):
         # Characterization: %2e%2e is a literal segment, not decoded.
         r = ValidationResult()
-        validate_inventory(
-            _inv_with_manifest({_D1: ["v1/content/%2e%2e/file.txt"]}), r
-        )
+        validate_inventory(_inv_with_manifest({_D1: ["v1/content/%2e%2e/file.txt"]}), r)
         assert not r.has_code("E099")
 
 
 class TestManifestNullBytes:
     def test_null_byte_in_manifest_path(self):
         r = ValidationResult()
-        validate_inventory(
-            _inv_with_manifest({_D1: ["v1/content/foo\x00bar"]}), r
-        )
+        validate_inventory(_inv_with_manifest({_D1: ["v1/content/foo\x00bar"]}), r)
         assert r.has_code("L001")
 
     def test_null_byte_in_logical_state_path(self):
@@ -201,9 +195,7 @@ class TestManifestNullBytes:
             },
         }
         validate_inventory(
-            _inv_with_manifest(
-                {_D1: ["v1/content/file.txt"]}, versions=versions
-            ),
+            _inv_with_manifest({_D1: ["v1/content/file.txt"]}, versions=versions),
             r,
         )
         assert r.has_code("L001")
@@ -227,9 +219,7 @@ class TestAbsurdLengthCaps:
     def test_manifest_path_over_4kb(self):
         r = ValidationResult()
         long_seg = "x" * 5000
-        validate_inventory(
-            _inv_with_manifest({_D1: [f"v1/content/{long_seg}"]}), r
-        )
+        validate_inventory(_inv_with_manifest({_D1: [f"v1/content/{long_seg}"]}), r)
         assert r.has_code("L002")
 
     def test_logical_path_over_4kb(self):
@@ -242,9 +232,7 @@ class TestAbsurdLengthCaps:
             },
         }
         validate_inventory(
-            _inv_with_manifest(
-                {_D1: ["v1/content/file.txt"]}, versions=versions
-            ),
+            _inv_with_manifest({_D1: ["v1/content/file.txt"]}, versions=versions),
             r,
         )
         assert r.has_code("L002")
@@ -259,9 +247,7 @@ class TestAbsurdLengthCaps:
             },
         }
         validate_inventory(
-            _inv_with_manifest(
-                {_D1: ["v1/content/file.txt"]}, versions=versions
-            ),
+            _inv_with_manifest({_D1: ["v1/content/file.txt"]}, versions=versions),
             r,
         )
         assert r.has_code("L002")
@@ -276,9 +262,7 @@ class TestAbsurdLengthCaps:
             },
         }
         validate_inventory(
-            _inv_with_manifest(
-                {_D1: ["v1/content/file.txt"]}, versions=versions
-            ),
+            _inv_with_manifest({_D1: ["v1/content/file.txt"]}, versions=versions),
             r,
         )
         assert r.has_code("L002")

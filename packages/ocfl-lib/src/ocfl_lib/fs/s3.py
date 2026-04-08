@@ -180,9 +180,7 @@ class S3FS:
         for search_prefix in (key, prefix):
             if not search_prefix:
                 continue
-            for page in paginator.paginate(
-                Bucket=self._bucket, Prefix=search_prefix
-            ):
+            for page in paginator.paginate(Bucket=self._bucket, Prefix=search_prefix):
                 for obj in page.get("Contents", ()):
                     to_delete.append({"Key": obj["Key"]})
 
@@ -223,9 +221,7 @@ class S3FS:
             )
         except ClientError as e:
             if _not_found(e):
-                raise FileNotFoundError(
-                    f"s3://{self._bucket}/{src_key}"
-                ) from e
+                raise FileNotFoundError(f"s3://{self._bucket}/{src_key}") from e
             raise
         resp = self._client.head_object(Bucket=self._bucket, Key=dst_key)
         return resp["ContentLength"]

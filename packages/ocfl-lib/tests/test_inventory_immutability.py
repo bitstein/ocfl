@@ -24,25 +24,20 @@ def _inv() -> Inventory:
 
 def test_inventory_field_reassign_blocked():
     inv = _inv()
-    with pytest.raises(AttributeError):
-        inv.head = "v2"
-    with pytest.raises(AttributeError):
-        inv.manifest = {}
-    with pytest.raises(AttributeError):
-        inv.versions = {}
+    for field, value in [("head", "v2"), ("manifest", {}), ("versions", {})]:
+        with pytest.raises(AttributeError):
+            setattr(inv, field, value)
 
 
 def test_version_info_field_reassign_blocked():
     vi = VersionInfo(created="2024-01-01T00:00:00Z", state={})
-    with pytest.raises(AttributeError):
-        vi.created = "x"
-    with pytest.raises(AttributeError):
-        vi.state = {}
+    for field, value in [("created", "x"), ("state", {})]:
+        with pytest.raises(AttributeError):
+            setattr(vi, field, value)
 
 
 def test_user_info_field_reassign_blocked():
     u = UserInfo(name="alice")
-    with pytest.raises(AttributeError):
-        u.name = "bob"
-    with pytest.raises(AttributeError):
-        u.address = "x"
+    for field, value in [("name", "bob"), ("address", "x")]:
+        with pytest.raises(AttributeError):
+            setattr(u, field, value)

@@ -89,17 +89,11 @@ def _output_result(result: ValidationResult, json_mode: bool) -> None:
         for e in result.errors:
             err(f"[{e.code}] {e.message}")
         for w in result.warnings:
-            _style.echo(
-                _style.warning(f"Warning: [{w.code}] {w.message}"), err=True
-            )
+            _style.echo(_style.warning(f"Warning: [{w.code}] {w.message}"), err=True)
         if result.is_valid:
             _style.echo(
                 _style.valid(
                     "Valid"
-                    + (
-                        f" ({result.num_warnings} warnings)"
-                        if result.warnings
-                        else ""
-                    )
+                    + (f" ({result.num_warnings} warnings)" if result.warnings else "")
                 )
             )

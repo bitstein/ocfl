@@ -21,12 +21,12 @@ class ValidationResult:
         self.errors: list[ValidationError] = []
         self.warnings: list[ValidationError] = []
 
-    def error(self, code: str, **params: str) -> None:
+    def error(self, code: str, **params: object) -> None:
         vc = get_code(code)
         msg = vc.description.format(**params) if params else vc.description
         self.errors.append(ValidationError(code=code, message=msg, is_warning=False))
 
-    def warning(self, code: str, **params: str) -> None:
+    def warning(self, code: str, **params: object) -> None:
         vc = get_code(code)
         msg = vc.description.format(**params) if params else vc.description
         self.warnings.append(ValidationError(code=code, message=msg, is_warning=True))

@@ -102,9 +102,7 @@ class TestRoundTrip:
         assert "Valid" in result.stdout
 
     def test_validate_object(self, runner: CliRunner, s3_storage_root):
-        result = runner.invoke(
-            app, ["--root", s3_storage_root, "validate", "obj:test"]
-        )
+        result = runner.invoke(app, ["--root", s3_storage_root, "validate", "obj:test"])
         assert result.exit_code == 0, result.output
         assert "Valid" in result.stdout
 

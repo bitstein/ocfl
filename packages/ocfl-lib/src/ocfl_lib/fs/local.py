@@ -40,6 +40,7 @@ def _check_entry_type(entry: os.DirEntry[str]) -> tuple[bool, bool]:
         )
     return is_dir, is_file
 
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -77,9 +78,7 @@ class LocalFS:
                     name=entry.name,
                     is_dir=is_dir,
                     is_file=is_file,
-                    size=entry.stat(follow_symlinks=False).st_size
-                    if is_file
-                    else None,
+                    size=entry.stat(follow_symlinks=False).st_size if is_file else None,
                 )
 
     # -- WriteFS --

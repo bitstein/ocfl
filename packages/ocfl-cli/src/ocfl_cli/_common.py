@@ -66,4 +66,5 @@ def output_json(data: Any) -> None:
 def err(msg: str) -> None:
     """Print error message to stderr."""
     from ocfl_cli import _style
+
     _style.echo(_style.error(f"Error: {msg}"), err=True)

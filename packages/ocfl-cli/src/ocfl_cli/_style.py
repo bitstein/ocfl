@@ -10,19 +10,19 @@ from rich.console import Console
 from rich.text import Text
 
 _STYLES: dict[str, str] = {
-    "added":    "bold green",
-    "deleted":  "bold red",
+    "added": "bold green",
+    "deleted": "bold red",
     "modified": "bold yellow",
-    "renamed":  "bold cyan",
-    "error":    "bold red",
-    "warning":  "yellow",
-    "valid":    "bold green",
-    "invalid":  "bold red",
-    "dim":      "dim",
-    "key":      "bold",
-    "version":  "bold cyan",
-    "digest":   "dim",
-    "date":     "yellow",
+    "renamed": "bold cyan",
+    "error": "bold red",
+    "warning": "yellow",
+    "valid": "bold green",
+    "invalid": "bold red",
+    "dim": "dim",
+    "key": "bold",
+    "version": "bold cyan",
+    "digest": "dim",
+    "date": "yellow",
 }
 
 
@@ -34,7 +34,7 @@ def _should_color(stream: Any) -> bool:
         return True
     try:
         return stream.isatty()
-    except (AttributeError, ValueError):
+    except AttributeError, ValueError:
         return False
 
 
@@ -74,15 +74,49 @@ def echo(text: str | Text, *, err: bool = False) -> None:
 
 
 # Convenience helpers for high-frequency call sites.
-def added(text: str) -> Text:    return style("added", text)
-def deleted(text: str) -> Text:  return style("deleted", text)
-def modified(text: str) -> Text: return style("modified", text)
-def renamed(text: str) -> Text:  return style("renamed", text)
-def error(text: str) -> Text:    return style("error", text)
-def warning(text: str) -> Text:  return style("warning", text)
-def valid(text: str) -> Text:    return style("valid", text)
-def dim(text: str) -> Text:      return style("dim", text)
-def key(text: str) -> Text:      return style("key", text)
-def version(text: str) -> Text:  return style("version", text)
-def digest(text: str) -> Text:   return style("digest", text)
-def date(text: str) -> Text:     return style("date", text)
+def added(text: str) -> Text:
+    return style("added", text)
+
+
+def deleted(text: str) -> Text:
+    return style("deleted", text)
+
+
+def modified(text: str) -> Text:
+    return style("modified", text)
+
+
+def renamed(text: str) -> Text:
+    return style("renamed", text)
+
+
+def error(text: str) -> Text:
+    return style("error", text)
+
+
+def warning(text: str) -> Text:
+    return style("warning", text)
+
+
+def valid(text: str) -> Text:
+    return style("valid", text)
+
+
+def dim(text: str) -> Text:
+    return style("dim", text)
+
+
+def key(text: str) -> Text:
+    return style("key", text)
+
+
+def version(text: str) -> Text:
+    return style("version", text)
+
+
+def digest(text: str) -> Text:
+    return style("digest", text)
+
+
+def date(text: str) -> Text:
+    return style("date", text)

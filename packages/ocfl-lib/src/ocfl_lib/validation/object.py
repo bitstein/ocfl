@@ -449,7 +449,7 @@ def _verify_digests(
                         content_path=content_path,
                         content_digest=actual,
                     )
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 pass
 
 
@@ -488,7 +488,7 @@ def _verify_fixity_digests(
                             content_path=content_path,
                             content_digest=actual,
                         )
-                except (OSError, ValueError):
+                except OSError, ValueError:
                     pass
 
 

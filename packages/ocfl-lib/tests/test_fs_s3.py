@@ -99,9 +99,7 @@ class TestReadDir:
         from ocfl_lib.fs.s3 import S3FS
 
         for i in range(1050):
-            s3_client.put_object(
-                Bucket=BUCKET, Key=f"many/{i:04d}.txt", Body=b"x"
-            )
+            s3_client.put_object(Bucket=BUCKET, Key=f"many/{i:04d}.txt", Body=b"x")
         s3fs = S3FS(BUCKET, client=s3_client)
         entries = list(s3fs.read_dir("many"))
         file_entries = [e for e in entries if e.is_file]
@@ -123,9 +121,7 @@ class TestWrite:
     def test_write_nested(self, fs: S3FS, s3_client: S3Client):
         n = fs.write("newdir/f.txt", BytesIO(b"data"))
         assert n == 4
-        body = s3_client.get_object(Bucket=BUCKET, Key="newdir/f.txt")[
-            "Body"
-        ].read()
+        body = s3_client.get_object(Bucket=BUCKET, Key="newdir/f.txt")["Body"].read()
         assert body == b"data"
 
 
@@ -160,9 +156,7 @@ class TestRemoveAll:
         from ocfl_lib.fs.s3 import S3FS
 
         for i in range(1050):
-            s3_client.put_object(
-                Bucket=BUCKET, Key=f"bulk/{i:04d}.txt", Body=b"x"
-            )
+            s3_client.put_object(Bucket=BUCKET, Key=f"bulk/{i:04d}.txt", Body=b"x")
         s3fs = S3FS(BUCKET, client=s3_client)
         s3fs.remove_all("bulk")
         resp = s3_client.list_objects_v2(Bucket=BUCKET, Prefix="bulk/")
@@ -197,9 +191,7 @@ class TestCopy:
 
     def test_copy_nested(self, fs: S3FS, s3_client: S3Client):
         fs.copy("sub/b.txt", "out/b_copy.txt")
-        body = s3_client.get_object(Bucket=BUCKET, Key="out/b_copy.txt")[
-            "Body"
-        ].read()
+        body = s3_client.get_object(Bucket=BUCKET, Key="out/b_copy.txt")["Body"].read()
         assert body == b"world"
 
     def test_copy_not_found(self, fs: S3FS):
@@ -277,19 +269,13 @@ class TestPrefix:
         from ocfl_lib.fs.s3 import S3FS
 
         # Seed objects under the prefix via raw boto3
-        s3_client.put_object(
-            Bucket=BUCKET, Key="myprefix/a.txt", Body=b"hello"
-        )
-        s3_client.put_object(
-            Bucket=BUCKET, Key="myprefix/sub/b.txt", Body=b"world"
-        )
+        s3_client.put_object(Bucket=BUCKET, Key="myprefix/a.txt", Body=b"hello")
+        s3_client.put_object(Bucket=BUCKET, Key="myprefix/sub/b.txt", Body=b"world")
         s3_client.put_object(
             Bucket=BUCKET, Key="myprefix/sub/deep/c.txt", Body=b"\x00\x01\x02"
         )
         # Also put an object outside the prefix to verify isolation
-        s3_client.put_object(
-            Bucket=BUCKET, Key="other/outside.txt", Body=b"nope"
-        )
+        s3_client.put_object(Bucket=BUCKET, Key="other/outside.txt", Body=b"nope")
         return S3FS(BUCKET, prefix="myprefix", client=s3_client)
 
     def test_open_file(self, prefixed_fs: S3FS):
@@ -354,7 +340,5 @@ class TestPrefix:
 
     def test_mkdir_noop(self, prefixed_fs: S3FS, s3_client: S3Client):
         prefixed_fs.mkdir("newdir")
-        resp = s3_client.list_objects_v2(
-            Bucket=BUCKET, Prefix="myprefix/newdir/"
-        )
+        resp = s3_client.list_objects_v2(Bucket=BUCKET, Prefix="myprefix/newdir/")
         assert resp.get("KeyCount", 0) == 0

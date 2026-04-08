@@ -110,7 +110,7 @@ def new(
         if digest:
             try:
                 alg = DigestAlgorithm.from_ocfl_name(digest)
-            except (KeyError, ValueError):
+            except KeyError, ValueError:
                 err(f"unknown digest algorithm: {digest!r}")
                 raise typer.Exit(1) from None
 

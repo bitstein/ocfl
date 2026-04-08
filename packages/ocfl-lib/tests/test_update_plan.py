@@ -29,9 +29,10 @@ from ocfl_lib.update_plan import (
 
 
 def test_revert_plan_refuses_completed():
+    inv = _make_stored_inventory()
     plan = UpdatePlan(
-        old_inv=None,  # type: ignore[arg-type]
-        new_inv=None,  # type: ignore[arg-type]
+        old_inv=None,
+        new_inv=inv,
         steps=[
             PlanStep(name="a", completed=True),
             PlanStep(name="b", completed=True),
@@ -265,9 +266,7 @@ class _DictContentSource:
 class _FailingContentSource:
     """ContentSource that raises for designated digests, otherwise serves bytes."""
 
-    def __init__(
-        self, files: dict[str, bytes], fail_digests: set[str]
-    ) -> None:
+    def __init__(self, files: dict[str, bytes], fail_digests: set[str]) -> None:
         self._tmpobj = tempfile.TemporaryDirectory()
         self._tmpdir = Path(self._tmpobj.name)
         self._fs = LocalFS(self._tmpdir)
@@ -646,18 +645,14 @@ class TestConcurrentFailureModes:
         revert_plan(plan)
         assert not (tmp_path / "obj1").exists()
 
-    def test_sync_failure_after_async_success_reverts_content(
-        self, tmp_path: Path
-    ):
+    def test_sync_failure_after_async_success_reverts_content(self, tmp_path: Path):
         """A post-async sync step (e.g. inventory write) fails after content
         copies completed. Revert must clean up the copied content."""
         files = {f"f{i}.txt": f"d{i}" for i in range(4)}
         new_inv = _build_v1_inventory(files=files)
         plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
         fsys = LocalFS(tmp_path)
-        source = _DictContentSource(
-            {f"d{i}": f"x{i}".encode() for i in range(4)}
-        )
+        source = _DictContentSource({f"d{i}": f"x{i}".encode() for i in range(4)})
         prepare_steps(plan, fsys, "obj1", source)
 
         # Inject failure into the post-async version-inv step
@@ -668,9 +663,7 @@ class TestConcurrentFailureModes:
             execute_plan(plan)
 
         # Content was copied
-        assert any(
-            s.completed and s.name == "content-copy" for s in plan.steps
-        )
+        assert any(s.completed and s.name == "content-copy" for s in plan.steps)
         # Revert removes everything
         revert_plan(plan)
         assert not (tmp_path / "obj1").exists()

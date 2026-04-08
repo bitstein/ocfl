@@ -167,7 +167,9 @@ class TestSignalHandling:
         _invoke(runner, storage_root, staging, "new", "obj:interrupted")
         _invoke(runner, storage_root, staging, "add", "obj:interrupted", str(src))
 
-        with patch("ocfl_cli.commands.stage.execute_plan", side_effect=KeyboardInterrupt):
+        with patch(
+            "ocfl_cli.commands.stage.execute_plan", side_effect=KeyboardInterrupt
+        ):
             result = _invoke(runner, storage_root, staging, "commit", "obj:interrupted")
 
         assert result.exit_code == 130
@@ -182,7 +184,9 @@ class TestSignalHandling:
         _invoke(runner, storage_root, staging, "new", "obj:retry")
         _invoke(runner, storage_root, staging, "add", "obj:retry", str(src))
 
-        with patch("ocfl_cli.commands.stage.execute_plan", side_effect=KeyboardInterrupt):
+        with patch(
+            "ocfl_cli.commands.stage.execute_plan", side_effect=KeyboardInterrupt
+        ):
             _invoke(runner, storage_root, staging, "commit", "obj:retry")
 
         store = StagingStore(staging)
@@ -200,7 +204,9 @@ class TestSignalHandling:
         _invoke(runner, storage_root, staging, "new", "obj:clean")
         _invoke(runner, storage_root, staging, "add", "obj:clean", str(src))
 
-        with patch("ocfl_cli.commands.stage.execute_plan", side_effect=KeyboardInterrupt):
+        with patch(
+            "ocfl_cli.commands.stage.execute_plan", side_effect=KeyboardInterrupt
+        ):
             _invoke(runner, storage_root, staging, "commit", "obj:clean")
 
         # Object should not exist (new object, fully reverted)
@@ -218,7 +224,9 @@ class TestSignalHandling:
         _invoke(runner, storage_root, staging, "add", "obj:retried", str(src))
 
         # First attempt: interrupted
-        with patch("ocfl_cli.commands.stage.execute_plan", side_effect=KeyboardInterrupt):
+        with patch(
+            "ocfl_cli.commands.stage.execute_plan", side_effect=KeyboardInterrupt
+        ):
             _invoke(runner, storage_root, staging, "commit", "obj:retried")
 
         # Retry succeeds
