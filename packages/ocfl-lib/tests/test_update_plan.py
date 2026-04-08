@@ -1053,3 +1053,47 @@ class TestExhaustiveFaultTolerance:
             assert not (obj_dir / "obj1").exists(), (
                 f"obj dir remains after KeyboardInterrupt at step {fail_idx}"
             )
+
+
+class TestPlanWireVersion:
+    def test_roundtrip_includes_version(self):
+        import json
+
+        from ocfl_lib.update_plan import deserialize, serialize
+
+        plan = _make_plan()
+        data = serialize(plan)
+        decoded = json.loads(data)
+        assert decoded.get("version") == 1
+        deserialize(data)  # roundtrip ok
+
+    def test_bumped_version_raises(self):
+        import json
+
+        import pytest
+
+        from ocfl_lib.update_plan import deserialize, serialize
+
+        plan = _make_plan()
+        data = serialize(plan)
+        decoded = json.loads(data)
+        decoded["version"] = 999
+        with pytest.raises(ValueError, match="wire version"):
+            deserialize(json.dumps(decoded).encode())
+
+
+def _make_plan():
+    """Build a minimal plan for serialization tests."""
+    from ocfl_lib.digest import DigestAlgorithm
+    from ocfl_lib.inventory import StoredInventory
+    from ocfl_lib.inventory_builder import InventoryBuilder
+    from ocfl_lib.update_plan import UpdatePlan
+
+    inv = (
+        InventoryBuilder()
+        .id("test")
+        .add_version({"abc": ["f.txt"]}, created="2024-01-01T00:00:00Z")
+        .build()
+    )
+    stored = StoredInventory.from_inventory(inv, DigestAlgorithm.SHA512)
+    return UpdatePlan(steps=[], new_inv=stored, old_inv=None)

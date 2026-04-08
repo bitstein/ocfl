@@ -105,6 +105,9 @@ class _StoredInvState(msgspec.Struct):
     digest_algorithm: str
 
 
+_PLAN_WIRE_VERSION = 1
+
+
 class _PlanState(msgspec.Struct):
     """Serializable UpdatePlan state."""
 
@@ -113,6 +116,7 @@ class _PlanState(msgspec.Struct):
     old_inv: _StoredInvState | None = None
     old_sidecar_alg: str = ""
     revert_inv: _StoredInvState | None = None
+    version: int = _PLAN_WIRE_VERSION
 
 
 def _inv_to_state(stored: StoredInventory) -> _StoredInvState:
@@ -156,6 +160,11 @@ def serialize(plan: UpdatePlan) -> bytes:
 def deserialize(data: bytes) -> UpdatePlan:
     """Deserialize an UpdatePlan from JSON bytes. Callables are None."""
     state = msgspec.json.decode(data, type=_PlanState)
+    if state.version != _PLAN_WIRE_VERSION:
+        raise ValueError(
+            f"unsupported plan wire version: got {state.version}, "
+            f"expected {_PLAN_WIRE_VERSION}"
+        )
     steps = [
         PlanStep(
             name=s.name,
