@@ -8,14 +8,14 @@ import msgspec
 from ocfl_lib.digest import DigestAlgorithm, bytes_digest
 
 
-class UserInfo(msgspec.Struct, omit_defaults=True):
+class UserInfo(msgspec.Struct, frozen=True, omit_defaults=True):
     """Version creator information."""
 
     name: str
     address: str | None = None
 
 
-class VersionInfo(msgspec.Struct, omit_defaults=True):
+class VersionInfo(msgspec.Struct, frozen=True, omit_defaults=True):
     """Single version descriptor within an inventory."""
 
     created: str
@@ -24,11 +24,17 @@ class VersionInfo(msgspec.Struct, omit_defaults=True):
     user: UserInfo | None = None
 
 
-class Inventory(msgspec.Struct, rename="camel", omit_defaults=True):
+class Inventory(msgspec.Struct, frozen=True, rename="camel", omit_defaults=True):
     """OCFL inventory structure.
 
     Field names use snake_case in Python but serialize to camelCase JSON
     (e.g. digest_algorithm ↔ digestAlgorithm).
+
+    Mutation contract: this struct (and VersionInfo, UserInfo) is frozen, so
+    field reassignment raises AttributeError. msgspec frozen=True does NOT
+    block mutation of contained dict/list values (manifest, versions, state,
+    fixity); mutating those in place is undefined behavior. Build new
+    inventories via InventoryBuilder.
     """
 
     id: str
@@ -39,6 +45,18 @@ class Inventory(msgspec.Struct, rename="camel", omit_defaults=True):
     versions: dict[str, VersionInfo]
     content_directory: str | None = None
     fixity: dict[str, dict[str, list[str]]] | None = None
+
+
+def _encode_inventory(inv: Inventory) -> bytes:
+    """Canonical compact JSON encoding for an Inventory.
+
+    Single source of truth for byte serialization; from_inventory and the
+    StoredInventory drift self-check must agree byte-for-byte.
+    """
+    obj = msgspec.to_builtins(inv)
+    return json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()
 
 
 @dataclass(frozen=True)
@@ -54,17 +72,16 @@ class StoredInventory:
     digest_algorithm: DigestAlgorithm
 
     @classmethod
-    def from_bytes(cls, data: bytes, alg: DigestAlgorithm) -> StoredInventory:
+    def from_bytes(cls, data: bytes, alg: DigestAlgorithm) -> "StoredInventory":
         """Decode inventory from raw JSON bytes, preserving exact bytes."""
         inv = msgspec.json.decode(data, type=Inventory)
         digest = bytes_digest(data, alg)
         return cls(inventory=inv, raw_bytes=data, digest=digest, digest_algorithm=alg)
 
     @classmethod
-    def from_inventory(cls, inv: Inventory, alg: DigestAlgorithm) -> StoredInventory:
-        """Encode inventory to compact JSON bytes with sorted keys."""
-        obj = msgspec.to_builtins(inv)
-        raw = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
+    def from_inventory(cls, inv: Inventory, alg: DigestAlgorithm) -> "StoredInventory":
+        """Encode inventory to canonical compact JSON bytes."""
+        raw = _encode_inventory(inv)
         digest = bytes_digest(raw, alg)
         return cls(inventory=inv, raw_bytes=raw, digest=digest, digest_algorithm=alg)
 
