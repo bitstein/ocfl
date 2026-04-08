@@ -307,3 +307,26 @@ class TestStoredInventory:
         parsed = json.loads(si.raw_bytes)
         assert "contentDirectory" not in parsed
         assert "fixity" not in parsed
+
+    def test_from_inventory_emits_raw_utf8(self):
+        """Non-ASCII strings serialize as raw UTF-8 bytes, not \\u escapes."""
+        inv = Inventory(
+            id="http://example.org/obj1",
+            type="https://ocfl.io/1.1/spec/#inventory",
+            digest_algorithm="sha512",
+            head="v1",
+            manifest={"abc123": ["v1/content/file.txt"]},
+            versions={
+                "v1": VersionInfo(
+                    created="2024-01-01T00:00:00Z",
+                    state={"abc123": ["file.txt"]},
+                    message="café",
+                    user=UserInfo(name="naïve"),
+                )
+            },
+        )
+        si = StoredInventory.from_inventory(inv, DigestAlgorithm.SHA512)
+        assert "café".encode() in si.raw_bytes
+        assert "naïve".encode() in si.raw_bytes
+        assert b"caf\\u00e9" not in si.raw_bytes
+        assert b"na\\u00efve" not in si.raw_bytes
