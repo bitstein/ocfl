@@ -4,6 +4,8 @@ from typing import Literal
 
 import msgspec
 
+from ocfl_lib.validation.limits import validate_path_component
+
 EXTENSION_NAME = "0007-n-tuple-omit-prefix-storage-layout"
 
 
@@ -72,6 +74,7 @@ class NTupleOmitPrefixLayout:
         # Strip prefix: use whole ID if delimiter not found
         idx = object_id.rfind(self._delimiter)
         remainder = object_id[idx + len(self._delimiter) :] if idx >= 0 else object_id
+        validate_path_component(remainder)
 
         total_len = self._tuple_size * self._n_tuples
 

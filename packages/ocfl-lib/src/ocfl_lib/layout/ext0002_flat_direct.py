@@ -2,6 +2,8 @@
 
 import msgspec
 
+from ocfl_lib.validation.limits import validate_path_component
+
 EXTENSION_NAME = "0002-flat-direct-storage-layout"
 
 
@@ -27,12 +29,5 @@ class FlatDirectLayout:
         return cls()
 
     def resolve(self, object_id: str) -> str:
-        if not object_id:
-            raise ValueError("object ID must not be empty")
-        if "/" in object_id:
-            raise ValueError("object ID must not contain a slash")
-        if object_id == ".":
-            raise ValueError("object ID must not be '.'")
-        if object_id == "..":
-            raise ValueError("object ID must not be '..'")
+        validate_path_component(object_id)
         return object_id

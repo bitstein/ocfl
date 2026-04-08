@@ -2,6 +2,8 @@
 
 import msgspec
 
+from ocfl_lib.validation.limits import validate_path_component
+
 EXTENSION_NAME = "0006-flat-omit-prefix-storage-layout"
 
 
@@ -40,4 +42,6 @@ class FlatOmitPrefixLayout:
             raise ValueError(
                 f"delimiter {self._delimiter!r} not found in object ID {object_id!r}"
             )
-        return object_id[idx + len(self._delimiter) :]
+        remainder = object_id[idx + len(self._delimiter) :]
+        validate_path_component(remainder)
+        return remainder

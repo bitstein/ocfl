@@ -26,7 +26,7 @@ class TestFlatDirectLayout:
     # -- validation --
 
     def test_reject_id_with_slash(self):
-        with pytest.raises(ValueError, match="slash"):
+        with pytest.raises(ValueError, match="separator"):
             FlatDirectLayout().resolve("info:fedora/object-01")
 
     def test_reject_empty_id(self):
