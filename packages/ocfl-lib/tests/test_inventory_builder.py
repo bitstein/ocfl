@@ -339,3 +339,14 @@ class TestValidationFailures:
     def test_no_versions(self):
         with pytest.raises(ValueError, match="version"):
             InventoryBuilder().id("test").build()
+
+    def test_build_twice_raises(self):
+        state: DigestMap = {"abc123": ["file.txt"]}
+        b = (
+            InventoryBuilder()
+            .id("http://example.org/obj")
+            .add_version(state, created="2024-01-01T00:00:00Z")
+        )
+        b.build()
+        with pytest.raises(ValueError, match="already"):
+            b.build()

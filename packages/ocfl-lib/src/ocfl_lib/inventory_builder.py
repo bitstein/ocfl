@@ -37,6 +37,7 @@ class InventoryBuilder:
         self._pending_versions: list[
             tuple[DigestMap, str, str | None, UserInfo | None]
         ] = []
+        self._built = False
 
     def id(self, id: str) -> Self:
         self._id = id
@@ -78,6 +79,9 @@ class InventoryBuilder:
         return self
 
     def build(self) -> Inventory:
+        if self._built:
+            raise ValueError("build() already called; builders are single-use")
+        self._built = True
         if not self._id:
             raise ValueError("id must be set")
         if not self._pending_versions:
