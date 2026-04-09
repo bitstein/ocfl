@@ -1,11 +1,12 @@
 """OCFL storage root validation."""
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ocfl_lib.fs import utils as fs_utils
-from ocfl_lib.spec import Namaste
+from ocfl_lib.spec import Namaste, Spec
 from ocfl_lib.validation.object import validate_object
 
 if TYPE_CHECKING:
@@ -24,6 +25,9 @@ _KNOWN_ROOT_EXTENSIONS = frozenset(
         "0007-n-tuple-omit-prefix-storage-layout",
     }
 )
+
+_OBJ_DECL_RE = re.compile(r"^0=ocfl_object_(\d+\.\d+)$")
+_SUPPORTED_VERSIONS = frozenset(v.value for v in Spec)
 
 
 @dataclass
@@ -180,14 +184,27 @@ def _walk_hierarchy(
 
         is_root = dir_path == root_path
 
-        # Check if this dir is an object root (has object NAMASTE)
-        has_obj_namaste = any(
-            (n := Namaste.parse(e.name)) is not None and n.kind == "object"
-            for e in entries
-        )
-        if has_obj_namaste:
-            obj_paths.append(dir_path)
-            continue  # don't descend into objects
+        if not is_root:
+            # Check for object declarations (files starting with "0=")
+            zero_eqs = [e for e in entries if e.name.startswith("0=")]
+            if len(zero_eqs) > 1:
+                result.error("E003d", path=dir_path)
+                continue
+            if len(zero_eqs) == 1:
+                m = _OBJ_DECL_RE.match(zero_eqs[0].name)
+                if m:
+                    version = m.group(1)
+                    if version in _SUPPORTED_VERSIONS:
+                        obj_paths.append(dir_path)
+                    else:
+                        result.error("E004a", path=dir_path, version=version)
+                else:
+                    result.error(
+                        "E004b",
+                        path=dir_path,
+                        declaration=zero_eqs[0].name,
+                    )
+                continue
 
         sub_dirs = [e for e in entries if e.is_dir]
         files = [e for e in entries if e.is_file]

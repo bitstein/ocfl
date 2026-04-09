@@ -89,6 +89,53 @@ class TestRootExtensions:
         assert r.has_code("W901")
 
 
+class TestE003dMultipleDeclarations:
+    def test_multiple_zero_eq_files_emits_E003d(self, tmp_path: Path):
+        (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
+        subdir = tmp_path / "obj1"
+        subdir.mkdir()
+        (subdir / "0=ocfl_object_1.0").write_text("ocfl_object_1.0\n")
+        (subdir / "0=ocfl_object_1.1").write_text("ocfl_object_1.1\n")
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_root(fsys, "", r, validate_objects=True)
+        assert r.has_code("E003d")
+
+
+class TestE004aUnknownVersion:
+    def test_unknown_version_emits_E004a(self, tmp_path: Path):
+        (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
+        subdir = tmp_path / "obj1"
+        subdir.mkdir()
+        (subdir / "0=ocfl_object_0.9").write_text("ocfl_object_0.9\n")
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_root(fsys, "", r, validate_objects=True)
+        assert r.has_code("E004a")
+
+
+class TestE004bMalformedDeclaration:
+    def test_malformed_declaration_emits_E004b(self, tmp_path: Path):
+        (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
+        subdir = tmp_path / "obj1"
+        subdir.mkdir()
+        (subdir / "0=special_object_yeah").write_text("junk\n")
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_root(fsys, "", r, validate_objects=True)
+        assert r.has_code("E004b")
+
+    def test_bare_zero_eq_emits_E004b(self, tmp_path: Path):
+        (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
+        subdir = tmp_path / "obj1"
+        subdir.mkdir()
+        (subdir / "0=foo").write_text("foo\n")
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_root(fsys, "", r, validate_objects=True)
+        assert r.has_code("E004b")
+
+
 class TestE073EmptyDir:
     def test_empty_dir_in_hierarchy_emits_E073(self, tmp_path: Path):
         (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")

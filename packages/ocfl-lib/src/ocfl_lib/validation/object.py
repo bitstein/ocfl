@@ -258,6 +258,15 @@ def _validate_version_dir(
         elif entry.is_file:
             result.error("E015", where=vkey, entry=entry.name)
 
+    # W003: empty content directory
+    content_path = _join(vdir, content_dir)
+    try:
+        content_entries = list(fsys.read_dir(content_path))
+        if not content_entries:
+            result.warning("W003", where=vkey)
+    except OSError:
+        pass
+
     # Check version inventory
     vinv_path = _join(vdir, "inventory.json")
     try:
@@ -292,6 +301,19 @@ def _validate_version_dir(
     vinv = validate_inventory(vinv_data, result, lax_digests=lax_digests, where=vkey)
     if vinv is None:
         return
+
+    # E019/E020: contentDirectory consistency between version and root
+    root_cd = root_inv_data.get("contentDirectory")
+    ver_cd = vinv_data.get("contentDirectory")
+    if ver_cd is not None and "contentDirectory" not in root_inv_data:
+        result.error("E019", where=vkey)
+    elif ver_cd is not None and root_cd is not None and ver_cd != root_cd:
+        result.error(
+            "E020",
+            where=vkey,
+            version_content_directory=ver_cd,
+            root_content_directory=root_cd,
+        )
 
     # E040: version inventory head must match version directory
     vinv_head = vinv_data.get("head", "")
