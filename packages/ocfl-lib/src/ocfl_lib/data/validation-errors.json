@@ -98,6 +98,18 @@
     ],
     "description": "OCFL Object {where} inventory version numbers use inconsistent zero-padding"
   },
+  "E012": {
+    "params": [
+      "where"
+    ],
+    "description": "OCFL Object {where} inventory version directories do not all use the same padding convention"
+  },
+  "E013": {
+    "params": [
+      "where"
+    ],
+    "description": "OCFL Object {where} inventory new version does not follow the padding convention established by earlier versions"
+  },
   "E015": {
     "params": [
       "where",

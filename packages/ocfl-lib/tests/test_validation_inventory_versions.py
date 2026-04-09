@@ -91,6 +91,82 @@ class TestVersionKeys:
         )
         assert r.has_code("W001")
 
+    def test_mixed_padding_emits_E011_E012_E013(self):
+        r = ValidationResult()
+        validate_inventory(
+            _inv(
+                head="v2",
+                manifest={
+                    _D1: ["v01/content/file.txt"],
+                    _D2: ["v2/content/file2.txt"],
+                },
+                versions={
+                    "v01": {
+                        "created": "2024-01-01T00:00:00Z",
+                        "state": {_D1: ["file.txt"]},
+                    },
+                    "v2": {
+                        "created": "2024-01-02T00:00:00Z",
+                        "state": {_D1: ["file.txt"], _D2: ["file2.txt"]},
+                    },
+                },
+            ),
+            r,
+        )
+        assert r.has_code("E011")
+        assert r.has_code("E012")
+        assert r.has_code("E013")
+
+    def test_inconsistent_pad_width_emits_E012(self):
+        r = ValidationResult()
+        validate_inventory(
+            _inv(
+                head="v002",
+                manifest={
+                    _D1: ["v01/content/file.txt"],
+                    _D2: ["v002/content/file2.txt"],
+                },
+                versions={
+                    "v01": {
+                        "created": "2024-01-01T00:00:00Z",
+                        "state": {_D1: ["file.txt"]},
+                    },
+                    "v002": {
+                        "created": "2024-01-02T00:00:00Z",
+                        "state": {_D1: ["file.txt"], _D2: ["file2.txt"]},
+                    },
+                },
+            ),
+            r,
+        )
+        assert r.has_code("E012")
+        assert not r.has_code("E011")
+
+    def test_consistent_padding_no_E012(self):
+        r = ValidationResult()
+        validate_inventory(
+            _inv(
+                head="v002",
+                manifest={
+                    _D1: ["v001/content/file.txt"],
+                    _D2: ["v002/content/file2.txt"],
+                },
+                versions={
+                    "v001": {
+                        "created": "2024-01-01T00:00:00Z",
+                        "state": {_D1: ["file.txt"]},
+                    },
+                    "v002": {
+                        "created": "2024-01-02T00:00:00Z",
+                        "state": {_D1: ["file.txt"], _D2: ["file2.txt"]},
+                    },
+                },
+            ),
+            r,
+        )
+        assert not r.has_code("E012")
+        assert r.has_code("W001")
+
 
 class TestHead:
     def test_head_not_highest(self):

@@ -296,28 +296,33 @@ def _validate_versions(
 
     # Parse and validate version keys
     vnums: list[tuple[int, str]] = []  # (number, key)
-    is_padded = False
+    pad_lengths: set[int] = set()  # 0 = unpadded, >0 = padded width
     for vkey in versions:
         m = _VNUM_RE.match(vkey)
         if not m:
             result.error("E046b", dir=vkey)
             continue
-        # Extract number
         digits = vkey[1:]
         num = int(digits)
-        if digits[0] == "0":
-            is_padded = True
+        pad_lengths.add(len(digits) if digits[0] == "0" else 0)
         vnums.append((num, vkey))
 
     if not vnums:
         result.error("E008", where=where)
         return
 
-    # E011: inconsistent padding (some padded, some not)
-    has_unpadded = any(vkey[1:] == str(num) for num, vkey in vnums)
-    if is_padded and has_unpadded:
+    # E011/E012/E013: padding consistency
+    has_padded = any(p > 0 for p in pad_lengths)
+    has_unpadded = 0 in pad_lengths
+    if has_padded and has_unpadded:
+        # Mixed padded and unpadded — E011 + E012 + E013
         result.error("E011", where=where)
-    elif is_padded:
+        result.error("E012", where=where)
+        result.error("E013", where=where)
+    elif has_padded and len(pad_lengths) > 1:
+        # All padded but inconsistent widths — E012
+        result.error("E012", where=where)
+    elif has_padded:
         result.warning("W001", where=where)
 
     vnums.sort()
