@@ -21,13 +21,6 @@ _ERRORS_JSON = (
 # analysis.  Each entry has a brief rationale.
 _KNOWN_UNREACHED: frozenset[str] = frozenset(
     {
-        # Object-level declaration checks (fired in object.py via Namaste.parse
-        # before _walk_hierarchy ever runs)
-        "E003c",
-        "E006",
-        # Root declaration variants
-        "E069c",
-        "E069d",
         # Content path empty segment — subsumed by E099 segment check
         "E024",
         # Digest type unknown — caught at algorithm parse, not in validation
@@ -45,9 +38,8 @@ _KNOWN_UNREACHED: frozenset[str] = frozenset(
         "E066e",
         # Fixity object type — E056a covers this path
         "E111",
-        # Inventory cross-version id check — E110 covers from
-        # validate_inventory_against_prior
-        "E037b",
+        # Inventory cross-version id check — E110 is unreachable (E037b used instead)
+        "E110",
         # Created date format variant — E049b covers this path
         "E049c",
         # Unsupported file type — raised outside validation/ (fs layer)

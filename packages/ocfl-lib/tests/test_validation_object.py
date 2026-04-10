@@ -200,6 +200,55 @@ class TestE020ContentDirectoryMismatch:
         assert r.has_code("E020")
 
 
+class TestE003cUnparseableDecl:
+    def test_unparseable_zero_eq_fires_E003c(self, tmp_path: Path):
+        """Dir has 0= files but none parse as valid NAMASTE -> E003c."""
+        (tmp_path / "0=garbage_1.1").write_text("garbage\n")
+        (tmp_path / "v1").mkdir()
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_object(fsys, "", r)
+        assert r.has_code("E003c")
+        assert not any(e.code == "E003a" for e in r.errors)
+
+    def test_no_zero_eq_at_all_fires_E003a(self, tmp_path: Path):
+        """Dir has no 0= files at all -> E003a (not E003c)."""
+        (tmp_path / "v1").mkdir()
+        (tmp_path / "readme.txt").write_text("hello\n")
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_object(fsys, "", r)
+        assert any(e.code == "E003a" for e in r.errors)
+        assert not r.has_code("E003c")
+
+
+class TestE006InvalidNamaste:
+    def test_unparseable_zero_eq_fires_E006(self, tmp_path: Path):
+        """Each unparseable 0= file fires E006 with filename."""
+        (tmp_path / "0=garbage_1.1").write_text("garbage\n")
+        (tmp_path / "0=alsogarbage").write_text("nope\n")
+        (tmp_path / "v1").mkdir()
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_object(fsys, "", r)
+        e006_errors = [e for e in r.errors if e.code == "E006"]
+        msgs = [e.message for e in e006_errors]
+        assert any("0=garbage_1.1" in m for m in msgs)
+        assert any("0=alsogarbage" in m for m in msgs)
+
+    def test_valid_plus_unparseable_fires_E006_for_extra(self, tmp_path: Path):
+        """Valid decl + extra unparseable 0= file -> E006 for the extra."""
+        root_inv = _base_inv()
+        _make_object(tmp_path, root_inv)
+        (tmp_path / "0=garbage").write_text("nope\n")
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_object(fsys, "", r, check_digests=False)
+        e006_errors = [e for e in r.errors if e.code == "E006"]
+        assert len(e006_errors) == 1
+        assert "0=garbage" in e006_errors[0].message
+
+
 class TestW003EmptyContentDir:
     def test_empty_content_dir_warns(self, tmp_path: Path):
         root_inv = _base_inv(

@@ -608,7 +608,7 @@ def validate_inventory_against_prior(
     cur_id = current.get("id", "")
     pri_id = prior.get("id", "")
     if cur_id != pri_id:
-        result.error("E110", where=where, current_id=str(cur_id), prior_id=str(pri_id))
+        result.error("E037b", where=where, root_id=str(cur_id), version_id=str(pri_id))
 
     # Prior versions must be subset of current
     cur_versions = current.get("versions", {})

@@ -55,6 +55,7 @@ def validate_object(
         return
 
     # 2. Find and validate NAMASTE declaration
+    raw_zero_files = [e for e in entries if e.name.startswith("0=")]
     decl_files = []
     namaste = None
     for entry in entries:
@@ -62,8 +63,17 @@ def validate_object(
         if n is not None and n.kind == "object":
             decl_files.append(n)
 
+    # Fire E006 for each unparseable 0= file
+    parsed_names = {d.filename for d in decl_files}
+    for zf in raw_zero_files:
+        if zf.name not in parsed_names:
+            result.error("E006", filename=zf.name)
+
     if not decl_files:
-        result.error("E003a", assumed_version="1.1")
+        if raw_zero_files:
+            result.error("E003c", assumed_version="1.1")
+        else:
+            result.error("E003a", assumed_version="1.1")
     elif len(decl_files) > 1:
         result.error(
             "E003b",

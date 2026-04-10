@@ -48,7 +48,7 @@ class TestIdConsistency:
         )
         r = ValidationResult()
         validate_inventory_against_prior(current, prior, r)
-        assert r.has_code("E110")
+        assert r.has_code("E037b")
 
     def test_id_same_no_error(self):
         prior = _inv(versions={"v1": _v1_block()})
@@ -58,7 +58,7 @@ class TestIdConsistency:
         )
         r = ValidationResult()
         validate_inventory_against_prior(current, prior, r)
-        assert not r.has_code("E110")
+        assert not r.has_code("E037b")
 
 
 class TestVersionSubset:

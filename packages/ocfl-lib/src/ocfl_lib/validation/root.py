@@ -59,14 +59,24 @@ def validate_root(
         result.error("E069a", assumed_version="1.1")
         return summary
 
+    raw_zero_files = [e for e in entries if e.name.startswith("0=")]
     root_decls = []
     for entry in entries:
         n = Namaste.parse(entry.name)
         if n is not None and n.kind == "root":
             root_decls.append(n)
 
+    # Fire E069d for each unparseable 0= file
+    parsed_names = {d.filename for d in root_decls}
+    for zf in raw_zero_files:
+        if zf.name not in parsed_names:
+            result.error("E069d", filename=zf.name)
+
     if not root_decls:
-        result.error("E069a", assumed_version="1.1")
+        if raw_zero_files:
+            result.error("E069c", assumed_version="1.1")
+        else:
+            result.error("E069a", assumed_version="1.1")
     elif len(root_decls) > 1:
         result.error(
             "E069b",

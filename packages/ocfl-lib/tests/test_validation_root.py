@@ -89,6 +89,51 @@ class TestRootExtensions:
         assert r.has_code("W901")
 
 
+class TestE069cUnparseableDecl:
+    def test_unparseable_zero_eq_fires_E069c(self, tmp_path: Path):
+        """Root dir has 0= files but none parse as valid root NAMASTE -> E069c."""
+        (tmp_path / "0=garbage_1.1").write_text("garbage\n")
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_root(fsys, "", r, validate_objects=False)
+        assert r.has_code("E069c")
+        assert not any(e.code == "E069a" for e in r.errors)
+
+    def test_no_zero_eq_at_all_fires_E069a(self, tmp_path: Path):
+        """Root dir has no 0= files at all -> E069a (not E069c)."""
+        (tmp_path / "readme.txt").write_text("hello\n")
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_root(fsys, "", r, validate_objects=False)
+        assert any(e.code == "E069a" for e in r.errors)
+        assert not r.has_code("E069c")
+
+
+class TestE069dInvalidNamaste:
+    def test_unparseable_zero_eq_fires_E069d(self, tmp_path: Path):
+        """Each unparseable 0= file fires E069d with filename."""
+        (tmp_path / "0=garbage_1.1").write_text("garbage\n")
+        (tmp_path / "0=alsogarbage").write_text("nope\n")
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_root(fsys, "", r, validate_objects=False)
+        e069d_errors = [e for e in r.errors if e.code == "E069d"]
+        msgs = [e.message for e in e069d_errors]
+        assert any("0=garbage_1.1" in m for m in msgs)
+        assert any("0=alsogarbage" in m for m in msgs)
+
+    def test_valid_plus_unparseable_fires_E069d_for_extra(self, tmp_path: Path):
+        """Valid root decl + extra unparseable 0= file -> E069d for the extra."""
+        (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
+        (tmp_path / "0=garbage").write_text("nope\n")
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_root(fsys, "", r, validate_objects=False)
+        e069d_errors = [e for e in r.errors if e.code == "E069d"]
+        assert len(e069d_errors) == 1
+        assert "0=garbage" in e069d_errors[0].message
+
+
 class TestE003dMultipleDeclarations:
     def test_multiple_zero_eq_files_emits_E003d(self, tmp_path: Path):
         (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
