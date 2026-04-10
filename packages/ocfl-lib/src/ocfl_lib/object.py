@@ -431,7 +431,7 @@ class Object:
         return stored
 
 
-class _ObjectContentSource:
+class _ObjectContentSource(ContentSource):
     """ContentSource backed by an object's manifest."""
 
     def __init__(self, fsys: FS, obj_path: str, manifest: dict[str, list[str]]):

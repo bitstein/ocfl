@@ -7,12 +7,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 from ocfl_lib.fs.protocols import (
-    FS,
     CopyFS,
     FileRef,
-    FileWalker,
     FsEntry,
-    WriteFS,
 )
 
 
@@ -69,47 +66,8 @@ class TestFsEntry:
         assert a == b
 
 
-class TestProtocolsRuntimeCheckable:
-    """Verify protocols are @runtime_checkable."""
-
-    def test_fs_protocol(self):
-        class MyFS:
-            def open_file(self, name: str) -> BinaryIO:
-                return BytesIO()
-
-            def read_dir(self, name: str) -> Iterator[FsEntry]:
-                yield from ()
-
-            def exists(self, name: str) -> bool:
-                return False
-
-        assert isinstance(MyFS(), FS)
-
-    def test_write_fs_protocol(self):
-        class MyWriteFS:
-            def open_file(self, name: str) -> BinaryIO:
-                return BytesIO()
-
-            def read_dir(self, name: str) -> Iterator[FsEntry]:
-                yield from ()
-
-            def exists(self, name: str) -> bool:
-                return False
-
-            def write(self, name: str, data: BinaryIO) -> int:
-                return 0
-
-            def remove(self, name: str) -> None:
-                pass
-
-            def remove_all(self, name: str) -> None:
-                pass
-
-            def mkdir(self, name: str) -> None:
-                pass
-
-        assert isinstance(MyWriteFS(), WriteFS)
-        assert isinstance(MyWriteFS(), FS)
+class TestCopyFSRuntimeCheckable:
+    """CopyFS is the only @runtime_checkable FS protocol (isinstance in fs/utils.py)."""
 
     def test_copy_fs_protocol(self):
         class MyCopyFS:
@@ -138,30 +96,9 @@ class TestProtocolsRuntimeCheckable:
                 return 0
 
         assert isinstance(MyCopyFS(), CopyFS)
-        assert isinstance(MyCopyFS(), WriteFS)
-
-    def test_file_walker_protocol(self):
-        class MyWalker:
-            def open_file(self, name: str) -> BinaryIO:
-                return BytesIO()
-
-            def read_dir(self, name: str) -> Iterator[FsEntry]:
-                yield from ()
-
-            def exists(self, name: str) -> bool:
-                return False
-
-            def walk_files(self, name: str) -> Iterator[FileRef]:
-                yield from ()
-
-        assert isinstance(MyWalker(), FileWalker)
-        assert isinstance(MyWalker(), FS)
 
     def test_non_conforming_not_instance(self):
         class NotFS:
             pass
 
-        assert not isinstance(NotFS(), FS)
-        assert not isinstance(NotFS(), WriteFS)
         assert not isinstance(NotFS(), CopyFS)
-        assert not isinstance(NotFS(), FileWalker)

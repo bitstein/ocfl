@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from ocfl_lib.fs.protocols import FS
 from ocfl_lib.inventory_builder import InventoryBuilder
 from ocfl_lib.update_plan import (
-    ContentSource,
     PlanStep,
     RevertError,
     UpdatePlan,
@@ -230,23 +229,6 @@ class TestSerialization:
         restored = deserialize(data)
         assert restored.steps[0].error == "disk full"
         assert restored.steps[1].revert_error == "cleanup failed"
-
-
-class TestContentSourceProtocol:
-    def test_protocol_checkable(self):
-        """ContentSource is a runtime-checkable protocol."""
-
-        class MySource:
-            def get_content(self, digest: str) -> tuple:
-                return (None, "")
-
-        assert isinstance(MySource(), ContentSource)
-
-    def test_non_conforming(self):
-        class NotASource:
-            pass
-
-        assert not isinstance(NotASource(), ContentSource)
 
 
 class _DictContentSource:

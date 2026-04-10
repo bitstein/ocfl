@@ -2,6 +2,7 @@
 
 import msgspec
 
+from ocfl_lib.layout.types import Layout
 from ocfl_lib.validation.limits import validate_path_component
 
 EXTENSION_NAME = "0006-flat-omit-prefix-storage-layout"
@@ -12,7 +13,7 @@ class FlatOmitPrefixConfig(msgspec.Struct, rename="camel"):
     extension_name: str = EXTENSION_NAME
 
 
-class FlatOmitPrefixLayout:
+class FlatOmitPrefixLayout(Layout):
     """OCFL 0006: flat omit prefix storage layout."""
 
     def __init__(self, *, delimiter: str) -> None:

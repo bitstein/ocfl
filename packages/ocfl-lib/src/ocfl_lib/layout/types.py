@@ -1,9 +1,8 @@
 """Layout protocol definition."""
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 
-@runtime_checkable
 class Layout(Protocol):
     """Protocol for OCFL storage layout extensions."""
 

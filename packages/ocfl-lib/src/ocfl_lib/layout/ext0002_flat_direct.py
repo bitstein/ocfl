@@ -2,6 +2,7 @@
 
 import msgspec
 
+from ocfl_lib.layout.types import Layout
 from ocfl_lib.validation.limits import validate_path_component
 
 EXTENSION_NAME = "0002-flat-direct-storage-layout"
@@ -11,7 +12,7 @@ class FlatDirectConfig(msgspec.Struct, rename="camel"):
     extension_name: str = EXTENSION_NAME
 
 
-class FlatDirectLayout:
+class FlatDirectLayout(Layout):
     """OCFL 0002: flat direct storage layout (identity mapping)."""
 
     @property

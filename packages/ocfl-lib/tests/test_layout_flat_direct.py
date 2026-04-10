@@ -3,15 +3,10 @@
 import msgspec
 import pytest
 
-from ocfl_lib.layout import Layout
 from ocfl_lib.layout.ext0002_flat_direct import FlatDirectConfig, FlatDirectLayout
 
 
 class TestFlatDirectLayout:
-    def test_satisfies_protocol(self):
-        layout = FlatDirectLayout()
-        assert isinstance(layout, Layout)
-
     def test_name(self):
         assert FlatDirectLayout().name == "0002-flat-direct-storage-layout"
 

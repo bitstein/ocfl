@@ -3,6 +3,7 @@
 import msgspec
 
 from ocfl_lib.digest import DigestAlgorithm
+from ocfl_lib.layout.types import Layout
 
 EXTENSION_NAME = "0004-hashed-n-tuple-storage-layout"
 
@@ -15,7 +16,7 @@ class HashedNTupleConfig(msgspec.Struct, rename="camel"):
     short_object_root: bool = False
 
 
-class HashedNTupleLayout:
+class HashedNTupleLayout(Layout):
     """OCFL 0004: hashed n-tuple storage layout."""
 
     def __init__(

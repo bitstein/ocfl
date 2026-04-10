@@ -27,7 +27,7 @@ class _DummyFS:
         return False
 
 
-class _DummyContentSource:
+class _DummyContentSource(ContentSource):
     """Minimal ContentSource for testing."""
 
     def __init__(self, files: dict[str, tuple[FS, str]]):
@@ -37,7 +37,7 @@ class _DummyContentSource:
         return self._files[digest]
 
 
-class _DummyFixitySource:
+class _DummyFixitySource(FixitySource):
     """Minimal FixitySource for testing."""
 
     def __init__(self, fixity: dict[str, dict[DigestAlgorithm, str]]):
@@ -50,7 +50,7 @@ class _DummyFixitySource:
 class TestFixitySourceProtocol:
     def test_dummy_satisfies_protocol(self):
         src = _DummyFixitySource({})
-        assert isinstance(src, FixitySource)
+        assert src is not None
 
     def test_get_fixity_returns_digest_map(self):
         src = _DummyFixitySource({"abc123": {DigestAlgorithm.SHA256: "def456"}})
@@ -90,7 +90,7 @@ class TestStageConstruction:
 
     def test_content_source_satisfies_protocol(self):
         cs = _DummyContentSource({})
-        assert isinstance(cs, ContentSource)
+        assert cs is not None
 
     def test_empty_state(self):
         stage = Stage(

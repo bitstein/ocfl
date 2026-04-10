@@ -1,19 +1,18 @@
 """OCFL staging for version assembly."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol
 
 from ocfl_lib.digest import DigestAlgorithm, stream_digest, stream_multi_digest
+from ocfl_lib.update_plan import ContentSource
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from ocfl_lib.digest_map import DigestMap
     from ocfl_lib.fs.protocols import FS, FileWalker
-    from ocfl_lib.update_plan import ContentSource
 
 
-@runtime_checkable
 class FixitySource(Protocol):
     """Protocol for resolving fixity digests by primary digest."""
 
@@ -71,7 +70,7 @@ class Stage:
         )
 
 
-class _ChainContentSource:
+class _ChainContentSource(ContentSource):
     """ContentSource that tries multiple sources in order."""
 
     def __init__(self, sources: list[ContentSource]):
@@ -86,7 +85,7 @@ class _ChainContentSource:
         raise KeyError(f"digest {digest!r} not found in any content source")
 
 
-class _ChainFixitySource:
+class _ChainFixitySource(FixitySource):
     """FixitySource that tries multiple sources in order."""
 
     def __init__(self, sources: list[FixitySource]):
@@ -100,7 +99,7 @@ class _ChainFixitySource:
         return {}
 
 
-class _DirContentSource:
+class _DirContentSource(ContentSource):
     """ContentSource backed by a directory in an FS."""
 
     def __init__(self, fsys: FS, path_by_digest: dict[str, str]):
@@ -111,7 +110,7 @@ class _DirContentSource:
         return self._fsys, self._paths[digest]
 
 
-class _DictFixitySource:
+class _DictFixitySource(FixitySource):
     """FixitySource backed by a precomputed dict."""
 
     def __init__(self, fixity: dict[str, dict[DigestAlgorithm, str]]):

@@ -8,7 +8,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from ocfl_lib.fs import CopyFS, FileWalker, WriteFS
+from ocfl_lib.fs import CopyFS
 from ocfl_lib.fs.local import LocalFS
 
 
@@ -29,14 +29,8 @@ def fs(fs_dir: Path) -> LocalFS:
 
 
 class TestProtocolConformance:
-    def test_is_write_fs(self, fs: LocalFS):
-        assert isinstance(fs, WriteFS)
-
     def test_is_copy_fs(self, fs: LocalFS):
         assert isinstance(fs, CopyFS)
-
-    def test_is_file_walker(self, fs: LocalFS):
-        assert isinstance(fs, FileWalker)
 
 
 class TestOpenFile:

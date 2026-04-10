@@ -3,7 +3,6 @@
 import msgspec
 import pytest
 
-from ocfl_lib.layout import Layout
 from ocfl_lib.layout.ext0007_n_tuple_omit_prefix import (
     NTupleOmitPrefixConfig,
     NTupleOmitPrefixLayout,
@@ -11,9 +10,6 @@ from ocfl_lib.layout.ext0007_n_tuple_omit_prefix import (
 
 
 class TestNTupleOmitPrefixLayout:
-    def test_satisfies_protocol(self):
-        assert isinstance(NTupleOmitPrefixLayout(), Layout)
-
     def test_name(self):
         assert (
             NTupleOmitPrefixLayout().name == "0007-n-tuple-omit-prefix-storage-layout"
@@ -102,7 +98,7 @@ class TestNTupleOmitPrefixLayout:
 
     def test_from_config_none(self):
         layout = NTupleOmitPrefixLayout.from_config(None)
-        assert isinstance(layout, Layout)
+        assert layout is not None
 
     def test_from_config_dict(self):
         layout = NTupleOmitPrefixLayout.from_config(

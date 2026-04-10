@@ -4,6 +4,7 @@ from typing import Literal
 
 import msgspec
 
+from ocfl_lib.layout.types import Layout
 from ocfl_lib.validation.limits import validate_path_component
 
 EXTENSION_NAME = "0007-n-tuple-omit-prefix-storage-layout"
@@ -18,7 +19,7 @@ class NTupleOmitPrefixConfig(msgspec.Struct, rename="camel"):
     reverse_object_root: bool = False
 
 
-class NTupleOmitPrefixLayout:
+class NTupleOmitPrefixLayout(Layout):
     """OCFL 0007: n-tuple omit prefix storage layout."""
 
     def __init__(

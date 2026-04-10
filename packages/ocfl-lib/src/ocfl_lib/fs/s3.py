@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, BinaryIO
 import boto3
 from botocore.exceptions import ClientError
 
-from ocfl_lib.fs.protocols import FileRef, FsEntry
+from ocfl_lib.fs.protocols import CopyFS, FileRef, FileWalker, FsEntry
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -58,7 +58,7 @@ class _CountingReader:
         return chunk
 
 
-class S3FS:
+class S3FS(CopyFS, FileWalker):
     """S3 filesystem implementing WriteFS, CopyFS, and FileWalker."""
 
     def __init__(

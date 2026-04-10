@@ -7,7 +7,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from ocfl_lib.fs import CopyFS, FileWalker, WriteFS
+from ocfl_lib.fs import CopyFS
 
 if TYPE_CHECKING:
     from mypy_boto3_s3 import S3Client
@@ -42,14 +42,8 @@ def fs(s3_client: S3Client) -> S3FS:
 
 
 class TestProtocolConformance:
-    def test_is_write_fs(self, fs: S3FS):
-        assert isinstance(fs, WriteFS)
-
     def test_is_copy_fs(self, fs: S3FS):
         assert isinstance(fs, CopyFS)
-
-    def test_is_file_walker(self, fs: S3FS):
-        assert isinstance(fs, FileWalker)
 
 
 class TestOpenFile:

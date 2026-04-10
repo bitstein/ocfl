@@ -3,7 +3,6 @@
 import msgspec
 import pytest
 
-from ocfl_lib.layout import Layout
 from ocfl_lib.layout.ext0003_hash_and_id_n_tuple import (
     HashAndIdNTupleConfig,
     HashAndIdNTupleLayout,
@@ -12,9 +11,6 @@ from ocfl_lib.layout.ext0003_hash_and_id_n_tuple import (
 
 
 class TestHashAndIdNTupleLayout:
-    def test_satisfies_protocol(self):
-        assert isinstance(HashAndIdNTupleLayout(), Layout)
-
     def test_name(self):
         assert HashAndIdNTupleLayout().name == "0003-hash-and-id-n-tuple-storage-layout"
 

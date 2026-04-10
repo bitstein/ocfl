@@ -20,7 +20,7 @@ recovered: partial state sits on disk and requires manual cleanup.
 import base64
 import contextlib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol
 
 import msgspec
 
@@ -48,7 +48,6 @@ __all__ = [
 ]
 
 
-@runtime_checkable
 class ContentSource(Protocol):
     """Protocol for resolving content by digest."""
 

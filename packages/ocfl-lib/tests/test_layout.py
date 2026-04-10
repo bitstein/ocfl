@@ -1,13 +1,11 @@
 """Tests for layout protocol and registry."""
 
-from typing import runtime_checkable
-
 import pytest
 
 from ocfl_lib.layout import Layout, LayoutRegistry, get_layout
 
 
-class _DummyLayout:
+class _DummyLayout(Layout):
     """Minimal Layout implementation for testing."""
 
     @property
@@ -23,13 +21,6 @@ class _DummyLayout:
 
 
 class TestLayoutProtocol:
-    def test_protocol_is_runtime_checkable(self):
-        assert runtime_checkable(Layout)
-
-    def test_dummy_satisfies_protocol(self):
-        layout = _DummyLayout()
-        assert isinstance(layout, Layout)
-
     def test_resolve_returns_string(self):
         layout = _DummyLayout()
         assert layout.resolve("obj-1") == "obj-1"
@@ -44,7 +35,6 @@ class TestLayoutRegistry:
         reg = LayoutRegistry()
         reg.register("dummy-layout", lambda config: _DummyLayout())
         layout = reg.get_layout("dummy-layout")
-        assert isinstance(layout, Layout)
         assert layout.name == "dummy-layout"
 
     def test_get_with_config(self):
@@ -89,5 +79,4 @@ class TestDefaultRegistry:
             layout = get_layout(name, config={"delimiter": ":"})
         else:
             layout = get_layout(name)
-        assert isinstance(layout, Layout)
         assert layout.name == name

@@ -7,7 +7,13 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO
 
-from ocfl_lib.fs.protocols import FileRef, FsEntry, OcflFileTypeError
+from ocfl_lib.fs.protocols import (
+    CopyFS,
+    FileRef,
+    FileWalker,
+    FsEntry,
+    OcflFileTypeError,
+)
 
 
 def _classify(mode: int) -> str:
@@ -47,7 +53,7 @@ if TYPE_CHECKING:
 _CHUNK_SIZE = 32 * 1024
 
 
-class LocalFS:
+class LocalFS(CopyFS, FileWalker):
     """Local filesystem implementing WriteFS, CopyFS, and FileWalker."""
 
     def __init__(self, root: Path) -> None:

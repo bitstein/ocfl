@@ -3,7 +3,6 @@
 import msgspec
 import pytest
 
-from ocfl_lib.layout import Layout
 from ocfl_lib.layout.ext0004_hashed_n_tuple import (
     HashedNTupleConfig,
     HashedNTupleLayout,
@@ -11,10 +10,6 @@ from ocfl_lib.layout.ext0004_hashed_n_tuple import (
 
 
 class TestHashedNTupleLayout:
-    def test_satisfies_protocol(self):
-        layout = HashedNTupleLayout()
-        assert isinstance(layout, Layout)
-
     def test_name(self):
         assert HashedNTupleLayout().name == "0004-hashed-n-tuple-storage-layout"
 

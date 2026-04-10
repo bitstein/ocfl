@@ -38,7 +38,6 @@ class FsEntry:
     size: int | None
 
 
-@runtime_checkable
 class FS(Protocol):
     """Read-only filesystem."""
 
@@ -47,7 +46,6 @@ class FS(Protocol):
     def exists(self, name: str) -> bool: ...
 
 
-@runtime_checkable
 class WriteFS(FS, Protocol):
     """Filesystem with write operations."""
 
@@ -64,7 +62,6 @@ class CopyFS(WriteFS, Protocol):
     def copy(self, src: str, dst: str) -> int: ...
 
 
-@runtime_checkable
 class FileWalker(FS, Protocol):
     """Filesystem that can recursively walk files."""
 
