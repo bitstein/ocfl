@@ -510,7 +510,8 @@ def revert_plan(plan: UpdatePlan) -> None:
     Raises RevertCompletedError if every step is already completed
     (refuses to undo a successful commit).
     """
-    if plan.steps and all(s.completed for s in plan.steps):
+    has_error = any(s.error for s in plan.steps)
+    if plan.steps and all(s.completed for s in plan.steps) and not has_error:
         raise RevertCompletedError(
             "refusing to revert: all plan steps completed successfully"
         )

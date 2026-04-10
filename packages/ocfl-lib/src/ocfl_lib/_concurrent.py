@@ -52,4 +52,4 @@ def bounded_map[T, R](
 
             yield result
     finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+        pool.shutdown(wait=True, cancel_futures=True)
