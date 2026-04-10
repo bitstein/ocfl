@@ -126,7 +126,11 @@ class LocalFS:
             raise FileNotFoundError(f"path not found: {name!r}")
 
     def mkdir(self, name: str) -> None:
-        """Create directory, including parents."""
+        """Create directory, including parents.
+
+        Safe under concurrent invocation: ``os.makedirs(exist_ok=True)``
+        is idempotent on POSIX.
+        """
         os.makedirs(self._resolve(name), exist_ok=True)
 
     # -- CopyFS --

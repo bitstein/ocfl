@@ -73,7 +73,16 @@ class PlanStep:
 
 @dataclass
 class UpdatePlan:
-    """Plan for creating or updating an OCFL object version."""
+    """Plan for creating or updating an OCFL object version.
+
+    **Non-atomic completion caveat:** ``step.run()`` followed by
+    ``step.completed = True`` is not atomic.  If the process dies
+    between the two (SIGKILL, OOM), the side-effect is committed but
+    ``revert_plan`` won't roll it back because ``completed`` is still
+    ``False``.  A future serializable/resumable plan will close this
+    gap; for now callers should treat incomplete reverts as requiring
+    manual inspection.
+    """
 
     steps: list[PlanStep]
     new_inv: StoredInventory
