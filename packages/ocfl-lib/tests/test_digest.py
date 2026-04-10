@@ -282,15 +282,12 @@ class TestDigestFilesMulti:
         assert result == {}
 
 
-def test_digest_files_groups_errors(tmp_path):
+def test_digest_files_fail_fast(tmp_path):
     import pytest
 
     from ocfl_lib.digest import DigestAlgorithm, digest_files
 
     missing1 = tmp_path / "nope1"
     missing2 = tmp_path / "nope2"
-    with pytest.raises(ExceptionGroup) as exc_info:
+    with pytest.raises(FileNotFoundError):
         digest_files([missing1, missing2], DigestAlgorithm.SHA256)
-    eg = exc_info.value
-    assert len(eg.exceptions) == 2
-    assert all(isinstance(e, FileNotFoundError) for e in eg.exceptions)

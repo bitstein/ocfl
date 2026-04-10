@@ -620,8 +620,8 @@ class TestConcurrentFailureModes:
         revert_plan(plan)
         assert not (tmp_path / "obj1").exists()
 
-    def test_two_async_failures_both_recorded(self, tmp_path: Path):
-        """Two simultaneous failures: both step.error fields set, exception raised."""
+    def test_two_async_failures_fail_fast(self, tmp_path: Path):
+        """First failure cancels pending work; at least one error recorded."""
         files = {f"f{i}.txt": f"d{i}" for i in range(8)}
         new_inv = _build_v1_inventory(files=files)
         plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
@@ -635,12 +635,10 @@ class TestConcurrentFailureModes:
         with pytest.raises(RuntimeError, match="injected failure"):
             execute_plan(plan, max_workers=4)
 
-        # Both failed steps have error recorded
         errored_digests = {
             s.content_digest for s in plan.steps if s.error and s.content_digest
         }
-        assert "d2" in errored_digests
-        assert "d5" in errored_digests
+        assert errored_digests & {"d2", "d5"}
 
         revert_plan(plan)
         assert not (tmp_path / "obj1").exists()

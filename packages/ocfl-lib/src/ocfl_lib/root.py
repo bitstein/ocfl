@@ -190,8 +190,11 @@ class StorageRoot:
             yield Object(self._fsys, obj_path)
 
     def objects_batch(self, *, max_workers: int | None = None) -> Iterator[Object]:
-        """Load objects in parallel using ThreadPoolExecutor."""
-        from concurrent.futures import ThreadPoolExecutor
+        """Load objects in parallel with bounded concurrency.
+
+        Safe to abandon early; pool is cleaned up on consumer break.
+        """
+        from ocfl_lib._concurrent import bounded_map
 
         obj_paths = list(self.object_paths())
         if not obj_paths:
@@ -203,8 +206,7 @@ class StorageRoot:
             _ = obj.inventory
             return obj
 
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            yield from pool.map(_load, obj_paths)
+        yield from bounded_map(_load, obj_paths, max_workers=max_workers)
 
     def _detect_spec(self) -> Spec:
         """Find and parse the root NAMASTE declaration."""

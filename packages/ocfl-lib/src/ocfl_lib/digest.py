@@ -122,26 +122,19 @@ def digest_files(
 ) -> dict[Path, str]:
     """Compute digests for multiple files in parallel.
 
-    Collects all errors and raises an ExceptionGroup if any file fails.
+    Fails fast on the first error (cancels remaining work).
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from ocfl_lib._concurrent import bounded_map
 
     path_list = list(paths)
     if not path_list:
         return {}
-    results: dict[Path, str] = {}
-    errors: list[Exception] = []
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(file_digest, p, alg): p for p in path_list}
-        for fut in as_completed(futures):
-            p = futures[fut]
-            try:
-                results[p] = fut.result()
-            except Exception as exc:
-                errors.append(exc)
-    if errors:
-        raise ExceptionGroup("digest_files failures", errors)
-    return results
+    digests = bounded_map(
+        lambda p: file_digest(p, alg),
+        path_list,
+        max_workers=max_workers,
+    )
+    return dict(zip(path_list, digests, strict=True))
 
 
 def digest_files_multi(
@@ -151,11 +144,14 @@ def digest_files_multi(
     max_workers: int | None = None,
 ) -> dict[Path, dict[DigestAlgorithm, str]]:
     """Compute multiple digests for multiple files in parallel."""
-    from concurrent.futures import ThreadPoolExecutor
+    from ocfl_lib._concurrent import bounded_map
 
     path_list = list(paths)
     if not path_list:
         return {}
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        results = pool.map(lambda p: multi_digest(p, algs), path_list)
+    results = bounded_map(
+        lambda p: multi_digest(p, algs),
+        path_list,
+        max_workers=max_workers,
+    )
     return dict(zip(path_list, results, strict=True))

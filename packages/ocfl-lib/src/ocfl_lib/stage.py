@@ -133,7 +133,7 @@ def stage_dir(
     Walks dir, computes digests, builds state and content source.
     Optionally computes fixity digests for additional algorithms.
     """
-    from concurrent.futures import ThreadPoolExecutor
+    from ocfl_lib._concurrent import bounded_map
 
     dir = dir.rstrip("/")
 
@@ -169,8 +169,7 @@ def stage_dir(
             return state_path, walk_path, primary, {}
 
     # Parallel digest computation
-    with ThreadPoolExecutor() as pool:
-        results = list(pool.map(lambda fr: _digest_file(fr.path), files))
+    results = list(bounded_map(lambda fr: _digest_file(fr.path), files))
 
     # Build state (digest → [paths]) and path_by_digest
     state: dict[str, list[str]] = {}

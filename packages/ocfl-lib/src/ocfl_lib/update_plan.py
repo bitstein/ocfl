@@ -449,12 +449,12 @@ def execute_plan(
 ) -> None:
     """Execute all steps in the plan.
 
-    Async steps (content copies) run concurrently in a ThreadPoolExecutor.
+    Async steps (content copies) run concurrently via bounded_map.
     Sync steps run sequentially after the async batch.
     Steps already marked completed are skipped.
     On failure: sets step.error and re-raises.
     """
-    from concurrent.futures import ThreadPoolExecutor
+    from ocfl_lib._concurrent import bounded_map
 
     # Partition steps into pre-async sync, async, and post-async sync
     pre_async: list[PlanStep] = []
@@ -478,10 +478,8 @@ def execute_plan(
 
     # Execute async steps (content copies) concurrently
     if async_steps:
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(_run_step, s): s for s in async_steps}
-            for future in futures:
-                future.result()  # re-raises on error
+        for _ in bounded_map(_run_step, async_steps, max_workers=max_workers):
+            pass
 
     # Execute post-async sync steps (inventories, sidecars)
     for step in post_async:
