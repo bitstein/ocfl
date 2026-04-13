@@ -47,6 +47,22 @@ class Inventory(msgspec.Struct, frozen=True, rename="camel", omit_defaults=True)
     fixity: dict[str, dict[str, list[str]]] | None = None
 
 
+def _sort_path_lists(obj: dict) -> None:
+    """Sort all path lists in manifest, version states, and fixity in place."""
+    if "manifest" in obj:
+        for digest in obj["manifest"]:
+            obj["manifest"][digest].sort()
+    if "versions" in obj:
+        for ver in obj["versions"].values():
+            if "state" in ver:
+                for digest in ver["state"]:
+                    ver["state"][digest].sort()
+    if obj.get("fixity"):
+        for alg in obj["fixity"].values():
+            for digest in alg:
+                alg[digest].sort()
+
+
 def _encode_inventory(inv: Inventory) -> bytes:
     """Canonical compact JSON encoding for an Inventory.
 
@@ -54,6 +70,7 @@ def _encode_inventory(inv: Inventory) -> bytes:
     StoredInventory drift self-check must agree byte-for-byte.
     """
     obj = msgspec.to_builtins(inv)
+    _sort_path_lists(obj)
     return json.dumps(
         obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode()
