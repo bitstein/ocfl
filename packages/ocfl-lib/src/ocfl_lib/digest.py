@@ -4,7 +4,7 @@ import enum
 import hashlib
 import re
 from functools import cached_property
-from typing import TYPE_CHECKING, BinaryIO, Protocol
+from typing import TYPE_CHECKING, BinaryIO, Protocol, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -122,19 +122,26 @@ def digest_files(
 ) -> dict[Path, str]:
     """Compute digests for multiple files in parallel.
 
-    Fails fast on the first error (cancels remaining work).
+    Raises ``ExceptionGroup`` when any files fail.
     """
     from ocfl_lib._concurrent import bounded_map
 
     path_list = list(paths)
     if not path_list:
         return {}
-    digests = bounded_map(
-        lambda p: file_digest(p, alg),
-        path_list,
-        max_workers=max_workers,
-    )
-    return dict(zip(path_list, digests, strict=True))
+
+    def _safe(p: Path) -> str | Exception:
+        try:
+            return file_digest(p, alg)
+        except Exception as exc:
+            exc.add_note(f"while digesting {p}")
+            return exc
+
+    results = list(bounded_map(_safe, path_list, max_workers=max_workers))
+    errors = [r for r in results if isinstance(r, Exception)]
+    if errors:
+        raise ExceptionGroup("digest computation failed", errors)
+    return dict(zip(path_list, cast(list[str], results), strict=True))
 
 
 def digest_files_multi(
@@ -143,15 +150,25 @@ def digest_files_multi(
     *,
     max_workers: int | None = None,
 ) -> dict[Path, dict[DigestAlgorithm, str]]:
-    """Compute multiple digests for multiple files in parallel."""
+    """Compute multiple digests for multiple files in parallel.
+
+    Raises ``ExceptionGroup`` when any files fail.
+    """
     from ocfl_lib._concurrent import bounded_map
 
     path_list = list(paths)
     if not path_list:
         return {}
-    results = bounded_map(
-        lambda p: multi_digest(p, algs),
-        path_list,
-        max_workers=max_workers,
-    )
-    return dict(zip(path_list, results, strict=True))
+
+    def _safe(p: Path) -> dict[DigestAlgorithm, str] | Exception:
+        try:
+            return multi_digest(p, algs)
+        except Exception as exc:
+            exc.add_note(f"while digesting {p}")
+            return exc
+
+    results = list(bounded_map(_safe, path_list, max_workers=max_workers))
+    errors = [r for r in results if isinstance(r, Exception)]
+    if errors:
+        raise ExceptionGroup("digest computation failed", errors)
+    return dict(zip(path_list, cast(list[dict[DigestAlgorithm, str]], results), strict=True))

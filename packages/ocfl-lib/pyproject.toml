@@ -13,6 +13,7 @@ s3 = [
 ]
 test = [
     "moto[s3]>=5.0.0",
+    "ocfl-lib[s3]",
 ]
 
 [build-system]

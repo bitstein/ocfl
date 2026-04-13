@@ -282,12 +282,35 @@ class TestDigestFilesMulti:
         assert result == {}
 
 
-def test_digest_files_fail_fast(tmp_path):
-    import pytest
+class TestDigestFilesErrors:
+    def test_two_missing_files_raises_exception_group(self, tmp_path: Path):
+        missing1 = tmp_path / "nope1"
+        missing2 = tmp_path / "nope2"
+        with pytest.raises(ExceptionGroup) as exc_info:
+            digest_files([missing1, missing2], DigestAlgorithm.SHA256)
+        assert len(exc_info.value.exceptions) == 2
+        assert all(isinstance(e, FileNotFoundError) for e in exc_info.value.exceptions)
+        # add_note attaches path context
+        for exc in exc_info.value.exceptions:
+            assert any("while digesting" in n for n in exc.__notes__)
 
-    from ocfl_lib.digest import DigestAlgorithm, digest_files
+    def test_single_missing_file_raises_exception_group(self, tmp_path: Path):
+        missing = tmp_path / "nope"
+        with pytest.raises(ExceptionGroup):
+            digest_files([missing], DigestAlgorithm.SHA256)
 
-    missing1 = tmp_path / "nope1"
-    missing2 = tmp_path / "nope2"
-    with pytest.raises(FileNotFoundError):
-        digest_files([missing1, missing2], DigestAlgorithm.SHA256)
+    def test_mixed_good_and_bad_raises_exception_group(self, tmp_path: Path):
+        good = tmp_path / "good.txt"
+        good.write_bytes(b"ok")
+        missing = tmp_path / "nope"
+        with pytest.raises(ExceptionGroup) as exc_info:
+            digest_files([good, missing], DigestAlgorithm.SHA256)
+        assert len(exc_info.value.exceptions) == 1
+
+    def test_multi_two_missing_raises_exception_group(self, tmp_path: Path):
+        missing1 = tmp_path / "nope1"
+        missing2 = tmp_path / "nope2"
+        algs = [DigestAlgorithm.SHA256, DigestAlgorithm.SHA512]
+        with pytest.raises(ExceptionGroup) as exc_info:
+            digest_files_multi([missing1, missing2], algs)
+        assert len(exc_info.value.exceptions) == 2
