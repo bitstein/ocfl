@@ -1,10 +1,10 @@
 """ocfl stage command group."""
 
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 import typer
+from platformdirs import user_state_path
 from rich.text import Text
 
 from ocfl_cli import _style
@@ -20,12 +20,6 @@ stage_app = typer.Typer(
     name="stage",
     help="Stage changes for OCFL objects.",
     no_args_is_help=True,
-)
-
-_DEFAULT_STAGING_ROOT = (
-    Path(os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")))
-    / "ocfl-cli"
-    / "staging"
 )
 
 
@@ -70,7 +64,10 @@ def stage_callback(
 ) -> None:
     """Stage changes for OCFL objects."""
     ctx.ensure_object(dict)
-    root = Path(staging_root) if staging_root else _DEFAULT_STAGING_ROOT
+    if staging_root:
+        root = Path(staging_root)
+    else:
+        root = user_state_path("ocfl-cli") / "staging"
     root.mkdir(parents=True, exist_ok=True)
     ctx.obj["staging"] = StagingStore(root)
 
@@ -107,11 +104,17 @@ def new(
     else:
         # New object: build empty v1 inventory
         alg = DigestAlgorithm.SHA512
-        if digest:
+        digest_name = digest
+        if digest_name is None:
+            config = ctx.obj.get("config")
+            archive = ctx.obj.get("archive")
+            if config is not None:
+                digest_name = config.effective_digest(archive)
+        if digest_name:
             try:
-                alg = DigestAlgorithm.from_ocfl_name(digest)
+                alg = DigestAlgorithm.from_ocfl_name(digest_name)
             except KeyError, ValueError:
-                err(f"unknown digest algorithm: {digest!r}")
+                err(f"unknown digest algorithm: {digest_name!r}")
                 raise typer.Exit(1) from None
 
         inv = (

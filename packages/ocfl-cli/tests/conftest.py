@@ -9,6 +9,13 @@ from typer.testing import CliRunner
 from ocfl_lib import DigestAlgorithm, LocalFS, Spec, StorageRoot, get_layout, stage_dir
 
 
+@pytest.fixture(autouse=True)
+def _isolate_user_config(tmp_path_factory, monkeypatch):
+    """Point `OCFL_CONFIG` at nonexistent path; tests must not read real user config."""
+    sentinel = tmp_path_factory.mktemp("ocfl-config") / "config.toml"
+    monkeypatch.setenv("OCFL_CONFIG", str(sentinel))
+
+
 @pytest.fixture
 def runner():
     return CliRunner()

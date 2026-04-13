@@ -1,6 +1,6 @@
 """ocfl validate command."""
 
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 import typer
 
@@ -22,14 +22,27 @@ def validate(
     """Validate an OCFL storage root or a specific object."""
     json_mode = ctx.obj.get("json", False)
     check_digests = not no_check_digests
+    suppress = _suppressed_codes(ctx)
 
     if object_id is not None:
-        _validate_object(ctx, object_id, check_digests, json_mode)
+        _validate_object(ctx, object_id, check_digests, json_mode, suppress)
     else:
-        _validate_root(ctx, check_digests, json_mode)
+        _validate_root(ctx, check_digests, json_mode, suppress)
 
 
-def _validate_root(ctx: typer.Context, check_digests: bool, json_mode: bool) -> None:
+def _suppressed_codes(ctx: typer.Context) -> frozenset[str]:
+    config = ctx.obj.get("config")
+    if config is None:
+        return frozenset()
+    return config.effective_suppress(ctx.obj.get("archive"))
+
+
+def _validate_root(
+    ctx: typer.Context,
+    check_digests: bool,
+    json_mode: bool,
+    suppress: frozenset[str],
+) -> None:
     path = resolve_root(ctx.obj.get("root"))
     try:
         fs = _make_fs(path)
@@ -38,13 +51,17 @@ def _validate_root(ctx: typer.Context, check_digests: bool, json_mode: bool) -> 
 
     result = ValidationResult()
     validate_root(fs, "", result, check_digests=check_digests)
-    _output_result(result, json_mode)
+    _output_result(result, json_mode, suppress)
     if not result.is_valid:
         raise typer.Exit(1)
 
 
 def _validate_object(
-    ctx: typer.Context, object_id: str, check_digests: bool, json_mode: bool
+    ctx: typer.Context,
+    object_id: str,
+    check_digests: bool,
+    json_mode: bool,
+    suppress: frozenset[str],
 ) -> None:
     try:
         root, fs = open_root(ctx.obj.get("root"))
@@ -58,12 +75,12 @@ def _validate_object(
 
     result = ValidationResult()
     validate_object(fs, obj_path, result, check_digests=check_digests)
-    _output_result(result, json_mode)
+    _output_result(result, json_mode, suppress)
     if not result.is_valid:
         raise typer.Exit(1)
 
 
-def _fail(msg: str, json_mode: bool) -> None:
+def _fail(msg: str, json_mode: bool) -> NoReturn:
     """Report an early failure and exit."""
     if json_mode:
         output_json({"valid": False, "errors": [msg], "warnings": []})
@@ -72,7 +89,10 @@ def _fail(msg: str, json_mode: bool) -> None:
     raise typer.Exit(1)
 
 
-def _output_result(result: ValidationResult, json_mode: bool) -> None:
+def _output_result(
+    result: ValidationResult, json_mode: bool, suppress: frozenset[str]
+) -> None:
+    warnings = [w for w in result.warnings if w.code not in suppress]
     if json_mode:
         output_json(
             {
@@ -81,19 +101,19 @@ def _output_result(result: ValidationResult, json_mode: bool) -> None:
                     {"code": e.code, "message": e.message} for e in result.errors
                 ],
                 "warnings": [
-                    {"code": w.code, "message": w.message} for w in result.warnings
+                    {"code": w.code, "message": w.message} for w in warnings
                 ],
             }
         )
     else:
         for e in result.errors:
             err(f"[{e.code}] {e.message}")
-        for w in result.warnings:
+        for w in warnings:
             _style.echo(_style.warning(f"Warning: [{w.code}] {w.message}"), err=True)
         if result.is_valid:
             _style.echo(
                 _style.valid(
                     "Valid"
-                    + (f" ({result.num_warnings} warnings)" if result.warnings else "")
+                    + (f" ({len(warnings)} warnings)" if warnings else "")
                 )
             )
