@@ -113,6 +113,56 @@ def _upsert_object(
     )
 
 
+def _existing_version_nums(conn: sqlite3.Connection, object_id: str) -> set[int]:
+    rows = conn.execute(
+        "SELECT version_num FROM versions WHERE object_id = ?",
+        (object_id,),
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def _insert_versions_and_paths(
+    conn: sqlite3.Connection,
+    *,
+    inventory: StoredInventory,
+    counters: _Counters,
+) -> None:
+    inv = inventory.inventory
+    object_id = inv.id
+    existing = _existing_version_nums(conn, object_id)
+    items = sorted(inv.versions.items(), key=lambda kv: VNum.parse(kv[0]).number)
+    for raw_key, info in items:
+        vnum = VNum.parse(raw_key)
+        if vnum.number in existing:
+            continue
+        user = info.user
+        conn.execute(
+            "INSERT INTO versions(object_id, version_num, version, created_at, "
+            "message, user_name, user_address) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                object_id,
+                vnum.number,
+                raw_key,
+                info.created,
+                info.message,
+                user.name if user else None,
+                user.address if user else None,
+            ),
+        )
+        path_rows = [
+            (object_id, vnum.number, logical_path, digest)
+            for digest, paths in info.state.items()
+            for logical_path in paths
+        ]
+        if path_rows:
+            conn.executemany(
+                "INSERT INTO content_paths(object_id, version_num, "
+                "logical_path, digest) VALUES (?, ?, ?, ?)",
+                path_rows,
+            )
+        counters.versions_added += 1
+
+
 def _scan_object(
     conn: sqlite3.Connection,
     fs: FS,
@@ -136,6 +186,7 @@ def _scan_object(
         inventory_digest=incoming_digest,
     )
     counters.objects_changed += 1
+    _insert_versions_and_paths(conn, inventory=inventory, counters=counters)
 
 
 def scan(
