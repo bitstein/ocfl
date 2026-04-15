@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from ocfl_index import ots
+from ocfl_index import db, ots
 from ocfl_index.constants import OTS_EXTENSION_DIR
 from ocfl_index.mediatype import OCTET_STREAM, sniff
 from ocfl_index.models import ScanReport
@@ -390,11 +390,13 @@ def scan(
 
     fs: FS = storage_root._fsys
     counters = _Counters()
-    blob_seen = _existing_blob_digests(conn)
     size_cache: dict[str, int] = {}
     start = time.perf_counter()
     conn.execute("BEGIN IMMEDIATE")
     try:
+        if full:
+            db.reset_cache(conn)
+        blob_seen = _existing_blob_digests(conn)
         for relpath in storage_root.object_paths():
             _scan_object(
                 conn,
@@ -410,6 +412,10 @@ def scan(
         raise
     counters.objects_purged = sweep_objects(conn, counters.walked_relpaths)
     sniff_pass(conn, fs)
+    now = _now()
+    db.meta_set(conn, "last_scan_at", now)
+    if full:
+        db.meta_set(conn, "last_full_scan_at", now)
     conn.commit()
     elapsed = time.perf_counter() - start
     return counters.to_report(elapsed_seconds=elapsed)

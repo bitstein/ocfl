@@ -20,6 +20,15 @@ _TABLES = (
     "meta",
 )
 
+_CACHE_TABLES = (
+    "ots_inventory",
+    "ots_attestations",
+    "blobs",
+    "content_paths",
+    "versions",
+    "objects",
+)
+
 
 def connect(path: Path | str) -> sqlite3.Connection:
     """Open a SQLite connection with WAL + foreign keys enforced."""
@@ -42,6 +51,12 @@ def migrate(conn: sqlite3.Connection, root_path: str) -> None:
 def meta_get(conn: sqlite3.Connection, key: str) -> str | None:
     row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
     return row[0] if row else None
+
+
+def reset_cache(conn: sqlite3.Connection) -> None:
+    """Truncate all index tables (everything except meta)."""
+    for table in _CACHE_TABLES:
+        conn.execute(f"DELETE FROM {table}")
 
 
 def meta_set(conn: sqlite3.Connection, key: str, value: str) -> None:
