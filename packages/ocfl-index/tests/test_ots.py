@@ -115,6 +115,76 @@ def test_content_attestation_resolves_sibling_path(tmp_path: Path) -> None:
         assert att.block_height == 860_000
 
 
+def _commit_with_inventory_proof(
+    fixture: FixtureRoot,
+    object_id: str,
+    files: dict[str, bytes],
+    *,
+    version_num: int,
+    height: int,
+) -> None:
+    fixture.commit(object_id, files, algorithm=DigestAlgorithm.SHA256)
+    relpath = fixture.root.object_path(object_id)
+    inv_path = fixture.root_dir / relpath / f"v{version_num}" / "inventory.json"
+    payload = inv_path.read_bytes()
+    proof = _build_proof(payload, height=height)
+    ext_dir = fixture.root_dir / relpath / "extensions" / "NNNN-ots-timestamps"
+    ext_dir.mkdir(parents=True, exist_ok=True)
+    (ext_dir / f"inventory.json.v{version_num}.ots").write_bytes(proof)
+
+
+def test_inventory_proof_indexed_with_block_height(tmp_path: Path) -> None:
+    fixture = FixtureRoot(tmp_path)
+    _commit_with_inventory_proof(
+        fixture, "alpha", {"a.txt": b"x"}, version_num=1, height=880_000
+    )
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        idx.refresh()
+        row = idx.conn.execute(
+            "SELECT a.block_height FROM ots_inventory i "
+            "JOIN ots_attestations a ON a.proof_digest = i.proof_digest "
+            "WHERE i.object_id = 'alpha' AND i.version_num = 1"
+        ).fetchone()
+        assert row == (880_000,)
+
+
+def test_missing_inventory_proof_is_fine(tmp_path: Path) -> None:
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        idx.refresh()
+        rows = idx.conn.execute("SELECT count(*) FROM ots_inventory").fetchone()
+        assert rows[0] == 0
+
+
+def test_get_inventory_attestation_returns_row(tmp_path: Path) -> None:
+    fixture = FixtureRoot(tmp_path)
+    _commit_with_inventory_proof(
+        fixture, "alpha", {"a.txt": b"x"}, version_num=1, height=890_000
+    )
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        idx.refresh()
+        att = idx.get_inventory_attestation("alpha", 1)
+        assert att is not None
+        assert att.block_height == 890_000
+
+
+def test_first_version_attestation_sugar(tmp_path: Path) -> None:
+    fixture = FixtureRoot(tmp_path)
+    _commit_with_inventory_proof(
+        fixture, "alpha", {"a.txt": b"x"}, version_num=1, height=900_000
+    )
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        idx.refresh()
+        att = idx.first_version_attestation("alpha")
+        assert att is not None
+        assert att.block_height == 900_000
+
+
 def test_duplicate_proof_across_objects_parses_once(tmp_path: Path) -> None:
     fixture = FixtureRoot(tmp_path)
     payload = b"shared bytes"

@@ -152,3 +152,18 @@ class Index:
         if row is None:
             return None
         return self.get_attestation(row[0])
+
+    def get_inventory_attestation(
+        self, object_id: str, version_num: int
+    ) -> OtsAttestation | None:
+        row = self._conn.execute(
+            "SELECT proof_digest FROM ots_inventory "
+            "WHERE object_id = ? AND version_num = ?",
+            (object_id, version_num),
+        ).fetchone()
+        if row is None:
+            return None
+        return self.get_attestation(row[0])
+
+    def first_version_attestation(self, object_id: str) -> OtsAttestation | None:
+        return self.get_inventory_attestation(object_id, 1)

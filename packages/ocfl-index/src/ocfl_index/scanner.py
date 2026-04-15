@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from ocfl_index import ots
+from ocfl_index.constants import OTS_EXTENSION_DIR
 from ocfl_index.mediatype import OCTET_STREAM, sniff
 from ocfl_index.models import ScanReport
 from ocfl_lib import DigestAlgorithm, Object, Spec, VNum
@@ -132,11 +133,12 @@ def _insert_versions_and_paths(
     *,
     inventory: StoredInventory,
     counters: _Counters,
-) -> None:
+) -> list[tuple[int, str]]:
     inv = inventory.inventory
     object_id = inv.id
     existing = _existing_version_nums(conn, object_id)
     items = sorted(inv.versions.items(), key=lambda kv: VNum.parse(kv[0]).number)
+    added: list[tuple[int, str]] = []
     for raw_key, info in items:
         vnum = VNum.parse(raw_key)
         if vnum.number in existing:
@@ -167,6 +169,8 @@ def _insert_versions_and_paths(
                 path_rows,
             )
         counters.versions_added += 1
+        added.append((vnum.number, raw_key))
+    return added
 
 
 def _file_size(fs: FS, path: str) -> int:
@@ -232,7 +236,9 @@ def _scan_object(
         inventory_digest=incoming_digest,
     )
     counters.objects_changed += 1
-    _insert_versions_and_paths(conn, inventory=inventory, counters=counters)
+    added_versions = _insert_versions_and_paths(
+        conn, inventory=inventory, counters=counters
+    )
     _insert_blobs(
         conn,
         fs,
@@ -243,6 +249,13 @@ def _scan_object(
         counters=counters,
     )
     _ingest_ots_companions(conn, fs, relpath=relpath, inventory=inventory)
+    _ingest_ots_inventory_proofs(
+        conn,
+        fs,
+        relpath=relpath,
+        object_id=inventory.inventory.id,
+        added_versions=added_versions,
+    )
 
 
 def _ingest_ots_companions(
@@ -267,6 +280,30 @@ def _ingest_ots_companions(
             with fs.open_file(f"{relpath}/{content_paths[0]}") as f:
                 proof_bytes = f.read()
             ots.upsert_attestation(conn, proof_bytes)
+
+
+def _ingest_ots_inventory_proofs(
+    conn: sqlite3.Connection,
+    fs: FS,
+    *,
+    relpath: str,
+    object_id: str,
+    added_versions: list[tuple[int, str]],
+) -> None:
+    base = f"{relpath}/extensions/{OTS_EXTENSION_DIR}"
+    for vnum, _vkey in added_versions:
+        proof_path = f"{base}/inventory.json.v{vnum}.ots"
+        try:
+            with fs.open_file(proof_path) as f:
+                proof_bytes = f.read()
+        except FileNotFoundError:
+            continue
+        pdigest = ots.upsert_attestation(conn, proof_bytes)
+        conn.execute(
+            "INSERT OR REPLACE INTO ots_inventory(object_id, version_num, "
+            "proof_digest) VALUES (?, ?, ?)",
+            (object_id, vnum, pdigest),
+        )
 
 
 def _content_path_for_digest(
