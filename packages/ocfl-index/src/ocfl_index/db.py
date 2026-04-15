@@ -32,9 +32,10 @@ _CACHE_TABLES = (
 
 def connect(path: Path | str) -> sqlite3.Connection:
     """Open a SQLite connection with WAL + foreign keys enforced."""
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=0)
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 0")
     return conn
 
 

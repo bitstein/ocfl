@@ -9,6 +9,7 @@ from ocfl_index.models import (
     ScanReport,
     VersionRow,
 )
+from ocfl_index.scanner import RefreshInProgress
 
 __version__ = "0.1.0"
 
@@ -19,6 +20,7 @@ __all__ = [
     "ObjectRow",
     "OtsAttestation",
     "PathRow",
+    "RefreshInProgress",
     "ScanReport",
     "VersionRow",
     "__version__",

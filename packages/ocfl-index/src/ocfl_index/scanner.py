@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -18,7 +19,6 @@ _SNIFF_PRIMARY_BYTES = 8 * 1024
 _SNIFF_RETRY_BYTES = 1024 * 1024
 
 if TYPE_CHECKING:
-    import sqlite3
     from collections.abc import Callable
 
     from ocfl_lib import StorageRoot
@@ -26,6 +26,11 @@ if TYPE_CHECKING:
     from ocfl_lib.inventory import StoredInventory
 
 _log = logging.getLogger(__name__)
+
+
+class RefreshInProgress(RuntimeError):
+    """Another refresh is already running against this index."""
+
 
 _SIDECAR_PROBE_ORDER: tuple[DigestAlgorithm, ...] = (
     DigestAlgorithm.SHA256,
@@ -392,7 +397,14 @@ def scan(
     counters = _Counters()
     size_cache: dict[str, int] = {}
     start = time.perf_counter()
-    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError as err:
+        if "locked" in str(err) or "busy" in str(err):
+            raise RefreshInProgress(
+                "another refresh is holding the write lock"
+            ) from err
+        raise
     try:
         if full:
             db.reset_cache(conn)
