@@ -7,12 +7,17 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from ocfl_index.mediatype import OCTET_STREAM, sniff
 from ocfl_index.models import ScanReport
 from ocfl_lib import DigestAlgorithm, Object, Spec, VNum
 from ocfl_lib import fs as ocfl_fs
 
+_SNIFF_PRIMARY_BYTES = 8 * 1024
+_SNIFF_RETRY_BYTES = 1024 * 1024
+
 if TYPE_CHECKING:
     import sqlite3
+    from collections.abc import Callable
 
     from ocfl_lib import StorageRoot
     from ocfl_lib.fs.protocols import FS
@@ -238,6 +243,65 @@ def _scan_object(
     )
 
 
+def _content_path_for_digest(
+    conn: sqlite3.Connection, fs: FS, digest: str
+) -> str | None:
+    """Resolve any physical path under root that stores ``digest``."""
+    row = conn.execute(
+        "SELECT objects.root_relpath FROM objects "
+        "JOIN content_paths ON content_paths.object_id = objects.object_id "
+        "WHERE content_paths.digest = ? LIMIT 1",
+        (digest,),
+    ).fetchone()
+    if row is None:
+        return None
+    relpath = row[0]
+    obj = Object(fs, relpath)
+    cp = obj.content_path(digest)
+    if cp is None:
+        return None
+    return f"{relpath}/{cp}"
+
+
+def _read_prefix(fs: FS, path: str, size: int) -> bytes:
+    with fs.open_file(path) as f:
+        return f.read(size)
+
+
+def _sniff_blob(fs: FS, path: str, sniffer: Callable[[bytes], str] = sniff) -> str:
+    buf = _read_prefix(fs, path, _SNIFF_PRIMARY_BYTES)
+    result = sniffer(buf)
+    if result and result != OCTET_STREAM:
+        return result
+    bigger = _read_prefix(fs, path, _SNIFF_RETRY_BYTES)
+    retry = sniffer(bigger)
+    if retry and retry != OCTET_STREAM:
+        return retry
+    return OCTET_STREAM
+
+
+def sniff_pass(
+    conn: sqlite3.Connection,
+    fs: FS,
+    *,
+    sniffer: Callable[[bytes], str] = sniff,
+) -> int:
+    """Populate media_type for blobs where it is NULL. Returns row count."""
+    rows = conn.execute("SELECT digest FROM blobs WHERE media_type IS NULL").fetchall()
+    updated = 0
+    for (digest,) in rows:
+        path = _content_path_for_digest(conn, fs, digest)
+        if path is None:
+            continue
+        media_type = _sniff_blob(fs, path, sniffer=sniffer)
+        conn.execute(
+            "UPDATE blobs SET media_type = ? WHERE digest = ?",
+            (media_type, digest),
+        )
+        updated += 1
+    return updated
+
+
 def sweep_objects(conn: sqlite3.Connection, walked: set[str]) -> int:
     """Delete object rows whose root_relpath is not in walked. Returns count."""
     rows = conn.execute("SELECT root_relpath FROM objects").fetchall()
@@ -282,6 +346,7 @@ def scan(
         _log.warning("scan failed mid-walk; skipping purge sweep")
         raise
     counters.objects_purged = sweep_objects(conn, counters.walked_relpaths)
+    sniff_pass(conn, fs)
     conn.commit()
     elapsed = time.perf_counter() - start
     return counters.to_report(elapsed_seconds=elapsed)
