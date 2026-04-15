@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from ocfl_index import ots
 from ocfl_index.mediatype import OCTET_STREAM, sniff
 from ocfl_index.models import ScanReport
 from ocfl_lib import DigestAlgorithm, Object, Spec, VNum
@@ -241,6 +242,31 @@ def _scan_object(
         size_cache=size_cache,
         counters=counters,
     )
+    _ingest_ots_companions(conn, fs, relpath=relpath, inventory=inventory)
+
+
+def _ingest_ots_companions(
+    conn: sqlite3.Connection,
+    fs: FS,
+    *,
+    relpath: str,
+    inventory: StoredInventory,
+) -> None:
+    inv = inventory.inventory
+    seen_in_object: set[str] = set()
+    for version_info in inv.versions.values():
+        for digest, logical_paths in version_info.state.items():
+            if not any(p.endswith(".ots") for p in logical_paths):
+                continue
+            if digest in seen_in_object:
+                continue
+            seen_in_object.add(digest)
+            content_paths = inv.manifest.get(digest)
+            if not content_paths:
+                continue
+            with fs.open_file(f"{relpath}/{content_paths[0]}") as f:
+                proof_bytes = f.read()
+            ots.upsert_attestation(conn, proof_bytes)
 
 
 def _content_path_for_digest(

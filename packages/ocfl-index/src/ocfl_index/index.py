@@ -6,7 +6,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, Self
 
 from ocfl_index import db
-from ocfl_index.models import BlobRow, ObjectRow, PathRow, ScanReport, VersionRow
+from ocfl_index.models import (
+    BlobRow,
+    ObjectRow,
+    OtsAttestation,
+    PathRow,
+    ScanReport,
+    VersionRow,
+)
 from ocfl_lib import LocalFS, Object, StorageRoot, VNum
 
 if TYPE_CHECKING:
@@ -125,3 +132,23 @@ class Index:
         fs = self._storage_root._fsys
         obj = Object(fs, obj_row.root_relpath)
         return obj.open_logical_path(VNum(version_num), logical_path)
+
+    def get_attestation(self, proof_digest: str) -> OtsAttestation | None:
+        row = self._conn.execute(
+            "SELECT proof_digest, attested_digest, block_height, parsed_at, "
+            "parse_error FROM ots_attestations WHERE proof_digest = ?",
+            (proof_digest,),
+        ).fetchone()
+        return OtsAttestation(*row) if row else None
+
+    def content_attestation(
+        self, object_id: str, version_num: int, logical_path: str
+    ) -> OtsAttestation | None:
+        row = self._conn.execute(
+            "SELECT digest FROM content_paths WHERE object_id = ? AND "
+            "version_num = ? AND logical_path = ?",
+            (object_id, version_num, f"{logical_path}.ots"),
+        ).fetchone()
+        if row is None:
+            return None
+        return self.get_attestation(row[0])

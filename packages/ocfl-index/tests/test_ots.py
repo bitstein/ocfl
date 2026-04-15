@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -14,10 +13,12 @@ from opentimestamps.core.op import OpSHA256
 from opentimestamps.core.serialize import BytesSerializationContext
 from opentimestamps.core.timestamp import DetachedTimestampFile, Timestamp
 
-from ocfl_index import db, ots
+from ocfl_index import Index, db, ots
+from ocfl_lib import DigestAlgorithm
+from tests.conftest import FixtureRoot
 
 if TYPE_CHECKING:
-    pass
+    import sqlite3
 
 
 def _build_proof(payload: bytes, *, height: int | None = 854_321) -> bytes:
@@ -79,3 +80,57 @@ def test_parse_once_per_proof_digest(tmp_path: Path) -> None:
     with patch.object(ots, "parse", wraps=ots.parse) as mock_parse:
         ots.upsert_attestation(conn, proof)
         assert mock_parse.call_count == 0
+
+
+def test_content_companion_populates_attestations(tmp_path: Path) -> None:
+    fixture = FixtureRoot(tmp_path)
+    payload = b"hello payload"
+    proof = _build_proof(payload, height=850_000)
+    fixture.commit(
+        "alpha",
+        {"data.bin": payload, "data.bin.ots": proof},
+        algorithm=DigestAlgorithm.SHA256,
+    )
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        idx.refresh()
+        rows = idx.conn.execute("SELECT block_height FROM ots_attestations").fetchall()
+        assert rows == [(850_000,)]
+
+
+def test_content_attestation_resolves_sibling_path(tmp_path: Path) -> None:
+    fixture = FixtureRoot(tmp_path)
+    payload = b"bytes for sibling"
+    proof = _build_proof(payload, height=860_000)
+    fixture.commit(
+        "alpha",
+        {"file.txt": payload, "file.txt.ots": proof},
+        algorithm=DigestAlgorithm.SHA256,
+    )
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        idx.refresh()
+        att = idx.content_attestation("alpha", 1, "file.txt")
+        assert att is not None
+        assert att.block_height == 860_000
+
+
+def test_duplicate_proof_across_objects_parses_once(tmp_path: Path) -> None:
+    fixture = FixtureRoot(tmp_path)
+    payload = b"shared bytes"
+    proof = _build_proof(payload, height=870_000)
+    fixture.commit(
+        "alpha",
+        {"f.txt": payload, "f.txt.ots": proof},
+        algorithm=DigestAlgorithm.SHA256,
+    )
+    fixture.commit(
+        "beta",
+        {"f.txt": payload, "f.txt.ots": proof},
+        algorithm=DigestAlgorithm.SHA256,
+    )
+
+    with patch.object(ots, "parse", wraps=ots.parse) as mock_parse:
+        with Index.open(tmp_path / "i.db", fixture.path) as idx:
+            idx.refresh()
+        assert mock_parse.call_count == 1
