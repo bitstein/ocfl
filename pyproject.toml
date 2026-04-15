@@ -18,7 +18,11 @@ dev = [
 members = ["packages/*"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/ocfl-lib/tests", "packages/ocfl-cli/tests"]
+testpaths = [
+    "packages/ocfl-lib/tests",
+    "packages/ocfl-cli/tests",
+    "packages/ocfl-index/tests",
+]
 pythonpath = ["."]
 markers = ["bitcoin: requires bitcoind regtest subprocess"]
 
@@ -51,7 +55,7 @@ select = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["ocfl_lib", "ocfl_cli"]
+known-first-party = ["ocfl_lib", "ocfl_cli", "ocfl_index"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["TCH"]
