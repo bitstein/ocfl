@@ -163,11 +163,51 @@ def _insert_versions_and_paths(
         counters.versions_added += 1
 
 
+def _file_size(fs: FS, path: str) -> int:
+    with fs.open_file(path) as f:
+        f.seek(0, 2)
+        return f.tell()
+
+
+def _existing_blob_digests(conn: sqlite3.Connection) -> set[str]:
+    rows = conn.execute("SELECT digest FROM blobs").fetchall()
+    return {r[0] for r in rows}
+
+
+def _insert_blobs(
+    conn: sqlite3.Connection,
+    fs: FS,
+    *,
+    relpath: str,
+    inventory: StoredInventory,
+    seen: set[str],
+    size_cache: dict[str, int],
+    counters: _Counters,
+) -> None:
+    inv = inventory.inventory
+    now = _now()
+    for digest, content_paths in inv.manifest.items():
+        if digest in seen:
+            continue
+        if digest not in size_cache:
+            size_cache[digest] = _file_size(fs, f"{relpath}/{content_paths[0]}")
+        conn.execute(
+            "INSERT OR IGNORE INTO blobs(digest, size, media_type, first_seen_at) "
+            "VALUES (?, ?, NULL, ?)",
+            (digest, size_cache[digest], now),
+        )
+        seen.add(digest)
+        counters.blobs_added += 1
+
+
 def _scan_object(
     conn: sqlite3.Connection,
     fs: FS,
     relpath: str,
     counters: _Counters,
+    *,
+    blob_seen: set[str],
+    size_cache: dict[str, int],
 ) -> None:
     counters.walked_relpaths.add(relpath)
     counters.objects_scanned += 1
@@ -187,6 +227,15 @@ def _scan_object(
     )
     counters.objects_changed += 1
     _insert_versions_and_paths(conn, inventory=inventory, counters=counters)
+    _insert_blobs(
+        conn,
+        fs,
+        relpath=relpath,
+        inventory=inventory,
+        seen=blob_seen,
+        size_cache=size_cache,
+        counters=counters,
+    )
 
 
 def scan(
@@ -200,11 +249,20 @@ def scan(
 
     fs: FS = storage_root._fsys
     counters = _Counters()
+    blob_seen = _existing_blob_digests(conn)
+    size_cache: dict[str, int] = {}
     start = time.perf_counter()
     conn.execute("BEGIN IMMEDIATE")
     try:
         for relpath in storage_root.object_paths():
-            _scan_object(conn, fs, relpath, counters)
+            _scan_object(
+                conn,
+                fs,
+                relpath,
+                counters,
+                blob_seen=blob_seen,
+                size_cache=size_cache,
+            )
     except Exception:
         conn.rollback()
         raise

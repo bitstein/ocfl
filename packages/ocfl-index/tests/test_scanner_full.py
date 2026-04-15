@@ -41,6 +41,42 @@ def test_versions_rows_match_inventory(tmp_path: Path) -> None:
         assert rows == [(1, "v1"), (2, "v2")]
 
 
+def test_blobs_row_per_unique_digest(tmp_path: Path) -> None:
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit(
+        "alpha",
+        {"a.txt": "same", "b.txt": "same"},
+        algorithm=DigestAlgorithm.SHA256,
+    )
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        scan(idx.conn, idx.storage_root, full=False)
+        rows = idx.conn.execute("SELECT count(*) FROM blobs").fetchone()
+        assert rows[0] == 1
+
+
+def test_blob_dedup_across_objects(tmp_path: Path) -> None:
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"x.txt": "shared"}, algorithm=DigestAlgorithm.SHA256)
+    fixture.commit("beta", {"y.txt": "shared"}, algorithm=DigestAlgorithm.SHA256)
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        scan(idx.conn, idx.storage_root, full=False)
+        rows = idx.conn.execute("SELECT count(*) FROM blobs").fetchone()
+        assert rows[0] == 1
+
+
+def test_blob_size_matches_file(tmp_path: Path) -> None:
+    fixture = FixtureRoot(tmp_path)
+    payload = b"x" * 137
+    fixture.commit("alpha", {"a.bin": payload}, algorithm=DigestAlgorithm.SHA256)
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        scan(idx.conn, idx.storage_root, full=False)
+        size = idx.conn.execute("SELECT size FROM blobs").fetchone()[0]
+        assert size == len(payload)
+
+
 def test_content_paths_rows_match_state(tmp_path: Path) -> None:
     fixture = FixtureRoot(tmp_path)
     fixture.commit(
