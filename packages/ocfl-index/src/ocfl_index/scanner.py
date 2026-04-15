@@ -238,6 +238,20 @@ def _scan_object(
     )
 
 
+def sweep_objects(conn: sqlite3.Connection, walked: set[str]) -> int:
+    """Delete object rows whose root_relpath is not in walked. Returns count."""
+    rows = conn.execute("SELECT root_relpath FROM objects").fetchall()
+    db_relpaths = {r[0] for r in rows}
+    missing = db_relpaths - walked
+    if not missing:
+        return 0
+    conn.executemany(
+        "DELETE FROM objects WHERE root_relpath = ?",
+        [(r,) for r in missing],
+    )
+    return len(missing)
+
+
 def scan(
     conn: sqlite3.Connection,
     storage_root: StorageRoot,
@@ -265,7 +279,9 @@ def scan(
             )
     except Exception:
         conn.rollback()
+        _log.warning("scan failed mid-walk; skipping purge sweep")
         raise
+    counters.objects_purged = sweep_objects(conn, counters.walked_relpaths)
     conn.commit()
     elapsed = time.perf_counter() - start
     return counters.to_report(elapsed_seconds=elapsed)
