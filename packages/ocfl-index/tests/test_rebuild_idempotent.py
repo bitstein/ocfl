@@ -24,9 +24,9 @@ def test_full_rebuild_updates_last_full_scan_at(tmp_path: Path) -> None:
 
     with Index.open(tmp_path / "i.db", fixture.path) as idx:
         idx.refresh()
-        assert db.meta_get(idx.conn, "last_full_scan_at") is None
+        assert db.meta_get(idx._conn, "last_full_scan_at") is None
         idx.refresh(full=True)
-        stamp = db.meta_get(idx.conn, "last_full_scan_at")
+        stamp = db.meta_get(idx._conn, "last_full_scan_at")
         assert stamp is not None
 
 
@@ -40,7 +40,9 @@ def test_rebuild_clears_ots_tables(tmp_path: Path) -> None:
 
     with Index.open(tmp_path / "i.db", fixture.path) as idx:
         idx.refresh()
-        before = idx.conn.execute("SELECT count(*) FROM ots_attestations").fetchone()[0]
+        before = idx._conn.execute("SELECT count(*) FROM ots_attestations").fetchone()[
+            0
+        ]
         assert before > 0
 
         # Remove the proof file and rebuild
@@ -55,5 +57,5 @@ def test_rebuild_clears_ots_tables(tmp_path: Path) -> None:
         proof_path.unlink()
 
         idx.refresh(full=True)
-        after = idx.conn.execute("SELECT count(*) FROM ots_attestations").fetchone()[0]
+        after = idx._conn.execute("SELECT count(*) FROM ots_attestations").fetchone()[0]
         assert after == 0

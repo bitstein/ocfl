@@ -1,6 +1,10 @@
 """Frozen dataclasses returned by Index queries and refresh."""
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,3 +64,19 @@ class ScanReport:
     blobs_added: int = 0
     objects_purged: int = 0
     elapsed_seconds: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class StatusReport:
+    root_path: str
+    schema_version: str | None
+    last_scan_at: str | None
+    last_full_scan_at: str | None
+    counts: Mapping[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectDetail:
+    object: ObjectRow
+    versions: tuple[VersionRow, ...]
+    head_paths: tuple[PathRow, ...]

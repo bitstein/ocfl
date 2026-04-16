@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -94,7 +92,7 @@ def test_content_companion_populates_attestations(tmp_path: Path) -> None:
 
     with Index.open(tmp_path / "i.db", fixture.path) as idx:
         idx.refresh()
-        rows = idx.conn.execute("SELECT block_height FROM ots_attestations").fetchall()
+        rows = idx._conn.execute("SELECT block_height FROM ots_attestations").fetchall()
         assert rows == [(850_000,)]
 
 
@@ -141,7 +139,7 @@ def test_inventory_proof_indexed_with_block_height(tmp_path: Path) -> None:
 
     with Index.open(tmp_path / "i.db", fixture.path) as idx:
         idx.refresh()
-        row = idx.conn.execute(
+        row = idx._conn.execute(
             "SELECT a.block_height FROM ots_inventory i "
             "JOIN ots_attestations a ON a.proof_digest = i.proof_digest "
             "WHERE i.object_id = 'alpha' AND i.version_num = 1"
@@ -155,7 +153,7 @@ def test_missing_inventory_proof_is_fine(tmp_path: Path) -> None:
 
     with Index.open(tmp_path / "i.db", fixture.path) as idx:
         idx.refresh()
-        rows = idx.conn.execute("SELECT count(*) FROM ots_inventory").fetchone()
+        rows = idx._conn.execute("SELECT count(*) FROM ots_inventory").fetchone()
         assert rows[0] == 0
 
 

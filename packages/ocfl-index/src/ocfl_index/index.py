@@ -1,17 +1,17 @@
 """Public Index API: open, refresh, lookup."""
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, Self
 
 from ocfl_index import db
 from ocfl_index.models import (
     BlobRow,
+    ObjectDetail,
     ObjectRow,
     OtsAttestation,
     PathRow,
     ScanReport,
+    StatusReport,
     VersionRow,
 )
 from ocfl_lib import LocalFS, Object, StorageRoot, VNum
@@ -22,8 +22,25 @@ if TYPE_CHECKING:
     from types import TracebackType
 
 
+_COUNT_TABLES = (
+    "objects",
+    "versions",
+    "content_paths",
+    "blobs",
+    "ots_attestations",
+    "ots_inventory",
+)
+
+
 class IndexRootMismatch(ValueError):
     """Raised when an index is reopened against a different root path."""
+
+
+def _stored_root_path(conn: sqlite3.Connection) -> str | None:
+    meta_exists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='meta'"
+    ).fetchone()
+    return db.meta_get(conn, "root_path") if meta_exists else None
 
 
 class Index:
@@ -40,17 +57,26 @@ class Index:
         self._root_path = root_path
 
     @classmethod
-    def open(cls, db_path: Path | str, root: Path | str) -> Self:
-        root_path = str(Path(root))
+    def open(cls, db_path: Path | str, root: Path | str | None = None) -> Self:
         conn = db.connect(db_path)
-        db.migrate(conn, root_path=root_path)
-        stored = db.meta_get(conn, "root_path")
-        if stored != root_path:
-            conn.close()
-            raise IndexRootMismatch(
-                f"index was initialized for root {stored!r}, got {root_path!r}"
-            )
-        storage_root = StorageRoot(LocalFS(Path(root)))
+        if root is None:
+            stored = _stored_root_path(conn)
+            if not stored:
+                conn.close()
+                raise IndexRootMismatch(
+                    f"index db has no recorded root_path: {db_path}"
+                )
+            root_path = stored
+        else:
+            root_path = str(Path(root))
+            db.migrate(conn, root_path=root_path)
+            stored = db.meta_get(conn, "root_path")
+            if stored != root_path:
+                conn.close()
+                raise IndexRootMismatch(
+                    f"index was initialized for root {stored!r}, got {root_path!r}"
+                )
+        storage_root = StorageRoot(LocalFS(Path(root_path)))
         return cls(conn, storage_root, root_path)
 
     @property
@@ -60,10 +86,6 @@ class Index:
     @property
     def storage_root(self) -> StorageRoot:
         return self._storage_root
-
-    @property
-    def conn(self) -> sqlite3.Connection:
-        return self._conn
 
     def close(self) -> None:
         self._conn.close()
@@ -83,6 +105,35 @@ class Index:
         from ocfl_index import scanner
 
         return scanner.scan(self._conn, self._storage_root, full=full)
+
+    def counts(self) -> dict[str, int]:
+        return {
+            table: self._conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            for table in _COUNT_TABLES
+        }
+
+    def status(self) -> StatusReport:
+        return StatusReport(
+            root_path=self._root_path,
+            schema_version=db.meta_get(self._conn, "schema_version"),
+            last_scan_at=db.meta_get(self._conn, "last_scan_at"),
+            last_full_scan_at=db.meta_get(self._conn, "last_full_scan_at"),
+            counts=self.counts(),
+        )
+
+    def get_object_detail(self, object_id: str) -> ObjectDetail | None:
+        obj = self.get_object(object_id)
+        if obj is None:
+            return None
+        version_rows = self._conn.execute(
+            "SELECT object_id, version_num, version, created_at, message, "
+            "user_name, user_address FROM versions "
+            "WHERE object_id = ? ORDER BY version_num",
+            (object_id,),
+        ).fetchall()
+        versions = tuple(VersionRow(*r) for r in version_rows)
+        head_paths = tuple(self.list_paths(object_id, obj.head_version_num))
+        return ObjectDetail(object=obj, versions=versions, head_paths=head_paths)
 
     def iter_heads(self) -> Iterator[tuple[str, str]]:
         yield from self._conn.execute("SELECT object_id, inventory_digest FROM objects")

@@ -12,11 +12,11 @@ def test_full_scan_populates_objects(tmp_path: Path) -> None:
     fixture.commit("beta", {"b.txt": "world"}, algorithm=DigestAlgorithm.SHA512)
 
     with Index.open(tmp_path / "i.db", fixture.path) as idx:
-        report = scan(idx.conn, idx.storage_root, full=False)
+        report = scan(idx._conn, idx.storage_root, full=False)
         assert report.objects_scanned == 2
         assert report.objects_changed == 2
 
-        rows = idx.conn.execute(
+        rows = idx._conn.execute(
             "SELECT object_id, digest_algorithm FROM objects ORDER BY object_id"
         ).fetchall()
         assert rows == [("alpha", "sha256"), ("beta", "sha512")]
@@ -33,8 +33,8 @@ def test_versions_rows_match_inventory(tmp_path: Path) -> None:
     )
 
     with Index.open(tmp_path / "i.db", fixture.path) as idx:
-        scan(idx.conn, idx.storage_root, full=False)
-        rows = idx.conn.execute(
+        scan(idx._conn, idx.storage_root, full=False)
+        rows = idx._conn.execute(
             "SELECT version_num, version FROM versions WHERE object_id = 'alpha' "
             "ORDER BY version_num"
         ).fetchall()
@@ -50,8 +50,8 @@ def test_blobs_row_per_unique_digest(tmp_path: Path) -> None:
     )
 
     with Index.open(tmp_path / "i.db", fixture.path) as idx:
-        scan(idx.conn, idx.storage_root, full=False)
-        rows = idx.conn.execute("SELECT count(*) FROM blobs").fetchone()
+        scan(idx._conn, idx.storage_root, full=False)
+        rows = idx._conn.execute("SELECT count(*) FROM blobs").fetchone()
         assert rows[0] == 1
 
 
@@ -61,8 +61,8 @@ def test_blob_dedup_across_objects(tmp_path: Path) -> None:
     fixture.commit("beta", {"y.txt": "shared"}, algorithm=DigestAlgorithm.SHA256)
 
     with Index.open(tmp_path / "i.db", fixture.path) as idx:
-        scan(idx.conn, idx.storage_root, full=False)
-        rows = idx.conn.execute("SELECT count(*) FROM blobs").fetchone()
+        scan(idx._conn, idx.storage_root, full=False)
+        rows = idx._conn.execute("SELECT count(*) FROM blobs").fetchone()
         assert rows[0] == 1
 
 
@@ -72,8 +72,8 @@ def test_blob_size_matches_file(tmp_path: Path) -> None:
     fixture.commit("alpha", {"a.bin": payload}, algorithm=DigestAlgorithm.SHA256)
 
     with Index.open(tmp_path / "i.db", fixture.path) as idx:
-        scan(idx.conn, idx.storage_root, full=False)
-        size = idx.conn.execute("SELECT size FROM blobs").fetchone()[0]
+        scan(idx._conn, idx.storage_root, full=False)
+        size = idx._conn.execute("SELECT size FROM blobs").fetchone()[0]
         assert size == len(payload)
 
 
@@ -86,8 +86,8 @@ def test_content_paths_rows_match_state(tmp_path: Path) -> None:
     )
 
     with Index.open(tmp_path / "i.db", fixture.path) as idx:
-        scan(idx.conn, idx.storage_root, full=False)
-        paths = idx.conn.execute(
+        scan(idx._conn, idx.storage_root, full=False)
+        paths = idx._conn.execute(
             "SELECT logical_path FROM content_paths "
             "WHERE object_id = 'alpha' AND version_num = 1 "
             "ORDER BY logical_path"
