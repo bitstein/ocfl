@@ -4,7 +4,7 @@ import logging
 import sqlite3
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ocfl_index import db, ots
 from ocfl_index.constants import OTS_EXTENSION_DIR
@@ -38,17 +38,6 @@ class _Counters:
     versions_added: int = 0
     blobs_added: int = 0
     objects_purged: int = 0
-    walked_relpaths: set[str] = field(default_factory=set)
-
-    def to_report(self, *, elapsed_seconds: float) -> ScanReport:
-        return ScanReport(
-            objects_scanned=self.objects_scanned,
-            objects_changed=self.objects_changed,
-            versions_added=self.versions_added,
-            blobs_added=self.blobs_added,
-            objects_purged=self.objects_purged,
-            elapsed_seconds=elapsed_seconds,
-        )
 
 
 def _read_sidecar(fs: FS, relpath: str) -> tuple[DigestAlgorithm, str] | None:
@@ -210,10 +199,11 @@ def _scan_object(
     relpath: str,
     counters: _Counters,
     *,
+    walked: set[str],
     blob_seen: set[str],
     size_cache: dict[str, int],
 ) -> None:
-    counters.walked_relpaths.add(relpath)
+    walked.add(relpath)
     counters.objects_scanned += 1
     sidecar = _read_sidecar(fs, relpath)
     if sidecar is None:
@@ -395,6 +385,7 @@ def scan(
     """
     fs: FS = storage_root.fs
     counters = _Counters()
+    walked: set[str] = set()
     size_cache: dict[str, int] = {}
     start = time.perf_counter()
     try:
@@ -415,14 +406,14 @@ def scan(
                 fs,
                 relpath,
                 counters,
+                walked=walked,
                 blob_seen=blob_seen,
                 size_cache=size_cache,
             )
     except Exception:
         conn.rollback()
-        _log.warning("scan failed mid-walk; skipping purge sweep")
         raise
-    counters.objects_purged = sweep_objects(conn, counters.walked_relpaths)
+    counters.objects_purged = sweep_objects(conn, walked)
     sniff_pass(conn, fs)
     now = db.now_iso()
     db.meta_set(conn, "last_scan_at", now)
@@ -430,4 +421,4 @@ def scan(
         db.meta_set(conn, "last_full_scan_at", now)
     conn.commit()
     elapsed = time.perf_counter() - start
-    return counters.to_report(elapsed_seconds=elapsed)
+    return ScanReport(**vars(counters), elapsed_seconds=elapsed)
