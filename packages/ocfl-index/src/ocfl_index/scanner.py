@@ -13,7 +13,7 @@ from ocfl_index.models import ScanReport
 from ocfl_lib import DigestAlgorithm, Object, Spec, StorageRoot, VNum
 from ocfl_lib import fs as ocfl_fs
 from ocfl_lib.fs.protocols import FS
-from ocfl_lib.inventory import StoredInventory
+from ocfl_lib.inventory import StoredInventory, VersionInfo
 
 _SNIFF_PRIMARY_BYTES = 8 * 1024
 _SNIFF_RETRY_BYTES = 1024 * 1024
@@ -111,49 +111,46 @@ def _existing_version_nums(conn: sqlite3.Connection, object_id: str) -> set[int]
     return {r[0] for r in rows}
 
 
-def _insert_versions_and_paths(
+def _insert_version(
     conn: sqlite3.Connection,
-    *,
-    inventory: StoredInventory,
-    counters: _Counters,
-) -> list[tuple[int, str]]:
-    inv = inventory.inventory
-    object_id = inv.id
-    existing = _existing_version_nums(conn, object_id)
-    items = sorted(inv.versions.items(), key=lambda kv: VNum.parse(kv[0]).number)
-    added: list[tuple[int, str]] = []
-    for raw_key, info in items:
-        vnum = VNum.parse(raw_key)
-        if vnum.number in existing:
-            continue
-        user = info.user
-        conn.execute(
-            "INSERT INTO versions(object_id, version_num, version, created_at, "
-            "message, user_name, user_address) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                object_id,
-                vnum.number,
-                raw_key,
-                info.created,
-                info.message,
-                user.name if user else None,
-                user.address if user else None,
-            ),
+    object_id: str,
+    vnum: VNum,
+    raw_key: str,
+    info: VersionInfo,
+) -> None:
+    user = info.user
+    conn.execute(
+        "INSERT INTO versions(object_id, version_num, version, created_at, "
+        "message, user_name, user_address) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            object_id,
+            vnum.number,
+            raw_key,
+            info.created,
+            info.message,
+            user.name if user else None,
+            user.address if user else None,
+        ),
+    )
+
+
+def _insert_paths(
+    conn: sqlite3.Connection,
+    object_id: str,
+    vnum: VNum,
+    state: dict[str, list[str]],
+) -> None:
+    path_rows = [
+        (object_id, vnum.number, logical_path, digest)
+        for digest, paths in state.items()
+        for logical_path in paths
+    ]
+    if path_rows:
+        conn.executemany(
+            "INSERT INTO content_paths(object_id, version_num, "
+            "logical_path, digest) VALUES (?, ?, ?, ?)",
+            path_rows,
         )
-        path_rows = [
-            (object_id, vnum.number, logical_path, digest)
-            for digest, paths in info.state.items()
-            for logical_path in paths
-        ]
-        if path_rows:
-            conn.executemany(
-                "INSERT INTO content_paths(object_id, version_num, "
-                "logical_path, digest) VALUES (?, ?, ?, ?)",
-                path_rows,
-            )
-        counters.versions_added += 1
-        added.append((vnum.number, raw_key))
-    return added
 
 
 def _file_size(fs: FS, path: str) -> int:
@@ -220,9 +217,19 @@ def _scan_object(
         inventory_digest=incoming_digest,
     )
     counters.objects_changed += 1
-    added_versions = _insert_versions_and_paths(
-        conn, inventory=inventory, counters=counters
-    )
+    inv = inventory.inventory
+    object_id = inv.id
+    existing = _existing_version_nums(conn, object_id)
+    items = sorted(inv.versions.items(), key=lambda kv: VNum.parse(kv[0]).number)
+    added_versions: list[tuple[int, str]] = []
+    for raw_key, info in items:
+        vnum = VNum.parse(raw_key)
+        if vnum.number in existing:
+            continue
+        _insert_version(conn, object_id, vnum, raw_key, info)
+        _insert_paths(conn, object_id, vnum, info.state)
+        counters.versions_added += 1
+        added_versions.append((vnum.number, raw_key))
     _insert_blobs(
         conn,
         fs,

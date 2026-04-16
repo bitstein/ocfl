@@ -54,23 +54,24 @@ def upsert_attestation(conn: sqlite3.Connection, proof_bytes: bytes) -> str:
         return pdigest
     result = parse(proof_bytes)
     now = db.now_iso()
-    if isinstance(result, ParsedOts):
-        conn.execute(
-            "INSERT INTO ots_attestations(proof_digest, attested_digest, "
-            "block_height, parsed_at, parse_error) VALUES (?, ?, ?, ?, NULL)",
-            (
-                result.proof_digest,
-                result.attested_digest,
-                result.block_height,
-                now,
-            ),
-        )
-    else:
-        conn.execute(
-            "INSERT INTO ots_attestations(proof_digest, attested_digest, "
-            "block_height, parsed_at, parse_error) VALUES (?, '', NULL, ?, ?)",
-            (result.proof_digest, now, result.error),
-        )
+    match result:
+        case ParsedOts():
+            conn.execute(
+                "INSERT INTO ots_attestations(proof_digest, attested_digest, "
+                "block_height, parsed_at, parse_error) VALUES (?, ?, ?, ?, NULL)",
+                (
+                    result.proof_digest,
+                    result.attested_digest,
+                    result.block_height,
+                    now,
+                ),
+            )
+        case ParseFailure():
+            conn.execute(
+                "INSERT INTO ots_attestations(proof_digest, attested_digest, "
+                "block_height, parsed_at, parse_error) VALUES (?, '', NULL, ?, ?)",
+                (result.proof_digest, now, result.error),
+            )
     return pdigest
 
 
