@@ -1,9 +1,7 @@
 """Test fixtures: build OCFL storage roots via ocfl_lib."""
 
-from __future__ import annotations
-
+from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
@@ -15,9 +13,6 @@ from ocfl_lib import (
     stage_dir,
 )
 from ocfl_lib.layout import FlatDirectLayout
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
 
 
 def _write_files(dir_path: Path, files: Mapping[str, bytes | str]) -> None:

@@ -3,10 +3,7 @@
 import sqlite3
 from datetime import UTC, datetime
 from importlib import resources
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
 
 SCHEMA_VERSION = 1
 

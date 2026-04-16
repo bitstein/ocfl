@@ -1,6 +1,6 @@
 import hashlib
+import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from opentimestamps.core.notary import (
@@ -14,9 +14,6 @@ from opentimestamps.core.timestamp import DetachedTimestampFile, Timestamp
 from ocfl_index import Index, db, ots
 from ocfl_lib import DigestAlgorithm
 from tests.conftest import FixtureRoot
-
-if TYPE_CHECKING:
-    import sqlite3
 
 
 def _build_proof(payload: bytes, *, height: int | None = 854_321) -> bytes:

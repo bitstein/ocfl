@@ -1,18 +1,13 @@
 """Parse OpenTimestamps proofs and cache attestations."""
 
-from __future__ import annotations
-
 import hashlib
+import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 from opentimestamps.core.notary import BitcoinBlockHeaderAttestation
 from opentimestamps.core.serialize import BytesDeserializationContext
 from opentimestamps.core.timestamp import DetachedTimestampFile, Timestamp
-
-if TYPE_CHECKING:
-    import sqlite3
 
 
 @dataclass(frozen=True, slots=True)

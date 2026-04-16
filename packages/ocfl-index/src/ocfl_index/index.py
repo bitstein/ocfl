@@ -1,7 +1,10 @@
 """Public Index API: open, refresh, lookup."""
 
+import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO, Self
+from types import TracebackType
+from typing import BinaryIO, Self
 
 from ocfl_index import db
 from ocfl_index.models import (
@@ -15,12 +18,6 @@ from ocfl_index.models import (
     VersionRow,
 )
 from ocfl_lib import LocalFS, StorageRoot, VNum
-
-if TYPE_CHECKING:
-    import sqlite3
-    from collections.abc import Iterator
-    from types import TracebackType
-
 
 _COUNT_TABLES = (
     "objects",

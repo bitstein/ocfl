@@ -59,12 +59,9 @@ select = [
     "UP",    # pyupgrade
     "B",     # flake8-bugbear
     "SIM",   # flake8-simplify
-    "TCH",   # flake8-type-checking
     "RUF",   # ruff-specific
 ]
 
 [tool.ruff.lint.isort]
 known-first-party = ["ocfl_lib", "ocfl_cli", "ocfl_index"]
 
-[tool.ruff.lint.per-file-ignores]
-"**/tests/**" = ["TCH"]

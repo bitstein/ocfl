@@ -1,29 +1,22 @@
 """Walk an OCFL root and update the index cache."""
 
-from __future__ import annotations
-
 import logging
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 from ocfl_index import db, ots
 from ocfl_index.constants import OTS_EXTENSION_DIR
 from ocfl_index.mediatype import OCTET_STREAM, sniff
 from ocfl_index.models import ScanReport
-from ocfl_lib import DigestAlgorithm, Object, Spec, VNum
+from ocfl_lib import DigestAlgorithm, Object, Spec, StorageRoot, VNum
 from ocfl_lib import fs as ocfl_fs
+from ocfl_lib.fs.protocols import FS
+from ocfl_lib.inventory import StoredInventory
 
 _SNIFF_PRIMARY_BYTES = 8 * 1024
 _SNIFF_RETRY_BYTES = 1024 * 1024
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from ocfl_lib import StorageRoot
-    from ocfl_lib.fs.protocols import FS
-    from ocfl_lib.inventory import StoredInventory
 
 _log = logging.getLogger(__name__)
 
