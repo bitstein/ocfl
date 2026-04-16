@@ -78,6 +78,10 @@ class StorageRoot:
         return cls(walker, path)
 
     @property
+    def fs(self) -> FileWalker:
+        return self._fsys
+
+    @property
     def spec(self) -> Spec:
         return self._spec
 

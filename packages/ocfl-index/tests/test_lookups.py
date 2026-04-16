@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from ocfl_index import Index, ObjectRow
 from ocfl_lib import DigestAlgorithm
 from tests.conftest import FixtureRoot
@@ -25,3 +27,13 @@ def test_open_blob_yields_file_handle(tmp_path: Path) -> None:
         idx.refresh()
         with idx.open_blob("alpha", 1, "a.txt") as fh:
             assert fh.read() == b"hello"
+
+
+def test_open_blob_unknown_object_raises_key_error(tmp_path: Path) -> None:
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"a.txt": "hello"}, algorithm=DigestAlgorithm.SHA256)
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        idx.refresh()
+        with pytest.raises(KeyError, match="object 'missing' not in index"):
+            idx.open_blob("missing", 1, "a.txt")

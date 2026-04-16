@@ -14,7 +14,7 @@ from ocfl_index.models import (
     StatusReport,
     VersionRow,
 )
-from ocfl_lib import LocalFS, Object, StorageRoot, VNum
+from ocfl_lib import LocalFS, StorageRoot, VNum
 
 if TYPE_CHECKING:
     import sqlite3
@@ -177,11 +177,9 @@ class Index:
     def open_blob(
         self, object_id: str, version_num: int, logical_path: str
     ) -> BinaryIO:
-        obj_row = self.get_object(object_id)
-        if obj_row is None:
+        if self.get_object(object_id) is None:
             raise KeyError(f"object {object_id!r} not in index")
-        fs = self._storage_root._fsys
-        obj = Object(fs, obj_row.root_relpath)
+        obj = self._storage_root.get_object(object_id)
         return obj.open_logical_path(VNum(version_num), logical_path)
 
     def get_attestation(self, proof_digest: str) -> OtsAttestation | None:

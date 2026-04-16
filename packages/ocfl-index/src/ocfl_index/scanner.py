@@ -393,7 +393,7 @@ def scan(
     """Walk the storage root and update the index cache."""
     import time
 
-    fs: FS = storage_root._fsys
+    fs: FS = storage_root.fs
     counters = _Counters()
     size_cache: dict[str, int] = {}
     start = time.perf_counter()

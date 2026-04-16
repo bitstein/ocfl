@@ -36,7 +36,7 @@ def test_octet_stream_triggers_1mib_retry(tmp_path: Path) -> None:
             calls.append(len(buf))
             return OCTET_STREAM if len(calls) == 1 else "text/plain"
 
-        sniff_pass(idx._conn, idx.storage_root._fsys, sniffer=sniffer)
+        sniff_pass(idx._conn, idx.storage_root.fs, sniffer=sniffer)
         assert len(calls) == 2
         assert calls[0] == 8 * 1024
         assert calls[1] > 8 * 1024
@@ -57,7 +57,7 @@ def test_unchanged_blobs_not_resniffed(tmp_path: Path) -> None:
             calls += 1
             return "text/plain"
 
-        sniff_pass(idx._conn, idx.storage_root._fsys, sniffer=sniffer)
+        sniff_pass(idx._conn, idx.storage_root.fs, sniffer=sniffer)
         assert calls == 0
 
 
@@ -72,6 +72,6 @@ def test_indeterminate_stored_as_octet_stream(tmp_path: Path) -> None:
         idx._conn.execute("UPDATE blobs SET media_type = NULL")
 
         always_octet: Callable[[bytes], str] = lambda _: OCTET_STREAM  # noqa: E731
-        sniff_pass(idx._conn, idx.storage_root._fsys, sniffer=always_octet)
+        sniff_pass(idx._conn, idx.storage_root.fs, sniffer=always_octet)
         media = idx._conn.execute("SELECT media_type FROM blobs").fetchone()[0]
         assert media == OCTET_STREAM

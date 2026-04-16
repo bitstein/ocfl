@@ -120,6 +120,14 @@ class TestStorageRootOpen:
             StorageRoot(fsys)
 
 
+class TestStorageRootFs:
+    def test_fs_exposes_underlying_filewalker(self, tmp_path: Path):
+        _make_root(tmp_path)
+        fsys = LocalFS(tmp_path)
+        root = StorageRoot(fsys)
+        assert root.fs is fsys
+
+
 class TestStorageRootLayout:
     def test_no_layout(self, tmp_path: Path):
         _make_root(tmp_path)
