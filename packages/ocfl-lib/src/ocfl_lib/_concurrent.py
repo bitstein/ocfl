@@ -2,7 +2,7 @@
 
 import os
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable
@@ -46,7 +46,7 @@ def bounded_map[T, R](
             # Refill one slot
             nxt = next(it, _SENTINEL)
             if nxt is not _SENTINEL:
-                pending.append(pool.submit(fn, nxt))  # type: ignore[arg-type]
+                pending.append(pool.submit(fn, cast("T", nxt)))
 
             yield result
     finally:

@@ -8,7 +8,7 @@ notice.
 
 import io
 import posixpath
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, BinaryIO, cast
 
 import boto3
 from botocore.exceptions import ClientError
@@ -119,7 +119,7 @@ class S3FS(CopyFS, FileWalker):
             if _not_found(e):
                 raise FileNotFoundError(f"s3://{self._bucket}/{key}") from e
             raise
-        return S3FileReader(resp["Body"], resp["ContentLength"])  # type: ignore[return-value]
+        return cast("BinaryIO", S3FileReader(resp["Body"], resp["ContentLength"]))
 
     def read_dir(self, name: str) -> Iterator[FsEntry]:
         """List directory entries."""
