@@ -5,7 +5,6 @@ import sqlite3
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 
 from ocfl_index import db, ots
 from ocfl_index.constants import OTS_EXTENSION_DIR
@@ -69,10 +68,6 @@ def _read_sidecar(fs: FS, relpath: str) -> tuple[DigestAlgorithm, str] | None:
     return None
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
 def _existing_digest(conn: sqlite3.Connection, relpath: str) -> str | None:
     row = conn.execute(
         "SELECT inventory_digest FROM objects WHERE root_relpath = ?",
@@ -114,7 +109,7 @@ def _upsert_object(
             head.number,
             head_info.created,
             inventory_digest,
-            _now(),
+            db.now_iso(),
         ),
     )
 
@@ -194,7 +189,7 @@ def _insert_blobs(
     counters: _Counters,
 ) -> None:
     inv = inventory.inventory
-    now = _now()
+    now = db.now_iso()
     for digest, content_paths in inv.manifest.items():
         if digest in seen:
             continue
@@ -429,7 +424,7 @@ def scan(
         raise
     counters.objects_purged = sweep_objects(conn, counters.walked_relpaths)
     sniff_pass(conn, fs)
-    now = _now()
+    now = db.now_iso()
     db.meta_set(conn, "last_scan_at", now)
     if full:
         db.meta_set(conn, "last_full_scan_at", now)

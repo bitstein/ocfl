@@ -27,6 +27,10 @@ _CACHE_TABLES = (
 )
 
 
+def now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
 def connect(path: Path | str) -> sqlite3.Connection:
     """Open a SQLite connection with WAL + foreign keys enforced."""
     conn = sqlite3.connect(path, timeout=0)
@@ -83,7 +87,7 @@ def _drop_schema(conn: sqlite3.Connection) -> None:
 
 def _create_schema(conn: sqlite3.Connection, root_path: str) -> None:
     sql = resources.files("ocfl_index").joinpath("schema.sql").read_text()
-    now = datetime.now(UTC).isoformat()
+    now = now_iso()
     with conn:
         conn.executescript(sql)
         for key, value in (

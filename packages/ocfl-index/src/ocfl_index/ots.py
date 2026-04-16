@@ -3,11 +3,12 @@
 import hashlib
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from opentimestamps.core.notary import BitcoinBlockHeaderAttestation
 from opentimestamps.core.serialize import BytesDeserializationContext
 from opentimestamps.core.timestamp import DetachedTimestampFile, Timestamp
+
+from ocfl_index import db
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +53,7 @@ def upsert_attestation(conn: sqlite3.Connection, proof_bytes: bytes) -> str:
     if existing is not None:
         return pdigest
     result = parse(proof_bytes)
-    now = datetime.now(UTC).isoformat()
+    now = db.now_iso()
     if isinstance(result, ParsedOts):
         conn.execute(
             "INSERT INTO ots_attestations(proof_digest, attested_digest, "
