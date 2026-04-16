@@ -66,7 +66,7 @@ class Index:
             root_path = stored
         else:
             root_path = str(Path(root))
-            db.migrate(conn, root_path=root_path)
+            db.ensure_schema(conn, root_path=root_path)
             stored = db.meta_get(conn, "root_path")
             if stored != root_path:
                 conn.close()

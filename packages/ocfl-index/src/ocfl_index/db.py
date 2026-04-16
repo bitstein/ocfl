@@ -40,7 +40,7 @@ def connect(path: Path | str) -> sqlite3.Connection:
     return conn
 
 
-def migrate(conn: sqlite3.Connection, root_path: str) -> None:
+def ensure_schema(conn: sqlite3.Connection, root_path: str) -> None:
     """Create schema if missing; drop+recreate on schema_version mismatch."""
     stored = _stored_schema_version(conn)
     if stored is None:

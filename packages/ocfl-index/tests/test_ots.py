@@ -32,7 +32,7 @@ def _build_proof(payload: bytes, *, height: int | None = 854_321) -> bytes:
 
 def _open_db(tmp_path: Path) -> sqlite3.Connection:
     conn = db.connect(tmp_path / "i.db")
-    db.migrate(conn, root_path=str(tmp_path))
+    db.ensure_schema(conn, root_path=str(tmp_path))
     return conn
 
 
