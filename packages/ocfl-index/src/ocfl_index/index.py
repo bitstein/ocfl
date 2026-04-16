@@ -6,7 +6,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import BinaryIO, Self
 
-from ocfl_index import db
+from ocfl_index import db, scanner
 from ocfl_index.models import (
     BlobRow,
     ObjectDetail,
@@ -99,8 +99,6 @@ class Index:
         self.close()
 
     def refresh(self, *, full: bool = False) -> ScanReport:
-        from ocfl_index import scanner
-
         return scanner.scan(self._conn, self._storage_root, full=full)
 
     def counts(self) -> dict[str, int]:

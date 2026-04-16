@@ -2,7 +2,6 @@
 
 import dataclasses
 import json
-import logging
 from pathlib import Path
 from typing import Annotated
 
@@ -99,8 +98,3 @@ def show(
     typer.echo("head paths:")
     for p in detail.head_paths:
         typer.echo(f"  {p.logical_path}")
-
-
-def main() -> None:
-    logging.basicConfig(level=logging.WARNING)
-    app()
