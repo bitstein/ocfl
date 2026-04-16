@@ -479,6 +479,10 @@ source = { virtual = "." }
 [package.dev-dependencies]
 dev = [
     { name = "hypothesis" },
+    { name = "mypy-boto3-s3" },
+    { name = "ocfl-cli", extra = ["test"] },
+    { name = "ocfl-index" },
+    { name = "ocfl-lib", extra = ["test"] },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -490,6 +494,10 @@ dev = [
 [package.metadata.requires-dev]
 dev = [
     { name = "hypothesis", specifier = ">=6.152.2" },
+    { name = "mypy-boto3-s3", specifier = ">=1.42.80" },
+    { name = "ocfl-cli", extras = ["test"], editable = "packages/ocfl-cli" },
+    { name = "ocfl-index", editable = "packages/ocfl-index" },
+    { name = "ocfl-lib", extras = ["test"], editable = "packages/ocfl-lib" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=6" },
     { name = "ruff", specifier = ">=0.9" },
@@ -581,7 +589,7 @@ requires-dist = [
     { name = "boto3", marker = "extra == 's3'", specifier = ">=1.35.0" },
     { name = "moto", extras = ["s3"], marker = "extra == 'test'", specifier = ">=5.0.0" },
     { name = "msgspec", specifier = ">=0.20.0" },
-    { name = "ocfl-lib", extras = ["s3"], marker = "extra == 'test'" },
+    { name = "ocfl-lib", extras = ["s3"], marker = "extra == 'test'", editable = "packages/ocfl-lib" },
     { name = "opentimestamps", specifier = ">=0.4.5" },
 ]
 provides-extras = ["s3", "test"]

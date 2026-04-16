@@ -12,10 +12,19 @@ dev = [
     "ty>=0.0.24",
     "ruff>=0.9",
     "hypothesis>=6.152.2",
+    "ocfl-lib[test]",
+    "ocfl-cli[test]",
+    "ocfl-index",
+    "mypy-boto3-s3>=1.42.80",
 ]
 
 [tool.uv.workspace]
 members = ["packages/*"]
+
+[tool.uv.sources]
+ocfl-lib = { workspace = true }
+ocfl-cli = { workspace = true }
+ocfl-index = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = [
