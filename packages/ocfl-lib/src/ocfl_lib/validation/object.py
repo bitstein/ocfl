@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from ocfl_lib.digest import DigestAlgorithm, bytes_digest, stream_digest
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.spec import Namaste
+from ocfl_lib.validation.extension_ots import validate_ots_extension
 from ocfl_lib.validation.inventory import (
     validate_inventory,
     validate_inventory_against_prior,
@@ -30,6 +31,7 @@ _KNOWN_EXTENSIONS = frozenset(
         "0005-mutable-head",
         "0006-flat-omit-prefix-storage-layout",
         "0007-n-tuple-omit-prefix-storage-layout",
+        "NNNN-ots-timestamps",
     }
 )
 
@@ -172,6 +174,8 @@ def validate_object(
                 result.warning("W013", entry=entry.name)
     except OSError:
         pass
+
+    validate_ots_extension(fsys, path, inv_data, alg, inv_versions, result)
 
     # 8. Validate each version directory
     for vkey, _vnum in sorted(inv_versions.items(), key=lambda x: x[1]):

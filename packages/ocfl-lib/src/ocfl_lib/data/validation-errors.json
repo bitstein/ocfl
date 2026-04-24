@@ -906,5 +906,43 @@
       "kind"
     ],
     "description": "unsupported file type at {path}: {kind}; only regular files and directories are allowed"
+  },
+  "E901": {
+    "params": [],
+    "description": "OCFL Object NNNN-ots-timestamps extension is incompatible with the SHA-512 digest algorithm"
+  },
+  "E902": {
+    "params": [
+      "where",
+      "path"
+    ],
+    "description": "OCFL Object {where} logical path {path} has no companion '.ots' file in state"
+  },
+  "E903": {
+    "params": [
+      "where",
+      "path"
+    ],
+    "description": "OCFL Object {where} contains stray '.ots.ots' file: {path}"
+  },
+  "E904": {
+    "params": [
+      "where",
+      "path"
+    ],
+    "description": "OCFL Object NNNN-ots-timestamps extension missing {path} for version {where}"
+  },
+  "E905": {
+    "params": [
+      "path",
+      "reason"
+    ],
+    "description": "OCFL Object '.ots' file {path} failed embedded-digest check: {reason}"
+  },
+  "W902": {
+    "params": [
+      "path"
+    ],
+    "description": "OCFL Object '.ots' file {path} has only pending attestations (not anchored to Bitcoin)"
   }
 }
