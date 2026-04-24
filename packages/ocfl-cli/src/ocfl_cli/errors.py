@@ -5,7 +5,18 @@ Single-rooted at CLIError. Never imports from ocfl_lib.errors.
 The `Transient` marker mixin signals a retriable fault to `_retry.retry`.
 Concrete exception classes that mix it in (e.g. `SimpleProofTransient`)
 may set per-instance `retry_after` to override the backoff schedule.
+
+`SimpleProofError.partial_result` follows the same per-instance pattern:
+when a multi-chunk submit fails partway, the raise site attaches a
+`SubmitResult` aggregating chunks that succeeded before the failure.
 """
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ocfl_cli.simpleproof import SubmitResult
 
 
 class CLIError(Exception):
@@ -45,7 +56,15 @@ class Transient:
 
 
 class SimpleProofError(OTSError):
-    """Base class for SimpleProof API faults."""
+    """Base class for SimpleProof API faults.
+
+    `partial_result` is a class-level default; per-instance overrides are
+    set at raise time when a multi-chunk `submit_hashes` fails partway
+    (e.g., `exc.partial_result = SubmitResult(...)`). Callers inspect this
+    to recover digests/record_ids that did make it to SP before retrying.
+    """
+
+    partial_result: SubmitResult | None = None
 
 
 class SimpleProofAuthError(SimpleProofError):
