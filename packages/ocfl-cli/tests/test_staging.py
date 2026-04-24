@@ -1,6 +1,7 @@
 """Tests for StagingStore."""
 
 import hashlib
+import os
 
 import pytest
 
@@ -105,3 +106,46 @@ class TestPurge:
     def test_purge_nonexistent_is_noop(self, store):
         # Should not raise
         store.purge("/root", "obj:1")
+
+
+class TestAtomicContentMap:
+    """content.json writes must be atomic (write-temp + fsync + os.replace)."""
+
+    def test_save_content_map_no_temp_files_left(self, store, sample_inventory):
+        store.create("/root", "obj:1", sample_inventory)
+        content_map = {
+            "abc123": {"path": "/src/file.txt", "size": 1, "mtime": 1700000000.0}
+        }
+        store.save_content_map("/root", "obj:1", content_map)
+
+        d = store.staging_path("/root", "obj:1")
+        names = sorted(p.name for p in d.iterdir())
+        assert names == ["content.json", "inventory.json"]
+
+    def test_save_content_map_is_atomic_under_crash(
+        self, store, sample_inventory, monkeypatch
+    ):
+        store.create("/root", "obj:1", sample_inventory)
+        map_a = {"aaa": {"path": "/src/a.txt", "size": 1, "mtime": 1700000000.0}}
+        store.save_content_map("/root", "obj:1", map_a)
+
+        map_b = {"bbb": {"path": "/src/b.txt", "size": 2, "mtime": 1700000001.0}}
+
+        real_replace = os.replace
+
+        def boom(src, dst, *args, **kwargs):
+            if str(dst).endswith("content.json"):
+                raise OSError("boom")
+            return real_replace(src, dst, *args, **kwargs)
+
+        monkeypatch.setattr(os, "replace", boom)
+
+        with pytest.raises(OSError, match="boom"):
+            store.save_content_map("/root", "obj:1", map_b)
+
+        assert store.load_content_map("/root", "obj:1") == map_a
+        d = store.staging_path("/root", "obj:1")
+        leftover_tmps = [
+            p for p in d.iterdir() if p.name != "content.json" and ".tmp" in p.name
+        ]
+        assert leftover_tmps == []

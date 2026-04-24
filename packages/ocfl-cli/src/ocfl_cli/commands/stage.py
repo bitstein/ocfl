@@ -140,8 +140,8 @@ def add(
     ] = None,
 ) -> None:
     """Add files to a staged object version."""
+    from ocfl_cli.ingest import ingest_file
     from ocfl_lib import DigestAlgorithm
-    from ocfl_lib.digest import file_digest
 
     store: StagingStore = ctx.obj["staging"]
     root_path = _resolve_root_path(ctx)
@@ -155,21 +155,28 @@ def add(
     head = inv.head
     state = dict(inv.versions[head].state)
     content_map = store.load_content_map(root_path, object_id)
+    staging_dir = store.staging_path(root_path, object_id)
 
-    # Build reverse map: path → digest for removing overwritten paths
     path_to_digest: dict[str, str] = {}
     for d, paths in state.items():
         for p in paths:
             path_to_digest[p] = d
 
-    # Set of digests already in prior manifest (don't need content.json entry)
     prior_digests = set(inv.manifest.keys())
 
     def _add_file(file_path: Path, logical_path: str) -> None:
-        d = file_digest(file_path, alg)
-        stat = file_path.stat()
+        result = ingest_file(
+            file_path,
+            logical_path,
+            staging_dir=staging_dir,
+            content_map=content_map,
+            digest_alg=alg,
+        )
+        d = result.digest
 
-        # Remove old digest mapping if overwriting this logical path
+        if d in prior_digests:
+            content_map.pop(d, None)
+
         if logical_path in path_to_digest:
             old_d = path_to_digest[logical_path]
             old_paths = state.get(old_d, [])
@@ -178,21 +185,12 @@ def add(
                 if not old_paths:
                     state.pop(old_d, None)
 
-        # Add to state
         if d in state:
             if logical_path not in state[d]:
                 state[d].append(logical_path)
         else:
             state[d] = [logical_path]
         path_to_digest[logical_path] = d
-
-        # Add to content map if not already in prior manifest
-        if d not in prior_digests and d not in content_map:
-            content_map[d] = {
-                "path": str(file_path.resolve()),
-                "size": stat.st_size,
-                "mtime": stat.st_mtime,
-            }
 
     for s in src:
         p = Path(s)

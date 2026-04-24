@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import shutil
 from typing import TYPE_CHECKING
 
@@ -69,6 +70,14 @@ class StagingStore:
         (d / "inventory.json").write_bytes(data)
 
     def _write_content_map(self, d: Path, content_map: dict) -> None:
-        (d / "content.json").write_bytes(
-            json.dumps(content_map, sort_keys=True).encode()
-        )
+        data = json.dumps(content_map, sort_keys=True).encode()
+        tmp = d / f"content.json.tmp.{os.getpid()}"
+        try:
+            with open(tmp, "wb") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, d / "content.json")
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
