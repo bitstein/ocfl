@@ -15,6 +15,7 @@ def _hash_at(height: int, salt: bytes = b"") -> str:
 class FakeBitcoinRPC:
     _chain: list[str] = field(default_factory=list)
     _salt: bytes = b""
+    _merkle_roots: dict[int, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self._chain:
@@ -35,6 +36,14 @@ class FakeBitcoinRPC:
         del self._chain[height:]
         self._chain.append(_hash_at(height, self._salt))
 
+    def register_merkle_root(self, height: int, merkle_hex: str) -> None:
+        """Register the merkle_root reported by getblockheader at *height*.
+
+        ``merkle_hex`` follows bitcoind's RPC convention: hex of the merkle
+        root bytes in *reversed* (display) order.
+        """
+        self._merkle_roots[height] = merkle_hex
+
     def getblockchaininfo(self) -> BlockchainInfo:
         return BlockchainInfo(
             height=self.tip_height,
@@ -49,7 +58,7 @@ class FakeBitcoinRPC:
             block_hash=block_hash,
             height=height,
             confirmations=self.tip_height - height + 1,
-            merkle_root="",
+            merkle_root=self._merkle_roots.get(height, ""),
             time=0,
         )
 
@@ -57,9 +66,6 @@ class FakeBitcoinRPC:
         if height < 0 or height > self.tip_height:
             raise IndexError(f"height {height} out of range")
         return self._chain[height]
-
-    def verify_attestation(self, ots_bytes: bytes, expected_digest: str) -> BlockHeader:
-        raise NotImplementedError
 
 
 @dataclass
