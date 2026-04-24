@@ -1,11 +1,15 @@
 """Tests for update_plan module."""
 
+import base64
 import shutil
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import msgspec
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from ocfl_lib.digest import DigestAlgorithm
 from ocfl_lib.errors import RevertCompletedError
@@ -1077,3 +1081,263 @@ def _make_plan():
     )
     stored = StoredInventory.from_inventory(inv, DigestAlgorithm.SHA512)
     return UpdatePlan(steps=[], new_inv=stored, old_inv=None)
+
+
+class TestExtensionFiles:
+    def test_default_is_empty_dict(self):
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        assert plan.extension_files == {}
+
+    def test_field_is_mutable_after_construction(self):
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        plan.extension_files = {
+            "extensions/NNNN-ots-timestamps/inventory.json.v1.ots": b"proof-bytes",
+        }
+        assert plan.extension_files == {
+            "extensions/NNNN-ots-timestamps/inventory.json.v1.ots": b"proof-bytes",
+        }
+
+    def test_field_accepts_bytes_values(self):
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(
+            steps=[],
+            new_inv=new_inv,
+            old_inv=None,
+            extension_files={
+                "extensions/NNNN-ots-timestamps/inventory.json.v1.ots": b"\x00\xff",
+            },
+        )
+        for value in plan.extension_files.values():
+            assert type(value) is bytes
+
+
+class TestExtensionFilesSteps:
+    def test_step_emitted_per_entry(self, tmp_path: Path):
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(
+            steps=[],
+            new_inv=new_inv,
+            old_inv=None,
+            extension_files={
+                "extensions/NNNN-ots-timestamps/inventory.json.v1.ots": b"a",
+                "extensions/NNNN-ots-timestamps/v1/content/file.txt.ots": b"b",
+            },
+        )
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"aabbcc": b"hello"})
+
+        prepare_steps(plan, fsys, "obj1", source)
+
+        ext_steps = [s for s in plan.steps if s.name == "extension-file"]
+        assert len(ext_steps) == 2
+
+    def test_emitted_before_root_inv(self, tmp_path: Path):
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(
+            steps=[],
+            new_inv=new_inv,
+            old_inv=None,
+            extension_files={
+                "extensions/NNNN-ots-timestamps/inventory.json.v1.ots": b"a",
+                "extensions/NNNN-ots-timestamps/v1/content/file.txt.ots": b"b",
+            },
+        )
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"aabbcc": b"hello"})
+
+        prepare_steps(plan, fsys, "obj1", source)
+
+        names = [s.name for s in plan.steps]
+        ext_indices = [i for i, n in enumerate(names) if n == "extension-file"]
+        root_inv_idx = names.index("root-inv")
+        root_sidecar_idx = names.index("root-sidecar")
+        assert ext_indices, "no extension-file steps emitted"
+        for idx in ext_indices:
+            assert idx < root_inv_idx
+        # root-sidecar is last (or followed only by remove-old-sidecar)
+        trailing = names[root_sidecar_idx + 1 :]
+        assert trailing == [] or trailing == ["remove-old-sidecar"]
+
+    def test_run_writes_bytes_to_path(self, tmp_path: Path):
+        new_inv = _build_v1_inventory()
+        ext_path = "extensions/NNNN-ots-timestamps/inventory.json.v1.ots"
+        ext_bytes = b"\x00\x01\x02"
+        plan = UpdatePlan(
+            steps=[],
+            new_inv=new_inv,
+            old_inv=None,
+            extension_files={ext_path: ext_bytes},
+        )
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"aabbcc": b"hello"})
+
+        prepare_steps(plan, fsys, "obj1", source)
+        execute_plan(plan)
+
+        written = tmp_path / "obj1" / ext_path
+        assert written.is_file()
+        assert written.read_bytes() == ext_bytes
+
+    def test_run_creates_parent_dir(self, tmp_path: Path):
+        new_inv = _build_v1_inventory()
+        ext_path = "extensions/NNNN-ots-timestamps/inventory.json.v1.ots"
+        plan = UpdatePlan(
+            steps=[],
+            new_inv=new_inv,
+            old_inv=None,
+            extension_files={ext_path: b"x"},
+        )
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"aabbcc": b"hello"})
+
+        prepare_steps(plan, fsys, "obj1", source)
+
+        parent = tmp_path / "obj1" / "extensions" / "NNNN-ots-timestamps"
+        assert not parent.exists()
+
+        execute_plan(plan)
+
+        assert parent.is_dir()
+        assert (parent / "inventory.json.v1.ots").is_file()
+
+    def test_revert_removes_file(self, tmp_path: Path):
+        new_inv = _build_v1_inventory()
+        ext_path = "extensions/NNNN-ots-timestamps/inventory.json.v1.ots"
+        plan = UpdatePlan(
+            steps=[],
+            new_inv=new_inv,
+            old_inv=None,
+            extension_files={ext_path: b"proof"},
+        )
+        fsys = LocalFS(tmp_path)
+        source = _DictContentSource({"aabbcc": b"hello"})
+
+        prepare_steps(plan, fsys, "obj1", source)
+        execute_plan(plan)
+
+        written = tmp_path / "obj1" / ext_path
+        assert written.is_file()
+
+        # Bypass RevertCompletedError by marking one step incomplete
+        plan.steps[-1].completed = False
+        revert_plan(plan)
+
+        assert not written.exists()
+
+
+class TestExtensionFilesWireFormat:
+    def test_serialize_excludes_extension_files_bytes(self):
+        new_inv = _build_v1_inventory()
+        secret = b"SECRET_PROOF_BYTES_DO_NOT_LEAK"
+        plan = UpdatePlan(
+            steps=[PlanStep(name="object-root")],
+            new_inv=new_inv,
+            old_inv=None,
+            extension_files={
+                "extensions/NNNN-ots-timestamps/inventory.json.v1.ots": secret,
+            },
+        )
+
+        data = serialize(plan)
+
+        assert secret not in data
+        assert base64.b64encode(secret) not in data
+        assert secret.hex().encode() not in data
+        assert b"extension_files" not in data
+
+    def test_deserialize_defaults_extension_files_to_empty(self):
+        new_inv = _build_v1_inventory()
+        plan = UpdatePlan(
+            steps=[PlanStep(name="object-root")],
+            new_inv=new_inv,
+            old_inv=None,
+            extension_files={
+                "extensions/NNNN-ots-timestamps/inventory.json.v1.ots": b"bytes",
+            },
+        )
+
+        data = serialize(plan)
+        restored = deserialize(data)
+
+        assert restored.extension_files == {}
+
+    def test_wire_version_unchanged(self):
+        new_inv = _build_v1_inventory()
+        plain = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        populated = UpdatePlan(
+            steps=[],
+            new_inv=new_inv,
+            old_inv=None,
+            extension_files={
+                "extensions/NNNN-ots-timestamps/inventory.json.v1.ots": b"x",
+            },
+        )
+        for plan in (plain, populated):
+            data = serialize(plan)
+            decoded = msgspec.json.decode(data)
+            assert decoded["version"] == 1
+
+
+class TestExtensionFilesProperty:
+    @given(
+        step_names=st.lists(
+            st.sampled_from(
+                [
+                    "object-root",
+                    "declaration",
+                    "version-dir",
+                    "content-copy",
+                    "version-inv",
+                    "version-sidecar",
+                    "root-inv",
+                    "root-sidecar",
+                ]
+            ),
+            max_size=8,
+        ),
+        with_old_inv=st.booleans(),
+        with_extension_files=st.booleans(),
+    )
+    def test_deserialize_serialize_roundtrip(
+        self,
+        step_names: list[str],
+        with_old_inv: bool,
+        with_extension_files: bool,
+    ):
+        new_inv = _build_v1_inventory(obj_id="test:new")
+        old_inv = _build_v1_inventory(obj_id="test:old") if with_old_inv else None
+        extension_files: dict[str, bytes] = (
+            {"extensions/NNNN-ots-timestamps/inventory.json.v1.ots": b"proof"}
+            if with_extension_files
+            else {}
+        )
+        steps = [PlanStep(name=n) for n in step_names]
+        plan = UpdatePlan(
+            steps=steps,
+            new_inv=new_inv,
+            old_inv=old_inv,
+            extension_files=extension_files,
+        )
+
+        restored = deserialize(serialize(plan))
+
+        def _project(p: UpdatePlan) -> tuple:
+            return (
+                len(p.steps),
+                [s.name for s in p.steps],
+                p.new_inv.digest,
+                p.old_inv is None,
+                p.extension_files,
+            )
+
+        # extension_files is runtime-only; wire excludes it.
+        assert restored.extension_files == {}
+        assert _project(restored) == (
+            len(plan.steps),
+            [s.name for s in plan.steps],
+            plan.new_inv.digest,
+            plan.old_inv is None,
+            {},
+        )

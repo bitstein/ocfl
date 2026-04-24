@@ -11,6 +11,7 @@ dev = [
     "pytest-cov>=6",
     "ty>=0.0.24",
     "ruff>=0.9",
+    "hypothesis>=6.152.2",
 ]
 
 [tool.uv.workspace]

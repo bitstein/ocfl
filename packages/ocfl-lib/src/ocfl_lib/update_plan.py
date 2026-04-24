@@ -88,6 +88,7 @@ class UpdatePlan:
     old_inv: StoredInventory | None
     old_sidecar_alg: str = ""  # Non-empty when algorithm migration happened
     revert_inv: StoredInventory | None = None  # Original pre-migration inv for revert
+    extension_files: dict[str, bytes] = field(default_factory=dict)
 
 
 # --- Wire format (msgspec structs for serialization) ---
@@ -347,7 +348,28 @@ def prepare_steps(
         )
     )
 
-    # 7. Root inventory.json
+    # 7. Extension files
+    for rel_path, content_bytes in plan.extension_files.items():
+        dest = _join(obj_dir, rel_path)
+
+        def _make_ext_write(dst: str = dest, data: bytes = content_bytes) -> int:
+            parent = dst.rsplit("/", 1)[0] if "/" in dst else ""
+            if parent:
+                fsys.mkdir(parent)
+            return fs_utils.write_bytes(fsys, dst, data)
+
+        def _make_ext_revert(dst: str = dest) -> None:
+            _try_remove(fsys, dst)
+
+        steps.append(
+            PlanStep(
+                name="extension-file",
+                run=_make_ext_write,
+                revert=_make_ext_revert,
+            )
+        )
+
+    # 8. Root inventory.json
     rinv_path = _join(obj_dir, "inventory.json")
     if revert_src is not None:
         revert_rinv_bytes = revert_src.raw_bytes
@@ -367,7 +389,7 @@ def prepare_steps(
         )
     )
 
-    # 8. Root sidecar (last step — marks completion)
+    # 9. Root sidecar (last step — marks completion)
     rsidecar_path = _join(obj_dir, new_inv.sidecar_filename)
     rsidecar_bytes = new_inv.sidecar_content.encode()
     if revert_src is not None:
@@ -390,7 +412,7 @@ def prepare_steps(
         )
     )
 
-    # 9. Remove old root sidecar on algorithm migration
+    # 10. Remove old root sidecar on algorithm migration
     if plan.old_sidecar_alg:
         migrated_sidecar_path = _join(obj_dir, f"inventory.json.{plan.old_sidecar_alg}")
 
