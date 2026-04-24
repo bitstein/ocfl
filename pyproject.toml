@@ -19,6 +19,7 @@ members = ["packages/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/ocfl-lib/tests", "packages/ocfl-cli/tests"]
+pythonpath = ["."]
 markers = ["bitcoin: requires bitcoind regtest subprocess"]
 
 [tool.ty.src]
