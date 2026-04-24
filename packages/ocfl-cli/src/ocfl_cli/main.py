@@ -1,6 +1,9 @@
 """OCFL CLI entry point."""
 
+import json
+import logging
 import os
+import sys
 from typing import Annotated
 
 import typer
@@ -17,6 +20,38 @@ from ocfl_cli.commands.show import show
 from ocfl_cli.commands.stage import stage_app
 from ocfl_cli.commands.validate import validate
 from ocfl_cli.config import ConfigError, load_config
+
+
+class _JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, object] = {
+            "time": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc"] = self.formatException(record.exc_info)
+        return json.dumps(payload)
+
+
+def _configure_logging(json_mode: bool, verbose: bool, quiet: bool) -> None:
+    root = logging.getLogger()
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    handler = logging.StreamHandler(sys.stderr)
+    if json_mode:
+        handler.setFormatter(_JsonFormatter())
+    else:
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    root.addHandler(handler)
+    if quiet:
+        root.setLevel(logging.ERROR)
+    elif verbose:
+        root.setLevel(logging.DEBUG)
+    else:
+        root.setLevel(logging.INFO)
+
 
 app = typer.Typer(
     name="ocfl",
@@ -61,10 +96,19 @@ def main(
         bool,
         typer.Option("--no-color", help="Disable colored output."),
     ] = False,
+    log_json: Annotated[
+        bool,
+        typer.Option("--log-json", help="Emit structured JSON log lines."),
+    ] = False,
 ) -> None:
     """CLI for managing an OCFL archive."""
     if no_color:
         _style.set_no_color()
+    _configure_logging(
+        json_mode=log_json or os.environ.get("OCFL_LOG_JSON") == "1",
+        verbose=verbose,
+        quiet=quiet,
+    )
     ctx.ensure_object(dict)
 
     try:

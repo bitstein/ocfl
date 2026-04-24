@@ -100,9 +100,7 @@ def _output_result(
                 "errors": [
                     {"code": e.code, "message": e.message} for e in result.errors
                 ],
-                "warnings": [
-                    {"code": w.code, "message": w.message} for w in warnings
-                ],
+                "warnings": [{"code": w.code, "message": w.message} for w in warnings],
             }
         )
     else:
@@ -113,7 +111,6 @@ def _output_result(
         if result.is_valid:
             _style.echo(
                 _style.valid(
-                    "Valid"
-                    + (f" ({len(warnings)} warnings)" if warnings else "")
+                    "Valid" + (f" ({len(warnings)} warnings)" if warnings else "")
                 )
             )

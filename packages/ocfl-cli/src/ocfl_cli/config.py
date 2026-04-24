@@ -8,6 +8,16 @@ from typing import Any
 
 from platformdirs import user_config_path
 
+from ocfl_cli.errors import ConfigError
+
+__all__ = [
+    "ArchiveConfig",
+    "Config",
+    "ConfigError",
+    "config_path",
+    "load_config",
+]
+
 
 @dataclass(frozen=True)
 class ArchiveConfig:
@@ -43,16 +53,10 @@ class Config:
             return archive.digest
         return self.defaults_digest
 
-    def effective_suppress(
-        self, archive: ArchiveConfig | None
-    ) -> frozenset[str]:
+    def effective_suppress(self, archive: ArchiveConfig | None) -> frozenset[str]:
         if archive is not None and archive.suppress is not None:
             return frozenset(archive.suppress)
         return frozenset(self.defaults_suppress)
-
-
-class ConfigError(ValueError):
-    """Raised when the config file is malformed."""
 
 
 def config_path() -> Path:
@@ -98,9 +102,7 @@ def _parse(data: dict[str, Any], path: Path) -> Config:
         if not root:
             raise ConfigError(f"{path}: archives.{name} missing 'root'")
         digest = _opt_str(section, "digest", path, f"archives.{name}.digest")
-        suppress = _opt_str_list(
-            section, "suppress", path, f"archives.{name}.suppress"
-        )
+        suppress = _opt_str_list(section, "suppress", path, f"archives.{name}.suppress")
         archives[name] = ArchiveConfig(
             name=name, root=root, digest=digest, suppress=suppress
         )
@@ -113,9 +115,7 @@ def _parse(data: dict[str, Any], path: Path) -> Config:
     )
 
 
-def _opt_str(
-    tbl: dict[str, Any], key: str, path: Path, label: str
-) -> str | None:
+def _opt_str(tbl: dict[str, Any], key: str, path: Path, label: str) -> str | None:
     v = tbl.get(key)
     if v is None:
         return None

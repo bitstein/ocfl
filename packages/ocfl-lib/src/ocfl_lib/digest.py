@@ -141,7 +141,7 @@ def digest_files(
     errors = [r for r in results if isinstance(r, Exception)]
     if errors:
         raise ExceptionGroup("digest computation failed", errors)
-    return dict(zip(path_list, cast(list[str], results), strict=True))
+    return dict(zip(path_list, cast("list[str]", results), strict=True))
 
 
 def digest_files_multi(
@@ -171,4 +171,6 @@ def digest_files_multi(
     errors = [r for r in results if isinstance(r, Exception)]
     if errors:
         raise ExceptionGroup("digest computation failed", errors)
-    return dict(zip(path_list, cast(list[dict[DigestAlgorithm, str]], results), strict=True))
+    return dict(
+        zip(path_list, cast("list[dict[DigestAlgorithm, str]]", results), strict=True)
+    )

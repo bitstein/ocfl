@@ -173,19 +173,13 @@ class TestEffective:
         """suppress = [] explicitly opts out of default suppressions."""
         cfg = Config(
             defaults_suppress=("W004",),
-            archives={
-                "strict": ArchiveConfig(
-                    name="strict", root="/x", suppress=()
-                )
-            },
+            archives={"strict": ArchiveConfig(name="strict", root="/x", suppress=())},
         )
         arch = cfg.archive("strict")
         assert cfg.effective_suppress(arch) == frozenset()
 
     def test_implicit_default_single_archive(self):
-        cfg = Config(
-            archives={"only": ArchiveConfig(name="only", root="/x")}
-        )
+        cfg = Config(archives={"only": ArchiveConfig(name="only", root="/x")})
         assert cfg.implicit_default() is not None
         assert cfg.implicit_default().name == "only"  # type: ignore[union-attr]
 
@@ -352,9 +346,7 @@ def sha256_root(tmp_path: Path) -> Path:
 
 
 class TestSuppressWarnings:
-    def test_w004_emitted_without_suppress(
-        self, runner: CliRunner, sha256_root: Path
-    ):
+    def test_w004_emitted_without_suppress(self, runner: CliRunner, sha256_root: Path):
         result = runner.invoke(
             app, ["--root", str(sha256_root), "--json", "validate", "obj:x"]
         )

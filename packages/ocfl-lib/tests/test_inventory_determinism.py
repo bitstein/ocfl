@@ -28,17 +28,21 @@ class TestPathListDeterminism:
         """Manifest path lists sorted regardless of insertion order."""
         inv_a = _make_inventory(
             manifest={"aaa": ["z.txt", "a.txt", "m.txt"]},
-            versions={"v1": VersionInfo(
-                created="2024-01-01T00:00:00Z",
-                state={"aaa": ["file.txt"]},
-            )},
+            versions={
+                "v1": VersionInfo(
+                    created="2024-01-01T00:00:00Z",
+                    state={"aaa": ["file.txt"]},
+                )
+            },
         )
         inv_b = _make_inventory(
             manifest={"aaa": ["m.txt", "a.txt", "z.txt"]},
-            versions={"v1": VersionInfo(
-                created="2024-01-01T00:00:00Z",
-                state={"aaa": ["file.txt"]},
-            )},
+            versions={
+                "v1": VersionInfo(
+                    created="2024-01-01T00:00:00Z",
+                    state={"aaa": ["file.txt"]},
+                )
+            },
         )
         sa = StoredInventory.from_inventory(inv_a, ALG)
         sb = StoredInventory.from_inventory(inv_b, ALG)
@@ -50,17 +54,21 @@ class TestPathListDeterminism:
         """Version state path lists sorted regardless of insertion order."""
         inv_a = _make_inventory(
             manifest={"aaa": ["v1/content/file.txt"]},
-            versions={"v1": VersionInfo(
-                created="2024-01-01T00:00:00Z",
-                state={"aaa": ["z.txt", "a.txt"]},
-            )},
+            versions={
+                "v1": VersionInfo(
+                    created="2024-01-01T00:00:00Z",
+                    state={"aaa": ["z.txt", "a.txt"]},
+                )
+            },
         )
         inv_b = _make_inventory(
             manifest={"aaa": ["v1/content/file.txt"]},
-            versions={"v1": VersionInfo(
-                created="2024-01-01T00:00:00Z",
-                state={"aaa": ["a.txt", "z.txt"]},
-            )},
+            versions={
+                "v1": VersionInfo(
+                    created="2024-01-01T00:00:00Z",
+                    state={"aaa": ["a.txt", "z.txt"]},
+                )
+            },
         )
         sa = StoredInventory.from_inventory(inv_a, ALG)
         sb = StoredInventory.from_inventory(inv_b, ALG)
@@ -70,18 +78,22 @@ class TestPathListDeterminism:
         """Fixity path lists sorted regardless of insertion order."""
         inv_a = _make_inventory(
             manifest={"aaa": ["v1/content/file.txt"]},
-            versions={"v1": VersionInfo(
-                created="2024-01-01T00:00:00Z",
-                state={"aaa": ["file.txt"]},
-            )},
+            versions={
+                "v1": VersionInfo(
+                    created="2024-01-01T00:00:00Z",
+                    state={"aaa": ["file.txt"]},
+                )
+            },
             fixity={"md5": {"fff": ["z.txt", "a.txt"]}},
         )
         inv_b = _make_inventory(
             manifest={"aaa": ["v1/content/file.txt"]},
-            versions={"v1": VersionInfo(
-                created="2024-01-01T00:00:00Z",
-                state={"aaa": ["file.txt"]},
-            )},
+            versions={
+                "v1": VersionInfo(
+                    created="2024-01-01T00:00:00Z",
+                    state={"aaa": ["file.txt"]},
+                )
+            },
             fixity={"md5": {"fff": ["a.txt", "z.txt"]}},
         )
         sa = StoredInventory.from_inventory(inv_a, ALG)
@@ -135,17 +147,17 @@ class TestPathListDeterminism:
                 "aaa": ["z.txt", "a.txt"],
                 "bbb": ["y.txt", "b.txt"],
             },
-            versions={"v1": VersionInfo(
-                created="2024-01-01T00:00:00Z",
-                state={
-                    "aaa": ["z.txt", "a.txt"],
-                    "bbb": ["y.txt", "b.txt"],
-                },
-            )},
+            versions={
+                "v1": VersionInfo(
+                    created="2024-01-01T00:00:00Z",
+                    state={
+                        "aaa": ["z.txt", "a.txt"],
+                        "bbb": ["y.txt", "b.txt"],
+                    },
+                )
+            },
         )
-        parsed = json.loads(
-            StoredInventory.from_inventory(inv, ALG).raw_bytes
-        )
+        parsed = json.loads(StoredInventory.from_inventory(inv, ALG).raw_bytes)
         assert parsed["manifest"]["aaa"] == ["a.txt", "z.txt"]
         assert parsed["manifest"]["bbb"] == ["b.txt", "y.txt"]
         assert parsed["versions"]["v1"]["state"]["aaa"] == ["a.txt", "z.txt"]

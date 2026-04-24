@@ -2,9 +2,9 @@
 
 import shutil
 
-import boto3  # ty: ignore[unresolved-import]
+import boto3
 import pytest
-from moto import mock_aws  # ty: ignore[unresolved-import]
+from moto import mock_aws
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app

@@ -1,15 +1,34 @@
 """Shared CLI options, error handling, and output formatting."""
 
+from __future__ import annotations
+
 import json
+import logging
 import os
 import sys
 import urllib.parse
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
 
 from ocfl_lib import LocalFS, OcflError, StorageRoot, VNum
+
+if TYPE_CHECKING:
+    import httpx
+
+logger = logging.getLogger(__name__)
+
+
+def _log_http(resp: httpx.Response) -> None:
+    """Log method + URL + status + elapsed at DEBUG. Never logs headers."""
+    logger.debug(
+        "http %s %s -> %d (%.3fs)",
+        resp.request.method,
+        resp.request.url,
+        resp.status_code,
+        resp.elapsed.total_seconds(),
+    )
 
 
 def resolve_root(root: str | None) -> str:

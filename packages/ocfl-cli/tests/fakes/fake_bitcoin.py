@@ -1,0 +1,75 @@
+"""In-memory FakeBitcoinRPC + InMemoryHashBlockStream."""
+
+from collections import deque
+from dataclasses import dataclass, field
+from hashlib import sha256
+
+from ocfl_cli.bitcoin import BlockchainInfo, BlockHeader
+
+
+def _hash_at(height: int, salt: bytes = b"") -> str:
+    return sha256(f"block:{height}".encode() + salt).hexdigest()
+
+
+@dataclass
+class FakeBitcoinRPC:
+    _chain: list[str] = field(default_factory=list)
+    _salt: bytes = b""
+
+    def __post_init__(self) -> None:
+        if not self._chain:
+            self._chain.append(_hash_at(0, self._salt))
+
+    @property
+    def tip_height(self) -> int:
+        return len(self._chain) - 1
+
+    def extend(self, n: int) -> None:
+        for _ in range(n):
+            self._chain.append(_hash_at(len(self._chain), self._salt))
+
+    def reorg_at(self, height: int) -> None:
+        if height < 0 or height > self.tip_height:
+            raise ValueError(f"height {height} outside chain")
+        self._salt = self._salt + b"r"
+        del self._chain[height:]
+        self._chain.append(_hash_at(height, self._salt))
+
+    def getblockchaininfo(self) -> BlockchainInfo:
+        return BlockchainInfo(
+            height=self.tip_height,
+            best_block_hash=self._chain[-1],
+            initial_block_download=False,
+            verification_progress=1.0,
+        )
+
+    def getblockheader(self, block_hash: str) -> BlockHeader:
+        height = self._chain.index(block_hash)
+        return BlockHeader(
+            block_hash=block_hash,
+            height=height,
+            confirmations=self.tip_height - height + 1,
+            merkle_root="",
+            time=0,
+        )
+
+    def getblockhash(self, height: int) -> str:
+        if height < 0 or height > self.tip_height:
+            raise IndexError(f"height {height} out of range")
+        return self._chain[height]
+
+    def verify_attestation(self, ots_bytes: bytes, expected_digest: str) -> BlockHeader:
+        raise NotImplementedError
+
+
+@dataclass
+class InMemoryHashBlockStream:
+    _feed: deque[bytes] = field(default_factory=deque)
+
+    def push(self, block_hash: bytes) -> None:
+        self._feed.append(block_hash)
+
+    def wait_for_block(self, timeout_ms: int) -> bytes | None:
+        if not self._feed:
+            return None
+        return self._feed.popleft()

@@ -6,13 +6,30 @@ readme = "README.md"
 requires-python = ">=3.14"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-cov>=6", "ty", "ruff>=0.9"]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=6",
+    "ty>=0.0.24",
+    "ruff>=0.9",
+]
 
 [tool.uv.workspace]
 members = ["packages/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/ocfl-lib/tests", "packages/ocfl-cli/tests"]
+markers = ["bitcoin: requires bitcoind regtest subprocess"]
+
+[tool.ty.src]
+include = [
+    "packages/ocfl-cli/src",
+    "packages/ocfl-cli/tests",
+    "packages/ocfl-lib/src",
+    "packages/ocfl-lib/tests",
+    "packages/ocfl-index/src",
+    "packages/ocfl-index/tests",
+    "tests",
+]
 
 [tool.ruff]
 target-version = "py314"

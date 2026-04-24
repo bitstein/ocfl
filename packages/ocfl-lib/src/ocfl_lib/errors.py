@@ -83,3 +83,19 @@ class RevertError(OcflError):
         self.failures = failures
         detail = "; ".join(f"{name}: {err}" for name, err in failures)
         super().__init__(f"revert failed for {len(failures)} step(s): {detail}")
+
+
+class ExtensionError(OcflError):
+    """Base class for OCFL extension structural violations."""
+
+
+class CompanionMissingError(ExtensionError):
+    """Expected companion file (e.g. `.ots`) is absent from an object."""
+
+
+class EmbeddedDigestMismatchError(ExtensionError):
+    """Digest embedded in a companion file does not match its paired content."""
+
+
+class OtsParseError(ExtensionError):
+    """Raw `.ots` bytes could not be parsed."""
