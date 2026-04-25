@@ -2,6 +2,7 @@
 
 import json
 import shutil
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,6 +11,14 @@ from fakes import FakeBitcoinRPC, FakeSimpleProof, InMemoryHashBlockStream
 from typer.testing import CliRunner
 
 from ocfl_lib import DigestAlgorithm, LocalFS, Spec, StorageRoot, get_layout, stage_dir
+from tests.helpers.regtest import (
+    RegtestNode,
+    ensure_wallet,
+    find_bitcoind,
+    fund_wallet,
+    start_regtest,
+    stop_regtest,
+)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -112,13 +121,30 @@ def staging_with_ots_json(tmp_path: Path) -> Path:
     return staging
 
 
-@pytest.fixture
-def real_ots_bytes() -> bytes:
-    pytest.skip("wires to regtest builder in a later step")
-
-
 @pytest.fixture(scope="session")
-def bitcoind_regtest() -> object:
-    if not shutil.which("bitcoind"):
-        pytest.skip("bitcoind not installed")
-    raise NotImplementedError("regtest fixture wires up in a later step")
+def bitcoind_regtest(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RegtestNode]:
+    binary = find_bitcoind()
+    if binary is None:
+        pytest.skip("bitcoind not installed (set $BITCOIND or install bitcoin-core)")
+    datadir = tmp_path_factory.mktemp("bitcoind-regtest", numbered=False)
+    node = start_regtest(binary, datadir)
+    try:
+        ensure_wallet(node)
+        fund_wallet(node, "ocfltest", blocks=101)
+        yield node
+    finally:
+        stop_regtest(node)
+
+
+@pytest.fixture
+def real_ots_bytes(bitcoind_regtest: RegtestNode) -> bytes:
+    """Real OTS attestation for ``b"hello regtest"`` against bitcoind regtest."""
+    import hashlib
+
+    from tests.helpers.ots import build_regtest_attestation
+
+    digest = hashlib.sha256(b"hello regtest").digest()
+    ots_bytes, _height, _block_hash = build_regtest_attestation(
+        bitcoind_regtest, digest
+    )
+    return ots_bytes
