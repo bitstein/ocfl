@@ -1344,15 +1344,302 @@ def timestamp_content(
         _log_phase(state.phase, target_phase)
 
 
+def _reset_inv_proof_and_resubmit(
+    state: OtsState, sp: SimpleProofClient, *, ots_path: str | None
+) -> OtsState:
+    """Reset `inventory_proof.proof` to unverified and queue a fresh verify_batch."""
+    if state.inventory_proof is None:
+        return state
+    inv_digest = state.inventory_proof.digest
+    new_proof = VerifiedProof(ots_path=ots_path, verified=False)
+    new_inv = replace(state.inventory_proof, proof=new_proof)
+    kept_jobs = tuple(j for j in state.verify_jobs if inv_digest not in j.digests)
+    new_job = VerifyJob(
+        job_id=sp.verify_batch([inv_digest]),
+        digests=(inv_digest,),
+        status="IN_PROGRESS",
+    )
+    return replace(state, inventory_proof=new_inv, verify_jobs=(*kept_jobs, new_job))
+
+
+def _inventory_reverify_existing_proof(
+    state: OtsState,
+    btc: BitcoinRPC,
+    sp: SimpleProofClient,
+    staging_dir: Path,
+    min_confirmations: int,
+) -> OtsState:
+    """Re-verify a `verified=True` ``inventory_proof.proof`` against the chain.
+
+    Single-digest mirror of `_reverify_existing_proofs`. On mismatch /
+    pending the proof resets to `verified=False` and a fresh verify_batch
+    is queued; `ReorgDetectedError` propagates.
+    """
+    if state.inventory_proof is None:
+        return state
+    proof = state.inventory_proof.proof
+    if not proof.verified:
+        return state
+    inv_digest = state.inventory_proof.digest
+    cache = ots_cache_path(staging_dir, inv_digest)
+    if not cache.is_file():
+        return state
+    try:
+        result = verify_attestation(
+            rpc=btc,
+            ots_bytes=cache.read_bytes(),
+            expected_digest=bytes.fromhex(inv_digest),
+            min_confirmations=min_confirmations,
+        )
+    except AttestationMismatchError:
+        return _reset_inv_proof_and_resubmit(state, sp, ots_path=proof.ots_path)
+
+    match result:
+        case VerifiedAttestation(block_height=h, confirmations=c):
+            new_proof = VerifiedProof(
+                ots_path=proof.ots_path,
+                verified=True,
+                block_height=h,
+                confirmations_at_verify=c,
+                verified_at=proof.verified_at,
+            )
+            new_inv = replace(state.inventory_proof, proof=new_proof)
+            return replace(state, inventory_proof=new_inv)
+        case PendingVerification():
+            return _reset_inv_proof_and_resubmit(state, sp, ots_path=proof.ots_path)
+
+
+def _verify_inventory_digest(
+    state: OtsState,
+    ots_bytes: bytes,
+    btc: BitcoinRPC,
+    staging_dir: Path,
+    min_confirmations: int,
+) -> OtsState:
+    """Apply the three-step crash-recovery invariant for the inventory digest.
+
+    Step 1: atomic cache write `ots-cache/<inv_digest>.ots`.
+    Step 2: vacuous (extension-file is queued at `stage commit`).
+    Step 3: atomic ots.json update — `inventory_proof.proof` set; on
+    `VerifiedAttestation` `phase` advances to INVENTORY_UPGRADED in the
+    same write so readers never see torn state.
+    """
+    inv_proof = state.inventory_proof
+    if inv_proof is None:
+        raise RuntimeError("inventory_proof missing")
+    inv_digest = inv_proof.digest
+
+    result = verify_attestation(
+        rpc=btc,
+        ots_bytes=ots_bytes,
+        expected_digest=bytes.fromhex(inv_digest),
+        min_confirmations=min_confirmations,
+    )
+
+    cache_file = ots_cache_path(staging_dir, inv_digest)
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    _staging_mod._atomic_write_bytes(cache_file, ots_bytes)
+    ots_path_rel = f"ots-cache/{inv_digest}.ots"
+
+    match result:
+        case VerifiedAttestation(block_height=h, confirmations=c):
+            new_proof = VerifiedProof(
+                ots_path=ots_path_rel,
+                verified=True,
+                block_height=h,
+                confirmations_at_verify=c,
+                verified_at=now_utc_iso(),
+            )
+            state = replace(
+                state,
+                inventory_proof=replace(inv_proof, proof=new_proof),
+                phase=Phase.INVENTORY_UPGRADED,
+            )
+        case PendingVerification():
+            new_proof = VerifiedProof(ots_path=ots_path_rel, verified=False)
+            state = replace(state, inventory_proof=replace(inv_proof, proof=new_proof))
+
+    save_ots(staging_dir, state)
+    return state
+
+
+def _process_completed_inventory_job(
+    state: OtsState,
+    sp: SimpleProofClient,
+    btc: BitcoinRPC,
+    staging_dir: Path,
+    min_confirmations: int,
+) -> OtsState:
+    """Download + verify any completed verify_job covering the inventory digest."""
+    inv_proof = state.inventory_proof
+    if inv_proof is None or inv_proof.proof.verified:
+        return state
+    inv_digest = inv_proof.digest
+
+    for j in state.verify_jobs:
+        if j.status != "COMPLETED" or inv_digest not in j.digests:
+            continue
+        poll = sp.poll_job(j.job_id)
+        if poll.results_url is None:
+            continue
+        downloads = sp.download_results(poll.results_url, {inv_digest})
+        if inv_digest not in downloads:
+            continue
+        return _verify_inventory_digest(
+            state, downloads[inv_digest], btc, staging_dir, min_confirmations
+        )
+    return state
+
+
+def _inventory_upgrade_pass_locked(cfg: Config, staging_dir: Path) -> None:
+    """One inventory `--upgrade` pass. Caller MUST hold the staging lock."""
+    btc_cfg = cfg.bitcoin
+    if btc_cfg is None or cfg.simpleproof is None:
+        raise RuntimeError("config missing required sections")
+    min_confs = btc_cfg.confirmations
+
+    state = load_ots(staging_dir)
+    prev_phase = state.phase
+    check_transition(state.phase, "timestamp inventory --upgrade")
+    apply_category_id(state, cfg.simpleproof.proof_category_id)
+
+    if state.inventory_proof is None:
+        raise PhaseError(f"inventory_proof missing in phase {state.phase.value!r}")
+
+    sp = _get_sp_client(cfg)
+    btc = _get_btc_rpc(cfg)
+
+    state = _inventory_reverify_existing_proof(state, btc, sp, staging_dir, min_confs)
+    save_ots(staging_dir, state)
+
+    inv_proof = state.inventory_proof
+    if inv_proof is not None and not inv_proof.proof.verified:
+        inv_digest = inv_proof.digest
+        has_job = any(
+            inv_digest in j.digests and j.status != "FAILED" for j in state.verify_jobs
+        )
+        if not has_job:
+            new_job = VerifyJob(
+                job_id=sp.verify_batch([inv_digest]),
+                digests=(inv_digest,),
+                status="IN_PROGRESS",
+            )
+            state = replace(state, verify_jobs=(*state.verify_jobs, new_job))
+            save_ots(staging_dir, state)
+
+    state = _poll_outstanding_jobs(state, sp)
+    save_ots(staging_dir, state)
+
+    state = _process_completed_inventory_job(state, sp, btc, staging_dir, min_confs)
+
+    if (
+        state.phase is Phase.INVENTORY_UPGRADED
+        and prev_phase is not Phase.INVENTORY_UPGRADED
+    ):
+        _log_phase(prev_phase, Phase.INVENTORY_UPGRADED)
+
+
+def _inventory_upgrade_pass(cfg: Config, staging_dir: Path) -> None:
+    """Drive `stage timestamp inventory --upgrade` end-to-end under the lock."""
+    with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
+        _inventory_upgrade_pass_locked(cfg, staging_dir)
+
+
+def _inventory_watch_loop(cfg: Config, staging_dir: Path) -> int:
+    """Drive `stage timestamp inventory --upgrade --watch`. Returns exit code."""
+    btc_cfg = cfg.bitcoin
+    if btc_cfg is None or cfg.simpleproof is None:
+        raise RuntimeError("config missing required sections")
+    min_confs = btc_cfg.confirmations
+    btc = _get_btc_rpc(cfg)
+    last_height: int | None = None
+    last_tip_hash: str | None = None
+    stream = _get_zmq_subscriber(cfg)
+    stream_cm = cast(
+        "contextlib.AbstractContextManager[HashBlockStream]",
+        stream if hasattr(stream, "__enter__") else contextlib.nullcontext(stream),
+    )
+    try:
+        with stream_cm as zmq_sub:
+            while True:
+                block = zmq_sub.wait_for_block(timeout_ms=5000)
+                if block is None:
+                    continue
+                try:
+                    with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
+                        info = btc.getblockchaininfo()
+                        height_jumped = (
+                            last_height is not None and info.height - last_height > 1
+                        )
+                        tip_changed_at_stable = (
+                            last_height is not None
+                            and info.height == last_height
+                            and last_tip_hash is not None
+                            and last_tip_hash != info.best_block_hash
+                        )
+                        if height_jumped or tip_changed_at_stable:
+                            sp = _get_sp_client(cfg)
+                            state = load_ots(staging_dir)
+                            state = _inventory_reverify_existing_proof(
+                                state, btc, sp, staging_dir, min_confs
+                            )
+                            save_ots(staging_dir, state)
+                        last_height = info.height
+                        last_tip_hash = info.best_block_hash
+                        _inventory_upgrade_pass_locked(cfg, staging_dir)
+                        state = load_ots(staging_dir)
+                        if state.phase is Phase.INVENTORY_UPGRADED:
+                            return 0
+                except LockTimeoutError as e:
+                    logger.warning(
+                        "staging lock contended (%s); retrying on next block", e
+                    )
+                    continue
+    except KeyboardInterrupt:
+        return 130
+
+
 @timestamp_app.command("inventory")
 def timestamp_inventory(
     ctx: typer.Context,
     object_id: Annotated[str, typer.Argument(help="Object ID.")],
+    upgrade: Annotated[
+        bool,
+        typer.Option(
+            "--upgrade",
+            help="Poll SP, verify inventory .ots against Bitcoin, advance phase.",
+        ),
+    ] = False,
+    watch: Annotated[
+        bool,
+        typer.Option(
+            "--watch",
+            help="ZMQ-driven loop; runs an inventory upgrade pass per block.",
+        ),
+    ] = False,
+    retry: Annotated[
+        bool,
+        typer.Option("--retry", help="Re-POST inventory digest at inventory-pending."),
+    ] = False,
 ) -> None:
     """Build inventory, submit its digest to SimpleProof, serialize plan."""
     cfg: Config | None = ctx.obj.get("config")
     if cfg is None or cfg.simpleproof is None:
         err("'stage timestamp inventory' requires [simpleproof] config section")
+        raise typer.Exit(2)
+    if retry:
+        for other_name, other_set in (("--upgrade", upgrade), ("--watch", watch)):
+            if other_set:
+                err(
+                    "'stage timestamp inventory --retry' is incompatible with "
+                    f"{other_name}"
+                )
+                raise typer.Exit(2)
+    if upgrade and cfg.bitcoin is None:
+        err("'stage timestamp inventory --upgrade' requires [bitcoin] config section")
+        raise typer.Exit(2)
+    if watch and not upgrade:
+        err("'stage timestamp inventory --watch' requires --upgrade")
         raise typer.Exit(2)
 
     store: StagingStore = ctx.obj["staging"]
@@ -1367,6 +1654,46 @@ def timestamp_inventory(
     if not has_ots(staging_dir):
         err(f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)")
         raise typer.Exit(2)
+
+    if watch:
+        try:
+            exit_code = _inventory_watch_loop(cfg, staging_dir)
+        except (ReorgDetectedError, AttestationMismatchError) as e:
+            err(f"halt: {e}")
+            raise typer.Exit(5) from None
+        except PhaseError as e:
+            err(str(e))
+            raise typer.Exit(3) from None
+        raise typer.Exit(exit_code)
+
+    if upgrade:
+        try:
+            _inventory_upgrade_pass(cfg, staging_dir)
+        except (ReorgDetectedError, AttestationMismatchError) as e:
+            err(f"halt: {e}")
+            raise typer.Exit(5) from None
+        except PhaseError as e:
+            err(str(e))
+            raise typer.Exit(3) from None
+        return
+
+    if retry:
+        with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
+            state = load_ots(staging_dir)
+            try:
+                check_transition(state.phase, "timestamp inventory --retry")
+            except PhaseError as e:
+                err(str(e))
+                raise typer.Exit(3) from None
+            category_id = apply_category_id(state, cfg.simpleproof.proof_category_id)
+            if state.inventory_proof is None:
+                err("inventory_proof missing")
+                raise typer.Exit(3)
+            inv_digest = state.inventory_proof.digest
+            sp = _get_sp_client(cfg)
+            sp.submit_hashes([inv_digest], category_id)
+            logger.info("retried inventory submission for %s", object_id)
+        return
 
     with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
         state = load_ots(staging_dir)
