@@ -29,6 +29,7 @@ from ocfl_cli.errors import (
 )
 from ocfl_cli.ingest import ingest_file
 from ocfl_cli.staging import (
+    InventoryProof,
     Phase,
     StagingStore,
     Submission,
@@ -40,10 +41,19 @@ from ocfl_cli.staging import (
     load_ots,
     now_utc_iso,
     ots_cache_path,
+    plan_path,
     save_ots,
     with_lock,
 )
-from ocfl_lib.update_plan import execute_plan, prepare_steps, revert_plan
+from ocfl_lib.update_plan import (
+    ContentSource,
+    UpdatePlan,
+    deserialize,
+    execute_plan,
+    prepare_steps,
+    revert_plan,
+    serialize,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -521,6 +531,71 @@ def status(
             _style.echo(Text.assemble(*parts))
 
 
+def _build_inventory_plan(
+    store: StagingStore,
+    sr,
+    root_path: str,
+    object_id: str,
+    *,
+    message: str | None = None,
+    user: object | None = None,
+    created: str | None = None,
+) -> tuple[UpdatePlan, ContentSource]:
+    """Build an UpdatePlan from the staged inventory + content map.
+
+    Used by both `stage commit` (which then prepares/executes) and
+    `stage timestamp inventory` (which serializes for later commit).
+    Returns the plan and the `_StagingContentSource` (commit needs it
+    for `prepare_steps`).
+    """
+    from ocfl_lib import DigestAlgorithm, LocalFS
+    from ocfl_lib.stage import Stage
+
+    inv = store.load_inventory(root_path, object_id)
+    content_map = store.load_content_map(root_path, object_id)
+    alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
+    head = inv.head
+
+    for _digest, entry in content_map.items():
+        file_path = Path(entry["path"])
+        if not file_path.exists():
+            err(f"source file missing: {file_path}")
+            raise typer.Exit(1)
+        stat = file_path.stat()
+        if stat.st_size != entry["size"] or stat.st_mtime != entry["mtime"]:
+            err(f"source file changed since staging: {file_path}")
+            raise typer.Exit(1)
+
+    class _StagingContentSource:
+        def __init__(self, cm: dict, root: Path) -> None:
+            self._cm = cm
+            self._root = root
+
+        def get_content(self, digest: str) -> tuple[FS, str]:
+            if digest in self._cm:
+                file_path = Path(self._cm[digest]["path"])
+                local_fs = LocalFS(file_path.parent)
+                return local_fs, file_path.name
+            raise KeyError(digest)
+
+    content_source = _StagingContentSource(content_map, Path(root_path))
+    stage_obj = Stage(
+        state=inv.versions[head].state,
+        digest_algorithm=alg,
+        content_source=content_source,
+    )
+    obj = sr.get_object(object_id)
+    plan = obj.new_update_plan(
+        stage_obj,
+        id=object_id if not obj.exists else None,
+        spec=sr.spec if not obj.exists else None,
+        message=message,
+        user=user,
+        created=created,
+    )
+    return plan, content_source
+
+
 @stage_app.command()
 def commit(
     ctx: typer.Context,
@@ -537,9 +612,7 @@ def commit(
     ] = None,
 ) -> None:
     """Commit staged changes to the storage root."""
-    from ocfl_lib import DigestAlgorithm, LocalFS
     from ocfl_lib.inventory import UserInfo
-    from ocfl_lib.stage import Stage
 
     store: StagingStore = ctx.obj["staging"]
     sr, fs = open_root(ctx.obj.get("root"))
@@ -549,58 +622,20 @@ def commit(
         err(f"no staging exists for {object_id!r}")
         raise typer.Exit(1)
 
-    inv = store.load_inventory(root_path, object_id)
-    content_map = store.load_content_map(root_path, object_id)
-    alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
-    head = inv.head
-
-    # Pre-commit validation: verify all content.json files still exist and are unchanged
-    for _digest, entry in content_map.items():
-        file_path = Path(entry["path"])
-        if not file_path.exists():
-            err(f"source file missing: {file_path}")
-            raise typer.Exit(1)
-        stat = file_path.stat()
-        if stat.st_size != entry["size"] or stat.st_mtime != entry["mtime"]:
-            err(f"source file changed since staging: {file_path}")
-            raise typer.Exit(1)
-
-    # Build ContentSource backed by content.json local file references
-    class _StagingContentSource:
-        def __init__(self, cm: dict, root: Path) -> None:
-            self._cm = cm
-            self._root = root
-
-        def get_content(self, digest: str) -> tuple[FS, str]:
-            if digest in self._cm:
-                file_path = Path(self._cm[digest]["path"])
-                local_fs = LocalFS(file_path.parent)
-                return local_fs, file_path.name
-            raise KeyError(digest)
-
-    content_source = _StagingContentSource(content_map, Path(root_path))
-
-    # Build Stage from staged inventory head state
-    state = inv.versions[head].state
-    stage_obj = Stage(
-        state=state,
-        digest_algorithm=alg,
-        content_source=content_source,
-    )
-
     user = None
     if name:
         user = UserInfo(name=name, address=address)
 
-    obj = sr.get_object(object_id)
-    plan = obj.new_update_plan(
-        stage_obj,
-        id=object_id if not obj.exists else None,
-        spec=sr.spec if not obj.exists else None,
+    plan, content_source = _build_inventory_plan(
+        store,
+        sr,
+        root_path,
+        object_id,
         message=message,
         user=user,
         created=created,
     )
+    obj = sr.get_object(object_id)
     prepare_steps(plan, fs, obj._path, content_source)
 
     try:
@@ -1307,6 +1342,83 @@ def timestamp_content(
 
         logger.info("submitted %d digests for %s", len(ordered), object_id)
         _log_phase(state.phase, target_phase)
+
+
+@timestamp_app.command("inventory")
+def timestamp_inventory(
+    ctx: typer.Context,
+    object_id: Annotated[str, typer.Argument(help="Object ID.")],
+) -> None:
+    """Build inventory, submit its digest to SimpleProof, serialize plan."""
+    cfg: Config | None = ctx.obj.get("config")
+    if cfg is None or cfg.simpleproof is None:
+        err("'stage timestamp inventory' requires [simpleproof] config section")
+        raise typer.Exit(2)
+
+    store: StagingStore = ctx.obj["staging"]
+    sr, _fs = open_root(ctx.obj.get("root"))
+    root_path = _resolve_root_path(ctx)
+
+    if not store.exists(root_path, object_id):
+        err(f"no staging exists for {object_id!r}")
+        raise typer.Exit(1)
+
+    staging_dir = store.staging_path(root_path, object_id)
+    if not has_ots(staging_dir):
+        err(f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)")
+        raise typer.Exit(2)
+
+    with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
+        state = load_ots(staging_dir)
+        try:
+            target_phase = check_transition(state.phase, "timestamp inventory")
+        except PhaseError as e:
+            err(str(e) + "; run 'stage timestamp content' first")
+            raise typer.Exit(3) from None
+        category_id = apply_category_id(state, cfg.simpleproof.proof_category_id)
+
+        if state.phase is Phase.INVENTORY_UPGRADED:
+            return
+
+        # On resubmit, preserve `created` from the prior plan so the new
+        # inventory digest stays identical across retries.
+        prior_created: str | None = None
+        if state.inventory_proof is not None and plan_path(staging_dir).is_file():
+            prior_plan = deserialize(plan_path(staging_dir).read_bytes())
+            prior_inv = prior_plan.new_inv.inventory
+            prior_created = prior_inv.versions[prior_inv.head].created
+
+        plan, _cs = _build_inventory_plan(
+            store, sr, root_path, object_id, created=prior_created
+        )
+        inv_digest = plan.new_inv.digest
+        head_version = plan.new_inv.inventory.head
+
+        existing = state.inventory_proof
+        intent_proof = InventoryProof(
+            version=head_version,
+            digest=inv_digest,
+            proof=existing.proof if existing is not None else VerifiedProof(),
+            job_id=existing.job_id if existing is not None else None,
+        )
+        prev_phase = state.phase
+        save_ots(
+            staging_dir,
+            replace(
+                state,
+                category_id=category_id,
+                inventory_proof=intent_proof,
+                phase=target_phase,
+            ),
+        )
+
+        sp = _get_sp_client(cfg)
+        sp.submit_hashes([inv_digest], category_id)
+
+        plan_path(staging_dir).write_bytes(serialize(plan))
+
+        _log_phase(prev_phase, target_phase)
+        logger.info("submitted inventory digest %s for %s", inv_digest, object_id)
 
 
 @stage_app.command()
