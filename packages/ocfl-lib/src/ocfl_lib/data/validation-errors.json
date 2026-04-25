@@ -944,5 +944,19 @@
       "path"
     ],
     "description": "OCFL Object '.ots' file {path} has only pending attestations (not anchored to Bitcoin)"
+  },
+  "E906": {
+    "params": [
+      "path",
+      "reason"
+    ],
+    "description": "OCFL Object '.ots' file {path} failed Bitcoin attestation walk: {reason}"
+  },
+  "W903": {
+    "params": [
+      "path",
+      "reason"
+    ],
+    "description": "OCFL Object '.ots' file {path} not yet anchored at required confirmation depth: {reason}"
   }
 }
