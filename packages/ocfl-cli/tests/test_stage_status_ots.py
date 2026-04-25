@@ -24,8 +24,6 @@ Pins the contract from ``OTS workflow contract::stage_status``:
 RED until ``stage status`` learns the OTS shape.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 from dataclasses import replace

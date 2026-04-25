@@ -6,8 +6,6 @@ PAIR end. Bitcoin Core publishes ``hashblock`` as ``[topic, hash, sequence]``
 on PUB; our ``recv_multipart`` -> ``msg[1]`` logic is identical for PAIR.
 """
 
-from __future__ import annotations
-
 from collections.abc import Iterator
 
 import pytest

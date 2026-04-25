@@ -22,8 +22,6 @@ These tests are RED until the ``--retry`` flag lands. The diagnostic is
 reason — the flag does not exist).
 """
 
-from __future__ import annotations
-
 import hashlib
 from dataclasses import replace
 from pathlib import Path

@@ -6,8 +6,6 @@ Non-`Transient` exceptions propagate on first raise (fail fast). For
 `retry_after` overrides the sleep with that exact value (no jitter).
 """
 
-from __future__ import annotations
-
 import logging
 import random
 import time

@@ -1,7 +1,5 @@
 """Shared CLI options, error handling, and output formatting."""
 
-from __future__ import annotations
-
 import json
 import logging
 import os

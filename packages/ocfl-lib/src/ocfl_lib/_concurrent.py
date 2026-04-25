@@ -1,7 +1,5 @@
 """Bounded concurrent map with fail-fast cancellation."""
 
-from __future__ import annotations
-
 import os
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import TYPE_CHECKING

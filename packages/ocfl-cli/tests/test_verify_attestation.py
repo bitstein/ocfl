@@ -31,8 +31,6 @@ the chain tip is shorter than ``block_height`` by more than
 ``min_confirmations`` blocks.
 """
 
-from __future__ import annotations
-
 import hashlib
 
 import pytest

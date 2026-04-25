@@ -34,8 +34,6 @@ Test infrastructure seams (introduced by the implementer in `commands/stage.py`)
   Tests monkeypatch to inject ``FakeBitcoinRPC`` (mirrors ``_get_sp_client``).
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 from dataclasses import replace

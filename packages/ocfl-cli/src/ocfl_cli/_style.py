@@ -1,7 +1,5 @@
 """Centralized output styling. Honors NO_COLOR, --no-color, and TTY detection."""
 
-from __future__ import annotations
-
 import os
 import sys
 from typing import IO, Any

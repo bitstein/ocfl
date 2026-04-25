@@ -12,8 +12,6 @@ do NOT touch the CLI surface or the staging directory.
 RED until ``compute_in_sync`` is exposed by ``ocfl_cli.commands.stage``.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from ocfl_cli.bitcoin import BlockchainInfo

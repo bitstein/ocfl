@@ -25,8 +25,6 @@ through the implementation seam ``ocfl_cli.commands.stage._get_sp_client``
 (monkeypatched). The implementer is expected to add that private factory.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import shutil

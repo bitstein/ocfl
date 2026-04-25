@@ -23,8 +23,6 @@ land. Expected diagnostics include ``no such option: '--upgrade'``,
 ``KeyError`` on ``inventory_proof.proof``, or ``NotImplementedError``.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import logging

@@ -1,7 +1,5 @@
 """Tests for ocfl_cli._style."""
 
-from __future__ import annotations
-
 import io
 
 import pytest

@@ -38,8 +38,6 @@ The "advance-content-pending-or-straight-to-upgraded-if-vacuous" cell
 vacuous fast-path is also an upstream concern.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from ocfl_cli.errors import PhaseError

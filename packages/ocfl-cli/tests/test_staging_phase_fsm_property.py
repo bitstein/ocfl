@@ -12,8 +12,6 @@ check_transition over them, and asserts:
   inventory-upgraded → COMMITTED transition, which here we just observe)
 """
 
-from __future__ import annotations
-
 from hypothesis import settings
 from hypothesis.stateful import RuleBasedStateMachine, invariant, rule
 from hypothesis.strategies import sampled_from

@@ -28,8 +28,6 @@ KeyError-style failures probing for the cached extension bytes in the
 committed object directory.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from unittest.mock import patch
 

@@ -44,8 +44,6 @@ option or ``AttributeError`` on the patched seam) is an acceptable
 diagnostic.
 """
 
-from __future__ import annotations
-
 import hashlib
 import logging
 import threading

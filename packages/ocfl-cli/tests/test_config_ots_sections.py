@@ -11,8 +11,6 @@ stderr via ``StreamHandler(sys.stderr)`` — capturing logs is cleaner and
 avoids coupling tests to formatter output.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import sys

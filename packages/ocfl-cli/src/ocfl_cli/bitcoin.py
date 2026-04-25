@@ -5,8 +5,6 @@ scrubbed from any propagated ``httpx`` exception so credentials never leak
 through tracebacks or log handlers.
 """
 
-from __future__ import annotations
-
 import contextlib
 from dataclasses import dataclass
 from enum import StrEnum

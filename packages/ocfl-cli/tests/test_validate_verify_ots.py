@@ -22,8 +22,6 @@ Test-infrastructure seam (introduced by the implementer in
   ``test_stage_timestamp_content_upgrade.py::_inject_fake_btc``).
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 from pathlib import Path

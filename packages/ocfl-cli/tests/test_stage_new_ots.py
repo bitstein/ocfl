@@ -18,8 +18,6 @@ Pins step 9 of `OTS workflow contract`:
   (existing-staging guard inherited from `stage new`).
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest

@@ -25,8 +25,6 @@ FSM (already encoded in ``_TRANSITIONS``):
 - All other phases ⇒ ``PhaseError``
 """
 
-from __future__ import annotations
-
 import hashlib
 from dataclasses import replace
 from pathlib import Path

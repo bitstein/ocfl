@@ -9,8 +9,6 @@ Pins:
 - category_id drift: WARN log + return persisted value
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import os

@@ -7,8 +7,6 @@ Pinned behavior:
   atomically-rewritten ots.json directly. Bounded staleness is correct.
 """
 
-from __future__ import annotations
-
 import json
 import threading
 import time

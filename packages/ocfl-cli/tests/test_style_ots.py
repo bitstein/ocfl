@@ -11,8 +11,6 @@ Pinned behavior:
     future / <0  => "just now" (clock skew guard)
 """
 
-from __future__ import annotations
-
 import pytest
 
 from ocfl_cli._style import _format_digest, humanize_age

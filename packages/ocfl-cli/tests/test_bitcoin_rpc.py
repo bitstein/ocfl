@@ -5,8 +5,6 @@ The client must accept an injected ``httpx.Client`` so tests can swap in a
 ``httpx.BasicAuth`` (rpc_user/password) and a timeout.
 """
 
-from __future__ import annotations
-
 import json
 from collections.abc import Callable
 

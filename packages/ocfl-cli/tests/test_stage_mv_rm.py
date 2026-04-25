@@ -1,7 +1,5 @@
 """Tests for ocfl stage mv and ocfl stage rm."""
 
-from __future__ import annotations
-
 import hashlib
 from dataclasses import replace
 from pathlib import Path
