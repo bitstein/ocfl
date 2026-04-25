@@ -13,6 +13,7 @@ from ocfl_cli.staging import StagingStore
 from ocfl_lib.update_plan import execute_plan, prepare_steps, revert_plan
 
 if TYPE_CHECKING:
+    from ocfl_cli.config import Config, SimpleProofConfig
     from ocfl_lib.fs.protocols import FS
     from ocfl_lib.inventory import Inventory
 
@@ -26,6 +27,28 @@ stage_app = typer.Typer(
 def _resolve_root_path(ctx: typer.Context) -> str:
     """Resolve absolute root path string for staging path hashing."""
     return str(Path(ctx.obj.get("root") or Path.cwd()).resolve())
+
+
+def _require_ots_config(cfg: Config | None, digest: str | None) -> SimpleProofConfig:
+    """Preflight `stage new --ots`. Returns validated [simpleproof] config."""
+    if digest is not None and digest != "sha256":
+        err(
+            f"--ots requires SHA-256 (SimpleProof API constraint); "
+            f"got --digest={digest!r}"
+        )
+        raise typer.Exit(2)
+    where = (
+        f"in {cfg.path}"
+        if cfg is not None and cfg.path is not None
+        else "in your ocfl config"
+    )
+    if cfg is None or cfg.simpleproof is None:
+        err(f"--ots requires [simpleproof] section {where}")
+        raise typer.Exit(2)
+    if cfg.bitcoin is None:
+        err(f"--ots requires [bitcoin] section {where}")
+        raise typer.Exit(2)
+    return cfg.simpleproof
 
 
 def _update_head_state(inv: Inventory, state: dict[str, list[str]]) -> Inventory:
@@ -80,10 +103,24 @@ def new(
         str | None,
         typer.Option("--digest", help="Digest algorithm (new objects only)."),
     ] = None,
+    ots: Annotated[
+        bool,
+        typer.Option(
+            "--ots",
+            help="Enable OpenTimestamps workflow (requires SHA-256).",
+        ),
+    ] = False,
 ) -> None:
     """Create a new staging area for an object."""
+    from ocfl_cli.staging import OtsState, Phase, save_ots
     from ocfl_lib import DigestAlgorithm
     from ocfl_lib.inventory_builder import InventoryBuilder
+
+    cfg = ctx.obj.get("config")
+    sp_cfg: SimpleProofConfig | None = None
+    if ots:
+        sp_cfg = _require_ots_config(cfg, digest)
+        digest = "sha256"
 
     store: StagingStore = ctx.obj["staging"]
     sr, _fs = open_root(ctx.obj.get("root"))
@@ -105,11 +142,8 @@ def new(
         # New object: build empty v1 inventory
         alg = DigestAlgorithm.SHA512
         digest_name = digest
-        if digest_name is None:
-            config = ctx.obj.get("config")
-            archive = ctx.obj.get("archive")
-            if config is not None:
-                digest_name = config.effective_digest(archive)
+        if digest_name is None and cfg is not None:
+            digest_name = cfg.effective_digest(ctx.obj.get("archive"))
         if digest_name:
             try:
                 alg = DigestAlgorithm.from_ocfl_name(digest_name)
@@ -127,6 +161,12 @@ def new(
         )
 
     store.create(root_path, object_id, inv)
+
+    if sp_cfg is not None:
+        save_ots(
+            store.staging_path(root_path, object_id),
+            OtsState(phase=Phase.DRAFTING, category_id=sp_cfg.proof_category_id),
+        )
 
 
 @stage_app.command()
