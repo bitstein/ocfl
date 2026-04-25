@@ -2228,6 +2228,13 @@ def timestamp_inventory(
 def reset(
     ctx: typer.Context,
     object_id: Annotated[str, typer.Argument(help="Object ID.")],
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Discard persisted OTS progress (submissions, proofs, etc).",
+        ),
+    ] = False,
 ) -> None:
     """Delete staging area for an object."""
     store: StagingStore = ctx.obj["staging"]
@@ -2236,5 +2243,29 @@ def reset(
     if not store.exists(root_path, object_id):
         typer.echo(f"No staging exists for {object_id!r}", err=True)
         return
+
+    staging_dir = store.staging_path(root_path, object_id)
+    if has_ots(staging_dir):
+        state = load_ots(staging_dir)
+        counts = (
+            ("submissions", len(state.submissions)),
+            ("verify_jobs", len(state.verify_jobs)),
+            ("content_proofs", len(state.content_proofs)),
+            ("inventory_proof", 1 if state.inventory_proof is not None else 0),
+        )
+        if any(n for _, n in counts):
+            phase = state.phase.value
+            summary = ", ".join(f"{k}={v}" for k, v in counts)
+            if not force:
+                err(
+                    f"reset would discard persisted OTS progress at phase "
+                    f"{phase!r} ({summary}); re-run with --force to proceed"
+                )
+                raise typer.Exit(1)
+            logger.warning(
+                "reset --force discarding OTS progress at phase %r: %s",
+                phase,
+                summary,
+            )
 
     store.purge(root_path, object_id)
