@@ -1,5 +1,8 @@
 """ocfl stage command group."""
 
+import logging
+import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -9,13 +12,32 @@ from rich.text import Text
 
 from ocfl_cli import _style
 from ocfl_cli._common import err, open_root
-from ocfl_cli.staging import StagingStore
+from ocfl_cli.staging import (
+    Phase,
+    StagingStore,
+    Submission,
+    apply_category_id,
+    check_transition,
+    has_ots,
+    load_ots,
+    now_utc_iso,
+    save_ots,
+    with_lock,
+)
 from ocfl_lib.update_plan import execute_plan, prepare_steps, revert_plan
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ocfl_cli.config import Config, SimpleProofConfig
+    from ocfl_cli.simpleproof import SimpleProofClient
     from ocfl_lib.fs.protocols import FS
     from ocfl_lib.inventory import Inventory
+
+
+logger = logging.getLogger(__name__)
+
+_SUBMIT_CHUNK_SIZE = 1000
 
 stage_app = typer.Typer(
     name="stage",
@@ -112,7 +134,7 @@ def new(
     ] = False,
 ) -> None:
     """Create a new staging area for an object."""
-    from ocfl_cli.staging import OtsState, Phase, save_ots
+    from ocfl_cli.staging import OtsState
     from ocfl_lib import DigestAlgorithm
     from ocfl_lib.inventory_builder import InventoryBuilder
 
@@ -572,6 +594,138 @@ def commit(
 
     # Purge staging on success
     store.purge(root_path, object_id)
+
+
+timestamp_app = typer.Typer(
+    name="timestamp",
+    help="Timestamp staged content / inventory via SimpleProof.",
+    no_args_is_help=True,
+)
+stage_app.add_typer(timestamp_app)
+
+
+def _get_sp_client(
+    cfg: Config,
+    sleep: Callable[[float], None] = time.sleep,
+) -> SimpleProofClient:
+    """Construct the production `SimpleProofClient` from `cfg`.
+
+    Tests monkeypatch this seam to inject `FakeSimpleProof`.
+    """
+    import httpx
+
+    from ocfl_cli.simpleproof import SimpleProofCreds, SimpleProofHttpClient
+
+    sp_cfg = cfg.simpleproof
+    if sp_cfg is None:
+        raise RuntimeError("simpleproof config missing")
+    client = httpx.Client(timeout=sp_cfg.timeout_s)
+    creds = SimpleProofCreds(
+        access_token=sp_cfg.access_token,
+        api_key=sp_cfg.api_key,
+    )
+    return SimpleProofHttpClient(sp_cfg.base_url, creds, client=client, sleep=sleep)
+
+
+def _log_phase(prev: Phase, new: Phase) -> None:
+    if new is not prev:
+        logger.info("phase: %s -> %s", prev.value, new.value)
+
+
+@timestamp_app.command("content")
+def timestamp_content(
+    ctx: typer.Context,
+    object_id: Annotated[str, typer.Argument(help="Object ID.")],
+) -> None:
+    """Submit staged content digests to SimpleProof."""
+    cfg: Config | None = ctx.obj.get("config")
+    if cfg is None or cfg.simpleproof is None:
+        err("'stage timestamp content' requires [simpleproof] config section")
+        raise typer.Exit(2)
+
+    store: StagingStore = ctx.obj["staging"]
+    sr, _fs = open_root(ctx.obj.get("root"))
+    root_path = _resolve_root_path(ctx)
+
+    if not store.exists(root_path, object_id):
+        err(f"no staging exists for {object_id!r}")
+        raise typer.Exit(1)
+
+    staging_dir = store.staging_path(root_path, object_id)
+    if not has_ots(staging_dir):
+        err(f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)")
+        raise typer.Exit(2)
+
+    with with_lock(staging_dir, timeout=30):
+        state = load_ots(staging_dir)
+        target_phase = check_transition(state.phase, "timestamp content")
+        category_id = apply_category_id(state, cfg.simpleproof.proof_category_id)
+
+        inv = store.load_inventory(root_path, object_id)
+        head_state = inv.versions[inv.head].state
+        non_ots = {
+            d
+            for d, paths in head_state.items()
+            if not any(p.endswith(".ots") for p in paths)
+        }
+
+        obj = sr.get_object(object_id)
+        carry = set(obj.inventory.inventory.manifest) if obj.exists else set()
+
+        in_flight = [s for s in state.submissions if s.status == "submitting"]
+        submitting_digests = {d for s in in_flight for d in s.digests}
+        max_attempts = max((s.attempts for s in in_flight), default=0)
+
+        already_handled = set(state.pending_digests) | set(state.content_proofs)
+        submission_set = (non_ots - carry - already_handled) | submitting_digests
+
+        if not submission_set:
+            if not state.pending_digests and non_ots <= carry:
+                save_ots(staging_dir, replace(state, phase=Phase.CONTENT_UPGRADED))
+                typer.echo("nothing to timestamp; advancing to content-upgraded")
+                _log_phase(state.phase, Phase.CONTENT_UPGRADED)
+            elif target_phase is not state.phase:
+                save_ots(staging_dir, replace(state, phase=target_phase))
+                _log_phase(state.phase, target_phase)
+            return
+
+        ordered = tuple(sorted(submission_set))
+        kept = tuple(s for s in state.submissions if s.status != "submitting")
+        merged_pending = tuple(dict.fromkeys((*state.pending_digests, *ordered)))
+
+        intent = Submission(
+            submitted_at=now_utc_iso(),
+            digests=ordered,
+            status="submitting",
+            attempts=max_attempts + 1,
+        )
+        save_ots(
+            staging_dir,
+            replace(
+                state,
+                category_id=category_id,
+                submissions=(*kept, intent),
+                pending_digests=merged_pending,
+            ),
+        )
+
+        sp = _get_sp_client(cfg)
+        for i in range(0, len(ordered), _SUBMIT_CHUNK_SIZE):
+            sp.submit_hashes(list(ordered[i : i + _SUBMIT_CHUNK_SIZE]), category_id)
+
+        save_ots(
+            staging_dir,
+            replace(
+                state,
+                category_id=category_id,
+                submissions=(*kept, replace(intent, status="submitted")),
+                pending_digests=merged_pending,
+                phase=target_phase,
+            ),
+        )
+
+        logger.info("submitted %d digests for %s", len(ordered), object_id)
+        _log_phase(state.phase, target_phase)
 
 
 @stage_app.command()
