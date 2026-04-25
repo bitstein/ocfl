@@ -45,6 +45,8 @@ from ocfl_cli.staging import (
     save_ots,
     with_lock,
 )
+from ocfl_lib.errors import OtsParseError
+from ocfl_lib.ots import parse as parse_ots
 from ocfl_lib.update_plan import (
     ContentSource,
     UpdatePlan,
@@ -62,7 +64,7 @@ if TYPE_CHECKING:
     from ocfl_cli.simpleproof import SimpleProofClient
     from ocfl_cli.staging import OtsState
     from ocfl_lib import DigestAlgorithm
-    from ocfl_lib.fs.protocols import FS
+    from ocfl_lib.fs.protocols import FS, WriteFS
     from ocfl_lib.inventory import Inventory
 
 
@@ -531,6 +533,40 @@ def status(
             _style.echo(Text.assemble(*parts))
 
 
+class _StagingContentSource:
+    """ContentSource resolving digests against the staging content map."""
+
+    def __init__(self, cm: dict[str, dict]) -> None:
+        self._cm = cm
+
+    def get_content(self, digest: str) -> tuple[FS, str]:
+        from ocfl_lib import LocalFS
+
+        if digest in self._cm:
+            file_path = Path(self._cm[digest]["path"])
+            return LocalFS(file_path.parent), file_path.name
+        raise KeyError(digest)
+
+
+def _validate_and_build_content_source(
+    store: StagingStore,
+    root_path: str,
+    object_id: str,
+) -> _StagingContentSource:
+    """Re-load content_map, validate stale-file size+mtime, build source."""
+    content_map = store.load_content_map(root_path, object_id)
+    for entry in content_map.values():
+        file_path = Path(entry["path"])
+        if not file_path.exists():
+            err(f"source file missing: {file_path}")
+            raise typer.Exit(1)
+        stat = file_path.stat()
+        if stat.st_size != entry["size"] or stat.st_mtime != entry["mtime"]:
+            err(f"source file changed since staging: {file_path}")
+            raise typer.Exit(1)
+    return _StagingContentSource(content_map)
+
+
 def _build_inventory_plan(
     store: StagingStore,
     sr,
@@ -548,37 +584,14 @@ def _build_inventory_plan(
     Returns the plan and the `_StagingContentSource` (commit needs it
     for `prepare_steps`).
     """
-    from ocfl_lib import DigestAlgorithm, LocalFS
+    from ocfl_lib import DigestAlgorithm
     from ocfl_lib.stage import Stage
 
     inv = store.load_inventory(root_path, object_id)
-    content_map = store.load_content_map(root_path, object_id)
     alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
     head = inv.head
 
-    for _digest, entry in content_map.items():
-        file_path = Path(entry["path"])
-        if not file_path.exists():
-            err(f"source file missing: {file_path}")
-            raise typer.Exit(1)
-        stat = file_path.stat()
-        if stat.st_size != entry["size"] or stat.st_mtime != entry["mtime"]:
-            err(f"source file changed since staging: {file_path}")
-            raise typer.Exit(1)
-
-    class _StagingContentSource:
-        def __init__(self, cm: dict, root: Path) -> None:
-            self._cm = cm
-            self._root = root
-
-        def get_content(self, digest: str) -> tuple[FS, str]:
-            if digest in self._cm:
-                file_path = Path(self._cm[digest]["path"])
-                local_fs = LocalFS(file_path.parent)
-                return local_fs, file_path.name
-            raise KeyError(digest)
-
-    content_source = _StagingContentSource(content_map, Path(root_path))
+    content_source = _validate_and_build_content_source(store, root_path, object_id)
     stage_obj = Stage(
         state=inv.versions[head].state,
         digest_algorithm=alg,
@@ -622,6 +635,27 @@ def commit(
         err(f"no staging exists for {object_id!r}")
         raise typer.Exit(1)
 
+    staging_dir = store.staging_path(root_path, object_id)
+    obj = sr.get_object(object_id)
+
+    # OTS commit path: phase=INVENTORY_UPGRADED + serialized plan on disk.
+    # Both conditions required (a partial state means the OTS workflow has
+    # not reached the deferred-completion point yet).
+    if has_ots(staging_dir) and plan_path(staging_dir).is_file():
+        try:
+            _commit_ots_path(
+                store=store,
+                fs=fs,
+                obj_dir=obj._path,
+                root_path=root_path,
+                object_id=object_id,
+                staging_dir=staging_dir,
+            )
+        except AttestationMismatchError as e:
+            err(str(e))
+            raise typer.Exit(5) from None
+        return
+
     user = None
     if name:
         user = UserInfo(name=name, address=address)
@@ -635,7 +669,6 @@ def commit(
         user=user,
         created=created,
     )
-    obj = sr.get_object(object_id)
     prepare_steps(plan, fs, obj._path, content_source)
 
     try:
@@ -651,6 +684,90 @@ def commit(
 
     # Purge staging on success
     store.purge(root_path, object_id)
+
+
+def _commit_ots_path(
+    *,
+    store: StagingStore,
+    fs: WriteFS,
+    obj_dir: str,
+    root_path: str,
+    object_id: str,
+    staging_dir: Path,
+) -> None:
+    """Complete deferred extension_files from cache, prepare + execute plan.
+
+    Caller catches `AttestationMismatchError` and maps to exit 5. The
+    staging lock is released before plan execution: `prepare_steps` /
+    `execute_plan` / `revert_plan` mutate the OCFL object directory,
+    not staging, so a concurrent `--upgrade --watch` can keep running.
+    """
+    with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
+        state = load_ots(staging_dir)
+        try:
+            target_phase = check_transition(state.phase, "commit (ots path)")
+        except PhaseError as e:
+            err(
+                f"{e}; run 'stage timestamp inventory --upgrade' to advance "
+                f"to phase=inventory-upgraded"
+            )
+            raise typer.Exit(3) from None
+
+        if state.inventory_proof is None or not state.inventory_proof.proof.verified:
+            raise AttestationMismatchError(
+                "inventory_proof missing or unverified; "
+                "re-run `stage timestamp inventory --upgrade`"
+            )
+
+        inv_digest = state.inventory_proof.digest
+        plan = deserialize(plan_path(staging_dir).read_bytes())
+
+        try:
+            inv_ots = ots_cache_path(staging_dir, inv_digest).read_bytes()
+        except FileNotFoundError:
+            raise AttestationMismatchError(
+                f"ots-cache/{inv_digest}.ots missing; "
+                f"re-run `stage timestamp inventory --upgrade`"
+            ) from None
+
+        try:
+            parsed = parse_ots(inv_ots)
+        except OtsParseError as exc:
+            raise AttestationMismatchError(
+                f"failed to parse cached inventory .ots ({exc}); "
+                f"re-run `stage timestamp inventory --upgrade`"
+            ) from None
+
+        if parsed.commitment_digest.hex() != inv_digest:
+            raise AttestationMismatchError(
+                f"cached inventory .ots commits to "
+                f"{parsed.commitment_digest.hex()}, plan expects "
+                f"{inv_digest}; re-run `stage timestamp inventory --upgrade`"
+            )
+
+        head = plan.new_inv.inventory.head
+        plan.extension_files[
+            f"extensions/NNNN-ots-timestamps/inventory.json.{head}.ots"
+        ] = inv_ots
+
+        content_source = _validate_and_build_content_source(store, root_path, object_id)
+        prev_phase = state.phase
+
+    prepare_steps(plan, fs, obj_dir, content_source)
+    try:
+        execute_plan(plan)
+    except KeyboardInterrupt:
+        err("commit interrupted, reverting...")
+        revert_plan(plan)
+        raise typer.Exit(130) from None
+    except Exception as exc:
+        err(str(exc))
+        revert_plan(plan)
+        raise typer.Exit(1) from None
+
+    # Purge staging on success (also removes ots-cache/, ots.json, plan.json).
+    store.purge(root_path, object_id)
+    _log_phase(prev_phase, target_phase)
 
 
 timestamp_app = typer.Typer(
