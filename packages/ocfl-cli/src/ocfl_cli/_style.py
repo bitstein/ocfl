@@ -120,3 +120,46 @@ def digest(text: str) -> Text:
 
 def date(text: str) -> Text:
     return style("date", text)
+
+
+# ---------------------------------------------------------------------------
+# OTS-related formatters (human-facing strings only — never on the wire)
+# ---------------------------------------------------------------------------
+
+
+def _format_digest(d: str) -> str:
+    """Render a digest with the algorithm prefix for human output.
+
+    Internally (`ots.json`, content_map, SP API payloads, `--json` output)
+    digests are bare lowercase hex; the `sha256:` prefix is for human-
+    facing strings only. OTS extension forces sha256.
+    """
+    return f"sha256:{d}"
+
+
+# Humanizer thresholds (single-unit, floor-rounded, ASCII).
+_MIN = 60
+_HOUR = 60 * _MIN
+_DAY = 24 * _HOUR
+_WEEK = 7 * _DAY
+_MONTH = 30 * _DAY  # human-facing approximation; switches to weeks at 30d.
+
+
+def humanize_age(seconds: float) -> str:
+    """Render an elapsed-seconds value as `"Xs|Xm|Xh|Xd|Xw ago"`.
+
+    Single-unit, floor-rounded, ASCII. Future / negative inputs render
+    as `"just now"` (clock-skew guard).
+    """
+    if seconds < 0:
+        return "just now"
+    s = int(seconds)
+    if s < _MIN:
+        return f"{s}s ago"
+    if s < _HOUR:
+        return f"{s // _MIN}m ago"
+    if s < _DAY:
+        return f"{s // _HOUR}h ago"
+    if s < _MONTH:
+        return f"{s // _DAY}d ago"
+    return f"{s // _WEEK}w ago"
