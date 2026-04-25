@@ -24,6 +24,7 @@ from ocfl_cli.bitcoin import (
 from ocfl_cli.errors import (
     AttestationMismatchError,
     LockTimeoutError,
+    PhaseError,
     ReorgDetectedError,
 )
 from ocfl_cli.ingest import ingest_file
@@ -1122,12 +1123,24 @@ def timestamp_content(
             help="ZMQ-driven loop; runs an upgrade pass per Bitcoin block.",
         ),
     ] = False,
+    retry: Annotated[
+        bool,
+        typer.Option("--retry", help="Resubmit FAILED submissions only."),
+    ] = False,
 ) -> None:
     """Submit staged content digests to SimpleProof."""
     cfg: Config | None = ctx.obj.get("config")
     if cfg is None or cfg.simpleproof is None:
         err("'stage timestamp content' requires [simpleproof] config section")
         raise typer.Exit(2)
+    if retry:
+        for other_name, other_set in (("--upgrade", upgrade), ("--watch", watch)):
+            if other_set:
+                err(
+                    "'stage timestamp content --retry' is incompatible with "
+                    f"{other_name}"
+                )
+                raise typer.Exit(2)
     if upgrade and cfg.bitcoin is None:
         err("'stage timestamp content --upgrade' requires [bitcoin] config section")
         raise typer.Exit(2)
@@ -1162,6 +1175,66 @@ def timestamp_content(
         except (ReorgDetectedError, AttestationMismatchError) as e:
             err(f"halt: {e}")
             raise typer.Exit(5) from None
+        return
+
+    if retry:
+        with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
+            state = load_ots(staging_dir)
+            try:
+                target_phase = check_transition(
+                    state.phase, "timestamp content --retry"
+                )
+            except PhaseError as e:
+                err(str(e))
+                raise typer.Exit(3) from None
+            category_id = apply_category_id(state, cfg.simpleproof.proof_category_id)
+
+            failed_indices = [
+                i for i, s in enumerate(state.submissions) if s.status == "failed"
+            ]
+            if not failed_indices:
+                typer.echo("no failed submissions to retry")
+                return
+
+            # Crash-safe write protocol: intent (submitting, attempts++) ->
+            # POST -> committed (submitted). Index-based mutation avoids
+            # mis-targeting when two submissions share identical digests.
+            subs = list(state.submissions)
+            for i in failed_indices:
+                subs[i] = replace(
+                    subs[i],
+                    submitted_at=now_utc_iso(),
+                    status="submitting",
+                    attempts=subs[i].attempts + 1,
+                )
+            save_ots(
+                staging_dir,
+                replace(state, category_id=category_id, submissions=tuple(subs)),
+            )
+
+            sp = _get_sp_client(cfg)
+            for i in failed_indices:
+                digests = list(subs[i].digests)
+                for j in range(0, len(digests), _SUBMIT_CHUNK_SIZE):
+                    sp.submit_hashes(digests[j : j + _SUBMIT_CHUNK_SIZE], category_id)
+
+            for i in failed_indices:
+                subs[i] = replace(subs[i], status="submitted")
+            save_ots(
+                staging_dir,
+                replace(
+                    state,
+                    category_id=category_id,
+                    submissions=tuple(subs),
+                    phase=target_phase,
+                ),
+            )
+
+            logger.info(
+                "retried %d failed submission(s) for %s",
+                len(failed_indices),
+                object_id,
+            )
         return
 
     with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
