@@ -129,9 +129,11 @@ class TestStageStatus:
         )
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        assert isinstance(data, list)
-        # Each entry should have path and action
-        for entry in data:
+        # Non-OTS staging: status JSON is wrapped {"extension": null, "changes": [...]}
+        assert isinstance(data, dict)
+        assert data["extension"] is None
+        assert isinstance(data["changes"], list)
+        for entry in data["changes"]:
             assert "path" in entry
             assert "action" in entry
 

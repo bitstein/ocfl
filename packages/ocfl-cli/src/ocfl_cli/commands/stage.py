@@ -4,8 +4,10 @@ import contextlib
 import logging
 import time
 from dataclasses import replace
+from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, cast
+from typing import TYPE_CHECKING, Annotated, TypedDict, cast
 
 import typer
 from platformdirs import user_state_path
@@ -16,6 +18,7 @@ from ocfl_cli import staging as _staging_mod
 from ocfl_cli._common import err, open_root
 from ocfl_cli.bitcoin import (
     BitcoinRPC,
+    BlockchainInfo,
     HashBlockStream,
     PendingVerification,
     VerifiedAttestation,
@@ -23,6 +26,7 @@ from ocfl_cli.bitcoin import (
 )
 from ocfl_cli.errors import (
     AttestationMismatchError,
+    BitcoinError,
     LockTimeoutError,
     PhaseError,
     ReorgDetectedError,
@@ -449,15 +453,128 @@ def ls_cmd(
                 typer.echo(p)
 
 
+class NextActionKind(StrEnum):
+    """Stable enum surfaced as `next_action_kind` in `stage status --json`.
+
+    Scripts MUST tolerate unknown values (forward-compat).
+    """
+
+    TIMESTAMP_CONTENT = "timestamp_content"
+    UPGRADE_CONTENT = "upgrade_content"
+    RETRY_CONTENT = "retry_content"
+    TIMESTAMP_INVENTORY = "timestamp_inventory"
+    UPGRADE_INVENTORY = "upgrade_inventory"
+    RETRY_INVENTORY = "retry_inventory"
+    COMMIT = "commit"
+    ADD_CONTENT = "add_content"
+    NONE = "none"
+
+
+_NEXT_ACTION_HUMAN: dict[NextActionKind, str] = {
+    NextActionKind.ADD_CONTENT: "stage add <path>",
+    NextActionKind.TIMESTAMP_CONTENT: "stage timestamp content",
+    NextActionKind.RETRY_CONTENT: "stage timestamp content --retry",
+    NextActionKind.UPGRADE_CONTENT: (
+        "stage timestamp content --upgrade (or --upgrade --watch)"
+    ),
+    NextActionKind.TIMESTAMP_INVENTORY: "stage timestamp inventory",
+    NextActionKind.RETRY_INVENTORY: "stage timestamp inventory --retry",
+    NextActionKind.UPGRADE_INVENTORY: (
+        "stage timestamp inventory --upgrade (or --upgrade --watch)"
+    ),
+    NextActionKind.COMMIT: "stage commit",
+    NextActionKind.NONE: "",
+}
+
+
+class _OutstandingJobJson(TypedDict):
+    job_id: str
+    digests: list[str]
+    status: str
+    submitted_at: str
+    age_seconds: int
+
+
+def compute_in_sync(info: BlockchainInfo) -> bool:
+    """Bitcoin-in-sync derivation pinned by `OTS workflow contract`."""
+    return (not info.initial_block_download) and info.verification_progress >= 0.9999
+
+
+def humanize_age(seconds: int) -> str:
+    """Floor-rounded ASCII single-unit age (`30s ago`, `5m ago`, `2h ago`, `3d ago`)."""
+    if seconds < 60:
+        return f"{seconds}s ago"
+    if seconds < 3600:
+        return f"{seconds // 60}m ago"
+    if seconds < 86400:
+        return f"{seconds // 3600}h ago"
+    return f"{seconds // 86400}d ago"
+
+
+def _status_now() -> datetime:
+    """Indirection seam so tests can pin `now` for age math."""
+    return datetime.now(UTC)
+
+
+def _submission_age_seconds(submitted_at: str, now: datetime) -> int:
+    if not submitted_at:
+        return 0
+    try:
+        dt = datetime.fromisoformat(submitted_at)
+    except ValueError:
+        return 0
+    return max(0, int((now - dt).total_seconds()))
+
+
+def next_action_for(state: OtsState, has_files: bool) -> tuple[NextActionKind, str]:
+    """FSM-aware `(kind, human)` pair for the OTS status next-action surface."""
+    match state.phase:
+        case Phase.DRAFTING:
+            kind = (
+                NextActionKind.TIMESTAMP_CONTENT
+                if has_files
+                else NextActionKind.ADD_CONTENT
+            )
+        case Phase.CONTENT_PENDING:
+            verified = {d for d, p in state.content_proofs.items() if p.verified}
+            still_pending = set(state.pending_digests) - verified
+            failed_covers = any(
+                j.status == "FAILED" and (set(j.digests) & still_pending)
+                for j in state.verify_jobs
+            )
+            kind = (
+                NextActionKind.RETRY_CONTENT
+                if failed_covers
+                else NextActionKind.UPGRADE_CONTENT
+            )
+        case Phase.CONTENT_UPGRADED:
+            kind = NextActionKind.TIMESTAMP_INVENTORY
+        case Phase.INVENTORY_PENDING:
+            ip = state.inventory_proof
+            kind = (
+                NextActionKind.RETRY_INVENTORY
+                if ip is not None
+                and any(
+                    j.status == "FAILED" and ip.digest in j.digests
+                    for j in state.verify_jobs
+                )
+                else NextActionKind.UPGRADE_INVENTORY
+            )
+        case Phase.INVENTORY_UPGRADED:
+            kind = NextActionKind.COMMIT
+        case Phase.COMMITTED:
+            kind = NextActionKind.NONE
+        case _:
+            raise RuntimeError(f"unhandled phase: {state.phase!r}")
+    return kind, _NEXT_ACTION_HUMAN[kind]
+
+
 @stage_app.command()
 def status(
     ctx: typer.Context,
     object_id: Annotated[str, typer.Argument(help="Object ID.")],
 ) -> None:
-    """Show changes in staged version vs committed head."""
-    from ocfl_lib.digest_map import to_path_map
-    from ocfl_lib.spec import VNum
-
+    """Show changes in staged version vs committed head (OTS-aware)."""
     store: StagingStore = ctx.obj["staging"]
     root_path = _resolve_root_path(ctx)
 
@@ -465,10 +582,25 @@ def status(
         err(f"no staging exists for {object_id!r}")
         raise typer.Exit(1)
 
+    staging_dir = store.staging_path(root_path, object_id)
+    if has_ots(staging_dir):
+        _status_ots(ctx, store, root_path, object_id, staging_dir)
+    else:
+        _status_diff(ctx, store, root_path, object_id)
+
+
+def _status_diff(
+    ctx: typer.Context,
+    store: StagingStore,
+    root_path: str,
+    object_id: str,
+) -> None:
+    from ocfl_lib.digest_map import to_path_map
+    from ocfl_lib.spec import VNum
+
     inv = store.load_inventory(root_path, object_id)
     head = inv.head
 
-    # Get staged state and prior state (version before head)
     staged_pm = to_path_map(inv.versions[head].state)
     head_vnum = VNum.parse(head)
     if head_vnum.number > 1:
@@ -477,7 +609,6 @@ def status(
     else:
         prior_pm: dict[str, str] = {}
 
-    # Compute diff
     all_paths = set(staged_pm) | set(prior_pm)
     changes: list[dict[str, str]] = []
     added: dict[str, str] = {}
@@ -493,7 +624,6 @@ def status(
         elif prior_pm[p] != staged_pm[p]:
             changes.append({"path": p, "action": "modified"})
 
-    # Rename detection: pair added/removed sharing a digest
     removed_by_digest: dict[str, list[str]] = {}
     for p, d in removed.items():
         removed_by_digest.setdefault(d, []).append(p)
@@ -514,7 +644,7 @@ def status(
     if ctx.obj.get("json"):
         from ocfl_cli._common import output_json
 
-        output_json(changes)
+        output_json({"extension": None, "changes": changes})
     else:
         action_prefix = {"added": "A", "deleted": "D", "modified": "M", "renamed": "R"}
         sym_style = {
@@ -531,6 +661,155 @@ def status(
             if c.get("renamed_from"):
                 parts.append(f" (from {c['renamed_from']})")
             _style.echo(Text.assemble(*parts))
+
+
+def _cache_bytes(staging_dir: Path) -> int:
+    cache_dir = staging_dir / "ots-cache"
+    if not cache_dir.is_dir():
+        return 0
+    return sum(
+        entry.stat().st_size
+        for entry in cache_dir.iterdir()
+        if entry.is_file() and not entry.is_symlink()
+    )
+
+
+def _build_outstanding_jobs(
+    state: OtsState, now: datetime
+) -> list[_OutstandingJobJson]:
+    sub_by_id = {s.job_id: s for s in state.submissions if s.job_id is not None}
+    outstanding: list[_OutstandingJobJson] = []
+    for j in state.verify_jobs:
+        if j.status in ("COMPLETED", "FAILED"):
+            continue
+        sub = sub_by_id.get(j.job_id)
+        submitted_at = sub.submitted_at if sub is not None else ""
+        outstanding.append(
+            {
+                "job_id": j.job_id,
+                "digests": list(j.digests),
+                "status": j.status,
+                "submitted_at": submitted_at,
+                "age_seconds": _submission_age_seconds(submitted_at, now),
+            }
+        )
+    return outstanding
+
+
+def _build_counts(
+    state: OtsState, non_ots: set[str]
+) -> tuple[dict[str, int], int, int]:
+    total = len(non_ots)
+    upgraded_set = {d for d, p in state.content_proofs.items() if p.verified}
+    upgraded = len(upgraded_set & non_ots) if non_ots else 0
+    pending = total - upgraded
+
+    non_failed_set: set[str] = set()
+    failed_set: set[str] = set()
+    for j in state.verify_jobs:
+        (failed_set if j.status == "FAILED" else non_failed_set).update(j.digests)
+    submitted = len(non_failed_set)
+    failed = len(failed_set - non_failed_set)
+
+    counts = {
+        "total": total,
+        "submitted": submitted,
+        "upgraded": upgraded,
+        "pending": pending,
+        "failed": failed,
+    }
+    return counts, upgraded, pending
+
+
+def _build_bitcoin_section(cfg: Config | None) -> dict[str, object] | None:
+    if cfg is None or cfg.bitcoin is None:
+        return None
+    try:
+        info = _get_btc_rpc(cfg).getblockchaininfo()
+    except BitcoinError as e:
+        logger.warning("bitcoin RPC unreachable, omitting bitcoin section: %s", e)
+        return None
+    return {
+        "height": info.height,
+        "tip_hash": info.best_block_hash,
+        "in_sync": compute_in_sync(info),
+        "confirmations_required": cfg.bitcoin.confirmations,
+    }
+
+
+def _status_ots(
+    ctx: typer.Context,
+    store: StagingStore,
+    root_path: str,
+    object_id: str,
+    staging_dir: Path,
+) -> None:
+    cfg: Config | None = ctx.obj.get("config")
+    state = load_ots(staging_dir)
+    inv = store.load_inventory(root_path, object_id)
+    head_state = inv.versions[inv.head].state
+
+    non_ots = _non_ots_digests(head_state)
+    counts, upgraded, pending = _build_counts(state, non_ots)
+    failed = counts["failed"]
+    total = counts["total"]
+    has_files = total > 0
+
+    outstanding = _build_outstanding_jobs(state, _status_now())
+    bitcoin = _build_bitcoin_section(cfg)
+    simpleproof = {
+        "configured": cfg is not None and cfg.simpleproof is not None,
+        "category_id": state.category_id,
+    }
+    cache_bytes = _cache_bytes(staging_dir)
+    kind, human = next_action_for(state, has_files)
+
+    if ctx.obj.get("json"):
+        from ocfl_cli._common import output_json
+
+        output_json(
+            {
+                "schema_version": 1,
+                "extension": "NNNN-ots-timestamps",
+                "phase": state.phase.value,
+                "counts": counts,
+                "outstanding_jobs": outstanding,
+                "bitcoin": bitcoin,
+                "simpleproof": simpleproof,
+                "cache_bytes": cache_bytes,
+                "next_action_kind": kind.value,
+                "next_action": human,
+            }
+        )
+        return
+
+    parts = [f"Phase: {state.phase.value} ({upgraded} of {total} upgraded"]
+    if pending:
+        parts.append(f", {pending} outstanding")
+    if failed:
+        parts.append(f", {failed} failed")
+    parts.append(")")
+    typer.echo("".join(parts))
+
+    if outstanding:
+        typer.echo("Outstanding:")
+        for o in outstanding:
+            short = f"{o['digests'][0][:12]}..." if o["digests"] else ""
+            typer.echo(
+                f"  sha256:{short} — job {o['job_id']}, {o['status']}, "
+                f"submitted {humanize_age(o['age_seconds'])}"
+            )
+
+    if bitcoin is not None:
+        sync_str = "node in sync" if bitcoin["in_sync"] else "node not in sync"
+        typer.echo(f"Bitcoin: height {bitcoin['height']} ({sync_str})")
+
+    typer.echo(
+        "SimpleProof: configured"
+        if simpleproof["configured"]
+        else "SimpleProof: not configured"
+    )
+    typer.echo(f"Next: {human}")
 
 
 class _StagingContentSource:
