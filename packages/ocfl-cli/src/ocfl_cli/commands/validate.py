@@ -227,14 +227,8 @@ def _get_btc_rpc(cfg: Config) -> BitcoinRPC:
     if btc_cfg is None:
         raise RuntimeError("bitcoin config missing")
 
-    headers: dict[str, str] = {}
-    if btc_cfg.rpc_cookie is not None:
-        cookie = btc_cfg.rpc_cookie.read_text().strip()
-        headers["Authorization"] = "Basic " + base64.b64encode(cookie.encode()).decode()
-    elif btc_cfg.rpc_user:
-        creds = f"{btc_cfg.rpc_user}:{btc_cfg.rpc_password}"
-        headers["Authorization"] = "Basic " + base64.b64encode(creds.encode()).decode()
-
+    creds = f"{btc_cfg.rpc_user}:{btc_cfg.rpc_password}"
+    headers = {"Authorization": "Basic " + base64.b64encode(creds.encode()).decode()}
     client = httpx.Client(timeout=btc_cfg.rpc_timeout_s, headers=headers)
     return BitcoinRPCClient(btc_cfg.rpc_url, client=client)
 

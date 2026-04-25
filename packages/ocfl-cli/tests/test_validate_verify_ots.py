@@ -53,11 +53,12 @@ access_token = "tok"
 api_key = "key"
 """
 
-_BTC_OK_COOKIE = """\
+_BTC_OK = """\
 [bitcoin]
 rpc_url = "http://127.0.0.1:8332"
 zmq_endpoint = "tcp://127.0.0.1:28332"
-rpc_cookie = "~/.bitcoin/.cookie"
+rpc_user = "u"
+rpc_password = "p"
 confirmations = 3
 """
 
@@ -70,7 +71,7 @@ confirmations = 3
 def _write_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    body: str = _SP_OK + _BTC_OK_COOKIE,
+    body: str = _SP_OK + _BTC_OK,
 ) -> Path:
     cfg = tmp_path / "ocfl-config" / "config.toml"
     cfg.parent.mkdir(parents=True, exist_ok=True)

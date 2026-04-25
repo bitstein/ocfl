@@ -60,36 +60,20 @@ class BitcoinConfig:
 
     rpc_url: str
     zmq_endpoint: str
-    rpc_cookie: Path | None = None
-    rpc_user: str = ""
-    rpc_password: str = field(repr=False, default="")
+    rpc_user: str
+    rpc_password: str = field(repr=False)
     confirmations: int = 3
     rpc_timeout_s: int = 10
 
     def __post_init__(self) -> None:
         _validate_http_url(self.rpc_url, "bitcoin.rpc_url")
         _validate_zmq_endpoint(self.zmq_endpoint, "bitcoin.zmq_endpoint")
-        if self.rpc_cookie is not None and not isinstance(self.rpc_cookie, Path):
-            raise ConfigError("bitcoin.rpc_cookie must be a path")
         _require_str(self.rpc_user, "bitcoin.rpc_user")
         _require_str(self.rpc_password, "bitcoin.rpc_password")
         _require_pos_int(self.rpc_timeout_s, "bitcoin.rpc_timeout_s")
 
-        has_cookie = self.rpc_cookie is not None
-        has_user = bool(self.rpc_user)
-        has_pass = bool(self.rpc_password)
-        if has_user != has_pass:
-            raise ConfigError(
-                "bitcoin: rpc_user and rpc_password must both be set or both unset"
-            )
-        if has_cookie and has_user:
-            raise ConfigError(
-                "bitcoin: rpc_cookie and rpc_user/rpc_password are mutually exclusive"
-            )
-        if not (has_cookie or has_user):
-            raise ConfigError(
-                "bitcoin: must configure rpc_cookie or rpc_user+rpc_password"
-            )
+        if not (self.rpc_user and self.rpc_password):
+            raise ConfigError("bitcoin: rpc_user and rpc_password are both required")
 
         _require_int(self.confirmations, "bitcoin.confirmations")
         if not 1 <= self.confirmations <= 100:
@@ -236,17 +220,14 @@ def _parse_bitcoin(section: Any, path: Path) -> BitcoinConfig | None:
 
     rpc_url = _req_str(d, "rpc_url", path, "bitcoin.rpc_url")
     zmq_endpoint = _req_str(d, "zmq_endpoint", path, "bitcoin.zmq_endpoint")
-    cookie_str = _opt_str(d, "rpc_cookie", path, "bitcoin.rpc_cookie")
-    rpc_user = _opt_str(d, "rpc_user", path, "bitcoin.rpc_user") or ""
-    rpc_password = _opt_str(d, "rpc_password", path, "bitcoin.rpc_password") or ""
+    rpc_user = _req_str(d, "rpc_user", path, "bitcoin.rpc_user")
+    rpc_password = _req_str(d, "rpc_password", path, "bitcoin.rpc_password")
     confirmations = _opt_int(d, "confirmations", path, "bitcoin.confirmations")
     rpc_timeout_s = _opt_int(d, "rpc_timeout_s", path, "bitcoin.rpc_timeout_s")
 
-    cookie = Path(cookie_str).expanduser() if cookie_str is not None else None
     return BitcoinConfig(
         rpc_url=rpc_url,
         zmq_endpoint=zmq_endpoint,
-        rpc_cookie=cookie,
         rpc_user=rpc_user,
         rpc_password=rpc_password,
         confirmations=3 if confirmations is None else confirmations,

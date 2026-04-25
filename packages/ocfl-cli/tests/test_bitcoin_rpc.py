@@ -2,7 +2,7 @@
 
 The client must accept an injected ``httpx.Client`` so tests can swap in a
 ``MockTransport``. Production callers build their own ``Client`` with
-``httpx.BasicAuth`` (cookie or rpc_user/password) and a timeout.
+``httpx.BasicAuth`` (rpc_user/password) and a timeout.
 """
 
 from __future__ import annotations

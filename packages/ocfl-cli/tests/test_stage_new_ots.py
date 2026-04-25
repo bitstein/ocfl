@@ -44,7 +44,8 @@ _BTC_OK_COOKIE = """\
 [bitcoin]
 rpc_url = "http://127.0.0.1:8332"
 zmq_endpoint = "tcp://127.0.0.1:28332"
-rpc_cookie = "~/.bitcoin/.cookie"
+rpc_user = "u"
+rpc_password = "p"
 """
 
 
