@@ -691,6 +691,8 @@ class TestTwoWatchersSerializeSafely:
         _register_attested(btc_fake.rpc, d)
 
         from ocfl_cli.commands import stage as stage_cmd
+        from ocfl_cli.config import load_config
+        from ocfl_lib import LocalFS, StorageRoot
 
         # Two independent streams; each delivers one block then raises
         # KeyboardInterrupt so the loser exits cleanly after the winner
@@ -710,36 +712,45 @@ class TestTwoWatchersSerializeSafely:
 
             return _S()
 
-        # Round-robin: each call to _get_zmq_subscriber yields a fresh
-        # stream so the two CLI invocations don't share state.
+        # Round-robin: each thread gets a fresh stream so the two
+        # invocations don't share state.
         streams: list[object] = [_make_stream(), _make_stream()]
         idx = {"i": 0}
+        idx_lock = threading.Lock()
 
         def _next_stream(*a: object, **kw: object) -> object:
-            i = idx["i"]
-            idx["i"] = i + 1
+            with idx_lock:
+                i = idx["i"]
+                idx["i"] = i + 1
             return streams[i]
 
         monkeypatch.setattr(
             stage_cmd, "_get_zmq_subscriber", _next_stream, raising=False
         )
 
+        # Call _watch_loop directly per thread. CliRunner patches
+        # process-global sys.stdout/err which is not thread-safe; the
+        # contract under test (filelock serialization) lives entirely in
+        # _watch_loop. Per-thread state (cfg/store/sr) is built locally;
+        # only the staging dir + filelock are shared.
+        cfg = load_config()
+        root_path = str(empty_sha256_root.resolve())
+        # Both threads start at the same moment so the race against the
+        # filelock is real, not whichever-thread-started-first.
+        barrier = threading.Barrier(2)
         results: dict[str, int] = {}
+        errors: dict[str, BaseException] = {}
 
         def _run(tag: str) -> None:
-            r = CliRunner().invoke(
-                app,
-                _stage_args(
-                    empty_sha256_root,
-                    staging,
-                    "timestamp",
-                    "content",
-                    "obj:watch-two",
-                    "--upgrade",
-                    "--watch",
-                ),
-            )
-            results[tag] = r.exit_code
+            try:
+                store = StagingStore(staging)
+                sr = StorageRoot(LocalFS(empty_sha256_root))
+                barrier.wait(timeout=10)
+                results[tag] = stage_cmd._watch_loop(
+                    cfg, store, sr, root_path, "obj:watch-two", sd
+                )
+            except BaseException as e:  # noqa: BLE001 — re-raised in main thread below
+                errors[tag] = e
 
         t1 = threading.Thread(target=_run, args=("a",))
         t2 = threading.Thread(target=_run, args=("b",))
@@ -750,10 +761,10 @@ class TestTwoWatchersSerializeSafely:
 
         assert not t1.is_alive()
         assert not t2.is_alive()
-        # Both invocations terminated cleanly: winner exits 0 on phase
-        # advance; loser observes either phase-already-advanced (0) or
-        # KeyboardInterrupt (130). Neither may crash with non-graceful
-        # status.
+        # Surface any thread exceptions in the main thread.
+        assert not errors, errors
+        # Winner exits 0 on phase advance; loser observes either
+        # phase-already-advanced (0) or KeyboardInterrupt (130).
         for tag, code in results.items():
             assert code in (0, 130), f"{tag}: exit={code}"
 
