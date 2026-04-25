@@ -11,16 +11,31 @@ from platformdirs import user_state_path
 from rich.text import Text
 
 from ocfl_cli import _style
+from ocfl_cli import staging as _staging_mod
 from ocfl_cli._common import err, open_root
+from ocfl_cli.bitcoin import (
+    BitcoinRPC,
+    PendingVerification,
+    VerifiedAttestation,
+    verify_attestation,
+)
+from ocfl_cli.errors import (
+    AttestationMismatchError,
+    ReorgDetectedError,
+)
+from ocfl_cli.ingest import ingest_file
 from ocfl_cli.staging import (
     Phase,
     StagingStore,
     Submission,
+    VerifiedProof,
+    VerifyJob,
     apply_category_id,
     check_transition,
     has_ots,
     load_ots,
     now_utc_iso,
+    ots_cache_path,
     save_ots,
     with_lock,
 )
@@ -31,6 +46,8 @@ if TYPE_CHECKING:
 
     from ocfl_cli.config import Config, SimpleProofConfig
     from ocfl_cli.simpleproof import SimpleProofClient
+    from ocfl_cli.staging import OtsState
+    from ocfl_lib import DigestAlgorithm
     from ocfl_lib.fs.protocols import FS
     from ocfl_lib.inventory import Inventory
 
@@ -627,20 +644,390 @@ def _get_sp_client(
     return SimpleProofHttpClient(sp_cfg.base_url, creds, client=client, sleep=sleep)
 
 
+def _get_btc_rpc(cfg: Config) -> BitcoinRPC:
+    """Construct the production `BitcoinRPCClient` from `cfg`.
+
+    Tests monkeypatch this seam to inject `FakeBitcoinRPC`.
+    """
+    import base64
+
+    import httpx
+
+    from ocfl_cli.bitcoin import BitcoinRPCClient
+
+    btc_cfg = cfg.bitcoin
+    if btc_cfg is None:
+        raise RuntimeError("bitcoin config missing")
+
+    headers: dict[str, str] = {}
+    if btc_cfg.rpc_cookie is not None:
+        cookie = btc_cfg.rpc_cookie.read_text().strip()
+        headers["Authorization"] = "Basic " + base64.b64encode(cookie.encode()).decode()
+    elif btc_cfg.rpc_user:
+        creds = f"{btc_cfg.rpc_user}:{btc_cfg.rpc_password}"
+        headers["Authorization"] = "Basic " + base64.b64encode(creds.encode()).decode()
+
+    client = httpx.Client(timeout=btc_cfg.rpc_timeout_s, headers=headers)
+    return BitcoinRPCClient(btc_cfg.rpc_url, client=client)
+
+
 def _log_phase(prev: Phase, new: Phase) -> None:
     if new is not prev:
         logger.info("phase: %s -> %s", prev.value, new.value)
+
+
+def _non_ots_digests(state: dict[str, list[str]]) -> set[str]:
+    """Digests with at least one logical path not ending in `.ots`."""
+    return {
+        d for d, paths in state.items() if any(not p.endswith(".ots") for p in paths)
+    }
+
+
+def _covered_digests(state: OtsState) -> set[str]:
+    """Digests already covered by a non-FAILED verify_job."""
+    return {d for j in state.verify_jobs if j.status != "FAILED" for d in j.digests}
+
+
+def _reverify_existing_proofs(
+    state: OtsState,
+    btc: BitcoinRPC,
+    sp: SimpleProofClient,
+    staging_dir: Path,
+    min_confirmations: int,
+) -> OtsState:
+    """Re-verify every `verified=True` content_proof against the local chain.
+
+    Uses cached `.ots` bytes (which embed attested block_height + merkle
+    path); `verify_attestation` resolves the current block_hash at that
+    height via `getblockhash` and checks the merkle root. On mismatch or
+    insufficient-confs the proof resets to `verified=False` and the
+    covering VerifyJobs are dropped, so a fresh `verify-batches` is POSTed
+    and the next pass re-fetches bytes from SP. `ReorgDetectedError`
+    propagates to HALT.
+    """
+    new_proofs = dict(state.content_proofs)
+    needs_resubmit: list[str] = []
+    for d, proof in state.content_proofs.items():
+        if not proof.verified:
+            continue
+        cache = ots_cache_path(staging_dir, d)
+        if not cache.is_file():
+            continue
+        try:
+            result = verify_attestation(
+                rpc=btc,
+                ots_bytes=cache.read_bytes(),
+                expected_digest=bytes.fromhex(d),
+                min_confirmations=min_confirmations,
+            )
+        except AttestationMismatchError:
+            new_proofs[d] = VerifiedProof(ots_path=proof.ots_path, verified=False)
+            needs_resubmit.append(d)
+            continue
+        match result:
+            case VerifiedAttestation(block_height=h, confirmations=c):
+                new_proofs[d] = VerifiedProof(
+                    ots_path=proof.ots_path,
+                    verified=True,
+                    block_height=h,
+                    confirmations_at_verify=c,
+                    verified_at=proof.verified_at,
+                )
+            case PendingVerification():
+                new_proofs[d] = VerifiedProof(ots_path=proof.ots_path, verified=False)
+                needs_resubmit.append(d)
+
+    if not needs_resubmit:
+        return replace(state, content_proofs=new_proofs)
+
+    affected = set(needs_resubmit)
+    kept_jobs = tuple(j for j in state.verify_jobs if affected.isdisjoint(j.digests))
+    new_job = VerifyJob(
+        job_id=sp.verify_batch(list(needs_resubmit)),
+        digests=tuple(needs_resubmit),
+        status="IN_PROGRESS",
+    )
+    return replace(
+        state,
+        content_proofs=new_proofs,
+        verify_jobs=(*kept_jobs, new_job),
+    )
+
+
+def _submit_new_verify_batches(state: OtsState, sp: SimpleProofClient) -> OtsState:
+    """POST `verify-batches` for every submitted digest not already covered."""
+    covered = _covered_digests(state)
+    new_jobs: list[VerifyJob] = []
+    for sub in state.submissions:
+        if sub.status != "submitted":
+            continue
+        uncovered = tuple(d for d in sub.digests if d not in covered)
+        if not uncovered:
+            continue
+        new_jobs.append(
+            VerifyJob(
+                job_id=sp.verify_batch(list(uncovered)),
+                digests=uncovered,
+                status="IN_PROGRESS",
+            )
+        )
+        covered.update(uncovered)
+    if not new_jobs:
+        return state
+    return replace(state, verify_jobs=(*state.verify_jobs, *new_jobs))
+
+
+def _poll_outstanding_jobs(state: OtsState, sp: SimpleProofClient) -> OtsState:
+    """Refresh `status` for every non-terminal verify_job."""
+    polled = tuple(
+        j
+        if j.status in ("COMPLETED", "FAILED")
+        else replace(j, status=sp.poll_job(j.job_id).status)
+        for j in state.verify_jobs
+    )
+    return replace(state, verify_jobs=polled)
+
+
+def _unverified(state: OtsState, digests: tuple[str, ...]) -> list[str]:
+    """Subset of *digests* that do not yet have a verified=True proof."""
+    return [
+        d for d in digests if not state.content_proofs.get(d, VerifiedProof()).verified
+    ]
+
+
+def _verify_and_ingest_digest(
+    d: str,
+    ots_bytes: bytes,
+    state: OtsState,
+    inv: Inventory,
+    head_state: dict[str, list[str]],
+    alg: DigestAlgorithm,
+    *,
+    btc: BitcoinRPC,
+    store: StagingStore,
+    root_path: str,
+    object_id: str,
+    staging_dir: Path,
+    min_confirmations: int,
+) -> tuple[OtsState, Inventory]:
+    """Apply the three-step crash-recovery invariant for one digest.
+
+    Ordering (must not change):
+      1. atomic cache write `ots-cache/<d>.ots`,
+      2. `ingest_file` the cached bytes as `<obj_rel>.ots` (stage-state mutation),
+      3. atomic `ots.json` update recording VerifiedProof.
+
+    On `PendingVerification` only step (1) runs plus a `verified=False`
+    proof record; the next pass re-downloads and re-verifies. `head_state`
+    is mutated in place to track accumulated ingests across digests.
+    """
+    result = verify_attestation(
+        rpc=btc,
+        ots_bytes=ots_bytes,
+        expected_digest=bytes.fromhex(d),
+        min_confirmations=min_confirmations,
+    )
+
+    cache_file = ots_cache_path(staging_dir, d)
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    _staging_mod._atomic_write_bytes(cache_file, ots_bytes)
+    ots_path_rel = f"ots-cache/{d}.ots"
+
+    if not isinstance(result, VerifiedAttestation):
+        state = _record_proof(
+            state, d, VerifiedProof(ots_path=ots_path_rel, verified=False)
+        )
+        save_ots(staging_dir, state)
+        return state, inv
+
+    paths = head_state.get(d, [])
+    if not paths:
+        return state, inv
+    logical = f"{paths[0]}.ots"
+
+    content_map = store.load_content_map(root_path, object_id)
+    ots_digest = ingest_file(
+        cache_file,
+        logical,
+        staging_dir=staging_dir,
+        content_map=content_map,
+        digest_alg=alg,
+    ).digest
+    logicals = head_state.setdefault(ots_digest, [])
+    if logical not in logicals:
+        logicals.append(logical)
+    store.save_inventory(root_path, object_id, _update_head_state(inv, head_state))
+    store.save_content_map(root_path, object_id, content_map)
+    inv = store.load_inventory(root_path, object_id)
+
+    state = _record_proof(
+        state,
+        d,
+        VerifiedProof(
+            ots_path=ots_path_rel,
+            verified=True,
+            block_height=result.block_height,
+            confirmations_at_verify=result.confirmations,
+            verified_at=now_utc_iso(),
+        ),
+    )
+    save_ots(staging_dir, state)
+    return state, inv
+
+
+def _record_proof(state: OtsState, digest: str, proof: VerifiedProof) -> OtsState:
+    proofs = dict(state.content_proofs)
+    proofs[digest] = proof
+    return replace(state, content_proofs=proofs)
+
+
+def _process_completed_jobs(
+    state: OtsState,
+    sp: SimpleProofClient,
+    btc: BitcoinRPC,
+    store: StagingStore,
+    root_path: str,
+    object_id: str,
+    staging_dir: Path,
+    min_confirmations: int,
+) -> OtsState:
+    """Download + verify + ingest every completed verify_job's digests."""
+    from ocfl_lib import DigestAlgorithm
+
+    inv = store.load_inventory(root_path, object_id)
+    alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
+    head_state: dict[str, list[str]] = {
+        d: list(ps) for d, ps in inv.versions[inv.head].state.items()
+    }
+
+    for j in state.verify_jobs:
+        if j.status != "COMPLETED":
+            continue
+        unverified = _unverified(state, j.digests)
+        if not unverified:
+            continue
+        poll = sp.poll_job(j.job_id)
+        if poll.results_url is None:
+            continue
+        downloads = sp.download_results(poll.results_url, set(unverified))
+        for d, ots_bytes in downloads.items():
+            state, inv = _verify_and_ingest_digest(
+                d,
+                ots_bytes,
+                state,
+                inv,
+                head_state,
+                alg,
+                btc=btc,
+                store=store,
+                root_path=root_path,
+                object_id=object_id,
+                staging_dir=staging_dir,
+                min_confirmations=min_confirmations,
+            )
+    return state
+
+
+def _phase_advance_ready(
+    state: OtsState,
+    store: StagingStore,
+    sr,
+    root_path: str,
+    object_id: str,
+) -> tuple[bool, list[str], set[str]]:
+    """Evaluate the phase-advance invariant.
+
+    Returns `(ready, unverified_pending, orphans)`:
+      - cond1 (all pending verified): `unverified_pending` is empty
+      - cond2 (no orphan non-.ots digests outside pending): `orphans` is empty
+      - `ready` iff both conditions hold
+    """
+    final_inv = store.load_inventory(root_path, object_id)
+    final_state = {
+        d: list(ps) for d, ps in final_inv.versions[final_inv.head].state.items()
+    }
+    obj = sr.get_object(object_id)
+    carry = set(obj.inventory.inventory.manifest) if obj.exists else set()
+    unverified_pending = _unverified(state, state.pending_digests)
+    orphans = (_non_ots_digests(final_state) - carry) - set(state.pending_digests)
+    return (not unverified_pending and not orphans, unverified_pending, orphans)
+
+
+def _upgrade_pass(
+    cfg: Config,
+    store: StagingStore,
+    sr,
+    root_path: str,
+    object_id: str,
+    staging_dir: Path,
+) -> None:
+    """Drive `stage timestamp content --upgrade` end-to-end under the lock."""
+    btc_cfg = cfg.bitcoin
+    if btc_cfg is None or cfg.simpleproof is None:
+        raise RuntimeError("config missing required sections")
+    min_confs = btc_cfg.confirmations
+
+    with with_lock(staging_dir, timeout=30):
+        state = load_ots(staging_dir)
+        prev_phase = state.phase
+        check_transition(state.phase, "timestamp content --upgrade")
+        apply_category_id(state, cfg.simpleproof.proof_category_id)
+
+        sp = _get_sp_client(cfg)
+        btc = _get_btc_rpc(cfg)
+
+        state = _reverify_existing_proofs(state, btc, sp, staging_dir, min_confs)
+        save_ots(staging_dir, state)
+
+        state = _submit_new_verify_batches(state, sp)
+        save_ots(staging_dir, state)
+
+        state = _poll_outstanding_jobs(state, sp)
+        save_ots(staging_dir, state)
+
+        state = _process_completed_jobs(
+            state, sp, btc, store, root_path, object_id, staging_dir, min_confs
+        )
+
+        ready, unverified_pending, orphans = _phase_advance_ready(
+            state, store, sr, root_path, object_id
+        )
+        if ready and state.phase is not Phase.CONTENT_UPGRADED:
+            state = replace(state, phase=Phase.CONTENT_UPGRADED)
+            save_ots(staging_dir, state)
+            _log_phase(prev_phase, Phase.CONTENT_UPGRADED)
+            return
+        if unverified_pending:
+            logger.warning(
+                "phase advance held: %d pending digest(s) not yet verified",
+                len(unverified_pending),
+            )
+        if orphans:
+            logger.warning(
+                "phase advance held: %d orphan digest(s) outside pending set",
+                len(orphans),
+            )
 
 
 @timestamp_app.command("content")
 def timestamp_content(
     ctx: typer.Context,
     object_id: Annotated[str, typer.Argument(help="Object ID.")],
+    upgrade: Annotated[
+        bool,
+        typer.Option(
+            "--upgrade",
+            help="Poll SP, verify .ots against Bitcoin, ingest companion files.",
+        ),
+    ] = False,
 ) -> None:
     """Submit staged content digests to SimpleProof."""
     cfg: Config | None = ctx.obj.get("config")
     if cfg is None or cfg.simpleproof is None:
         err("'stage timestamp content' requires [simpleproof] config section")
+        raise typer.Exit(2)
+    if upgrade and cfg.bitcoin is None:
+        err("'stage timestamp content --upgrade' requires [bitcoin] config section")
         raise typer.Exit(2)
 
     store: StagingStore = ctx.obj["staging"]
@@ -655,6 +1042,14 @@ def timestamp_content(
     if not has_ots(staging_dir):
         err(f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)")
         raise typer.Exit(2)
+
+    if upgrade:
+        try:
+            _upgrade_pass(cfg, store, sr, root_path, object_id, staging_dir)
+        except (ReorgDetectedError, AttestationMismatchError) as e:
+            err(f"halt: {e}")
+            raise typer.Exit(5) from None
+        return
 
     with with_lock(staging_dir, timeout=30):
         state = load_ots(staging_dir)
