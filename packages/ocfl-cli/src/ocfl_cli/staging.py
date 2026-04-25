@@ -80,7 +80,7 @@ class StagingStore:
 
     def _write_inventory(self, d: Path, inventory: Inventory) -> None:
         data = msgspec.json.encode(inventory)
-        (d / "inventory.json").write_bytes(data)
+        _atomic_write_bytes(d / "inventory.json", data)
 
     def _write_content_map(self, d: Path, content_map: dict) -> None:
         data = json.dumps(content_map, sort_keys=True).encode()
