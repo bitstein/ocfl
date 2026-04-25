@@ -311,6 +311,69 @@ def add(
     store.save_content_map(root_path, object_id, content_map)
 
 
+def _pair_ots_companion_remove(
+    state: dict[str, list[str]], removed_paths: list[str]
+) -> None:
+    """Remove `<path>.ots` companions from *state* for each non-`.ots` path removed."""
+    for p in removed_paths:
+        if p.endswith(".ots"):
+            continue
+        companion = f"{p}.ots"
+        for d in list(state):
+            if companion in state[d]:
+                state[d].remove(companion)
+                if not state[d]:
+                    del state[d]
+                break
+
+
+def _pair_ots_companion_rename(state: dict[str, list[str]], src: str, dst: str) -> None:
+    """Rename `<src>.ots` to `<dst>.ots` within *state* if present."""
+    if src.endswith(".ots"):
+        return
+    src_ots = f"{src}.ots"
+    dst_ots = f"{dst}.ots"
+    for d in state:
+        if src_ots in state[d]:
+            state[d].remove(src_ots)
+            state[d].append(dst_ots)
+            return
+
+
+def _apply_rm_mv_regression(
+    staging_dir: Path,
+    new_inv_state: dict[str, list[str]],
+    command: str,
+    cause: str,
+) -> None:
+    """Update `ots.json` per regression rules for stage rm/mv. Caller holds the lock."""
+    state = load_ots(staging_dir)
+    new_phase = check_transition(state.phase, command)
+    new_pending = tuple(
+        d for d in state.pending_digests if d in _non_ots_digests(new_inv_state)
+    )
+    new_inv_proof = state.inventory_proof
+    if state.phase in (Phase.INVENTORY_PENDING, Phase.INVENTORY_UPGRADED):
+        new_inv_proof = None
+        plan_path(staging_dir).unlink(missing_ok=True)
+    save_ots(
+        staging_dir,
+        replace(
+            state,
+            phase=new_phase,
+            pending_digests=new_pending,
+            inventory_proof=new_inv_proof,
+        ),
+    )
+    if new_phase is not state.phase:
+        logger.info(
+            "phase regression %s→%s (cause: %s)",
+            state.phase.value,
+            new_phase.value,
+            cause,
+        )
+
+
 @stage_app.command()
 def mv(
     ctx: typer.Context,
@@ -327,7 +390,7 @@ def mv(
         raise typer.Exit(1)
 
     inv = store.load_inventory(root_path, object_id)
-    state = dict(inv.versions[inv.head].state)
+    state = {d: list(ps) for d, ps in inv.versions[inv.head].state.items()}
 
     # Find which digest owns src_path
     found_digest = None
@@ -342,12 +405,19 @@ def mv(
 
     # Rename: remove src, add dst
     state[found_digest].remove(src_path)
-    if not state[found_digest]:
-        state[found_digest] = [dst_path]
-    else:
-        state[found_digest].append(dst_path)
+    state[found_digest].append(dst_path)
 
-    store.save_inventory(root_path, object_id, _update_head_state(inv, state))
+    staging_dir = store.staging_path(root_path, object_id)
+
+    if has_ots(staging_dir):
+        with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
+            _pair_ots_companion_rename(state, src_path, dst_path)
+            store.save_inventory(root_path, object_id, _update_head_state(inv, state))
+            _apply_rm_mv_regression(
+                staging_dir, state, "mv", f"stage mv {src_path} {dst_path}"
+            )
+    else:
+        store.save_inventory(root_path, object_id, _update_head_state(inv, state))
 
 
 @stage_app.command()
@@ -370,46 +440,56 @@ def rm(
     inv = store.load_inventory(root_path, object_id)
     state = {d: list(ps) for d, ps in inv.versions[inv.head].state.items()}
     content_map = store.load_content_map(root_path, object_id)
+    staging_dir = store.staging_path(root_path, object_id)
 
-    removed_any = False
+    removed_paths: list[str] = []
     for target in paths:
         if recursive:
             prefix = target.rstrip("/") + "/"
             for d in list(state):
-                before = len(state[d])
-                state[d] = [
-                    p for p in state[d] if p != target and not p.startswith(prefix)
-                ]
-                if len(state[d]) < before:
-                    removed_any = True
-                if not state[d]:
+                kept: list[str] = []
+                for p in state[d]:
+                    if p == target or p.startswith(prefix):
+                        removed_paths.append(p)
+                    else:
+                        kept.append(p)
+                if kept:
+                    state[d] = kept
+                else:
                     del state[d]
         else:
-            found = False
             for d in list(state):
                 if target in state[d]:
                     state[d].remove(target)
                     if not state[d]:
                         del state[d]
-                    found = True
-                    removed_any = True
+                    removed_paths.append(target)
                     break
-            if not found:
+            else:
                 err(f"path not found: {target!r}")
                 raise typer.Exit(1)
 
-    if not removed_any:
+    if not removed_paths:
         err("no matching paths found")
         raise typer.Exit(1)
 
-    # Clean unreferenced digests from content map
-    referenced_digests = set(state.keys())
-    for d in list(content_map):
-        if d not in referenced_digests:
-            del content_map[d]
+    def _finalize() -> None:
+        referenced_digests = set(state.keys())
+        for d in list(content_map):
+            if d not in referenced_digests:
+                del content_map[d]
+        store.save_inventory(root_path, object_id, _update_head_state(inv, state))
+        store.save_content_map(root_path, object_id, content_map)
 
-    store.save_inventory(root_path, object_id, _update_head_state(inv, state))
-    store.save_content_map(root_path, object_id, content_map)
+    if has_ots(staging_dir):
+        with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
+            _pair_ots_companion_remove(state, removed_paths)
+            _finalize()
+            _apply_rm_mv_regression(
+                staging_dir, state, "rm", f"stage rm {' '.join(paths)}"
+            )
+    else:
+        _finalize()
 
 
 @stage_app.command("ls")
