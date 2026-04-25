@@ -38,8 +38,10 @@ class _JsonFormatter(logging.Formatter):
 def _configure_logging(json_mode: bool, verbose: bool, quiet: bool) -> None:
     root = logging.getLogger()
     for h in list(root.handlers):
-        root.removeHandler(h)
+        if getattr(h, "_ocfl_handler", False):
+            root.removeHandler(h)
     handler = logging.StreamHandler(sys.stderr)
+    handler._ocfl_handler = True  # type: ignore[attr-defined]
     if json_mode:
         handler.setFormatter(_JsonFormatter())
     else:

@@ -1,0 +1,781 @@
+"""Tests for `ocfl stage timestamp content --upgrade --watch`.
+
+Pins the `--upgrade --watch` contract from `OTS workflow contract`:
+
+- New flag `--watch` on `stage timestamp content --upgrade` (requires
+  `--upgrade`). ZMQ-driven loop that runs an upgrade pass per Bitcoin
+  block; exits when phase advances to ``content-upgraded`` or on
+  SIGINT/SIGTERM (exit 130).
+- Loop sketch (per ``stage_timestamp_content_upgrade_watch.loop_sketch``):
+    1. ``BitcoinZmqSubscriber`` (or fake ``HashBlockStream``) opened
+       outside the lock.
+    2. ``wait_for_block(timeout_ms=5000)`` — ``None`` ⇒ continue
+       (re-check cancel flag).
+    3. Acquire ``FileLock(staging/.lock, timeout=30)`` for write window
+       only.
+    4. Inside lock: fresh ``load_ots``, ``btc.getblockchaininfo()``,
+       if ``height_jump > 1`` or tip-hash changed at stable height ⇒
+       ``_reverify_existing_proofs``; run ``_upgrade_pass``.
+    5. Release lock; if phase advanced to ``content-upgraded`` ⇒
+       return 0.
+- ``LockTimeoutError`` is logged at WARNING and absorbed (loop continues
+  on next block).
+- SIGINT/SIGTERM ⇒ caller-owned cancel flag; loop observes on next
+  ``wait_for_block`` timeout (≤5s) or between passes; finishes
+  in-flight pass; releases lock; exits 130. The crash-recovery
+  invariant guarantees no torn checkpoint (``load_ots`` succeeds
+  after).
+- Two simultaneous ``--watch`` invocations on the same staging
+  serialize safely via filelock.
+- Caller (the watch loop), not the stream, owns the cancel flag —
+  same loop shape used with the fake stream in tests.
+
+Test infrastructure seam (introduced by the implementer in
+``commands/stage.py``):
+
+- ``_get_zmq_subscriber(cfg)`` — production factory returning a
+  ``HashBlockStream``-shaped object (mirrors ``_get_sp_client`` /
+  ``_get_btc_rpc``). Tests monkeypatch it to inject
+  ``InMemoryHashBlockStream`` from ``tests/fakes/fake_bitcoin.py``.
+
+These tests are RED until both the ``--watch`` flag and the
+``_get_zmq_subscriber`` seam land. Either failure mode (unknown CLI
+option or ``AttributeError`` on the patched seam) is an acceptable
+diagnostic.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+import threading
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+import filelock
+import pytest
+from fakes import FakeBitcoinRPC, FakeSimpleProof, InMemoryHashBlockStream
+from typer.testing import CliRunner
+
+from ocfl_cli.bitcoin import HashBlockStream
+from ocfl_cli.main import app
+from ocfl_cli.staging import (
+    Phase,
+    StagingStore,
+    Submission,
+    VerifyJob,
+    load_ots,
+    save_ots,
+)
+from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
+from tests.helpers.ots import build_attestation
+
+# --------------------------------------------------------------------------- #
+# Config + path helpers (copied from test_stage_timestamp_content_upgrade.py;
+# the workflow rule is "smaller file > shared module before 3rd use").
+# --------------------------------------------------------------------------- #
+
+_SP_OK = """\
+[simpleproof]
+base_url = "https://stage.example"
+proof_category_id = 641
+access_token = "tok"
+api_key = "key"
+"""
+
+_BTC_OK_COOKIE = """\
+[bitcoin]
+rpc_url = "http://127.0.0.1:8332"
+zmq_endpoint = "tcp://127.0.0.1:28332"
+rpc_cookie = "~/.bitcoin/.cookie"
+confirmations = 3
+"""
+
+
+def _write_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    body: str = _SP_OK + _BTC_OK_COOKIE,
+) -> Path:
+    cfg = tmp_path / "ocfl-config" / "config.toml"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(body)
+    monkeypatch.setenv("OCFL_CONFIG", str(cfg))
+    return cfg
+
+
+def _stage_args(root: Path, staging: Path, *args: str) -> list[str]:
+    return ["--root", str(root), "stage", "--staging-root", str(staging), *args]
+
+
+def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
+    store = StagingStore(staging)
+    return store.staging_path(str(root.resolve()), object_id)
+
+
+def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> None:
+    from ocfl_cli.commands import stage as stage_cmd
+
+    monkeypatch.setattr(
+        stage_cmd, "_get_sp_client", lambda *a, **kw: fake, raising=False
+    )
+
+
+def _inject_fake_btc(monkeypatch: pytest.MonkeyPatch, fake: FakeBitcoinRPC) -> None:
+    from ocfl_cli.commands import stage as stage_cmd
+
+    monkeypatch.setattr(stage_cmd, "_get_btc_rpc", lambda *a, **kw: fake, raising=False)
+
+
+def _inject_fake_zmq(monkeypatch: pytest.MonkeyPatch, stream: HashBlockStream) -> None:
+    """Patch the new ``_get_zmq_subscriber`` seam to return *stream*.
+
+    The implementer is expected to expose this private factory in
+    ``commands/stage.py`` (mirrors ``_get_sp_client`` / ``_get_btc_rpc``).
+    Tests monkeypatch it to bypass real ZMQ sockets. Accepts any
+    ``HashBlockStream``-shaped object (``InMemoryHashBlockStream`` or
+    inline test stub).
+    """
+    from ocfl_cli.commands import stage as stage_cmd
+
+    monkeypatch.setattr(
+        stage_cmd, "_get_zmq_subscriber", lambda *a, **kw: stream, raising=False
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Storage-root + .ots/chain helpers (copied verbatim from upgrade tests).
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def empty_sha256_root(tmp_path: Path) -> Path:
+    location = tmp_path / "root"
+    location.mkdir()
+    fs = LocalFS(location)
+    layout = get_layout("0002-flat-direct-storage-layout")
+    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
+    return location
+
+
+DIGEST_BLOCK_HEIGHT = 800_000
+MIN_CONFS = 3
+
+
+def _ots_for(digest_hex: str, *, block_height: int = DIGEST_BLOCK_HEIGHT) -> bytes:
+    return build_attestation(bytes.fromhex(digest_hex), block_height=block_height)
+
+
+def _grow_chain_to(rpc: FakeBitcoinRPC, height: int) -> None:
+    needed = height - rpc.tip_height
+    if needed > 0:
+        rpc.extend(needed)
+
+
+def _register_attested(
+    rpc: FakeBitcoinRPC, digest_hex: str, height: int = DIGEST_BLOCK_HEIGHT
+) -> None:
+    rpc.register_merkle_root(height, bytes.fromhex(digest_hex)[::-1].hex())
+
+
+def _new_ots_staging(
+    runner: CliRunner,
+    root: Path,
+    staging: Path,
+    object_id: str,
+    *files: tuple[str, bytes],
+) -> tuple[Path, dict[str, str], dict[str, str]]:
+    r = runner.invoke(app, _stage_args(root, staging, "new", object_id, "--ots"))
+    assert r.exit_code == 0, r.output
+
+    paths: dict[str, str] = {}
+    digests: dict[str, str] = {}
+    for name, data in files:
+        src = staging.parent / name
+        src.write_bytes(data)
+        r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(src)))
+        assert r.exit_code == 0, r.output
+        paths[name] = name
+        digests[name] = hashlib.sha256(data).hexdigest()
+
+    return _staging_dir(root, staging, object_id), paths, digests
+
+
+def _force_content_pending(sd: Path, digests: tuple[str, ...]) -> None:
+    state = load_ots(sd)
+    state = replace(
+        state,
+        phase=Phase.CONTENT_PENDING,
+        pending_digests=digests,
+        submissions=(
+            Submission(
+                submitted_at="2026-04-23T16:30:00+00:00",
+                digests=digests,
+                status="submitted",
+                job_id=None,
+                attempts=1,
+            ),
+        ),
+    )
+    save_ots(sd, state)
+
+
+def _seed_completed_verify_job(
+    sp_fake: FakeSimpleProof,
+    sd: Path,
+    digests: tuple[str, ...],
+    ots_results: dict[str, bytes],
+) -> str:
+    job_id = sp_fake.verify_batch(list(digests))
+    sp_fake.advance_to_completed(job_id, ots_results)
+    state = load_ots(sd)
+    state = replace(
+        state,
+        verify_jobs=(
+            *state.verify_jobs,
+            VerifyJob(job_id=job_id, digests=digests, status="IN_PROGRESS"),
+        ),
+    )
+    save_ots(sd, state)
+    return job_id
+
+
+# =========================================================================== #
+# Layer-2: --watch loop with fake HashBlockStream — phase advance
+# =========================================================================== #
+
+
+class TestWatchLoopAdvancesOnBlock:
+    def test_watch_loop_advances_on_block(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """One pre-pushed block ⇒ one upgrade pass that verifies + advances
+        phase to content-upgraded; exits 0."""
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+
+        stream = InMemoryHashBlockStream()
+        _inject_fake_zmq(monkeypatch, stream)
+
+        staging = tmp_path / "staging"
+        sd, _paths, digests = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:watch-ok", ("a.txt", b"alpha")
+        )
+        d = digests["a.txt"]
+        _force_content_pending(sd, (d,))
+
+        ots_bytes = _ots_for(d)
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        _register_attested(btc_fake.rpc, d)
+
+        # Prime one block on the in-memory stream — the loop wakes once,
+        # runs the pass, sees phase advance, exits 0.
+        stream.push(bytes.fromhex(btc_fake.rpc.getblockchaininfo().best_block_hash))
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:watch-ok",
+                "--upgrade",
+                "--watch",
+            ),
+        )
+        assert r.exit_code == 0, r.output
+        assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
+
+
+# =========================================================================== #
+# Layer-2: --watch reconcile on height jump > 1
+# =========================================================================== #
+
+
+class TestWatchHeightJumpTriggersReverify:
+    def test_watch_height_jump_triggers_reverify(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Two-digest staging: first digest verified before --watch starts.
+        Between the two pushed block hashes, the chain jumps by >1
+        (simulating dropped ZMQ notifications). The loop's per-wake
+        ``getblockchaininfo`` notices and runs ``_reverify_existing_proofs``.
+        Spy on the module-level ``_reverify_existing_proofs`` to assert
+        it ran."""
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+
+        from ocfl_cli.commands import stage as stage_cmd
+
+        # Spy: count invocations of _reverify_existing_proofs.
+        real_reverify = stage_cmd._reverify_existing_proofs
+        calls: list[int] = []
+
+        def spy_reverify(*args: Any, **kwargs: Any):
+            calls.append(1)
+            return real_reverify(*args, **kwargs)
+
+        monkeypatch.setattr(
+            stage_cmd, "_reverify_existing_proofs", spy_reverify, raising=True
+        )
+
+        staging = tmp_path / "staging"
+        sd, _paths, digests = _new_ots_staging(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:watch-jump",
+            ("a.txt", b"alpha"),
+            ("b.txt", b"bravo"),
+        )
+        da, db = digests["a.txt"], digests["b.txt"]
+        _force_content_pending(sd, (da, db))
+
+        ots_a = _ots_for(da)
+        ots_b = _ots_for(db, block_height=DIGEST_BLOCK_HEIGHT + 1)
+        _seed_completed_verify_job(sp_fake, sd, (da, db), {da: ots_a, db: ots_b})
+
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        _register_attested(btc_fake.rpc, da)
+        _register_attested(btc_fake.rpc, db, height=DIGEST_BLOCK_HEIGHT + 1)
+
+        # Wake 1: tip at H. Wake 2: chain jumped by >1 between wakes ⇒
+        # height_jump triggers reverify on second pass before the upgrade
+        # pass runs. Inline stream lets us mutate the chain between waits.
+        class _JumpStream:
+            def __init__(self) -> None:
+                self._n = 0
+
+            def wait_for_block(self, timeout_ms: int) -> bytes | None:
+                self._n += 1
+                if self._n == 1:
+                    return bytes.fromhex(
+                        btc_fake.rpc.getblockchaininfo().best_block_hash
+                    )
+                if self._n == 2:
+                    # Simulate a ZMQ-notification gap: chain advanced 5 blocks
+                    # between hashblock messages.
+                    btc_fake.rpc.extend(5)
+                    return bytes.fromhex(
+                        btc_fake.rpc.getblockchaininfo().best_block_hash
+                    )
+                # Loop should have exited on phase advance — but defensively
+                # raise so a stuck loop fails fast.
+                raise KeyboardInterrupt("loop did not exit after phase advance")
+
+        _inject_fake_zmq(monkeypatch, _JumpStream())
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:watch-jump",
+                "--upgrade",
+                "--watch",
+            ),
+        )
+        assert r.exit_code == 0, r.output
+        assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
+        # Reverify ran at least once during --watch (in addition to any
+        # baseline call during pass 1 if implementer always invokes it).
+        assert len(calls) >= 1
+
+
+# =========================================================================== #
+# Layer-2: --watch reconcile on tip-hash change at stable height (reorg)
+# =========================================================================== #
+
+
+class TestWatchTipChangeAtStableHeightTriggersReverify:
+    def test_watch_tip_change_at_stable_height_triggers_reverify(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Tip-hash differs at the same height between wakes ⇒ regtest
+        reorg signal ⇒ ``_reverify_existing_proofs`` runs."""
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+
+        from ocfl_cli.commands import stage as stage_cmd
+
+        real_reverify = stage_cmd._reverify_existing_proofs
+        calls: list[int] = []
+
+        def spy_reverify(*args: Any, **kwargs: Any):
+            calls.append(1)
+            return real_reverify(*args, **kwargs)
+
+        monkeypatch.setattr(
+            stage_cmd, "_reverify_existing_proofs", spy_reverify, raising=True
+        )
+
+        staging = tmp_path / "staging"
+        sd, _paths, digests = _new_ots_staging(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:watch-reorg",
+            ("a.txt", b"alpha"),
+        )
+        d = digests["a.txt"]
+        _force_content_pending(sd, (d,))
+
+        ots_bytes = _ots_for(d)
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        _register_attested(btc_fake.rpc, d)
+
+        class _ReorgStream:
+            def __init__(self) -> None:
+                self._n = 0
+
+            def wait_for_block(self, timeout_ms: int) -> bytes | None:
+                self._n += 1
+                if self._n == 1:
+                    return bytes.fromhex(
+                        btc_fake.rpc.getblockchaininfo().best_block_hash
+                    )
+                if self._n == 2:
+                    # Same tip height; different tip hash (reorg).
+                    btc_fake.rpc.reorg_at(btc_fake.rpc.tip_height)
+                    _register_attested(btc_fake.rpc, d)
+                    return bytes.fromhex(
+                        btc_fake.rpc.getblockchaininfo().best_block_hash
+                    )
+                raise KeyboardInterrupt("loop did not exit after phase advance")
+
+        _inject_fake_zmq(monkeypatch, _ReorgStream())
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:watch-reorg",
+                "--upgrade",
+                "--watch",
+            ),
+        )
+        # Either advances on pass 1 (clean verify) and exits 0, or runs
+        # pass 2 with reverify after reorg — both are spec-correct paths.
+        # In either case the spy must have observed at least one call.
+        assert r.exit_code in (0, 130), r.output
+        assert len(calls) >= 1
+
+
+# =========================================================================== #
+# Layer-2: SIGINT mid-loop → exits 130 without torn checkpoint
+# =========================================================================== #
+
+
+class TestWatchSigintExits130WithoutTornCheckpoint:
+    def test_watch_sigint_exits_130_without_torn_checkpoint(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Inject a stream whose first ``wait_for_block`` raises
+        ``KeyboardInterrupt``. This is the deterministic substitute for
+        sending a real SIGINT — the caller-owned cancel pattern means
+        the loop catches the interrupt OR the loop body installs a
+        signal handler that flips the cancel flag. Either way, the CLI
+        must exit 130 and ``ots.json`` must parse cleanly afterwards."""
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        sd, _paths, digests = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:watch-sigint", ("a.txt", b"alpha")
+        )
+        d = digests["a.txt"]
+        _force_content_pending(sd, (d,))
+
+        ots_bytes = _ots_for(d)
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        _register_attested(btc_fake.rpc, d)
+
+        class _SigintStream:
+            def wait_for_block(self, timeout_ms: int) -> bytes | None:
+                raise KeyboardInterrupt("simulated SIGINT before first block")
+
+        _inject_fake_zmq(monkeypatch, _SigintStream())
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:watch-sigint",
+                "--upgrade",
+                "--watch",
+            ),
+        )
+        assert r.exit_code == 130, r.output
+        # No torn checkpoint: ots.json parses cleanly after SIGINT.
+        load_ots(sd)
+
+
+# =========================================================================== #
+# Layer-2: LockTimeoutError absorbed (continue on next block)
+# =========================================================================== #
+
+
+class TestWatchLockTimeoutWarningAndContinue:
+    def test_watch_lock_timeout_warning_and_continue(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Pre-acquire the staging ``.lock``; push a block. The watch
+        loop hits ``LockTimeoutError``, logs WARNING, continues. Then
+        on the next wake we raise ``KeyboardInterrupt`` so the test
+        terminates deterministically (exit 130). Assert the loop did
+        NOT crash with ``LockTimeoutError`` and that a WARNING was
+        logged with a message mentioning ``lock``.
+
+        Speed: monkeypatch the watch loop's lock timeout down to 1s
+        via the module-level ``_LOCK_TIMEOUT_SECONDS`` constant the
+        implementer is expected to introduce. If the implementer
+        chooses an inline ``timeout=30`` literal, this test will pause
+        for 30s before continuing — still correct, just slow."""
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+
+        from ocfl_cli.commands import stage as stage_cmd
+
+        # Speed knob: monkeypatch the lock timeout if the constant exists.
+        monkeypatch.setattr(stage_cmd, "_LOCK_TIMEOUT_SECONDS", 1, raising=False)
+
+        staging = tmp_path / "staging"
+        sd, _paths, digests = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:watch-lock", ("a.txt", b"alpha")
+        )
+        d = digests["a.txt"]
+        _force_content_pending(sd, (d,))
+
+        ots_bytes = _ots_for(d)
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        _register_attested(btc_fake.rpc, d)
+
+        # Pre-acquire the staging .lock from a sibling FileLock instance.
+        sibling = filelock.FileLock(str(sd / ".lock"))
+        sibling.acquire(timeout=5)
+
+        class _ContendedStream:
+            """First wake delivers a block (which will hit LockTimeoutError);
+            second wake raises KeyboardInterrupt to terminate the test."""
+
+            def __init__(self) -> None:
+                self._n = 0
+
+            def wait_for_block(self, timeout_ms: int) -> bytes | None:
+                self._n += 1
+                if self._n == 1:
+                    return bytes.fromhex(
+                        btc_fake.rpc.getblockchaininfo().best_block_hash
+                    )
+                raise KeyboardInterrupt("terminate after lock-contention pass")
+
+        _inject_fake_zmq(monkeypatch, _ContendedStream())
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                r = runner.invoke(
+                    app,
+                    _stage_args(
+                        empty_sha256_root,
+                        staging,
+                        "timestamp",
+                        "content",
+                        "obj:watch-lock",
+                        "--upgrade",
+                        "--watch",
+                    ),
+                )
+        finally:
+            sibling.release()
+
+        # Loop terminated via the simulated SIGINT, NOT via an unhandled
+        # LockTimeoutError. Exit 130 (graceful cancel).
+        assert r.exit_code == 130, r.output
+        # No torn checkpoint after lock contention + cancel.
+        load_ots(sd)
+        # WARNING was logged with message mentioning the lock.
+        warn_msgs = [
+            r.getMessage().lower()
+            for r in caplog.records
+            if r.levelno == logging.WARNING
+        ]
+        assert any("lock" in m for m in warn_msgs), warn_msgs
+
+
+# =========================================================================== #
+# Layer-2: two --watchers on same staging serialize safely
+# =========================================================================== #
+
+
+class TestTwoWatchersSerializeSafely:
+    def test_two_watchers_serialize_safely(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Spawn two CliRunner invocations on separate threads, each
+        driven by an independent fake stream that delivers one block.
+        Both must exit 0; final state has no torn writes; phase
+        advanced to content-upgraded; the proof verifies."""
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        sd, _paths, digests = _new_ots_staging(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:watch-two",
+            ("a.txt", b"alpha"),
+        )
+        d = digests["a.txt"]
+        _force_content_pending(sd, (d,))
+
+        ots_bytes = _ots_for(d)
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        _register_attested(btc_fake.rpc, d)
+
+        from ocfl_cli.commands import stage as stage_cmd
+
+        # Two independent streams; each delivers one block then raises
+        # KeyboardInterrupt so the loser exits cleanly after the winner
+        # advances the phase.
+        def _make_stream() -> object:
+            class _S:
+                def __init__(self) -> None:
+                    self._n = 0
+
+                def wait_for_block(self, timeout_ms: int) -> bytes | None:
+                    self._n += 1
+                    if self._n == 1:
+                        return bytes.fromhex(
+                            btc_fake.rpc.getblockchaininfo().best_block_hash
+                        )
+                    raise KeyboardInterrupt("end")
+
+            return _S()
+
+        # Round-robin: each call to _get_zmq_subscriber yields a fresh
+        # stream so the two CLI invocations don't share state.
+        streams: list[object] = [_make_stream(), _make_stream()]
+        idx = {"i": 0}
+
+        def _next_stream(*a: object, **kw: object) -> object:
+            i = idx["i"]
+            idx["i"] = i + 1
+            return streams[i]
+
+        monkeypatch.setattr(
+            stage_cmd, "_get_zmq_subscriber", _next_stream, raising=False
+        )
+
+        results: dict[str, int] = {}
+
+        def _run(tag: str) -> None:
+            r = CliRunner().invoke(
+                app,
+                _stage_args(
+                    empty_sha256_root,
+                    staging,
+                    "timestamp",
+                    "content",
+                    "obj:watch-two",
+                    "--upgrade",
+                    "--watch",
+                ),
+            )
+            results[tag] = r.exit_code
+
+        t1 = threading.Thread(target=_run, args=("a",))
+        t2 = threading.Thread(target=_run, args=("b",))
+        t1.start()
+        t2.start()
+        t1.join(timeout=60)
+        t2.join(timeout=60)
+
+        assert not t1.is_alive()
+        assert not t2.is_alive()
+        # Both invocations terminated cleanly: winner exits 0 on phase
+        # advance; loser observes either phase-already-advanced (0) or
+        # KeyboardInterrupt (130). Neither may crash with non-graceful
+        # status.
+        for tag, code in results.items():
+            assert code in (0, 130), f"{tag}: exit={code}"
+
+        # Final state: phase advanced; proof verified; no torn writes.
+        state = load_ots(sd)
+        assert state.phase is Phase.CONTENT_UPGRADED
+        assert state.content_proofs[d].verified is True
+
+
+# =========================================================================== #
+# Layer-3: regtest real ZMQ hashblock delivery
+# =========================================================================== #
+
+
+@pytest.mark.bitcoin
+class TestRegtestRealZmqHashblockDelivery:
+    def test_real_zmq_hashblock_delivery_drives_watch_loop(
+        self,
+        bitcoind_regtest: object,
+    ) -> None:
+        """End-to-end: real bitcoind regtest emits hashblock notifications
+        on its ZMQ socket; ``--watch`` consumes them and converges. Wires
+        up once the regtest harness lands."""
+        pytest.skip("regtest harness not yet wired")

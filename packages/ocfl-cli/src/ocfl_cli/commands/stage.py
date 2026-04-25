@@ -1,10 +1,11 @@
 """ocfl stage command group."""
 
+import contextlib
 import logging
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
 from platformdirs import user_state_path
@@ -15,12 +16,14 @@ from ocfl_cli import staging as _staging_mod
 from ocfl_cli._common import err, open_root
 from ocfl_cli.bitcoin import (
     BitcoinRPC,
+    HashBlockStream,
     PendingVerification,
     VerifiedAttestation,
     verify_attestation,
 )
 from ocfl_cli.errors import (
     AttestationMismatchError,
+    LockTimeoutError,
     ReorgDetectedError,
 )
 from ocfl_cli.ingest import ingest_file
@@ -55,6 +58,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SUBMIT_CHUNK_SIZE = 1000
+_LOCK_TIMEOUT_SECONDS = 30
 
 stage_app = typer.Typer(
     name="stage",
@@ -953,6 +957,61 @@ def _phase_advance_ready(
     return (not unverified_pending and not orphans, unverified_pending, orphans)
 
 
+def _upgrade_pass_locked(
+    cfg: Config,
+    store: StagingStore,
+    sr,
+    root_path: str,
+    object_id: str,
+    staging_dir: Path,
+) -> None:
+    """One `--upgrade` pass. Caller MUST hold the staging lock."""
+    btc_cfg = cfg.bitcoin
+    if btc_cfg is None or cfg.simpleproof is None:
+        raise RuntimeError("config missing required sections")
+    min_confs = btc_cfg.confirmations
+
+    state = load_ots(staging_dir)
+    prev_phase = state.phase
+    check_transition(state.phase, "timestamp content --upgrade")
+    apply_category_id(state, cfg.simpleproof.proof_category_id)
+
+    sp = _get_sp_client(cfg)
+    btc = _get_btc_rpc(cfg)
+
+    state = _reverify_existing_proofs(state, btc, sp, staging_dir, min_confs)
+    save_ots(staging_dir, state)
+
+    state = _submit_new_verify_batches(state, sp)
+    save_ots(staging_dir, state)
+
+    state = _poll_outstanding_jobs(state, sp)
+    save_ots(staging_dir, state)
+
+    state = _process_completed_jobs(
+        state, sp, btc, store, root_path, object_id, staging_dir, min_confs
+    )
+
+    ready, unverified_pending, orphans = _phase_advance_ready(
+        state, store, sr, root_path, object_id
+    )
+    if ready and state.phase is not Phase.CONTENT_UPGRADED:
+        state = replace(state, phase=Phase.CONTENT_UPGRADED)
+        save_ots(staging_dir, state)
+        _log_phase(prev_phase, Phase.CONTENT_UPGRADED)
+        return
+    if unverified_pending:
+        logger.warning(
+            "phase advance held: %d pending digest(s) not yet verified",
+            len(unverified_pending),
+        )
+    if orphans:
+        logger.warning(
+            "phase advance held: %d orphan digest(s) outside pending set",
+            len(orphans),
+        )
+
+
 def _upgrade_pass(
     cfg: Config,
     store: StagingStore,
@@ -962,51 +1021,87 @@ def _upgrade_pass(
     staging_dir: Path,
 ) -> None:
     """Drive `stage timestamp content --upgrade` end-to-end under the lock."""
+    with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
+        _upgrade_pass_locked(cfg, store, sr, root_path, object_id, staging_dir)
+
+
+def _get_zmq_subscriber(cfg: Config) -> HashBlockStream:
+    """Construct the production ``BitcoinZmqSubscriber`` from `cfg`.
+
+    Tests monkeypatch this seam to inject ``InMemoryHashBlockStream``.
+    """
+    from ocfl_cli.bitcoin import BitcoinZmqSubscriber
+
+    btc_cfg = cfg.bitcoin
+    if btc_cfg is None:
+        raise RuntimeError("bitcoin config missing")
+    return BitcoinZmqSubscriber(btc_cfg.zmq_endpoint)
+
+
+def _watch_loop(
+    cfg: Config,
+    store: StagingStore,
+    sr,
+    root_path: str,
+    object_id: str,
+    staging_dir: Path,
+) -> int:
+    """Drive ``--upgrade --watch`` end-to-end. Returns exit code."""
     btc_cfg = cfg.bitcoin
     if btc_cfg is None or cfg.simpleproof is None:
         raise RuntimeError("config missing required sections")
     min_confs = btc_cfg.confirmations
-
-    with with_lock(staging_dir, timeout=30):
-        state = load_ots(staging_dir)
-        prev_phase = state.phase
-        check_transition(state.phase, "timestamp content --upgrade")
-        apply_category_id(state, cfg.simpleproof.proof_category_id)
-
-        sp = _get_sp_client(cfg)
-        btc = _get_btc_rpc(cfg)
-
-        state = _reverify_existing_proofs(state, btc, sp, staging_dir, min_confs)
-        save_ots(staging_dir, state)
-
-        state = _submit_new_verify_batches(state, sp)
-        save_ots(staging_dir, state)
-
-        state = _poll_outstanding_jobs(state, sp)
-        save_ots(staging_dir, state)
-
-        state = _process_completed_jobs(
-            state, sp, btc, store, root_path, object_id, staging_dir, min_confs
-        )
-
-        ready, unverified_pending, orphans = _phase_advance_ready(
-            state, store, sr, root_path, object_id
-        )
-        if ready and state.phase is not Phase.CONTENT_UPGRADED:
-            state = replace(state, phase=Phase.CONTENT_UPGRADED)
-            save_ots(staging_dir, state)
-            _log_phase(prev_phase, Phase.CONTENT_UPGRADED)
-            return
-        if unverified_pending:
-            logger.warning(
-                "phase advance held: %d pending digest(s) not yet verified",
-                len(unverified_pending),
-            )
-        if orphans:
-            logger.warning(
-                "phase advance held: %d orphan digest(s) outside pending set",
-                len(orphans),
-            )
+    btc = _get_btc_rpc(cfg)
+    last_height: int | None = None
+    last_tip_hash: str | None = None
+    stream = _get_zmq_subscriber(cfg)
+    # Real BitcoinZmqSubscriber is a context manager (closes the socket on
+    # exit); test fakes implement only `wait_for_block`. nullcontext bridges
+    # both with one `with` site.
+    stream_cm = cast(
+        "contextlib.AbstractContextManager[HashBlockStream]",
+        stream if hasattr(stream, "__enter__") else contextlib.nullcontext(stream),
+    )
+    try:
+        with stream_cm as zmq_sub:
+            while True:
+                block = zmq_sub.wait_for_block(timeout_ms=5000)
+                if block is None:
+                    continue
+                try:
+                    with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
+                        info = btc.getblockchaininfo()
+                        height_jumped = (
+                            last_height is not None and info.height - last_height > 1
+                        )
+                        tip_changed_at_stable = (
+                            last_height is not None
+                            and info.height == last_height
+                            and last_tip_hash is not None
+                            and last_tip_hash != info.best_block_hash
+                        )
+                        if height_jumped or tip_changed_at_stable:
+                            sp = _get_sp_client(cfg)
+                            state = load_ots(staging_dir)
+                            state = _reverify_existing_proofs(
+                                state, btc, sp, staging_dir, min_confs
+                            )
+                            save_ots(staging_dir, state)
+                        last_height = info.height
+                        last_tip_hash = info.best_block_hash
+                        _upgrade_pass_locked(
+                            cfg, store, sr, root_path, object_id, staging_dir
+                        )
+                        state = load_ots(staging_dir)
+                        if state.phase is Phase.CONTENT_UPGRADED:
+                            return 0
+                except LockTimeoutError as e:
+                    logger.warning(
+                        "staging lock contended (%s); retrying on next block", e
+                    )
+                    continue
+    except KeyboardInterrupt:
+        return 130
 
 
 @timestamp_app.command("content")
@@ -1020,6 +1115,13 @@ def timestamp_content(
             help="Poll SP, verify .ots against Bitcoin, ingest companion files.",
         ),
     ] = False,
+    watch: Annotated[
+        bool,
+        typer.Option(
+            "--watch",
+            help="ZMQ-driven loop; runs an upgrade pass per Bitcoin block.",
+        ),
+    ] = False,
 ) -> None:
     """Submit staged content digests to SimpleProof."""
     cfg: Config | None = ctx.obj.get("config")
@@ -1028,6 +1130,9 @@ def timestamp_content(
         raise typer.Exit(2)
     if upgrade and cfg.bitcoin is None:
         err("'stage timestamp content --upgrade' requires [bitcoin] config section")
+        raise typer.Exit(2)
+    if watch and not upgrade:
+        err("'stage timestamp content --watch' requires --upgrade")
         raise typer.Exit(2)
 
     store: StagingStore = ctx.obj["staging"]
@@ -1043,6 +1148,14 @@ def timestamp_content(
         err(f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)")
         raise typer.Exit(2)
 
+    if watch:
+        try:
+            exit_code = _watch_loop(cfg, store, sr, root_path, object_id, staging_dir)
+        except (ReorgDetectedError, AttestationMismatchError) as e:
+            err(f"halt: {e}")
+            raise typer.Exit(5) from None
+        raise typer.Exit(exit_code)
+
     if upgrade:
         try:
             _upgrade_pass(cfg, store, sr, root_path, object_id, staging_dir)
@@ -1051,7 +1164,7 @@ def timestamp_content(
             raise typer.Exit(5) from None
         return
 
-    with with_lock(staging_dir, timeout=30):
+    with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
         state = load_ots(staging_dir)
         target_phase = check_transition(state.phase, "timestamp content")
         category_id = apply_category_id(state, cfg.simpleproof.proof_category_id)
