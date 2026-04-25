@@ -772,9 +772,83 @@ class TestTwoWatchersSerializeSafely:
 class TestRegtestRealZmqHashblockDelivery:
     def test_real_zmq_hashblock_delivery_drives_watch_loop(
         self,
-        bitcoind_regtest: object,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        bitcoind_regtest,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """End-to-end: real bitcoind regtest emits hashblock notifications
-        on its ZMQ socket; ``--watch`` consumes them and converges. Wires
-        up once the regtest harness lands."""
-        pytest.skip("regtest harness not yet wired")
+        """Real bitcoind ZMQ ``hashblock`` notifications drive ``--watch``.
+
+        Anchors ``digest`` at height ``H`` with only ``MIN_CONFS - 1``
+        confirmations so the first upgrade pass does not advance the
+        phase. The watch loop then waits on real ZMQ; mining one more
+        block delivers the notification, the next pass sees enough
+        confirmations, the phase advances to ``content-upgraded``, and
+        the command exits 0.
+        """
+        from tests.helpers.ots import build_regtest_attestation
+        from tests.helpers.regtest import bitcoin_config_toml
+
+        cfg_body = _SP_OK + bitcoin_config_toml(bitcoind_regtest, confirmations=3)
+        _write_config(tmp_path, monkeypatch, body=cfg_body)
+        _inject_fake_sp(monkeypatch, sp_fake)
+        # Production _get_btc_rpc + _get_zmq_subscriber paths used.
+
+        staging = tmp_path / "staging"
+        sd, _paths, digests = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:rt-watch", ("a.txt", b"alpha")
+        )
+        d = digests["a.txt"]
+        _force_content_pending(sd, (d,))
+
+        ots_bytes, attest_height, _ = build_regtest_attestation(
+            bitcoind_regtest, bytes.fromhex(d)
+        )
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
+
+        # Bring the chain to MIN_CONFS - 1 confirmations: not enough to
+        # verify yet. The watch loop's first pass will record
+        # verified=False; the next mined block (delivered via real ZMQ)
+        # tips us to MIN_CONFS and lets the pass advance the phase.
+        addr = bitcoind_regtest.wallet_rpc("ocfltest", "getnewaddress")
+        info = bitcoind_regtest.rpc("getblockchaininfo")
+        confs = int(info["blocks"]) - attest_height + 1
+        if confs < MIN_CONFS - 1:
+            bitcoind_regtest.rpc("generatetoaddress", [MIN_CONFS - 1 - confs, addr])
+
+        # Run --upgrade --watch in a thread; mine the unblocking block
+        # from the main thread once the loop is up.
+        result: dict[str, Any] = {}
+
+        def _run() -> None:
+            r = CliRunner().invoke(
+                app,
+                _stage_args(
+                    empty_sha256_root,
+                    staging,
+                    "timestamp",
+                    "content",
+                    "obj:rt-watch",
+                    "--upgrade",
+                    "--watch",
+                ),
+            )
+            result["exit"] = r.exit_code
+            result["output"] = r.output
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+        # Give the SUB socket time to subscribe before mining the
+        # notification block; without this the subscriber may miss it.
+        import time as _time
+
+        _time.sleep(1.0)
+        bitcoind_regtest.rpc("generatetoaddress", [1, addr])
+
+        thread.join(timeout=30.0)
+        assert not thread.is_alive(), "watch loop did not exit after block notify"
+        assert result.get("exit") == 0, result
+        assert load_ots(sd).phase is Phase.CONTENT_UPGRADED

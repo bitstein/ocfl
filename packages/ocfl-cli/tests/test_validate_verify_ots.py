@@ -457,8 +457,107 @@ class TestVerifyTimeMismatchE906:
 class TestRegtestVerifyOtsEndToEnd:
     def test_real_rpc_walks_real_attestation_chain(
         self,
-        bitcoind_regtest: object,  # session-scoped regtest fixture
+        runner: CliRunner,
+        bitcoind_regtest,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """End-to-end: real bitcoind regtest walks a real attestation
-        chain via ``ocfl validate``. Wires up in step 5b regtest round."""
-        pytest.skip("wired in step 5b regtest round")
+        """End-to-end: real bitcoind regtest walks a real attestation chain.
+
+        Builds an OCFL object with content + inventory ``.ots`` companions
+        anchored to real regtest blocks (``OP_RETURN`` commit, real merkle
+        path, real block header). Runs ``ocfl validate --verify-ots`` —
+        production ``_get_btc_rpc`` path drives a real ``BitcoinRPCClient``
+        against the regtest node.
+        """
+        from tests.helpers.ots import build_regtest_attestation
+        from tests.helpers.regtest import bitcoin_config_toml, bury_to_confs
+
+        cfg_body = _SP_OK + bitcoin_config_toml(bitcoind_regtest, confirmations=3)
+        _write_config(tmp_path, monkeypatch, body=cfg_body)
+
+        # Real attestation for the content file.
+        file_bytes = b"hello world"
+        file_sha256 = hashlib.sha256(file_bytes).digest()
+        content_ots, content_height, _ = build_regtest_attestation(
+            bitcoind_regtest, file_sha256
+        )
+
+        # Build OCFL inventory referencing the content + its .ots companion.
+        digest_alg = "sha256"
+        manifest: dict[str, list[str]] = {}
+        state: dict[str, list[str]] = {}
+
+        def _add(content_path: str, state_path: str, data: bytes) -> None:
+            d = hashlib.new(digest_alg, data).hexdigest()
+            manifest.setdefault(d, []).append(content_path)
+            state.setdefault(d, []).append(state_path)
+
+        _add("v1/content/file.txt", "file.txt", file_bytes)
+        _add("v1/content/file.txt.ots", "file.txt.ots", content_ots)
+
+        inv = {
+            "id": "obj-regtest",
+            "type": "https://ocfl.io/1.1/spec/#inventory",
+            "digestAlgorithm": digest_alg,
+            "head": "v1",
+            "manifest": manifest,
+            "versions": {
+                "v1": {
+                    "created": "2026-04-25T00:00:00Z",
+                    "state": state,
+                    "message": "init",
+                    "user": {"name": "t", "address": "mailto:t@e.org"},
+                },
+            },
+        }
+        inv_bytes = json.dumps(inv, sort_keys=True, separators=(",", ":")).encode()
+        inv_digest = hashlib.sha256(inv_bytes).digest()
+
+        # Real attestation for the inventory digest (separate block).
+        inv_ots, inv_height, _ = build_regtest_attestation(bitcoind_regtest, inv_digest)
+
+        # Bury both attestations past MIN_CONFS.
+        bury_to_confs(
+            bitcoind_regtest,
+            max(content_height, inv_height),
+            target_confs=MIN_CONFS,
+            wallet="ocfltest",
+        )
+
+        # Materialize the OCFL object on disk.
+        root = tmp_path / "root"
+        root.mkdir()
+        fs = LocalFS(root)
+        layout = get_layout("0002-flat-direct-storage-layout")
+        StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
+        obj_dir = root / "obj-regtest"
+        obj_dir.mkdir()
+        (obj_dir / "0=ocfl_object_1.1").write_text("ocfl_object_1.1\n")
+        (obj_dir / "inventory.json").write_bytes(inv_bytes)
+        (obj_dir / f"inventory.json.{digest_alg}").write_text(
+            f"{inv_digest.hex()} inventory.json\n"
+        )
+        v1 = obj_dir / "v1"
+        v1.mkdir()
+        (v1 / "inventory.json").write_bytes(inv_bytes)
+        (v1 / f"inventory.json.{digest_alg}").write_text(
+            f"{inv_digest.hex()} inventory.json\n"
+        )
+        content = v1 / "content"
+        content.mkdir()
+        (content / "file.txt").write_bytes(file_bytes)
+        (content / "file.txt.ots").write_bytes(content_ots)
+        ext_dir = obj_dir / "extensions" / _EXT_NAME
+        ext_dir.mkdir(parents=True)
+        (ext_dir / "config.json").write_text(json.dumps({"extensionName": _EXT_NAME}))
+        (ext_dir / "inventory.json.v1.ots").write_bytes(inv_ots)
+
+        # Run validate; production _get_btc_rpc builds a real client from cfg.
+        r = runner.invoke(
+            app, ["--root", str(root), "--json", "validate", "obj-regtest"]
+        )
+        assert r.exit_code == 0, r.output
+        data = json.loads(r.stdout)
+        assert data["valid"] is True, data
+        assert data["errors"] == []

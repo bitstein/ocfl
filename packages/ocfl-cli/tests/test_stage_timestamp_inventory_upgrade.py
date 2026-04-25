@@ -1026,6 +1026,53 @@ class TestInventoryRetryHappyPath:
 class TestRegtestEndToEndInventoryUpgrade:
     def test_real_rpc_real_attestation_inventory(
         self,
-        bitcoind_regtest: object,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        bitcoind_regtest,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        pytest.skip("regtest harness wired in a later step")
+        """Real RPC, real OTS bytes for the inventory digest; ``--upgrade``
+        verifies + advances phase to ``inventory-upgraded``."""
+        from tests.helpers.ots import build_regtest_attestation
+        from tests.helpers.regtest import bitcoin_config_toml, bury_to_confs
+
+        cfg_body = _SP_OK + bitcoin_config_toml(bitcoind_regtest, confirmations=3)
+        _write_config(tmp_path, monkeypatch, body=cfg_body)
+        _inject_fake_sp(monkeypatch, sp_fake)
+        # Production _get_btc_rpc path used.
+
+        staging = tmp_path / "staging"
+        sd, _da, inv_digest = _setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:rt-inv"
+        )
+
+        ots_bytes, attest_height, _ = build_regtest_attestation(
+            bitcoind_regtest, bytes.fromhex(inv_digest)
+        )
+        _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
+        bury_to_confs(bitcoind_regtest, attest_height, MIN_CONFS, "ocfltest")
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "inventory",
+                "obj:rt-inv",
+                "--upgrade",
+            ),
+        )
+        assert r.exit_code == 0, r.output
+
+        state = load_ots(sd)
+        assert state.phase is Phase.INVENTORY_UPGRADED
+        assert state.inventory_proof is not None
+        proof = state.inventory_proof.proof
+        assert proof.verified is True
+        assert proof.block_height == attest_height
+        assert proof.confirmations_at_verify is not None
+        assert proof.confirmations_at_verify >= MIN_CONFS
+        assert ots_cache_path(sd, inv_digest).read_bytes() == ots_bytes

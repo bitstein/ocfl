@@ -1244,9 +1244,87 @@ class TestReverifyIdempotent:
 class TestRegtestEndToEnd:
     def test_real_rpc_real_attestation_with_invalidateblock_reorg(
         self,
-        bitcoind_regtest: object,  # session-scoped regtest fixture
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        bitcoind_regtest,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """End-to-end: real bitcoind regtest, real .ots from SP/calendar,
-        real verification, then ``invalidateblock`` to trigger reorg
-        reconciliation. Wires up in a later step."""
-        pytest.skip("regtest harness wired in a later step")
+        """Real bitcoind regtest, real OTS bytes, real RPC verify; then
+        ``invalidateblock`` on the attestation block forces the next
+        ``--upgrade`` pass to mark the proof ``verified=False`` via
+        ``_reverify_existing_proofs``."""
+        from tests.helpers.ots import build_regtest_attestation
+        from tests.helpers.regtest import bitcoin_config_toml, bury_to_confs
+
+        cfg_body = _SP_OK + bitcoin_config_toml(bitcoind_regtest, confirmations=3)
+        _write_config(tmp_path, monkeypatch, body=cfg_body)
+        _inject_fake_sp(monkeypatch, sp_fake)
+        # Production _get_btc_rpc path used; no btc fake.
+
+        staging = tmp_path / "staging"
+        sd, _paths, digests = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:rt", ("a.txt", b"alpha")
+        )
+        d = digests["a.txt"]
+        _force_content_pending(sd, (d,))
+
+        digest_bytes = bytes.fromhex(d)
+        ots_bytes, attest_height, attest_hash = build_regtest_attestation(
+            bitcoind_regtest, digest_bytes
+        )
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
+        bury_to_confs(bitcoind_regtest, attest_height, MIN_CONFS, "ocfltest")
+
+        # First pass: verify + ingest + advance phase.
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:rt",
+                "--upgrade",
+            ),
+        )
+        assert r.exit_code == 0, r.output
+        state = load_ots(sd)
+        assert state.phase is Phase.CONTENT_UPGRADED
+        assert state.content_proofs[d].verified is True
+        assert state.content_proofs[d].block_height == attest_height
+
+        # Reorg: invalidate the attestation block. Mine a longer fork so
+        # the chain advances past it without the OP_RETURN tx — the cached
+        # `.ots`'s merkle path no longer matches the chain at that height.
+        bitcoind_regtest.rpc("invalidateblock", [attest_hash])
+        addr = bitcoind_regtest.wallet_rpc("ocfltest", "getnewaddress")
+        bitcoind_regtest.rpc("generatetoaddress", [MIN_CONFS + 2, addr])
+
+        # SP re-fetch path: the upgrade pass calls verify-batches again
+        # for the affected digest. Pre-seed a fresh COMPLETED job so the
+        # call resolves; for this assertion we need only that the proof
+        # gets reset to verified=False (not that it re-converges).
+        sp_fake.advance_to_completed(sp_fake.verify_batch([d]), {d: ots_bytes})
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:rt",
+                "--upgrade",
+            ),
+        )
+        # Reorg reconciliation marks proof unverified; phase regresses.
+        post = load_ots(sd)
+        assert (
+            post.content_proofs[d].verified is False
+            or post.phase is not Phase.CONTENT_UPGRADED
+        ), (
+            f"reorg should have invalidated the proof; phase={post.phase} "
+            f"verified={post.content_proofs[d].verified} exit={r.exit_code}"
+        )
