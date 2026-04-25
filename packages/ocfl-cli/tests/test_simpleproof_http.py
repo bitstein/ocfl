@@ -585,6 +585,38 @@ class TestDownloadResults:
         cause: BaseException | None = info.value.__cause__
         assert isinstance(cause, OtsParseError)
 
+    def test_unexpected_digest_from_sp_raises_attestation_mismatch(self) -> None:
+        # SP returns a digest the caller never submitted. Even if the .ots
+        # bytes self-commit cleanly, treat as HALT — SP is never trusted.
+        submitted_bytes = _bytes_digest("submitted-file")
+        rogue_bytes = _bytes_digest("rogue-file")
+        submitted_hex = submitted_bytes.hex()
+        rogue_hex = rogue_bytes.hex()
+        rogue_ots = build_attestation(rogue_bytes, block_height=800_000)
+
+        results_url = "https://sp-results.test/rogue"
+        ots_url = "https://sp-blobs.test/rogue.ots"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if url == results_url:
+                return httpx.Response(
+                    200,
+                    json={
+                        "results": [
+                            {"digest": rogue_hex, "otsDownloadUrl": ots_url},
+                        ],
+                    },
+                )
+            if url == ots_url:
+                return httpx.Response(200, content=rogue_ots)
+            return httpx.Response(404)
+
+        client = _make_client(handler)
+
+        with pytest.raises(AttestationMismatchError, match="not in submission set"):
+            client.download_results(results_url, {submitted_hex})
+
 
 # ---------------------------------------------------------------------------
 # auth-header scrubbing

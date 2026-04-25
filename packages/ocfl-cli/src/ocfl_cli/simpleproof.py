@@ -221,7 +221,6 @@ class SimpleProofHttpClient:
     def download_results(
         self, results_url: str, expected_digests: set[str]
     ) -> dict[str, bytes]:
-        del expected_digests
         resp = retry(
             lambda: self._request("GET", results_url),
             sleep=self._sleep,
@@ -230,6 +229,10 @@ class SimpleProofHttpClient:
         out: dict[str, bytes] = {}
         for entry in resp.json()["results"]:
             claimed = str(entry["digest"])
+            if claimed not in expected_digests:
+                raise AttestationMismatchError(
+                    f"unexpected digest from SP: {claimed} (not in submission set)"
+                )
             ots_url = str(entry["otsDownloadUrl"])
             ots_resp = retry(
                 lambda u=ots_url: self._request("GET", u),
