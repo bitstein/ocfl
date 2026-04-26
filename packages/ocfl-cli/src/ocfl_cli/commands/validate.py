@@ -10,18 +10,18 @@ import typer
 
 from ocfl_cli import _style
 from ocfl_cli._common import _make_fs, err, open_root, output_json, resolve_root
-from ocfl_cli.bitcoin import (
+from ocfl_cli.errors import (
+    AttestationMismatchError,
+    ConfigError,
+    ReorgDetectedError,
+)
+from ocfl_cli.ots.bitcoin import (
     BitcoinRPC,
     BitcoinRPCClient,
     PendingReason,
     PendingVerification,
     VerifiedAttestation,
     verify_attestation,
-)
-from ocfl_cli.errors import (
-    AttestationMismatchError,
-    ConfigError,
-    ReorgDetectedError,
 )
 from ocfl_lib import OcflError, ValidationResult, validate_object, validate_root
 from ocfl_lib.fs import utils as fs_utils

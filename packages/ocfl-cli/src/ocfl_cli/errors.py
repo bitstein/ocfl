@@ -2,7 +2,7 @@
 
 Single-rooted at CLIError. Never imports from ocfl_lib.errors.
 
-The `Transient` marker mixin signals a retriable fault to `_retry.retry`.
+The `Transient` marker mixin signals a retriable fault to `ots._retry.retry`.
 Concrete exception classes that mix it in (e.g. `SimpleProofTransient`)
 may set per-instance `retry_after` to override the backoff schedule.
 
@@ -14,7 +14,7 @@ when a multi-chunk submit fails partway, the raise site attaches a
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ocfl_cli.simpleproof import SubmitResult
+    from ocfl_cli.ots.simpleproof import SubmitResult
 
 
 class CLIError(Exception):

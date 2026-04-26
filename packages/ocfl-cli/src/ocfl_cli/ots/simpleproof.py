@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 
-from ocfl_cli._retry import retry
 from ocfl_cli.errors import (
     AttestationMismatchError,
     SimpleProofAuthError,
@@ -14,6 +13,7 @@ from ocfl_cli.errors import (
     SimpleProofError,
     SimpleProofTransient,
 )
+from ocfl_cli.ots._retry import retry
 from ocfl_lib.errors import OtsParseError
 from ocfl_lib.ots import parse as parse_ots
 
@@ -85,7 +85,7 @@ class SimpleProofHttpClient:
 
     Callers inject a fully-configured ``httpx.Client`` so tests can swap in
     a ``MockTransport`` and lifecycle stays caller-controlled. ``sleep`` is
-    forwarded to ``ocfl_cli._retry.retry`` so tests bypass wall-clock time.
+    forwarded to ``ocfl_cli.ots._retry.retry`` so tests bypass wall-clock time.
     """
 
     def __init__(

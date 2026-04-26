@@ -1,11 +1,11 @@
-"""Tests for ocfl_cli._retry.retry helper."""
+"""Tests for ocfl_cli.ots._retry.retry helper."""
 
 from collections.abc import Callable
 
 import pytest
 
-from ocfl_cli._retry import retry
 from ocfl_cli.errors import Transient
+from ocfl_cli.ots._retry import retry
 
 
 class _FakeTransient(Exception, Transient):

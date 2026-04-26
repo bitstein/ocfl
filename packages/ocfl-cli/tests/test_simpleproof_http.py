@@ -81,7 +81,7 @@ from ocfl_cli.errors import (
     SimpleProofBadRequest,
     SimpleProofTransient,
 )
-from ocfl_cli.simpleproof import (
+from ocfl_cli.ots.simpleproof import (
     JobStatus,
     SimpleProofCreds,
     SimpleProofHttpClient,

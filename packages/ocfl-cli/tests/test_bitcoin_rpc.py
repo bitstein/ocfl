@@ -11,8 +11,8 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from ocfl_cli.bitcoin import BitcoinRPCClient, BlockchainInfo, BlockHeader
 from ocfl_cli.errors import BitcoinAuthError, BitcoinRPCTransient
+from ocfl_cli.ots.bitcoin import BitcoinRPCClient, BlockchainInfo, BlockHeader
 
 
 def _rpc_ok(result: object) -> bytes:

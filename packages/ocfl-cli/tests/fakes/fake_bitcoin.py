@@ -4,7 +4,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from hashlib import sha256
 
-from ocfl_cli.bitcoin import BlockchainInfo, BlockHeader
+from ocfl_cli.ots.bitcoin import BlockchainInfo, BlockHeader
 
 
 def _hash_at(height: int, salt: bytes = b"") -> str:

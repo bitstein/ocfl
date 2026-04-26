@@ -18,16 +18,6 @@ from rich.text import Text
 from ocfl_cli import _style
 from ocfl_cli import staging as _staging_mod
 from ocfl_cli._common import err, open_root
-from ocfl_cli.bitcoin import (
-    BitcoinRPC,
-    BitcoinRPCClient,
-    BlockchainInfo,
-    HashBlockStream,
-    PendingVerification,
-    VerifiedAttestation,
-    verify_attestation,
-)
-from ocfl_cli.simpleproof import SimpleProofCreds, SimpleProofHttpClient
 from ocfl_cli.errors import (
     AttestationMismatchError,
     BitcoinError,
@@ -36,6 +26,16 @@ from ocfl_cli.errors import (
     ReorgDetectedError,
 )
 from ocfl_cli.ingest import ingest_file
+from ocfl_cli.ots.bitcoin import (
+    BitcoinRPC,
+    BitcoinRPCClient,
+    BlockchainInfo,
+    HashBlockStream,
+    PendingVerification,
+    VerifiedAttestation,
+    verify_attestation,
+)
+from ocfl_cli.ots.simpleproof import SimpleProofCreds, SimpleProofHttpClient
 from ocfl_cli.staging import (
     InventoryProof,
     Phase,
@@ -69,7 +69,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from ocfl_cli.config import Config, SimpleProofConfig
-    from ocfl_cli.simpleproof import SimpleProofClient
+    from ocfl_cli.ots.simpleproof import SimpleProofClient
     from ocfl_cli.staging import OtsState
     from ocfl_lib import DigestAlgorithm
     from ocfl_lib.fs.protocols import FS, WriteFS
@@ -1533,7 +1533,7 @@ def _get_zmq_subscriber(cfg: Config) -> HashBlockStream:
 
     Tests monkeypatch this seam to inject ``InMemoryHashBlockStream``.
     """
-    from ocfl_cli.bitcoin import BitcoinZmqSubscriber
+    from ocfl_cli.ots.bitcoin import BitcoinZmqSubscriber
 
     btc_cfg = cfg.bitcoin
     if btc_cfg is None:

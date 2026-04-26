@@ -36,12 +36,12 @@ import hashlib
 import pytest
 from fakes import FakeBitcoinRPC
 
-from ocfl_cli.bitcoin import (
+from ocfl_cli.errors import AttestationMismatchError, ReorgDetectedError
+from ocfl_cli.ots.bitcoin import (
     PendingVerification,
     VerifiedAttestation,
     verify_attestation,
 )
-from ocfl_cli.errors import AttestationMismatchError, ReorgDetectedError
 from tests.helpers.ots import build_attestation
 
 # ---------------------------------------------------------------------------

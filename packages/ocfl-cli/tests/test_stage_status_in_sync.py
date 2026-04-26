@@ -14,7 +14,7 @@ RED until ``compute_in_sync`` is exposed by ``ocfl_cli.commands.stage``.
 
 import pytest
 
-from ocfl_cli.bitcoin import BlockchainInfo
+from ocfl_cli.ots.bitcoin import BlockchainInfo
 
 
 def _info(*, ibd: bool, vp: float) -> BlockchainInfo:

@@ -56,8 +56,8 @@ import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof, InMemoryHashBlockStream
 from typer.testing import CliRunner
 
-from ocfl_cli.bitcoin import HashBlockStream
 from ocfl_cli.main import app
+from ocfl_cli.ots.bitcoin import HashBlockStream
 from ocfl_cli.staging import (
     Phase,
     StagingStore,
@@ -749,7 +749,7 @@ class TestTwoWatchersSerializeSafely:
                 results[tag] = stage_cmd._watch_loop(
                     cfg, store, sr, root_path, "obj:watch-two", sd
                 )
-            except BaseException as e:  # noqa: BLE001 — re-raised in main thread below
+            except BaseException as e:
                 errors[tag] = e
 
         t1 = threading.Thread(target=_run, args=("a",))

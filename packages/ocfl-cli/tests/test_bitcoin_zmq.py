@@ -11,7 +11,7 @@ from collections.abc import Iterator
 import pytest
 import zmq
 
-from ocfl_cli.bitcoin import BitcoinZmqSubscriber
+from ocfl_cli.ots.bitcoin import BitcoinZmqSubscriber
 
 
 @pytest.fixture

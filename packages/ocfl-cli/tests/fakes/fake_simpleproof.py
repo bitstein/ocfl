@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 
-from ocfl_cli.simpleproof import JobStatus, SubmitResult
+from ocfl_cli.ots.simpleproof import JobStatus, SubmitResult
 
 
 @dataclass

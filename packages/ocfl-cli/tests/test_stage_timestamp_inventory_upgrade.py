@@ -35,8 +35,8 @@ import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof
 from typer.testing import CliRunner
 
-from ocfl_cli.bitcoin import HashBlockStream
 from ocfl_cli.main import app
+from ocfl_cli.ots.bitcoin import HashBlockStream
 from ocfl_cli.staging import (
     Phase,
     StagingStore,
