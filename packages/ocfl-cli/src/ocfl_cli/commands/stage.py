@@ -74,6 +74,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Inventory head-state shape: digest -> logical paths.
+type StateMap = dict[str, list[str]]
+
 _SUBMIT_CHUNK_SIZE = 1000
 _LOCK_TIMEOUT_SECONDS = 30
 
@@ -111,7 +114,7 @@ def _require_ots_config(cfg: Config | None, digest: str | None) -> SimpleProofCo
     return cfg.simpleproof
 
 
-def _update_head_state(inv: Inventory, state: dict[str, list[str]]) -> Inventory:
+def _update_head_state(inv: Inventory, state: StateMap) -> Inventory:
     """Return new Inventory with updated head version state."""
     from ocfl_lib.inventory import Inventory, VersionInfo
 
@@ -312,7 +315,7 @@ def add(
 
 
 def _pair_ots_companion_remove(
-    state: dict[str, list[str]], removed_paths: list[str]
+    state: StateMap, removed_paths: list[str]
 ) -> None:
     """Remove `<path>.ots` companions from *state* for each non-`.ots` path removed."""
     for p in removed_paths:
@@ -327,7 +330,7 @@ def _pair_ots_companion_remove(
                 break
 
 
-def _pair_ots_companion_rename(state: dict[str, list[str]], src: str, dst: str) -> None:
+def _pair_ots_companion_rename(state: StateMap, src: str, dst: str) -> None:
     """Rename `<src>.ots` to `<dst>.ots` within *state* if present."""
     if src.endswith(".ots"):
         return
@@ -342,7 +345,7 @@ def _pair_ots_companion_rename(state: dict[str, list[str]], src: str, dst: str) 
 
 def _apply_rm_mv_regression(
     staging_dir: Path,
-    new_inv_state: dict[str, list[str]],
+    new_inv_state: StateMap,
     command: str,
     cause: str,
 ) -> None:
@@ -704,7 +707,7 @@ def _status_diff(
         elif prior_pm[p] != staged_pm[p]:
             changes.append({"path": p, "action": "modified"})
 
-    removed_by_digest: dict[str, list[str]] = {}
+    removed_by_digest: StateMap = {}
     for p, d in removed.items():
         removed_by_digest.setdefault(d, []).append(p)
 
@@ -1186,7 +1189,7 @@ def _log_phase(prev: Phase, new: Phase) -> None:
         logger.info("phase: %s -> %s", prev.value, new.value)
 
 
-def _non_ots_digests(state: dict[str, list[str]]) -> set[str]:
+def _non_ots_digests(state: StateMap) -> set[str]:
     """Digests with at least one logical path not ending in `.ots`."""
     return {
         d for d, paths in state.items() if any(not p.endswith(".ots") for p in paths)
@@ -1310,7 +1313,7 @@ def _verify_and_ingest_digest(
     ots_bytes: bytes,
     state: OtsState,
     inv: Inventory,
-    head_state: dict[str, list[str]],
+    head_state: StateMap,
     alg: DigestAlgorithm,
     *,
     btc: BitcoinRPC,
@@ -1406,7 +1409,7 @@ def _process_completed_jobs(
 
     inv = store.load_inventory(root_path, object_id)
     alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
-    head_state: dict[str, list[str]] = {
+    head_state: StateMap = {
         d: list(ps) for d, ps in inv.versions[inv.head].state.items()
     }
 

@@ -130,8 +130,7 @@ class SimpleProofHttpClient:
                 transient = SimpleProofTransient(
                     f"SimpleProof rate-limited: HTTP {status}"
                 )
-                retry_after = exc.response.headers.get("Retry-After")
-                if retry_after is not None:
+                if (retry_after := exc.response.headers.get("Retry-After")) is not None:
                     transient.retry_after = float(retry_after)
                 raise transient from exc
             if 500 <= status < 600:
