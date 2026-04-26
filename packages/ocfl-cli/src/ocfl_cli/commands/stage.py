@@ -1,5 +1,6 @@
 """ocfl stage command group."""
 
+import base64
 import contextlib
 import logging
 import time
@@ -9,6 +10,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, TypedDict, cast
 
+import httpx
 import typer
 from platformdirs import user_state_path
 from rich.text import Text
@@ -18,12 +20,14 @@ from ocfl_cli import staging as _staging_mod
 from ocfl_cli._common import err, open_root
 from ocfl_cli.bitcoin import (
     BitcoinRPC,
+    BitcoinRPCClient,
     BlockchainInfo,
     HashBlockStream,
     PendingVerification,
     VerifiedAttestation,
     verify_attestation,
 )
+from ocfl_cli.simpleproof import SimpleProofCreds, SimpleProofHttpClient
 from ocfl_cli.errors import (
     AttestationMismatchError,
     BitcoinError,
@@ -1148,17 +1152,13 @@ def _get_sp_client(
 
     Tests monkeypatch this seam to inject `FakeSimpleProof`.
     """
-    import httpx
-
-    from ocfl_cli.simpleproof import SimpleProofCreds, SimpleProofHttpClient
-
     sp_cfg = cfg.simpleproof
     if sp_cfg is None:
         raise RuntimeError("simpleproof config missing")
     client = httpx.Client(timeout=sp_cfg.timeout_s)
     creds = SimpleProofCreds(
-        access_token=sp_cfg.access_token,
-        api_key=sp_cfg.api_key,
+        access_token=sp_cfg.access_token.get_secret_value(),
+        api_key=sp_cfg.api_key.get_secret_value(),
     )
     return SimpleProofHttpClient(sp_cfg.base_url, creds, client=client, sleep=sleep)
 
@@ -1168,17 +1168,11 @@ def _get_btc_rpc(cfg: Config) -> BitcoinRPC:
 
     Tests monkeypatch this seam to inject `FakeBitcoinRPC`.
     """
-    import base64
-
-    import httpx
-
-    from ocfl_cli.bitcoin import BitcoinRPCClient
-
     btc_cfg = cfg.bitcoin
     if btc_cfg is None:
         raise RuntimeError("bitcoin config missing")
 
-    creds = f"{btc_cfg.rpc_user}:{btc_cfg.rpc_password}"
+    creds = f"{btc_cfg.rpc_user}:{btc_cfg.rpc_password.get_secret_value()}"
     headers = {"Authorization": "Basic " + base64.b64encode(creds.encode()).decode()}
     client = httpx.Client(timeout=btc_cfg.rpc_timeout_s, headers=headers)
     return BitcoinRPCClient(btc_cfg.rpc_url, client=client)

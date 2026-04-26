@@ -66,15 +66,15 @@ class TestValidLoad:
         assert isinstance(cfg.simpleproof, SimpleProofConfig)
         assert cfg.simpleproof.base_url == "https://stage.example"
         assert cfg.simpleproof.proof_category_id == 641
-        assert cfg.simpleproof.access_token == "tok"
-        assert cfg.simpleproof.api_key == "key"
+        assert cfg.simpleproof.access_token.get_secret_value() == "tok"
+        assert cfg.simpleproof.api_key.get_secret_value() == "key"
         assert cfg.simpleproof.timeout_s == 30  # default
 
         assert isinstance(cfg.bitcoin, BitcoinConfig)
         assert cfg.bitcoin.rpc_url == "http://127.0.0.1:8332"
         assert cfg.bitcoin.zmq_endpoint == "tcp://127.0.0.1:28332"
         assert cfg.bitcoin.rpc_user == "u"
-        assert cfg.bitcoin.rpc_password == "p"
+        assert cfg.bitcoin.rpc_password.get_secret_value() == "p"
         assert cfg.bitcoin.confirmations == 3  # default
         assert cfg.bitcoin.rpc_timeout_s == 10  # default
 
@@ -94,7 +94,7 @@ class TestValidLoad:
         assert cfg.bitcoin.confirmations == 6
         assert cfg.bitcoin.rpc_timeout_s == 25
         assert cfg.bitcoin.rpc_user == "u"
-        assert cfg.bitcoin.rpc_password == "p"
+        assert cfg.bitcoin.rpc_password.get_secret_value() == "p"
 
 
 # --------------------------------------------------------------------------- #
@@ -182,7 +182,7 @@ class TestRpcAuth:
         cfg = load_config(path)
         assert cfg.bitcoin is not None
         assert cfg.bitcoin.rpc_user == "u"
-        assert cfg.bitcoin.rpc_password == "p"
+        assert cfg.bitcoin.rpc_password.get_secret_value() == "p"
 
     def test_missing_user_rejected(self, tmp_path: Path) -> None:
         body = _SP_OK + (
@@ -288,7 +288,7 @@ class TestEnvOverride:
         path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
         cfg = load_config(path)
         assert cfg.simpleproof is not None
-        assert cfg.simpleproof.access_token == "ENVTOKEN"
+        assert cfg.simpleproof.access_token.get_secret_value() == "ENVTOKEN"
 
     def test_api_key_env_wins_over_toml(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -297,7 +297,7 @@ class TestEnvOverride:
         path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
         cfg = load_config(path)
         assert cfg.simpleproof is not None
-        assert cfg.simpleproof.api_key == "ENVKEY"
+        assert cfg.simpleproof.api_key.get_secret_value() == "ENVKEY"
 
     def test_env_validates_scheme_too(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -307,6 +307,94 @@ class TestEnvOverride:
         path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
         with pytest.raises(ConfigError):
             load_config(path)
+
+
+# --------------------------------------------------------------------------- #
+# 7b. Bitcoin env override (BITCOIN_* mirrors SIMPLEPROOF_*)
+# --------------------------------------------------------------------------- #
+
+
+class TestBitcoinEnvOverride:
+    def test_rpc_url_env_wins_over_toml(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("BITCOIN_RPC_URL", "http://10.0.0.1:8332")
+        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        cfg = load_config(path)
+        assert cfg.bitcoin is not None
+        assert cfg.bitcoin.rpc_url == "http://10.0.0.1:8332"
+
+    def test_rpc_user_env_wins_over_toml(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("BITCOIN_RPC_USER", "envuser")
+        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        cfg = load_config(path)
+        assert cfg.bitcoin is not None
+        assert cfg.bitcoin.rpc_user == "envuser"
+
+    def test_rpc_password_env_wins_over_toml(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("BITCOIN_RPC_PASSWORD", "ENVPASS")
+        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        cfg = load_config(path)
+        assert cfg.bitcoin is not None
+        assert cfg.bitcoin.rpc_password.get_secret_value() == "ENVPASS"
+
+    def test_zmq_endpoint_env_wins_over_toml(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("BITCOIN_ZMQ_ENDPOINT", "tcp://10.0.0.1:28332")
+        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        cfg = load_config(path)
+        assert cfg.bitcoin is not None
+        assert cfg.bitcoin.zmq_endpoint == "tcp://10.0.0.1:28332"
+
+    def test_env_validates_scheme_too(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Env override participates in validation — bad scheme in env still fails."""
+        monkeypatch.setenv("BITCOIN_RPC_URL", "ftp://bad")
+        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        with pytest.raises(ConfigError):
+            load_config(path)
+
+
+# --------------------------------------------------------------------------- #
+# 7c. SecretStr API: tokens/passwords are SecretStr, not str
+# --------------------------------------------------------------------------- #
+
+
+class TestSecretStrAPI:
+    def test_simpleproof_secrets_are_secret_str(self, tmp_path: Path) -> None:
+        from pydantic import SecretStr
+
+        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        cfg = load_config(path)
+        assert cfg.simpleproof is not None
+        assert isinstance(cfg.simpleproof.access_token, SecretStr)
+        assert isinstance(cfg.simpleproof.api_key, SecretStr)
+        assert cfg.simpleproof.access_token.get_secret_value() == "tok"
+        assert cfg.simpleproof.api_key.get_secret_value() == "key"
+
+    def test_bitcoin_password_is_secret_str(self, tmp_path: Path) -> None:
+        from pydantic import SecretStr
+
+        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        cfg = load_config(path)
+        assert cfg.bitcoin is not None
+        assert isinstance(cfg.bitcoin.rpc_password, SecretStr)
+        assert cfg.bitcoin.rpc_password.get_secret_value() == "p"
+
+    def test_str_of_secret_masks_plaintext(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        cfg = load_config(path)
+        assert cfg.simpleproof is not None
+        assert cfg.bitcoin is not None
+        assert "tok" not in str(cfg.simpleproof.access_token)
+        assert "key" not in str(cfg.simpleproof.api_key)
+        assert "p" not in str(cfg.bitcoin.rpc_password)
 
 
 # --------------------------------------------------------------------------- #

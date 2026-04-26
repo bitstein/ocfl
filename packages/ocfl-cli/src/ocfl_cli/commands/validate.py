@@ -1,15 +1,18 @@
 """ocfl validate command."""
 
+import base64
 import hashlib
 import json
 from typing import TYPE_CHECKING, Annotated, NoReturn
 
+import httpx
 import typer
 
 from ocfl_cli import _style
 from ocfl_cli._common import _make_fs, err, open_root, output_json, resolve_root
 from ocfl_cli.bitcoin import (
     BitcoinRPC,
+    BitcoinRPCClient,
     PendingReason,
     PendingVerification,
     VerifiedAttestation,
@@ -215,17 +218,11 @@ def _get_btc_rpc(cfg: Config) -> BitcoinRPC:
 
     Tests monkeypatch this seam to inject `FakeBitcoinRPC`.
     """
-    import base64
-
-    import httpx
-
-    from ocfl_cli.bitcoin import BitcoinRPCClient
-
     btc_cfg = cfg.bitcoin
     if btc_cfg is None:
         raise RuntimeError("bitcoin config missing")
 
-    creds = f"{btc_cfg.rpc_user}:{btc_cfg.rpc_password}"
+    creds = f"{btc_cfg.rpc_user}:{btc_cfg.rpc_password.get_secret_value()}"
     headers = {"Authorization": "Basic " + base64.b64encode(creds.encode()).decode()}
     client = httpx.Client(timeout=btc_cfg.rpc_timeout_s, headers=headers)
     return BitcoinRPCClient(btc_cfg.rpc_url, client=client)

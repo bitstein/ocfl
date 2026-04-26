@@ -5,10 +5,24 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Self
 from urllib.parse import urlsplit
 
 from platformdirs import user_config_path
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 from ocfl_cli.errors import ConfigError
 
@@ -25,9 +39,41 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class ArchiveConfig:
+def _validate_http_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"must be an http(s) URL (got {value!r})")
+    if not parsed.netloc:
+        raise ValueError(f"must include a host (got {value!r})")
+    return value
+
+
+def _validate_zmq_endpoint(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.scheme not in ("tcp", "ipc"):
+        raise ValueError(f"must use tcp:// or ipc:// scheme (got {value!r})")
+    return value
+
+
+class _EnvOverInitSettings:
+    """Mixin: rank env_settings above init kwargs so env beats TOML."""
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (env_settings, init_settings, dotenv_settings, file_secret_settings)
+
+
+class ArchiveConfig(BaseModel):
     """One `[archives.<name>]` section."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
 
     name: str
     root: str
@@ -36,56 +82,62 @@ class ArchiveConfig:
     suppress: tuple[str, ...] | None = None
 
 
-@dataclass(frozen=True)
-class SimpleProofConfig:
-    """`[simpleproof]` section. Secrets are repr=False to keep logs safe."""
+class SimpleProofConfig(_EnvOverInitSettings, BaseSettings):
+    """`[simpleproof]` section. Tokens are SecretStr."""
+
+    model_config = SettingsConfigDict(
+        frozen=True,
+        extra="ignore",
+        env_prefix="SIMPLEPROOF_",
+    )
 
     base_url: str
     proof_category_id: int
-    access_token: str = field(repr=False, default="")
-    api_key: str = field(repr=False, default="")
-    timeout_s: int = 30
+    access_token: SecretStr = SecretStr("")
+    api_key: SecretStr = SecretStr("")
+    timeout_s: Annotated[int, Field(gt=0)] = 30
 
-    def __post_init__(self) -> None:
-        _validate_http_url(self.base_url, "simpleproof.base_url")
-        _require_int(self.proof_category_id, "simpleproof.proof_category_id")
-        _require_pos_int(self.timeout_s, "simpleproof.timeout_s")
-        _require_str(self.access_token, "simpleproof.access_token")
-        _require_str(self.api_key, "simpleproof.api_key")
+    @field_validator("base_url")
+    @classmethod
+    def _http(cls, v: str) -> str:
+        return _validate_http_url(v)
 
 
-@dataclass(frozen=True)
-class BitcoinConfig:
-    """`[bitcoin]` section. `rpc_password` is repr=False."""
+class BitcoinConfig(_EnvOverInitSettings, BaseSettings):
+    """`[bitcoin]` section. `rpc_password` is SecretStr."""
+
+    model_config = SettingsConfigDict(
+        frozen=True,
+        extra="ignore",
+        env_prefix="BITCOIN_",
+    )
 
     rpc_url: str
     zmq_endpoint: str
-    rpc_user: str
-    rpc_password: str = field(repr=False)
-    confirmations: int = 3
-    rpc_timeout_s: int = 10
+    rpc_user: Annotated[str, Field(min_length=1)]
+    rpc_password: Annotated[SecretStr, Field(min_length=1)]
+    confirmations: Annotated[int, Field(ge=1, le=100)] = 3
+    rpc_timeout_s: Annotated[int, Field(gt=0)] = 10
 
-    def __post_init__(self) -> None:
-        _validate_http_url(self.rpc_url, "bitcoin.rpc_url")
-        _validate_zmq_endpoint(self.zmq_endpoint, "bitcoin.zmq_endpoint")
-        _require_str(self.rpc_user, "bitcoin.rpc_user")
-        _require_str(self.rpc_password, "bitcoin.rpc_password")
-        _require_pos_int(self.rpc_timeout_s, "bitcoin.rpc_timeout_s")
+    @field_validator("rpc_url")
+    @classmethod
+    def _http(cls, v: str) -> str:
+        return _validate_http_url(v)
 
-        if not (self.rpc_user and self.rpc_password):
-            raise ConfigError("bitcoin: rpc_user and rpc_password are both required")
+    @field_validator("zmq_endpoint")
+    @classmethod
+    def _zmq(cls, v: str) -> str:
+        return _validate_zmq_endpoint(v)
 
-        _require_int(self.confirmations, "bitcoin.confirmations")
-        if not 1 <= self.confirmations <= 100:
-            raise ConfigError(
-                f"bitcoin.confirmations must be in 1..100 (got {self.confirmations})"
-            )
+    @model_validator(mode="after")
+    def _warn_shallow_confirmations(self) -> Self:
         if self.confirmations < 3:
             logger.warning(
                 "bitcoin.confirmations=%d is shallow; >=3 recommended to "
                 "tolerate reorgs",
                 self.confirmations,
             )
+        return self
 
 
 @dataclass(frozen=True)
@@ -140,37 +192,33 @@ def load_config(path: Path | None = None) -> Config:
         raise ConfigError(f"{path}: {e}") from None
     except OSError as e:
         raise ConfigError(f"{path}: {e}") from None
-    cfg = _parse(data, path)
+    cfg = _build(data, path)
     _maybe_warn_loose_perms(path, cfg)
     return cfg
 
 
-def _parse(data: dict[str, Any], path: Path) -> Config:
-    defaults = data.get("defaults", {})
-    if not isinstance(defaults, dict):
-        raise ConfigError(f"{path}: [defaults] must be a table")
+def _build(data: dict[str, Any], path: Path) -> Config:
+    defaults = _require_table(data.get("defaults", {}), path, "defaults")
     d_digest = _opt_str(defaults, "digest", path, "defaults.digest")
     d_suppress = _opt_str_list(defaults, "suppress", path, "defaults.suppress")
 
-    archives_tbl = data.get("archives", {})
-    if not isinstance(archives_tbl, dict):
-        raise ConfigError(f"{path}: [archives] must be a table")
-
+    archives_tbl = _require_table(data.get("archives", {}), path, "archives")
     archives: dict[str, ArchiveConfig] = {}
     for name, section in archives_tbl.items():
-        if not isinstance(section, dict):
-            raise ConfigError(f"{path}: [archives.{name}] must be a table")
-        root = _opt_str(section, "root", path, f"archives.{name}.root")
-        if not root:
+        section = _require_table(section, path, f"archives.{name}")
+        if "root" not in section:
             raise ConfigError(f"{path}: archives.{name} missing 'root'")
-        digest = _opt_str(section, "digest", path, f"archives.{name}.digest")
-        suppress = _opt_str_list(section, "suppress", path, f"archives.{name}.suppress")
-        archives[name] = ArchiveConfig(
-            name=name, root=root, digest=digest, suppress=suppress
+        archives[name] = _validate(
+            ArchiveConfig,
+            {"name": name, **section},
+            path,
+            f"archives.{name}",
         )
 
-    simpleproof = _parse_simpleproof(data.get("simpleproof"), path)
-    bitcoin = _parse_bitcoin(data.get("bitcoin"), path)
+    simpleproof = _build_section(
+        SimpleProofConfig, data.get("simpleproof"), path, "simpleproof"
+    )
+    bitcoin = _build_section(BitcoinConfig, data.get("bitcoin"), path, "bitcoin")
 
     return Config(
         path=path,
@@ -182,109 +230,83 @@ def _parse(data: dict[str, Any], path: Path) -> Config:
     )
 
 
-def _parse_simpleproof(section: Any, path: Path) -> SimpleProofConfig | None:
+def _build_section[T: BaseSettings](
+    cls: type[T], section: Any, path: Path, label: str
+) -> T | None:
     if section is None:
         return None
-    if not isinstance(section, dict):
-        raise ConfigError(f"{path}: [simpleproof] must be a table")
-    d: dict[str, Any] = dict(section)
-    for env_key, field_name in (
-        ("SIMPLEPROOF_BASE_URL", "base_url"),
-        ("SIMPLEPROOF_ACCESS_TOKEN", "access_token"),
-        ("SIMPLEPROOF_API_KEY", "api_key"),
-    ):
-        env_val = os.environ.get(env_key)
-        if env_val is not None:
-            d[field_name] = env_val
-
-    base_url = _req_str(d, "base_url", path, "simpleproof.base_url")
-    proof_id = _req_int(d, "proof_category_id", path, "simpleproof.proof_category_id")
-    access = _opt_str(d, "access_token", path, "simpleproof.access_token") or ""
-    api_key = _opt_str(d, "api_key", path, "simpleproof.api_key") or ""
-    timeout_s = _opt_int(d, "timeout_s", path, "simpleproof.timeout_s")
-    return SimpleProofConfig(
-        base_url=base_url,
-        proof_category_id=proof_id,
-        access_token=access,
-        api_key=api_key,
-        timeout_s=30 if timeout_s is None else timeout_s,
-    )
+    section = _require_table(section, path, label)
+    return _validate(cls, section, path, label)
 
 
-def _parse_bitcoin(section: Any, path: Path) -> BitcoinConfig | None:
-    if section is None:
-        return None
-    if not isinstance(section, dict):
-        raise ConfigError(f"{path}: [bitcoin] must be a table")
-    d: dict[str, Any] = dict(section)
-
-    rpc_url = _req_str(d, "rpc_url", path, "bitcoin.rpc_url")
-    zmq_endpoint = _req_str(d, "zmq_endpoint", path, "bitcoin.zmq_endpoint")
-    rpc_user = _req_str(d, "rpc_user", path, "bitcoin.rpc_user")
-    rpc_password = _req_str(d, "rpc_password", path, "bitcoin.rpc_password")
-    confirmations = _opt_int(d, "confirmations", path, "bitcoin.confirmations")
-    rpc_timeout_s = _opt_int(d, "rpc_timeout_s", path, "bitcoin.rpc_timeout_s")
-
-    return BitcoinConfig(
-        rpc_url=rpc_url,
-        zmq_endpoint=zmq_endpoint,
-        rpc_user=rpc_user,
-        rpc_password=rpc_password,
-        confirmations=3 if confirmations is None else confirmations,
-        rpc_timeout_s=10 if rpc_timeout_s is None else rpc_timeout_s,
-    )
-
-
-def _split(value: str, label: str) -> tuple[str, str]:
-    if not isinstance(value, str):
-        raise ConfigError(f"{label} must be a string")
+def _validate[T: BaseModel](
+    cls: type[T], data: dict[str, Any], path: Path, label: str
+) -> T:
     try:
-        parsed = urlsplit(value)
-    except ValueError as e:
-        raise ConfigError(f"{label}: {e}") from None
-    return parsed.scheme, parsed.netloc
+        return cls(**data)
+    except ValidationError as e:
+        raise ConfigError(_format_validation_error(e, path, label)) from None
 
 
-def _validate_http_url(value: str, label: str) -> None:
-    scheme, netloc = _split(value, label)
-    if scheme not in ("http", "https"):
-        raise ConfigError(f"{label} must be an http(s) URL (got {value!r})")
-    if not netloc:
-        raise ConfigError(f"{label} must include a host (got {value!r})")
+def _format_validation_error(e: ValidationError, path: Path, label: str) -> str:
+    parts: list[str] = []
+    for err in e.errors():
+        loc = ".".join(str(p) for p in err["loc"]) or "<root>"
+        parts.append(f"{label}.{loc}: {_clean_msg(err)}")
+    return f"{path}: " + "; ".join(parts)
 
 
-def _validate_zmq_endpoint(value: str, label: str) -> None:
-    scheme, _ = _split(value, label)
-    if scheme not in ("tcp", "ipc"):
-        raise ConfigError(f"{label} must use tcp:// or ipc:// scheme (got {value!r})")
+def _clean_msg(err: dict[str, Any]) -> str:
+    """Make pydantic's default messages read like the rest of our errors."""
+    # Map pydantic error types to phrasing that reads as a continuation of
+    # the "<section>.<field>: " label. Fall through to the raw `msg` for
+    # anything we haven't tuned, after stripping the "Value error, " prefix
+    # pydantic adds to ValueErrors raised inside validators.
+    match err["type"]:
+        case "missing":
+            return "is required"
+        case "string_too_short" | "too_short" if (
+            err.get("ctx", {}).get("min_length") == 1
+        ):
+            return "must not be empty"
+        case _:
+            return err["msg"].removeprefix("Value error, ")
 
 
-def _is_int(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)
+def _require_table(value: Any, path: Path, label: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ConfigError(f"{path}: [{label}] must be a table")
+    return value
 
 
-def _require_str(value: Any, label: str) -> None:
-    if not isinstance(value, str):
-        raise ConfigError(f"{label} must be a string")
+def _opt_str(tbl: dict[str, Any], key: str, path: Path, label: str) -> str | None:
+    v = tbl.get(key)
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ConfigError(f"{path}: {label} must be a string")
+    return v
 
 
-def _require_int(value: Any, label: str) -> None:
-    if not _is_int(value):
-        raise ConfigError(f"{label} must be an integer")
-
-
-def _require_pos_int(value: Any, label: str) -> None:
-    _require_int(value, label)
-    if value <= 0:
-        raise ConfigError(f"{label} must be positive")
+def _opt_str_list(
+    tbl: dict[str, Any], key: str, path: Path, label: str
+) -> tuple[str, ...] | None:
+    v = tbl.get(key)
+    if v is None:
+        return None
+    if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+        raise ConfigError(f"{path}: {label} must be a list of strings")
+    return tuple(v)
 
 
 def _has_secret(cfg: Config) -> bool:
     sp = cfg.simpleproof
-    if sp is not None and (sp.access_token or sp.api_key):
+    if sp is not None and (
+        sp.access_token.get_secret_value() or sp.api_key.get_secret_value()
+    ):
         return True
     btc = cfg.bitcoin
-    return bool(btc is not None and btc.rpc_password)
+    return bool(btc is not None and btc.rpc_password.get_secret_value())
 
 
 def _maybe_warn_loose_perms(path: Path, cfg: Config) -> None:
@@ -301,50 +323,3 @@ def _maybe_warn_loose_perms(path: Path, cfg: Config) -> None:
             path,
             mode & 0o777,
         )
-
-
-def _opt_str(tbl: dict[str, Any], key: str, path: Path, label: str) -> str | None:
-    v = tbl.get(key)
-    if v is None:
-        return None
-    if not isinstance(v, str):
-        raise ConfigError(f"{path}: {label} must be a string")
-    return v
-
-
-def _req_str(tbl: dict[str, Any], key: str, path: Path, label: str) -> str:
-    v = tbl.get(key)
-    if v is None:
-        raise ConfigError(f"{path}: {label} is required")
-    if not isinstance(v, str):
-        raise ConfigError(f"{path}: {label} must be a string")
-    return v
-
-
-def _opt_int(tbl: dict[str, Any], key: str, path: Path, label: str) -> int | None:
-    v = tbl.get(key)
-    if v is None:
-        return None
-    if not _is_int(v):
-        raise ConfigError(f"{path}: {label} must be an integer")
-    return v
-
-
-def _req_int(tbl: dict[str, Any], key: str, path: Path, label: str) -> int:
-    v = tbl.get(key)
-    if v is None:
-        raise ConfigError(f"{path}: {label} is required")
-    if not _is_int(v):
-        raise ConfigError(f"{path}: {label} must be an integer")
-    return v
-
-
-def _opt_str_list(
-    tbl: dict[str, Any], key: str, path: Path, label: str
-) -> tuple[str, ...] | None:
-    v = tbl.get(key)
-    if v is None:
-        return None
-    if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
-        raise ConfigError(f"{path}: {label} must be a list of strings")
-    return tuple(v)
