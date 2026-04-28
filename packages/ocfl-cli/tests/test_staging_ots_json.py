@@ -16,12 +16,12 @@ from pathlib import Path
 
 import pytest
 
-from ocfl_cli import staging as st_mod
 from ocfl_cli.errors import StagingError
-from ocfl_cli.staging import (
+from ocfl_cli.stage import state as st_mod
+from ocfl_cli.stage.fsm import Phase
+from ocfl_cli.stage.state import (
     InventoryProof,
     OtsState,
-    Phase,
     Submission,
     VerifiedProof,
     VerifyJob,

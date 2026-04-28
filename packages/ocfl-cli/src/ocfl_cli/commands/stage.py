@@ -16,7 +16,6 @@ from platformdirs import user_state_path
 from rich.text import Text
 
 from ocfl_cli import _style
-from ocfl_cli import staging as _staging_mod
 from ocfl_cli._common import err, open_root
 from ocfl_cli.errors import (
     AttestationMismatchError,
@@ -36,15 +35,14 @@ from ocfl_cli.ots.bitcoin import (
     verify_attestation,
 )
 from ocfl_cli.ots.simpleproof import SimpleProofCreds, SimpleProofHttpClient
-from ocfl_cli.staging import (
+from ocfl_cli.stage import store as _store_mod
+from ocfl_cli.stage.fsm import Phase, check_transition
+from ocfl_cli.stage.state import (
     InventoryProof,
-    Phase,
-    StagingStore,
     Submission,
     VerifiedProof,
     VerifyJob,
     apply_category_id,
-    check_transition,
     has_ots,
     load_ots,
     now_utc_iso,
@@ -53,6 +51,7 @@ from ocfl_cli.staging import (
     save_ots,
     with_lock,
 )
+from ocfl_cli.stage.store import StagingStore
 from ocfl_lib.errors import OtsParseError
 from ocfl_lib.ots import parse as parse_ots
 from ocfl_lib.update_plan import (
@@ -70,7 +69,7 @@ if TYPE_CHECKING:
 
     from ocfl_cli.config import Config, SimpleProofConfig
     from ocfl_cli.ots.simpleproof import SimpleProofClient
-    from ocfl_cli.staging import OtsState
+    from ocfl_cli.stage.state import OtsState
     from ocfl_lib import DigestAlgorithm
     from ocfl_lib.fs.protocols import FS, WriteFS
     from ocfl_lib.inventory import Inventory
@@ -179,7 +178,7 @@ def new(
     ] = False,
 ) -> None:
     """Create a new staging area for an object."""
-    from ocfl_cli.staging import OtsState
+    from ocfl_cli.stage.state import OtsState
     from ocfl_lib import DigestAlgorithm
     from ocfl_lib.inventory_builder import InventoryBuilder
 
@@ -1337,7 +1336,7 @@ def _verify_and_ingest_digest(
 
     cache_file = ots_cache_path(staging_dir, d)
     cache_file.parent.mkdir(parents=True, exist_ok=True)
-    _staging_mod._atomic_write_bytes(cache_file, ots_bytes)
+    _store_mod._atomic_write_bytes(cache_file, ots_bytes)
     ots_path_rel = f"ots-cache/{d}.ots"
 
     if not isinstance(result, VerifiedAttestation):
@@ -1905,7 +1904,7 @@ def _verify_inventory_digest(
 
     cache_file = ots_cache_path(staging_dir, inv_digest)
     cache_file.parent.mkdir(parents=True, exist_ok=True)
-    _staging_mod._atomic_write_bytes(cache_file, ots_bytes)
+    _store_mod._atomic_write_bytes(cache_file, ots_bytes)
     ots_path_rel = f"ots-cache/{inv_digest}.ots"
 
     match result:

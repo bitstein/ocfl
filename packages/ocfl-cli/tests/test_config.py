@@ -283,7 +283,7 @@ class TestConfigDigestDefault:
         )
         assert result.exit_code == 0, result.output
 
-        from ocfl_cli.staging import StagingStore
+        from ocfl_cli.stage.store import StagingStore
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -321,7 +321,7 @@ class TestConfigDigestDefault:
         )
         assert result.exit_code == 0, result.output
 
-        from ocfl_cli.staging import StagingStore
+        from ocfl_cli.stage.store import StagingStore
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())

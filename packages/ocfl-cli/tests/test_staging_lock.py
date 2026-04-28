@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from ocfl_cli.errors import LockTimeoutError
-from ocfl_cli.staging import load_ots, with_lock
+from ocfl_cli.stage.state import load_ots, with_lock
 
 
 @pytest.fixture

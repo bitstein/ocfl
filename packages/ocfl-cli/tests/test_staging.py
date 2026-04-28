@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from ocfl_cli.staging import StagingStore
+from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import DigestAlgorithm, Spec
 from ocfl_lib.inventory import Inventory
 from ocfl_lib.inventory_builder import InventoryBuilder

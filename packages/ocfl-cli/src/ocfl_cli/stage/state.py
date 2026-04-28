@@ -1,21 +1,21 @@
-"""Persistent staging store + OTS phase FSM for OCFL CLI."""
+"""OTS workspace state for staged OCFL versions.
 
-import enum
-import hashlib
+`<staging>/ots.json` schema (v1) plus persistence, locking, and
+schema-migration helpers.
+"""
+
 import json
 import logging
-import os
-import shutil
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import filelock
-import msgspec
 
-from ocfl_cli.errors import LockTimeoutError, PhaseError, StagingError
-from ocfl_lib.inventory import Inventory
+from ocfl_cli.errors import LockTimeoutError, StagingError
+from ocfl_cli.stage import store
+from ocfl_cli.stage.fsm import Phase
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -23,203 +23,6 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-
-class StagingStore:
-    """Manages staging directories for in-progress OCFL object versions.
-
-    Each (root_path, object_id) pair gets a staging directory containing:
-    - inventory.json: full staged inventory (all versions + new head)
-    - content.json: digest → {path, size, mtime} for new content files
-    """
-
-    def __init__(self, root: Path) -> None:
-        self._root = root
-
-    def staging_path(self, root_path: str, object_id: str) -> Path:
-        """Deterministic staging directory for a (root, object) pair."""
-        key = f"{root_path}\0{object_id}".encode()
-        return self._root / hashlib.sha256(key).hexdigest()
-
-    def exists(self, root_path: str, object_id: str) -> bool:
-        return self.staging_path(root_path, object_id).is_dir()
-
-    def create(self, root_path: str, object_id: str, inventory: Inventory) -> None:
-        """Create staging directory with inventory and empty content map."""
-        d = self.staging_path(root_path, object_id)
-        d.mkdir(parents=True, exist_ok=True)
-        self._write_inventory(d, inventory)
-        self._write_content_map(d, {})
-
-    def load_inventory(self, root_path: str, object_id: str) -> Inventory:
-        d = self.staging_path(root_path, object_id)
-        return msgspec.json.decode((d / "inventory.json").read_bytes(), type=Inventory)
-
-    def save_inventory(
-        self, root_path: str, object_id: str, inventory: Inventory
-    ) -> None:
-        d = self.staging_path(root_path, object_id)
-        self._write_inventory(d, inventory)
-
-    def load_content_map(self, root_path: str, object_id: str) -> dict:
-        d = self.staging_path(root_path, object_id)
-        return json.loads((d / "content.json").read_bytes())
-
-    def save_content_map(
-        self, root_path: str, object_id: str, content_map: dict
-    ) -> None:
-        d = self.staging_path(root_path, object_id)
-        self._write_content_map(d, content_map)
-
-    def purge(self, root_path: str, object_id: str) -> None:
-        d = self.staging_path(root_path, object_id)
-        if d.is_dir():
-            shutil.rmtree(d)
-
-    def _write_inventory(self, d: Path, inventory: Inventory) -> None:
-        data = msgspec.json.encode(inventory)
-        _atomic_write_bytes(d / "inventory.json", data)
-
-    def _write_content_map(self, d: Path, content_map: dict) -> None:
-        data = json.dumps(content_map, sort_keys=True).encode()
-        _atomic_write_bytes(d / "content.json", data)
-
-
-# ---------------------------------------------------------------------------
-# OTS phase FSM
-# ---------------------------------------------------------------------------
-
-
-class Phase(enum.StrEnum):
-    """Lifecycle phase of an OTS-enabled staging directory.
-
-    Persisted as a scalar in `ots.json.phase`. Legality + auto-regression
-    are enforced by `check_transition`.
-    """
-
-    DRAFTING = "drafting"
-    CONTENT_PENDING = "content-pending"
-    CONTENT_UPGRADED = "content-upgraded"
-    INVENTORY_PENDING = "inventory-pending"
-    INVENTORY_UPGRADED = "inventory-upgraded"
-    COMMITTED = "committed"
-
-
-# Sentinels for the transition matrix.
-_STAY = object()  # outcome: phase unchanged
-_ERR = object()  # outcome: PhaseError
-_REGRESS = object()  # outcome: Phase.DRAFTING
-
-# (phase, command) -> Phase | sentinel.
-# Mirrors `architecture.transitions.matrix` and `tests/test_staging_phase.py::MATRIX`.
-_TRANSITIONS: dict[tuple[Phase, str], Any] = {
-    # add / rm / mv: stay at drafting + content-pending; regress from upgraded.
-    **{
-        (p, c): outcome
-        for c in ("add", "rm", "mv")
-        for p, outcome in (
-            (Phase.DRAFTING, _STAY),
-            (Phase.CONTENT_PENDING, _STAY),
-            (Phase.CONTENT_UPGRADED, _REGRESS),
-            (Phase.INVENTORY_PENDING, _REGRESS),
-            (Phase.INVENTORY_UPGRADED, _REGRESS),
-        )
-    },
-    # timestamp content
-    (Phase.DRAFTING, "timestamp content"): Phase.CONTENT_PENDING,
-    (Phase.CONTENT_PENDING, "timestamp content"): _STAY,
-    (Phase.CONTENT_UPGRADED, "timestamp content"): _STAY,  # noop
-    (Phase.INVENTORY_PENDING, "timestamp content"): _ERR,
-    (Phase.INVENTORY_UPGRADED, "timestamp content"): _ERR,
-    # timestamp content --upgrade [--watch]
-    **{
-        (p, c): outcome
-        for c in (
-            "timestamp content --upgrade",
-            "timestamp content --upgrade --watch",
-        )
-        for p, outcome in (
-            (Phase.DRAFTING, _ERR),
-            (Phase.CONTENT_PENDING, _STAY),
-            (Phase.CONTENT_UPGRADED, _STAY),  # noop
-            (Phase.INVENTORY_PENDING, _ERR),
-            (Phase.INVENTORY_UPGRADED, _ERR),
-        )
-    },
-    # timestamp content --retry: only valid at content-pending.
-    (Phase.DRAFTING, "timestamp content --retry"): _ERR,
-    (Phase.CONTENT_PENDING, "timestamp content --retry"): _STAY,
-    (Phase.CONTENT_UPGRADED, "timestamp content --retry"): _ERR,
-    (Phase.INVENTORY_PENDING, "timestamp content --retry"): _ERR,
-    (Phase.INVENTORY_UPGRADED, "timestamp content --retry"): _ERR,
-    # timestamp inventory
-    (Phase.DRAFTING, "timestamp inventory"): _ERR,
-    (Phase.CONTENT_PENDING, "timestamp inventory"): _ERR,
-    (Phase.CONTENT_UPGRADED, "timestamp inventory"): Phase.INVENTORY_PENDING,
-    (Phase.INVENTORY_PENDING, "timestamp inventory"): _STAY,  # resubmit
-    (Phase.INVENTORY_UPGRADED, "timestamp inventory"): _STAY,  # noop
-    # timestamp inventory --upgrade [--watch]
-    **{
-        (p, c): outcome
-        for c in (
-            "timestamp inventory --upgrade",
-            "timestamp inventory --upgrade --watch",
-        )
-        for p, outcome in (
-            (Phase.DRAFTING, _ERR),
-            (Phase.CONTENT_PENDING, _ERR),
-            (Phase.CONTENT_UPGRADED, _ERR),
-            (Phase.INVENTORY_PENDING, Phase.INVENTORY_UPGRADED),
-            (Phase.INVENTORY_UPGRADED, _STAY),  # noop
-        )
-    },
-    # timestamp inventory --retry: only valid at inventory-pending.
-    (Phase.DRAFTING, "timestamp inventory --retry"): _ERR,
-    (Phase.CONTENT_PENDING, "timestamp inventory --retry"): _ERR,
-    (Phase.CONTENT_UPGRADED, "timestamp inventory --retry"): _ERR,
-    (Phase.INVENTORY_PENDING, "timestamp inventory --retry"): _STAY,
-    (Phase.INVENTORY_UPGRADED, "timestamp inventory --retry"): _ERR,
-    # commit (ots path): only valid at inventory-upgraded.
-    (Phase.DRAFTING, "commit (ots path)"): _ERR,
-    (Phase.CONTENT_PENDING, "commit (ots path)"): _ERR,
-    (Phase.CONTENT_UPGRADED, "commit (ots path)"): _ERR,
-    (Phase.INVENTORY_PENDING, "commit (ots path)"): _ERR,
-    (Phase.INVENTORY_UPGRADED, "commit (ots path)"): Phase.COMMITTED,
-    # reset / status: always legal, phase unchanged.
-    **{
-        (p, c): _STAY
-        for c in ("reset", "status")
-        for p in (
-            Phase.DRAFTING,
-            Phase.CONTENT_PENDING,
-            Phase.CONTENT_UPGRADED,
-            Phase.INVENTORY_PENDING,
-            Phase.INVENTORY_UPGRADED,
-        )
-    },
-}
-
-
-def check_transition(phase: Phase, command: str) -> Phase:
-    """Return the phase resulting from running *command* in *phase*.
-
-    Raises `PhaseError` for illegal transitions or unknown commands.
-    `regress-*` outcomes return `Phase.DRAFTING`. Caller is responsible
-    for applying any state mutation associated with regression.
-    """
-    try:
-        outcome = _TRANSITIONS[(phase, command)]
-    except KeyError:
-        raise PhaseError(
-            f"command {command!r} not legal in phase {phase.value!r}"
-        ) from None
-    if outcome is _ERR:
-        raise PhaseError(f"command {command!r} not legal in phase {phase.value!r}")
-    if outcome is _STAY:
-        return phase
-    if outcome is _REGRESS:
-        return Phase.DRAFTING
-    return outcome  # explicit Phase target (advance)
 
 
 # ---------------------------------------------------------------------------
@@ -382,25 +185,7 @@ def load_ots(staging: Path) -> OtsState:
 def save_ots(staging: Path, state: OtsState) -> None:
     """Atomically write `state` to `<staging>/ots.json` (temp + fsync + replace)."""
     raw_bytes = json.dumps(_serialize(state), sort_keys=True).encode()
-    _atomic_write_bytes(_ots_path(staging), raw_bytes)
-
-
-def _atomic_write_bytes(path: Path, data: bytes) -> None:
-    """Write *data* to *path* via write-temp + fsync + os.replace.
-
-    Readers never observe a torn file. On any failure the temp is removed
-    and the original error propagates.
-    """
-    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
-    try:
-        with open(tmp, "wb") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+    store._atomic_write_bytes(_ots_path(staging), raw_bytes)
 
 
 @contextmanager

@@ -34,16 +34,16 @@ from fakes import FakeBitcoinRPC, FakeSimpleProof
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
-from ocfl_cli.staging import (
+from ocfl_cli.stage.fsm import Phase
+from ocfl_cli.stage.state import (
     InventoryProof,
-    Phase,
-    StagingStore,
     Submission,
     VerifiedProof,
     VerifyJob,
     load_ots,
     save_ots,
 )
+from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 
 # --------------------------------------------------------------------------- #
@@ -723,8 +723,8 @@ class TestStageStatusOts:
         _inject_fake_sp(monkeypatch, sp_fake)
         _inject_fake_btc(monkeypatch, btc_fake.rpc)
 
-        from ocfl_cli import staging as staging_mod
         from ocfl_cli.commands import stage as stage_cmd
+        from ocfl_cli.stage import state as staging_mod
 
         def _boom(*a: object, **kw: object):
             raise AssertionError("status MUST NOT take the staging .lock")

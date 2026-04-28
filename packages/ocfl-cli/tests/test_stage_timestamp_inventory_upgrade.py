@@ -37,15 +37,15 @@ from typer.testing import CliRunner
 
 from ocfl_cli.main import app
 from ocfl_cli.ots.bitcoin import HashBlockStream
-from ocfl_cli.staging import (
-    Phase,
-    StagingStore,
+from ocfl_cli.stage.fsm import Phase
+from ocfl_cli.stage.state import (
     VerifiedProof,
     VerifyJob,
     load_ots,
     ots_cache_path,
     save_ots,
 )
+from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
 
@@ -470,13 +470,14 @@ def _install_inv_crash_fault(
 ) -> None:
     """Wrap module-level seams to raise at the specified inventory boundary.
 
-    ``_atomic_write_bytes`` from ``ocfl_cli.staging`` underlies BOTH the
-    ots-cache write (step 1) and the ots.json save (step 3). Fault site
-    is selected by inspecting the target path. The wire format flattens
-    ``inventory_proof.proof`` into the top-level ``inventory_proof``
-    object, so the JSON inspection looks at ``inventory_proof.verified``.
+    ``_atomic_write_bytes`` from ``ocfl_cli.stage.store`` underlies BOTH
+    the ots-cache write (step 1) and the ots.json save (step 3). Fault
+    site is selected by inspecting the target path. The wire format
+    flattens ``inventory_proof.proof`` into the top-level
+    ``inventory_proof`` object, so the JSON inspection looks at
+    ``inventory_proof.verified``.
     """
-    from ocfl_cli import staging as staging_mod
+    from ocfl_cli.stage import store as staging_mod
 
     real_atomic = staging_mod._atomic_write_bytes
 

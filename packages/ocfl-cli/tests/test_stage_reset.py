@@ -7,11 +7,10 @@ import pytest
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
-from ocfl_cli.staging import (
+from ocfl_cli.stage.fsm import Phase
+from ocfl_cli.stage.state import (
     InventoryProof,
     OtsState,
-    Phase,
-    StagingStore,
     Submission,
     VerifiedProof,
     VerifyJob,
@@ -20,6 +19,7 @@ from ocfl_cli.staging import (
     ots_cache_path,
     save_ots,
 )
+from ocfl_cli.stage.store import StagingStore
 
 
 @pytest.fixture

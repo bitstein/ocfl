@@ -24,7 +24,9 @@ import pytest
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
-from ocfl_cli.staging import Phase, StagingStore, has_ots, load_ots
+from ocfl_cli.stage.fsm import Phase
+from ocfl_cli.stage.state import has_ots, load_ots
+from ocfl_cli.stage.store import StagingStore
 
 # --------------------------------------------------------------------------- #
 # Config fixtures
