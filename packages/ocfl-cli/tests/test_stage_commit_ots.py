@@ -321,7 +321,7 @@ class TestStageCommitOtsKeyboardInterrupt:
         )
 
         with patch(
-            "ocfl_cli.commands.stage.execute_plan", side_effect=KeyboardInterrupt
+            "ocfl_cli.stage.service.execute_plan", side_effect=KeyboardInterrupt
         ):
             r = runner.invoke(
                 app,
@@ -385,7 +385,7 @@ class TestStageCommitOtsCrashRecovery:
 
         # --- Round 1: induced crash ---
         with patch(
-            "ocfl_cli.commands.stage.execute_plan",
+            "ocfl_cli.stage.service.execute_plan",
             side_effect=RuntimeError("simulated crash"),
         ):
             r1 = runner.invoke(

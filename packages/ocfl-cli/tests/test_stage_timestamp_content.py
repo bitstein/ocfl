@@ -103,7 +103,7 @@ def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> N
     `commands/stage.py` that the production submit path calls to obtain
     a ``SimpleProofClient``. Tests monkeypatch it to bypass the network.
     """
-    from ocfl_cli.commands import stage as stage_cmd
+    from ocfl_cli.stage import service as stage_cmd
 
     monkeypatch.setattr(
         stage_cmd, "_get_sp_client", lambda *a, **kw: fake, raising=False

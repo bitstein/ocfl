@@ -91,7 +91,7 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
 
 def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> None:
     """Patch ``_get_sp_client`` to return *fake*."""
-    from ocfl_cli.commands import stage as stage_cmd
+    from ocfl_cli.stage import service as stage_cmd
 
     monkeypatch.setattr(
         stage_cmd, "_get_sp_client", lambda *a, **kw: fake, raising=False

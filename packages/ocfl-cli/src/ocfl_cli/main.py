@@ -17,9 +17,9 @@ from ocfl_cli.commands.log import log
 from ocfl_cli.commands.ls import ls
 from ocfl_cli.commands.purge import purge
 from ocfl_cli.commands.show import show
-from ocfl_cli.commands.stage import stage_app
 from ocfl_cli.commands.validate import validate
 from ocfl_cli.config import ConfigError, load_config
+from ocfl_cli.stage import stage_app
 
 
 class _JsonFormatter(logging.Formatter):

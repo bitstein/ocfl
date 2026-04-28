@@ -101,7 +101,7 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
 
 def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> None:
     """Patch ``_get_sp_client`` to return *fake*."""
-    from ocfl_cli.commands import stage as stage_cmd
+    from ocfl_cli.stage import service as stage_cmd
 
     monkeypatch.setattr(
         stage_cmd, "_get_sp_client", lambda *a, **kw: fake, raising=False
@@ -115,7 +115,7 @@ def _inject_fake_btc(monkeypatch: pytest.MonkeyPatch, fake: FakeBitcoinRPC) -> N
     ``commands/stage.py`` (mirrors ``_get_sp_client``). Tests monkeypatch
     it to bypass the real RPC client.
     """
-    from ocfl_cli.commands import stage as stage_cmd
+    from ocfl_cli.stage import service as stage_cmd
 
     monkeypatch.setattr(stage_cmd, "_get_btc_rpc", lambda *a, **kw: fake, raising=False)
 
@@ -850,9 +850,9 @@ def _install_crash_fault(
     `_atomic_write_bytes` from `ocfl_cli.stage.store` underlies BOTH the
     ots-cache write (step 1) and the ots.json save (step 3). Fault site
     is selected by inspecting the target path. `ingest_file` from
-    `ocfl_cli.ingest` is the step-2 seam.
+    `ocfl_cli.stage.ingest` is the step-2 seam.
     """
-    from ocfl_cli import ingest as ingest_mod
+    from ocfl_cli.stage import ingest as ingest_mod
     from ocfl_cli.stage import store as staging_mod
 
     real_atomic = staging_mod._atomic_write_bytes
@@ -879,7 +879,7 @@ def _install_crash_fault(
         # patching the source module if it's referenced via attribute.
         _patch_attr(ingest_mod, "ingest_file", _ingest)
         try:
-            from ocfl_cli.commands import stage as stage_cmd
+            from ocfl_cli.stage import service as stage_cmd
 
             _patch_attr(stage_cmd, "ingest_file", _ingest)
         except ImportError:

@@ -95,7 +95,7 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
 
 
 def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> None:
-    from ocfl_cli.commands import stage as stage_cmd
+    from ocfl_cli.stage import service as stage_cmd
 
     monkeypatch.setattr(
         stage_cmd, "_get_sp_client", lambda *a, **kw: fake, raising=False
@@ -103,16 +103,16 @@ def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> N
 
 
 def _inject_fake_btc(monkeypatch: pytest.MonkeyPatch, fake: FakeBitcoinRPC) -> None:
-    from ocfl_cli.commands import stage as stage_cmd
+    from ocfl_cli.stage import service as stage_cmd
 
     monkeypatch.setattr(stage_cmd, "_get_btc_rpc", lambda *a, **kw: fake, raising=False)
 
 
 def _inject_fake_zmq(monkeypatch: pytest.MonkeyPatch, stream: HashBlockStream) -> None:
-    from ocfl_cli.commands import stage as stage_cmd
+    from ocfl_cli.stage import watch as stage_watch
 
     monkeypatch.setattr(
-        stage_cmd, "_get_zmq_subscriber", lambda *a, **kw: stream, raising=False
+        stage_watch, "_get_zmq_subscriber", lambda *a, **kw: stream, raising=False
     )
 
 
@@ -794,7 +794,7 @@ class TestInventoryWatchLoop:
         _inject_fake_sp(monkeypatch, sp_fake)
         _inject_fake_btc(monkeypatch, btc_fake.rpc)
 
-        from ocfl_cli.commands import stage as stage_cmd
+        from ocfl_cli.stage import service as stage_cmd
 
         # Speed knob: shrink the watch loop's lock timeout if the constant
         # exists (it does — see test_stage_timestamp_content_upgrade_watch).

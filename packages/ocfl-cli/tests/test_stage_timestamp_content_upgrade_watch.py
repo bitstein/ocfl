@@ -114,7 +114,7 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
 
 
 def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> None:
-    from ocfl_cli.commands import stage as stage_cmd
+    from ocfl_cli.stage import service as stage_cmd
 
     monkeypatch.setattr(
         stage_cmd, "_get_sp_client", lambda *a, **kw: fake, raising=False
@@ -122,24 +122,22 @@ def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> N
 
 
 def _inject_fake_btc(monkeypatch: pytest.MonkeyPatch, fake: FakeBitcoinRPC) -> None:
-    from ocfl_cli.commands import stage as stage_cmd
+    from ocfl_cli.stage import service as stage_cmd
 
     monkeypatch.setattr(stage_cmd, "_get_btc_rpc", lambda *a, **kw: fake, raising=False)
 
 
 def _inject_fake_zmq(monkeypatch: pytest.MonkeyPatch, stream: HashBlockStream) -> None:
-    """Patch the new ``_get_zmq_subscriber`` seam to return *stream*.
+    """Patch the ``_get_zmq_subscriber`` seam to return *stream*.
 
-    The implementer is expected to expose this private factory in
-    ``commands/stage.py`` (mirrors ``_get_sp_client`` / ``_get_btc_rpc``).
     Tests monkeypatch it to bypass real ZMQ sockets. Accepts any
     ``HashBlockStream``-shaped object (``InMemoryHashBlockStream`` or
     inline test stub).
     """
-    from ocfl_cli.commands import stage as stage_cmd
+    from ocfl_cli.stage import watch as stage_watch
 
     monkeypatch.setattr(
-        stage_cmd, "_get_zmq_subscriber", lambda *a, **kw: stream, raising=False
+        stage_watch, "_get_zmq_subscriber", lambda *a, **kw: stream, raising=False
     )
 
 
@@ -321,7 +319,7 @@ class TestWatchHeightJumpTriggersReverify:
         _inject_fake_sp(monkeypatch, sp_fake)
         _inject_fake_btc(monkeypatch, btc_fake.rpc)
 
-        from ocfl_cli.commands import stage as stage_cmd
+        from ocfl_cli.stage import service as stage_cmd
 
         # Spy: count invocations of _reverify_existing_proofs.
         real_reverify = stage_cmd._reverify_existing_proofs
@@ -421,7 +419,7 @@ class TestWatchTipChangeAtStableHeightTriggersReverify:
         _inject_fake_sp(monkeypatch, sp_fake)
         _inject_fake_btc(monkeypatch, btc_fake.rpc)
 
-        from ocfl_cli.commands import stage as stage_cmd
+        from ocfl_cli.stage import service as stage_cmd
 
         real_reverify = stage_cmd._reverify_existing_proofs
         calls: list[int] = []
@@ -582,7 +580,7 @@ class TestWatchLockTimeoutWarningAndContinue:
         _inject_fake_sp(monkeypatch, sp_fake)
         _inject_fake_btc(monkeypatch, btc_fake.rpc)
 
-        from ocfl_cli.commands import stage as stage_cmd
+        from ocfl_cli.stage import service as stage_cmd
 
         # Speed knob: monkeypatch the lock timeout if the constant exists.
         monkeypatch.setattr(stage_cmd, "_LOCK_TIMEOUT_SECONDS", 1, raising=False)
@@ -690,8 +688,8 @@ class TestTwoWatchersSerializeSafely:
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
         _register_attested(btc_fake.rpc, d)
 
-        from ocfl_cli.commands import stage as stage_cmd
         from ocfl_cli.config import load_config
+        from ocfl_cli.stage import watch as stage_watch
         from ocfl_lib import LocalFS, StorageRoot
 
         # Two independent streams; each delivers one block then raises
@@ -725,7 +723,7 @@ class TestTwoWatchersSerializeSafely:
             return streams[i]
 
         monkeypatch.setattr(
-            stage_cmd, "_get_zmq_subscriber", _next_stream, raising=False
+            stage_watch, "_get_zmq_subscriber", _next_stream, raising=False
         )
 
         # Call _watch_loop directly per thread. CliRunner patches
@@ -746,7 +744,7 @@ class TestTwoWatchersSerializeSafely:
                 store = StagingStore(staging)
                 sr = StorageRoot(LocalFS(empty_sha256_root))
                 barrier.wait(timeout=10)
-                results[tag] = stage_cmd._watch_loop(
+                results[tag] = stage_watch._watch_loop(
                     cfg, store, sr, root_path, "obj:watch-two", sd
                 )
             except BaseException as e:

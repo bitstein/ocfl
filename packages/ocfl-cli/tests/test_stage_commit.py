@@ -168,7 +168,7 @@ class TestSignalHandling:
         _invoke(runner, storage_root, staging, "add", "obj:interrupted", str(src))
 
         with patch(
-            "ocfl_cli.commands.stage.execute_plan", side_effect=KeyboardInterrupt
+            "ocfl_cli.stage.service.execute_plan", side_effect=KeyboardInterrupt
         ):
             result = _invoke(runner, storage_root, staging, "commit", "obj:interrupted")
 
@@ -185,7 +185,7 @@ class TestSignalHandling:
         _invoke(runner, storage_root, staging, "add", "obj:retry", str(src))
 
         with patch(
-            "ocfl_cli.commands.stage.execute_plan", side_effect=KeyboardInterrupt
+            "ocfl_cli.stage.service.execute_plan", side_effect=KeyboardInterrupt
         ):
             _invoke(runner, storage_root, staging, "commit", "obj:retry")
 
@@ -205,7 +205,7 @@ class TestSignalHandling:
         _invoke(runner, storage_root, staging, "add", "obj:clean", str(src))
 
         with patch(
-            "ocfl_cli.commands.stage.execute_plan", side_effect=KeyboardInterrupt
+            "ocfl_cli.stage.service.execute_plan", side_effect=KeyboardInterrupt
         ):
             _invoke(runner, storage_root, staging, "commit", "obj:clean")
 
@@ -225,7 +225,7 @@ class TestSignalHandling:
 
         # First attempt: interrupted
         with patch(
-            "ocfl_cli.commands.stage.execute_plan", side_effect=KeyboardInterrupt
+            "ocfl_cli.stage.service.execute_plan", side_effect=KeyboardInterrupt
         ):
             _invoke(runner, storage_root, staging, "commit", "obj:retried")
 

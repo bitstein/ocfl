@@ -107,7 +107,7 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
 
 
 def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> None:
-    from ocfl_cli.commands import stage as stage_cmd
+    from ocfl_cli.stage import service as stage_cmd
 
     monkeypatch.setattr(
         stage_cmd, "_get_sp_client", lambda *a, **kw: fake, raising=False
@@ -115,7 +115,7 @@ def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> N
 
 
 def _inject_fake_btc(monkeypatch: pytest.MonkeyPatch, fake: FakeBitcoinRPC) -> None:
-    from ocfl_cli.commands import stage as stage_cmd
+    from ocfl_cli.stage import service as stage_cmd
 
     monkeypatch.setattr(stage_cmd, "_get_btc_rpc", lambda *a, **kw: fake, raising=False)
 
@@ -723,7 +723,7 @@ class TestStageStatusOts:
         _inject_fake_sp(monkeypatch, sp_fake)
         _inject_fake_btc(monkeypatch, btc_fake.rpc)
 
-        from ocfl_cli.commands import stage as stage_cmd
+        from ocfl_cli.stage import service as stage_cmd
         from ocfl_cli.stage import state as staging_mod
 
         def _boom(*a: object, **kw: object):
@@ -835,7 +835,7 @@ class TestStageStatusOts:
         submitted = fake_now - timedelta(seconds=30)
         submitted_iso = submitted.isoformat(timespec="seconds")
 
-        from ocfl_cli.commands import stage as stage_cmd
+        from ocfl_cli.stage import service as stage_cmd
 
         monkeypatch.setattr(stage_cmd, "_status_now", lambda: fake_now, raising=False)
 
@@ -893,7 +893,7 @@ class TestStageStatusOts:
         submitted = fake_now - timedelta(seconds=7200)
         submitted_iso = submitted.isoformat(timespec="seconds")
 
-        from ocfl_cli.commands import stage as stage_cmd
+        from ocfl_cli.stage import service as stage_cmd
 
         monkeypatch.setattr(stage_cmd, "_status_now", lambda: fake_now, raising=False)
 
