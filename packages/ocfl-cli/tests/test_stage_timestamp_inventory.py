@@ -89,13 +89,9 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
     return store.staging_path(str(root.resolve()), object_id)
 
 
-def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> None:
-    """Patch ``_get_sp_client`` to return *fake*."""
-    from ocfl_cli.stage import service as stage_cmd
-
-    monkeypatch.setattr(
-        stage_cmd, "_get_sp_client", lambda *a, **kw: fake, raising=False
-    )
+def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
+    """Inject *fake* via ``runner.obj["sp_client_factory"]``."""
+    runner.obj["sp_client_factory"] = lambda cfg: fake
 
 
 # --------------------------------------------------------------------------- #
@@ -207,7 +203,7 @@ class TestInventoryBuild:
         """Manifest must contain both the data digest and the .ots companion
         digest after `stage timestamp inventory`."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, da, ots_digest = _setup_content_upgraded(
@@ -261,7 +257,7 @@ class TestPlanRoundTrip:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _da, _ots_digest = _setup_content_upgraded(
@@ -310,7 +306,7 @@ class TestPhaseGate:
     ) -> None:
         """Fresh OTS staging (phase=drafting) ⇒ exit 3 with a hint."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         _new_ots_staging(
@@ -342,7 +338,7 @@ class TestPhaseGate:
     ) -> None:
         """Phase=content-pending ⇒ exit 3 with a hint."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _paths, _digests = _new_ots_staging(
@@ -387,7 +383,7 @@ class TestResubmitAtInventoryPending:
         at `inventory-pending` re-POSTs the inventory digest and
         re-serializes the plan."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _da, _ots_digest = _setup_content_upgraded(
@@ -448,7 +444,7 @@ class TestNoopAtInventoryUpgraded:
         inventory proof): re-running is a noop — no SP submission, phase
         unchanged."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _da, _ots_digest = _setup_content_upgraded(

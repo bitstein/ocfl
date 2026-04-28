@@ -106,18 +106,12 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
     return store.staging_path(str(root.resolve()), object_id)
 
 
-def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> None:
-    from ocfl_cli.stage import service as stage_cmd
-
-    monkeypatch.setattr(
-        stage_cmd, "_get_sp_client", lambda *a, **kw: fake, raising=False
-    )
+def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
+    runner.obj["sp_client_factory"] = lambda cfg: fake
 
 
-def _inject_fake_btc(monkeypatch: pytest.MonkeyPatch, fake: FakeBitcoinRPC) -> None:
-    from ocfl_cli.stage import service as stage_cmd
-
-    monkeypatch.setattr(stage_cmd, "_get_btc_rpc", lambda *a, **kw: fake, raising=False)
+def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
+    runner.obj["btc_rpc_factory"] = lambda cfg: fake
 
 
 # --------------------------------------------------------------------------- #
@@ -234,8 +228,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         _new_ots_staging_no_files(runner, empty_sha256_root, staging, "obj:s-empty")
@@ -260,8 +254,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         _new_ots_staging(
@@ -288,8 +282,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, digests = _new_ots_staging(
@@ -348,8 +342,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, digests = _new_ots_staging(
@@ -396,8 +390,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, digests = _new_ots_staging(
@@ -435,8 +429,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, digests = _new_ots_staging(
@@ -483,8 +477,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, digests = _new_ots_staging(
@@ -532,8 +526,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, digests = _new_ots_staging(
@@ -571,8 +565,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, digests = _new_ots_staging(
@@ -610,8 +604,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         _new_ots_staging(
@@ -648,8 +642,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _ = _new_ots_staging(
@@ -683,8 +677,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _ = _new_ots_staging(
@@ -720,8 +714,8 @@ class TestStageStatusOts:
         ``with_lock`` to raise if called from anywhere in the status path.
         """
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         from ocfl_cli.stage import service as stage_cmd
         from ocfl_cli.stage import state as staging_mod
@@ -761,8 +755,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, digests = _new_ots_staging(
@@ -815,8 +809,8 @@ class TestStageStatusOts:
     ) -> None:
         """Ages under a minute render as ``Ns ago`` (or close-equivalent)."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, digests = _new_ots_staging(
@@ -874,8 +868,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, digests = _new_ots_staging(
@@ -933,8 +927,8 @@ class TestStageStatusOts:
     ) -> None:
         """FakeBitcoinRPC reports ibd=False, vp=1.0 ⇒ ``bitcoin.in_sync == True``."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         _new_ots_staging(
@@ -975,7 +969,7 @@ class TestStageStatusOts:
         --ots``); we then drop [bitcoin] from config before invoking status.
         """
         _write_config(tmp_path, monkeypatch)  # full config to enable `stage new --ots`
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         _new_ots_staging(
@@ -1008,8 +1002,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         _new_ots_staging(
@@ -1041,8 +1035,8 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         _new_ots_staging(

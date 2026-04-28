@@ -19,6 +19,8 @@ from ocfl_cli.commands.purge import purge
 from ocfl_cli.commands.show import show
 from ocfl_cli.commands.validate import validate
 from ocfl_cli.config import ConfigError, load_config
+from ocfl_cli.ots.bitcoin import default_btc_factory
+from ocfl_cli.ots.simpleproof import default_sp_factory
 from ocfl_cli.stage import stage_app
 
 
@@ -143,3 +145,6 @@ def main(
     ctx.obj["quiet"] = quiet
     ctx.obj["verbose"] = verbose
     ctx.obj["no_color"] = no_color
+    # `setdefault` so tests can pre-inject fakes via `runner.invoke(obj=...)`.
+    ctx.obj.setdefault("sp_client_factory", default_sp_factory)
+    ctx.obj.setdefault("btc_rpc_factory", default_btc_factory)

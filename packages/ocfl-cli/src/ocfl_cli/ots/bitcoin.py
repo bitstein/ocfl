@@ -6,9 +6,10 @@ through tracebacks or log handlers.
 """
 
 import contextlib
+from base64 import b64encode
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 import zmq
@@ -21,6 +22,9 @@ from ocfl_cli.errors import (
     ReorgDetectedError,
 )
 from ocfl_lib.ots import parse as parse_ots
+
+if TYPE_CHECKING:
+    from ocfl_cli.config import Config
 
 _REDACTED = "<redacted>"
 _SENSITIVE_HEADERS: tuple[str, ...] = (
@@ -269,3 +273,20 @@ def verify_attestation(
         block_hash=block_hash,
         confirmations=header.confirmations,
     )
+
+
+def default_btc_factory(cfg: Config) -> BitcoinRPC:
+    """Construct the production `BitcoinRPCClient` from `cfg`.
+
+    Registered on `ctx.obj["btc_rpc_factory"]` by `main` so service
+    callers (and tests via `runner.invoke(obj=...)`) share one entry
+    point for client construction.
+    """
+    btc_cfg = cfg.bitcoin
+    if btc_cfg is None:
+        raise RuntimeError("bitcoin config missing")
+
+    creds = f"{btc_cfg.rpc_user}:{btc_cfg.rpc_password.get_secret_value()}"
+    headers = {"Authorization": "Basic " + b64encode(creds.encode()).decode()}
+    client = httpx.Client(timeout=btc_cfg.rpc_timeout_s, headers=headers)
+    return BitcoinRPCClient(btc_cfg.rpc_url, client=client)

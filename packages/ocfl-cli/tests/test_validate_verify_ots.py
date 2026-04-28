@@ -13,13 +13,8 @@ Pinned by ``OTS workflow contract``:
 - Structural validation ALWAYS runs, regardless of
   ``--verify-ots``/``--no-verify-ots``.
 
-Test-infrastructure seam (introduced by the implementer in
-``commands/validate.py``):
-
-- ``_get_btc_rpc(cfg)`` — production factory returning a ``BitcoinRPC``.
-  Tests monkeypatch it to inject ``FakeBitcoinRPC`` (mirrors the
-  ``_get_btc_rpc`` seam in ``commands/stage.py``; see
-  ``test_stage_timestamp_content_upgrade.py::_inject_fake_btc``).
+Tests inject a ``FakeBitcoinRPC`` via ``runner.obj["btc_rpc_factory"]``
+(see ``conftest.py::runner`` for the auto-attach mechanism).
 """
 
 import hashlib
@@ -30,7 +25,6 @@ import pytest
 from fakes import FakeBitcoinRPC
 from typer.testing import CliRunner
 
-from ocfl_cli.commands import validate as validate_cmd
 from ocfl_cli.main import app
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
@@ -83,16 +77,9 @@ def _write_config(
 # --------------------------------------------------------------------------- #
 
 
-def _inject_fake_btc(monkeypatch: pytest.MonkeyPatch, fake: FakeBitcoinRPC) -> None:
-    """Patch ``commands.validate._get_btc_rpc`` to return *fake*.
-
-    ``raising=False`` keeps the patch a no-op when the seam doesn't yet
-    exist on the module — RED runs surface the missing-symbol diagnostic
-    via the exit code / behavior assertion, not via the patch itself.
-    """
-    monkeypatch.setattr(
-        validate_cmd, "_get_btc_rpc", lambda *a, **kw: fake, raising=False
-    )
+def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
+    """Inject *fake* via ``runner.obj["btc_rpc_factory"]``."""
+    runner.obj["btc_rpc_factory"] = lambda cfg: fake
 
 
 def _grow_chain_to(rpc: FakeBitcoinRPC, height: int) -> None:
@@ -250,14 +237,6 @@ class TestDefaultOnVerifyOts:
         """Extension present + default-on + correct merkle registered → exit 0."""
         _write_config(tmp_path, monkeypatch)
 
-        # RED diagnostic: assert the seam exists BEFORE injecting. With
-        # ``raising=False`` ``monkeypatch.setattr`` would otherwise create
-        # the attribute itself and mask the missing-symbol diagnostic.
-        assert hasattr(validate_cmd, "_get_btc_rpc"), (
-            "implementer must expose `_get_btc_rpc(cfg)` on "
-            "ocfl_cli.commands.validate so tests can inject a FakeBitcoinRPC"
-        )
-
         # Track whether the cmd actually consults the RPC — the walk must
         # happen by default when the OTS extension is present.
         calls: list[str] = []
@@ -267,7 +246,7 @@ class TestDefaultOnVerifyOts:
                 calls.append(name)
                 return getattr(btc_fake.rpc, name)
 
-        _inject_fake_btc(monkeypatch, _SpyRPC())  # type: ignore[arg-type]
+        _inject_fake_btc(runner, _SpyRPC())  # type: ignore[arg-type]
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
 
@@ -287,7 +266,7 @@ class TestDefaultOnVerifyOts:
         assert data["errors"] == []
         # Walk actually happened: RPC was consulted at least once.
         assert calls, (
-            "default-on must walk the chain via _get_btc_rpc; "
+            "default-on must walk the chain via the injected btc factory; "
             "no RPC methods were invoked"
         )
 
@@ -314,7 +293,7 @@ class TestNoVerifyOtsSkipsWalk:
         # Inject the fake but DO NOT register any merkle / extend chain;
         # if the cmd touches the RPC despite --no-verify-ots, verification
         # will fail and surface the bug.
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
 
@@ -430,7 +409,7 @@ class TestVerifyTimeMismatchE906:
         attested height → reports new error code ``E906`` and exits 1.
         """
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
 
@@ -467,8 +446,8 @@ class TestRegtestVerifyOtsEndToEnd:
         Builds an OCFL object with content + inventory ``.ots`` companions
         anchored to real regtest blocks (``OP_RETURN`` commit, real merkle
         path, real block header). Runs ``ocfl validate --verify-ots`` —
-        production ``_get_btc_rpc`` path drives a real ``BitcoinRPCClient``
-        against the regtest node.
+        production ``btc_rpc_factory`` path drives a real
+        ``BitcoinRPCClient`` against the regtest node.
         """
         from tests.helpers.ots import build_regtest_attestation
         from tests.helpers.regtest import bitcoin_config_toml, bury_to_confs
@@ -553,7 +532,7 @@ class TestRegtestVerifyOtsEndToEnd:
         (ext_dir / "config.json").write_text(json.dumps({"extensionName": _EXT_NAME}))
         (ext_dir / "inventory.json.v1.ots").write_bytes(inv_ots)
 
-        # Run validate; production _get_btc_rpc builds a real client from cfg.
+        # Run validate; production btc_rpc_factory builds a real client from cfg.
         r = runner.invoke(
             app, ["--root", str(root), "--json", "validate", "obj-regtest"]
         )

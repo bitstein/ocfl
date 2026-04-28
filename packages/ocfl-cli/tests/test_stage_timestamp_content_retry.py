@@ -84,13 +84,9 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
     return store.staging_path(str(root.resolve()), object_id)
 
 
-def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> None:
-    """Patch ``_get_sp_client`` to return *fake*."""
-    from ocfl_cli.stage import service as stage_cmd
-
-    monkeypatch.setattr(
-        stage_cmd, "_get_sp_client", lambda *a, **kw: fake, raising=False
-    )
+def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
+    """Inject *fake* via ``runner.obj["sp_client_factory"]``."""
+    runner.obj["sp_client_factory"] = lambda cfg: fake
 
 
 # --------------------------------------------------------------------------- #
@@ -175,7 +171,7 @@ class TestRetryResubmitsOnlyFailed:
         only the failed entry's digests; the other two are byte-identical
         afterwards. Phase stays content-pending."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -276,7 +272,7 @@ class TestRetryEmptyFailedNoop:
         """No failed submissions: --retry exits 0, posts nothing, leaves
         ots.json byte-equal, and prints a user-friendly notice."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -344,7 +340,7 @@ class TestRetryMultipleFailedIndependent:
         """Two disjoint failed submissions ⇒ two SP POSTs; both flip to
         submitted; both attempts incremented."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -436,7 +432,7 @@ class TestRetryPhaseGate:
         """All phases ∉ {content-pending} ⇒ non-zero exit with the wrong
         phase mentioned in stderr/stdout."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -504,7 +500,7 @@ class TestRetryFlagCombinationGuards:
         """``--retry --upgrade`` and ``--retry --watch`` rejected at CLI
         surface with non-zero exit and an actionable message."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -576,7 +572,7 @@ class TestRetryCrashSafeShape:
         tests; --retry reuses the same protocol, so this asserts the
         end-state shape is consistent."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(

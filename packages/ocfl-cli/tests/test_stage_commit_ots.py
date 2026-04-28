@@ -147,8 +147,8 @@ class TestStageCommitOtsHappyPath:
         - Purges the entire staging directory (incl. ``ots-cache/``).
         """
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _da, _inv_digest, ots_bytes = _setup_at_inventory_upgraded(
@@ -205,8 +205,8 @@ class TestStageCommitOtsCorruptedCache:
         """Overwrite the cached ots with bytes that commit to a DIFFERENT
         digest than ``plan.new_inv.digest`` ⇒ HALT (exit 5) with hint."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
@@ -260,8 +260,8 @@ class TestStageCommitOtsMissingCache:
     ) -> None:
         """Unlink ``ots-cache/<inv_digest>.ots`` ⇒ HALT (exit 5) with hint."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
@@ -312,8 +312,8 @@ class TestStageCommitOtsKeyboardInterrupt:
         revert undoes any object-side writes (no extension file, no root
         inventory), and staging survives for retry."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         _sd, _da, _inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
@@ -375,8 +375,8 @@ class TestStageCommitOtsCrashRecovery:
         Round 2: re-run ``stage commit`` (no patch) ⇒ load-parse-fill
         converges, exit 0, object exists, staging purged."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest, ots_bytes = _setup_at_inventory_upgraded(

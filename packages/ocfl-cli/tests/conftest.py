@@ -50,7 +50,24 @@ def _isolate_user_config(tmp_path_factory, monkeypatch):
 
 @pytest.fixture
 def runner():
-    return CliRunner()
+    """CliRunner that auto-attaches a per-test ``obj`` dict to every invoke.
+
+    Tests inject `sp_client_factory` / `btc_rpc_factory` into ``runner.obj``
+    (typically via per-file `_inject_fake_*` helpers); the wrapper passes
+    the dict through to ``CliRunner.invoke(obj=...)``. Explicit ``obj=``
+    kwargs from callers win.
+    """
+    runner = CliRunner()
+    obj: dict = {}
+    runner.obj = obj  # type: ignore[attr-defined]
+    original_invoke = runner.invoke
+
+    def invoke(*args, **kwargs):
+        kwargs.setdefault("obj", obj)
+        return original_invoke(*args, **kwargs)
+
+    runner.invoke = invoke  # type: ignore[method-assign]
+    return runner
 
 
 @pytest.fixture

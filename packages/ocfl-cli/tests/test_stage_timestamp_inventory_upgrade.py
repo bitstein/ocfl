@@ -94,18 +94,14 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
     return store.staging_path(str(root.resolve()), object_id)
 
 
-def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> None:
-    from ocfl_cli.stage import service as stage_cmd
-
-    monkeypatch.setattr(
-        stage_cmd, "_get_sp_client", lambda *a, **kw: fake, raising=False
-    )
+def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
+    """Inject *fake* via ``runner.obj["sp_client_factory"]``."""
+    runner.obj["sp_client_factory"] = lambda cfg: fake
 
 
-def _inject_fake_btc(monkeypatch: pytest.MonkeyPatch, fake: FakeBitcoinRPC) -> None:
-    from ocfl_cli.stage import service as stage_cmd
-
-    monkeypatch.setattr(stage_cmd, "_get_btc_rpc", lambda *a, **kw: fake, raising=False)
+def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
+    """Inject *fake* via ``runner.obj["btc_rpc_factory"]``."""
+    runner.obj["btc_rpc_factory"] = lambda cfg: fake
 
 
 def _inject_fake_zmq(monkeypatch: pytest.MonkeyPatch, stream: HashBlockStream) -> None:
@@ -296,8 +292,8 @@ class TestInventoryUpgradeHappyPath:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest = _setup_at_inventory_pending(
@@ -388,8 +384,8 @@ class TestInventoryCrashRecovery:
         fault_at: str,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest = _setup_at_inventory_pending(
@@ -547,8 +543,8 @@ class TestInventoryPhaseAdvance:
     ) -> None:
         """Verify success at min_confs ⇒ advance to inventory-upgraded."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest = _setup_at_inventory_pending(
@@ -590,8 +586,8 @@ class TestInventoryPhaseAdvance:
         inventory-pending with ``inventory_proof.proof.verified=False``;
         cache bytes still written (step 1)."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest = _setup_at_inventory_pending(
@@ -633,8 +629,8 @@ class TestInventoryPhaseAdvance:
         """Chain shallower than ``confirmations`` past attested height ⇒
         stays at inventory-pending; ``verified=False`` persisted."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest = _setup_at_inventory_pending(
@@ -683,8 +679,8 @@ class TestInventoryWatchLoop:
         """One pre-pushed block ⇒ one upgrade pass that verifies + advances
         phase to inventory-upgraded; exits 0."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest = _setup_at_inventory_pending(
@@ -740,8 +736,8 @@ class TestInventoryWatchLoop:
         """Stream raises ``KeyboardInterrupt`` before delivering a block;
         CLI must exit 130 and ``ots.json`` must parse cleanly afterwards."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest = _setup_at_inventory_pending(
@@ -791,8 +787,8 @@ class TestInventoryWatchLoop:
         loop did NOT crash with ``LockTimeoutError`` and that a WARNING
         was logged with a message mentioning ``lock``."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         from ocfl_cli.stage import service as stage_cmd
 
@@ -876,7 +872,7 @@ class TestInventoryRetryFlagCombinationGuards:
         surface with non-zero exit and an actionable message naming both
         conflicting flags."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _da, _inv_digest = _setup_at_inventory_pending(
@@ -933,7 +929,7 @@ class TestInventoryRetryPhaseGate:
         """All phases ∉ {inventory-pending} ⇒ exit 3 with the wrong-phase
         value surfaced in the diagnostic."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _da, _inv_digest = _setup_at_inventory_pending(
@@ -983,7 +979,7 @@ class TestInventoryRetryHappyPath:
         IS the "retry" (mirrors content --retry's "re-POST FAILED"
         intent). InventoryProof is not required to grow a status field."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest = _setup_at_inventory_pending(
@@ -1041,8 +1037,8 @@ class TestRegtestEndToEndInventoryUpgrade:
 
         cfg_body = _SP_OK + bitcoin_config_toml(bitcoind_regtest, confirmations=3)
         _write_config(tmp_path, monkeypatch, body=cfg_body)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        # Production _get_btc_rpc path used.
+        _inject_fake_sp(runner, sp_fake)
+        # Production btc_rpc_factory path used.
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest = _setup_at_inventory_pending(

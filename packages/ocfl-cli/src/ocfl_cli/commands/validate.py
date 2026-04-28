@@ -1,11 +1,9 @@
 """ocfl validate command."""
 
-import base64
 import hashlib
 import json
 from typing import TYPE_CHECKING, Annotated, NoReturn
 
-import httpx
 import typer
 
 from ocfl_cli import _style
@@ -16,8 +14,6 @@ from ocfl_cli.errors import (
     ReorgDetectedError,
 )
 from ocfl_cli.ots.bitcoin import (
-    BitcoinRPC,
-    BitcoinRPCClient,
     PendingReason,
     PendingVerification,
     VerifiedAttestation,
@@ -27,6 +23,7 @@ from ocfl_lib import OcflError, ValidationResult, validate_object, validate_root
 from ocfl_lib.fs import utils as fs_utils
 
 if TYPE_CHECKING:
+    from ocfl_cli._appctx import BtcRpcFactory
     from ocfl_cli.config import Config
     from ocfl_lib.fs.protocols import FS
 
@@ -120,7 +117,7 @@ def _validate_object(
 
     if verify_ots and _ots_extension_present(fs, obj_path):
         cfg = ctx.obj.get("config")
-        _verify_ots_walk(fs, obj_path, cfg, result)
+        _verify_ots_walk(fs, obj_path, cfg, result, ctx.obj["btc_rpc_factory"])
 
     _output_result(result, json_mode, suppress)
     if not result.is_valid:
@@ -137,6 +134,7 @@ def _verify_ots_walk(
     obj_path: str,
     cfg: Config | None,
     result: ValidationResult,
+    btc_factory: BtcRpcFactory,
 ) -> None:
     """Walk extension `inventory.json.{vkey}.ots` files through ``verify_attestation``.
 
@@ -158,7 +156,7 @@ def _verify_ots_walk(
     if not versions:
         return
 
-    rpc = _get_btc_rpc(cfg)
+    rpc = btc_factory(cfg)
     min_confs = cfg.bitcoin.confirmations
     ext_root = _join(obj_path, "extensions", _OTS_EXT_NAME)
 
@@ -211,21 +209,6 @@ def _enumerate_versions(fs: FS, obj_path: str) -> list[str]:
     if not isinstance(versions, dict):
         return []
     return sorted(k for k in versions if isinstance(k, str))
-
-
-def _get_btc_rpc(cfg: Config) -> BitcoinRPC:
-    """Construct the production `BitcoinRPCClient` from `cfg`.
-
-    Tests monkeypatch this seam to inject `FakeBitcoinRPC`.
-    """
-    btc_cfg = cfg.bitcoin
-    if btc_cfg is None:
-        raise RuntimeError("bitcoin config missing")
-
-    creds = f"{btc_cfg.rpc_user}:{btc_cfg.rpc_password.get_secret_value()}"
-    headers = {"Authorization": "Basic " + base64.b64encode(creds.encode()).decode()}
-    client = httpx.Client(timeout=btc_cfg.rpc_timeout_s, headers=headers)
-    return BitcoinRPCClient(btc_cfg.rpc_url, client=client)
 
 
 def _fail(msg: str, json_mode: bool) -> NoReturn:

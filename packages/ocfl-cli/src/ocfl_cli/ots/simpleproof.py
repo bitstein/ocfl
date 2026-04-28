@@ -20,6 +20,8 @@ from ocfl_lib.ots import parse as parse_ots
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from ocfl_cli.config import Config
+
 
 _REDACTED = "<redacted>"
 _SENSITIVE_HEADERS: tuple[str, ...] = ("x-access-token", "x-api-key")
@@ -250,3 +252,21 @@ class SimpleProofHttpClient:
                 )
             out[claimed] = ots_bytes
         return out
+
+
+def default_sp_factory(cfg: Config) -> SimpleProofClient:
+    """Construct the production `SimpleProofHttpClient` from `cfg`.
+
+    Registered on `ctx.obj["sp_client_factory"]` by `main` so service
+    callers (and tests via `runner.invoke(obj=...)`) share one entry
+    point for client construction.
+    """
+    sp_cfg = cfg.simpleproof
+    if sp_cfg is None:
+        raise RuntimeError("simpleproof config missing")
+    client = httpx.Client(timeout=sp_cfg.timeout_s)
+    creds = SimpleProofCreds(
+        access_token=sp_cfg.access_token.get_secret_value(),
+        api_key=sp_cfg.api_key.get_secret_value(),
+    )
+    return SimpleProofHttpClient(sp_cfg.base_url, creds, client=client)

@@ -34,9 +34,10 @@ Test infrastructure seam (introduced by the implementer in
 ``commands/stage.py``):
 
 - ``_get_zmq_subscriber(cfg)`` — production factory returning a
-  ``HashBlockStream``-shaped object (mirrors ``_get_sp_client`` /
-  ``_get_btc_rpc``). Tests monkeypatch it to inject
+  ``HashBlockStream``-shaped object. Tests monkeypatch it to inject
   ``InMemoryHashBlockStream`` from ``tests/fakes/fake_bitcoin.py``.
+  SimpleProof / Bitcoin clients are injected via ``runner.obj``
+  factory entries (see ``conftest.py::runner``).
 
 These tests are RED until both the ``--watch`` flag and the
 ``_get_zmq_subscriber`` seam land. Either failure mode (unknown CLI
@@ -113,18 +114,14 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
     return store.staging_path(str(root.resolve()), object_id)
 
 
-def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> None:
-    from ocfl_cli.stage import service as stage_cmd
-
-    monkeypatch.setattr(
-        stage_cmd, "_get_sp_client", lambda *a, **kw: fake, raising=False
-    )
+def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
+    """Inject *fake* via ``runner.obj["sp_client_factory"]``."""
+    runner.obj["sp_client_factory"] = lambda cfg: fake
 
 
-def _inject_fake_btc(monkeypatch: pytest.MonkeyPatch, fake: FakeBitcoinRPC) -> None:
-    from ocfl_cli.stage import service as stage_cmd
-
-    monkeypatch.setattr(stage_cmd, "_get_btc_rpc", lambda *a, **kw: fake, raising=False)
+def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
+    """Inject *fake* via ``runner.obj["btc_rpc_factory"]``."""
+    runner.obj["btc_rpc_factory"] = lambda cfg: fake
 
 
 def _inject_fake_zmq(monkeypatch: pytest.MonkeyPatch, stream: HashBlockStream) -> None:
@@ -256,8 +253,8 @@ class TestWatchLoopAdvancesOnBlock:
         """One pre-pushed block ⇒ one upgrade pass that verifies + advances
         phase to content-upgraded; exits 0."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         stream = InMemoryHashBlockStream()
         _inject_fake_zmq(monkeypatch, stream)
@@ -316,8 +313,8 @@ class TestWatchHeightJumpTriggersReverify:
         Spy on the module-level ``_reverify_existing_proofs`` to assert
         it ran."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         from ocfl_cli.stage import service as stage_cmd
 
@@ -416,8 +413,8 @@ class TestWatchTipChangeAtStableHeightTriggersReverify:
         """Tip-hash differs at the same height between wakes ⇒ regtest
         reorg signal ⇒ ``_reverify_existing_proofs`` runs."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         from ocfl_cli.stage import service as stage_cmd
 
@@ -510,8 +507,8 @@ class TestWatchSigintExits130WithoutTornCheckpoint:
         signal handler that flips the cancel flag. Either way, the CLI
         must exit 130 and ``ots.json`` must parse cleanly afterwards."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -577,8 +574,8 @@ class TestWatchLockTimeoutWarningAndContinue:
         chooses an inline ``timeout=30`` literal, this test will pause
         for 30s before continuing — still correct, just slow."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         from ocfl_cli.stage import service as stage_cmd
 
@@ -669,8 +666,8 @@ class TestTwoWatchersSerializeSafely:
         Both must exit 0; final state has no torn writes; phase
         advanced to content-upgraded; the proof verifies."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -745,7 +742,14 @@ class TestTwoWatchersSerializeSafely:
                 sr = StorageRoot(LocalFS(empty_sha256_root))
                 barrier.wait(timeout=10)
                 results[tag] = stage_watch._watch_loop(
-                    cfg, store, sr, root_path, "obj:watch-two", sd
+                    cfg,
+                    store,
+                    sr,
+                    root_path,
+                    "obj:watch-two",
+                    sd,
+                    sp_factory=lambda _cfg: sp_fake,
+                    btc_factory=lambda _cfg: btc_fake.rpc,
                 )
             except BaseException as e:
                 errors[tag] = e
@@ -802,8 +806,8 @@ class TestRegtestRealZmqHashblockDelivery:
 
         cfg_body = _SP_OK + bitcoin_config_toml(bitcoind_regtest, confirmations=3)
         _write_config(tmp_path, monkeypatch, body=cfg_body)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        # Production _get_btc_rpc + _get_zmq_subscriber paths used.
+        _inject_fake_sp(runner, sp_fake)
+        # Production btc_rpc_factory + _get_zmq_subscriber paths used.
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -831,6 +835,11 @@ class TestRegtestRealZmqHashblockDelivery:
         # from the main thread once the loop is up.
         result: dict[str, Any] = {}
 
+        # Fresh CliRunner per thread (process-global stdout/stderr issues
+        # with the fixture runner under threads); pass `runner.obj` so the
+        # injected sp_client_factory still flows through.
+        thread_obj = dict(runner.obj)
+
         def _run() -> None:
             r = CliRunner().invoke(
                 app,
@@ -843,6 +852,7 @@ class TestRegtestRealZmqHashblockDelivery:
                     "--upgrade",
                     "--watch",
                 ),
+                obj=thread_obj,
             )
             result["exit"] = r.exit_code
             result["output"] = r.output

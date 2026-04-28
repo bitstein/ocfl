@@ -20,9 +20,9 @@ Pins step 10 of `OTS workflow contract`:
   without failure (`crash_safe_submit_protocol.on_startup`).
 
 The CLI command is the new ``stage timestamp content <object_id>``
-subcommand under ``stage_app``. The tests inject a ``FakeSimpleProof``
-through the implementation seam ``ocfl_cli.commands.stage._get_sp_client``
-(monkeypatched). The implementer is expected to add that private factory.
+subcommand under ``stage_app``. Tests inject a ``FakeSimpleProof``
+via ``runner.obj["sp_client_factory"]`` (see ``conftest.py::runner``
+for the auto-attach mechanism).
 """
 
 import hashlib
@@ -96,18 +96,14 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
     return store.staging_path(str(root.resolve()), object_id)
 
 
-def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> None:
-    """Patch the `_get_sp_client` seam to return *fake*.
+def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
+    """Inject *fake* via ``runner.obj["sp_client_factory"]``.
 
-    The implementer is expected to expose a private factory in
-    `commands/stage.py` that the production submit path calls to obtain
-    a ``SimpleProofClient``. Tests monkeypatch it to bypass the network.
+    The runner fixture (conftest) auto-passes ``runner.obj`` as the
+    typer-context obj on every ``runner.invoke``; service consumes the
+    factory on its kwargs.
     """
-    from ocfl_cli.stage import service as stage_cmd
-
-    monkeypatch.setattr(
-        stage_cmd, "_get_sp_client", lambda *a, **kw: fake, raising=False
-    )
+    runner.obj["sp_client_factory"] = lambda cfg: fake
 
 
 # --------------------------------------------------------------------------- #
@@ -164,7 +160,7 @@ class TestFullSubmitFlow:
     ) -> None:
         """Fresh OTS staging + stage add → timestamp content submits, phase=CP."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
 
@@ -221,7 +217,7 @@ class TestFullSubmitFlow:
     ) -> None:
         """Digest already in committed `obj.inventory.manifest` not resubmitted."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         r = runner.invoke(
@@ -285,7 +281,7 @@ class TestDeleteRenameOnlyNoop:
         prints `nothing to timestamp; advancing to content-upgraded`,
         advances phase to ``content-upgraded``, no SP calls."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         r = runner.invoke(
@@ -384,7 +380,7 @@ class TestChunkingBoundary:
         expected_chunk_count: int,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         r = runner.invoke(
@@ -460,7 +456,7 @@ class TestCrashSafeResubmit:
     ) -> None:
         """`submitting` entry persisted across crash → next run resubmits."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         r = runner.invoke(
@@ -508,7 +504,7 @@ class TestDoubleSubmitBenign:
         """Two `submitting` intents (e.g., crashed twice) → both resubmit;
         FakeSimpleProof records duplicates without failure."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
+        _inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         r = runner.invoke(

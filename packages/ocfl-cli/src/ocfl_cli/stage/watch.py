@@ -5,8 +5,9 @@ moved (height jumped or stable-height tip swapped — the reorg/stale-tip
 window) and re-verify cached proofs accordingly, then run one upgrade
 pass. Returns when the phase advances or the user interrupts.
 
-Calls into `service` via attribute lookup at call time so test
-monkeypatches on `service._get_*` apply transparently here.
+Receives `sp_factory` / `btc_factory` from the typer callback (sourced
+from `ctx.obj`); tests inject fakes by passing the same dict to
+`runner.invoke(obj=...)`.
 """
 
 import contextlib
@@ -21,6 +22,7 @@ from ocfl_cli.stage.state import load_ots, save_ots, with_lock
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ocfl_cli._appctx import BtcRpcFactory, SpClientFactory
     from ocfl_cli.config import Config
     from ocfl_cli.ots.bitcoin import HashBlockStream
     from ocfl_cli.stage.store import StagingStore
@@ -49,13 +51,16 @@ def _watch_loop(
     root_path: str,
     object_id: str,
     staging_dir: Path,
+    *,
+    sp_factory: SpClientFactory,
+    btc_factory: BtcRpcFactory,
 ) -> int:
     """Drive ``timestamp content --upgrade --watch`` end-to-end. Returns exit code."""
     btc_cfg = cfg.bitcoin
     if btc_cfg is None or cfg.simpleproof is None:
         raise RuntimeError("config missing required sections")
     min_confs = btc_cfg.confirmations
-    btc = service._get_btc_rpc(cfg)
+    btc = btc_factory(cfg)
     last_height: int | None = None
     last_tip_hash: str | None = None
     stream = _get_zmq_subscriber(cfg)
@@ -87,7 +92,7 @@ def _watch_loop(
                             and last_tip_hash != info.best_block_hash
                         )
                         if height_jumped or tip_changed_at_stable:
-                            sp = service._get_sp_client(cfg)
+                            sp = sp_factory(cfg)
                             state = load_ots(staging_dir)
                             state = service._reverify_existing_proofs(
                                 state, btc, sp, staging_dir, min_confs
@@ -96,7 +101,14 @@ def _watch_loop(
                         last_height = info.height
                         last_tip_hash = info.best_block_hash
                         service._upgrade_pass_locked(
-                            cfg, store, sr, root_path, object_id, staging_dir
+                            cfg,
+                            store,
+                            sr,
+                            root_path,
+                            object_id,
+                            staging_dir,
+                            sp_factory=sp_factory,
+                            btc_factory=btc_factory,
                         )
                         state = load_ots(staging_dir)
                         if state.phase is Phase.CONTENT_UPGRADED:
@@ -110,13 +122,19 @@ def _watch_loop(
         return 130
 
 
-def _inventory_watch_loop(cfg: Config, staging_dir: Path) -> int:
+def _inventory_watch_loop(
+    cfg: Config,
+    staging_dir: Path,
+    *,
+    sp_factory: SpClientFactory,
+    btc_factory: BtcRpcFactory,
+) -> int:
     """Drive ``timestamp inventory --upgrade --watch``. Returns exit code."""
     btc_cfg = cfg.bitcoin
     if btc_cfg is None or cfg.simpleproof is None:
         raise RuntimeError("config missing required sections")
     min_confs = btc_cfg.confirmations
-    btc = service._get_btc_rpc(cfg)
+    btc = btc_factory(cfg)
     last_height: int | None = None
     last_tip_hash: str | None = None
     stream = _get_zmq_subscriber(cfg)
@@ -145,7 +163,7 @@ def _inventory_watch_loop(cfg: Config, staging_dir: Path) -> int:
                             and last_tip_hash != info.best_block_hash
                         )
                         if height_jumped or tip_changed_at_stable:
-                            sp = service._get_sp_client(cfg)
+                            sp = sp_factory(cfg)
                             state = load_ots(staging_dir)
                             state = service._inventory_reverify_existing_proof(
                                 state, btc, sp, staging_dir, min_confs
@@ -153,7 +171,12 @@ def _inventory_watch_loop(cfg: Config, staging_dir: Path) -> int:
                             save_ots(staging_dir, state)
                         last_height = info.height
                         last_tip_hash = info.best_block_hash
-                        service._inventory_upgrade_pass_locked(cfg, staging_dir)
+                        service._inventory_upgrade_pass_locked(
+                            cfg,
+                            staging_dir,
+                            sp_factory=sp_factory,
+                            btc_factory=btc_factory,
+                        )
                         state = load_ots(staging_dir)
                         if state.phase is Phase.INVENTORY_UPGRADED:
                             return 0

@@ -489,7 +489,14 @@ def status(
     json_mode = bool(ctx.obj.get("json"))
     if has_ots(staging_dir):
         cfg: Config | None = ctx.obj.get("config")
-        data = service.status_ots_dict(cfg, store, root_path, object_id, staging_dir)
+        data = service.status_ots_dict(
+            cfg,
+            store,
+            root_path,
+            object_id,
+            staging_dir,
+            btc_factory=ctx.obj["btc_rpc_factory"],
+        )
         if json_mode:
             output_json(data)
         else:
@@ -657,10 +664,20 @@ def timestamp_content(
         err(f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)")
         raise typer.Exit(2)
 
+    sp_factory = ctx.obj["sp_client_factory"]
+    btc_factory = ctx.obj["btc_rpc_factory"]
+
     if watch_flag:
         try:
             exit_code = watch._watch_loop(
-                cfg, store, sr, root_path, object_id, staging_dir
+                cfg,
+                store,
+                sr,
+                root_path,
+                object_id,
+                staging_dir,
+                sp_factory=sp_factory,
+                btc_factory=btc_factory,
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             err(f"halt: {e}")
@@ -669,7 +686,16 @@ def timestamp_content(
 
     if upgrade:
         try:
-            service._upgrade_pass(cfg, store, sr, root_path, object_id, staging_dir)
+            service._upgrade_pass(
+                cfg,
+                store,
+                sr,
+                root_path,
+                object_id,
+                staging_dir,
+                sp_factory=sp_factory,
+                btc_factory=btc_factory,
+            )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             err(f"halt: {e}")
             raise typer.Exit(5) from None
@@ -678,7 +704,9 @@ def timestamp_content(
     if retry:
         with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
             try:
-                service.retry_content_locked(cfg, staging_dir, object_id)
+                service.retry_content_locked(
+                    cfg, staging_dir, object_id, sp_factory=sp_factory
+                )
             except PhaseError as e:
                 err(str(e))
                 raise typer.Exit(3) from None
@@ -690,7 +718,13 @@ def timestamp_content(
     with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
         try:
             advanced = service.submit_content_locked(
-                cfg, store, sr, root_path, object_id, staging_dir
+                cfg,
+                store,
+                sr,
+                root_path,
+                object_id,
+                staging_dir,
+                sp_factory=sp_factory,
             )
         except PhaseError as e:
             err(str(e))
@@ -755,9 +789,14 @@ def timestamp_inventory(
         err(f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)")
         raise typer.Exit(2)
 
+    sp_factory = ctx.obj["sp_client_factory"]
+    btc_factory = ctx.obj["btc_rpc_factory"]
+
     if watch_flag:
         try:
-            exit_code = watch._inventory_watch_loop(cfg, staging_dir)
+            exit_code = watch._inventory_watch_loop(
+                cfg, staging_dir, sp_factory=sp_factory, btc_factory=btc_factory
+            )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             err(f"halt: {e}")
             raise typer.Exit(5) from None
@@ -768,7 +807,9 @@ def timestamp_inventory(
 
     if upgrade:
         try:
-            service._inventory_upgrade_pass(cfg, staging_dir)
+            service._inventory_upgrade_pass(
+                cfg, staging_dir, sp_factory=sp_factory, btc_factory=btc_factory
+            )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             err(f"halt: {e}")
             raise typer.Exit(5) from None
@@ -780,7 +821,9 @@ def timestamp_inventory(
     if retry:
         with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
             try:
-                service.retry_inventory_locked(cfg, staging_dir, object_id)
+                service.retry_inventory_locked(
+                    cfg, staging_dir, object_id, sp_factory=sp_factory
+                )
             except PhaseError as e:
                 err(str(e))
                 raise typer.Exit(3) from None
@@ -792,7 +835,13 @@ def timestamp_inventory(
     with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
         try:
             service.submit_inventory_locked(
-                cfg, store, sr, root_path, object_id, staging_dir
+                cfg,
+                store,
+                sr,
+                root_path,
+                object_id,
+                staging_dir,
+                sp_factory=sp_factory,
             )
         except PhaseError as e:
             err(str(e) + "; run 'stage timestamp content' first")

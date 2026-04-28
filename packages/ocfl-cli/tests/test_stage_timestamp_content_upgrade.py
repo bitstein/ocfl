@@ -28,10 +28,9 @@ Pins step 11 of `OTS workflow contract`:
   and compare attested block hash against ``btc.getblockhash(block_height)``;
   on mismatch reset ``verified=False`` and re-fetch via SP.
 
-Test infrastructure seams (introduced by the implementer in `commands/stage.py`):
-
-- ``_get_btc_rpc(cfg)`` — production factory returning a ``BitcoinRPC``.
-  Tests monkeypatch to inject ``FakeBitcoinRPC`` (mirrors ``_get_sp_client``).
+Tests inject ``FakeBitcoinRPC`` / ``FakeSimpleProof`` via
+``runner.obj["btc_rpc_factory"]`` / ``runner.obj["sp_client_factory"]``
+(see ``conftest.py::runner`` for the auto-attach mechanism).
 """
 
 import hashlib
@@ -99,25 +98,14 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
     return store.staging_path(str(root.resolve()), object_id)
 
 
-def _inject_fake_sp(monkeypatch: pytest.MonkeyPatch, fake: FakeSimpleProof) -> None:
-    """Patch ``_get_sp_client`` to return *fake*."""
-    from ocfl_cli.stage import service as stage_cmd
-
-    monkeypatch.setattr(
-        stage_cmd, "_get_sp_client", lambda *a, **kw: fake, raising=False
-    )
+def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
+    """Inject *fake* via ``runner.obj["sp_client_factory"]``."""
+    runner.obj["sp_client_factory"] = lambda cfg: fake
 
 
-def _inject_fake_btc(monkeypatch: pytest.MonkeyPatch, fake: FakeBitcoinRPC) -> None:
-    """Patch the ``_get_btc_rpc`` seam to return *fake*.
-
-    The implementer is expected to expose this private factory in
-    ``commands/stage.py`` (mirrors ``_get_sp_client``). Tests monkeypatch
-    it to bypass the real RPC client.
-    """
-    from ocfl_cli.stage import service as stage_cmd
-
-    monkeypatch.setattr(stage_cmd, "_get_btc_rpc", lambda *a, **kw: fake, raising=False)
+def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
+    """Inject *fake* via ``runner.obj["btc_rpc_factory"]``."""
+    runner.obj["btc_rpc_factory"] = lambda cfg: fake
 
 
 # --------------------------------------------------------------------------- #
@@ -270,8 +258,8 @@ class TestUpgradeHappyPath:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -337,8 +325,8 @@ class TestUpgradeHappyPath:
     ) -> None:
         """Two digests submitted; only one verifies → phase stays content-pending."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -408,8 +396,8 @@ class TestThreeConfGate:
         expect_advance: bool,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -470,8 +458,8 @@ class TestPendingHeld:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -547,8 +535,8 @@ class TestReorgShallow:
         still within N of tip). Second pass: ``_reverify_existing_proofs``
         notices block-hash mismatch and resets verified=False — no HALT."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -622,8 +610,8 @@ class TestReorgDeep:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -675,8 +663,8 @@ class TestMerkleMismatch:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -748,8 +736,8 @@ class TestCrashRecovery:
         fault_at: str,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -964,8 +952,8 @@ class TestOrphanGuard:
         but MUST NOT advance: orphan in stage state outside pending_digests.
         """
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -1038,8 +1026,8 @@ class TestPhaseAdvanceInvariant:
     ) -> None:
         """Both conditions hold: pending fully verified + no orphans."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -1082,8 +1070,8 @@ class TestPhaseAdvanceInvariant:
     ) -> None:
         """Cond (1) fails: at least one pending digest unverified → no advance."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -1129,8 +1117,8 @@ class TestPhaseAdvanceInvariant:
         """Cond (2) fails: stage state has a non-.ots digest not in
         pending_digests → no advance even if all pending verified."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -1185,8 +1173,8 @@ class TestReverifyIdempotent:
     ) -> None:
         """``--upgrade`` already at content-upgraded with stable chain → no-op."""
         _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        _inject_fake_btc(monkeypatch, btc_fake.rpc)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -1260,8 +1248,8 @@ class TestRegtestEndToEnd:
 
         cfg_body = _SP_OK + bitcoin_config_toml(bitcoind_regtest, confirmations=3)
         _write_config(tmp_path, monkeypatch, body=cfg_body)
-        _inject_fake_sp(monkeypatch, sp_fake)
-        # Production _get_btc_rpc path used; no btc fake.
+        _inject_fake_sp(runner, sp_fake)
+        # Production btc_rpc_factory path used; no btc fake.
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(

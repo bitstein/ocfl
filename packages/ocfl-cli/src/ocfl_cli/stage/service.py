@@ -8,14 +8,10 @@ under a ZMQ-driven block loop.
 """
 
 import logging
-import time
-from base64 import b64encode
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-import httpx
 
 from ocfl_cli.errors import (
     AttestationMismatchError,
@@ -24,13 +20,11 @@ from ocfl_cli.errors import (
 )
 from ocfl_cli.ots.bitcoin import (
     BitcoinRPC,
-    BitcoinRPCClient,
     BlockchainInfo,
     PendingVerification,
     VerifiedAttestation,
     verify_attestation,
 )
-from ocfl_cli.ots.simpleproof import SimpleProofCreds, SimpleProofHttpClient
 from ocfl_cli.stage import store as _store_mod
 from ocfl_cli.stage.fsm import Phase, check_transition
 from ocfl_cli.stage.ingest import ingest_file
@@ -66,8 +60,7 @@ from ocfl_lib.update_plan import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
+    from ocfl_cli._appctx import BtcRpcFactory, SpClientFactory
     from ocfl_cli.config import Config
     from ocfl_cli.ots.simpleproof import SimpleProofClient
     from ocfl_cli.stage.store import StagingStore
@@ -83,46 +76,6 @@ type StateMap = dict[str, list[str]]
 
 _SUBMIT_CHUNK_SIZE = 1000
 _LOCK_TIMEOUT_SECONDS = 30
-
-
-# ---------------------------------------------------------------------------
-# Client factories (monkeypatch seams; commit 4 replaces these with a
-# ctx.obj factory injection mechanism).
-# ---------------------------------------------------------------------------
-
-
-def _get_sp_client(
-    cfg: Config,
-    sleep: Callable[[float], None] = time.sleep,
-) -> SimpleProofClient:
-    """Construct the production `SimpleProofClient` from `cfg`.
-
-    Tests monkeypatch this seam to inject `FakeSimpleProof`.
-    """
-    sp_cfg = cfg.simpleproof
-    if sp_cfg is None:
-        raise RuntimeError("simpleproof config missing")
-    client = httpx.Client(timeout=sp_cfg.timeout_s)
-    creds = SimpleProofCreds(
-        access_token=sp_cfg.access_token.get_secret_value(),
-        api_key=sp_cfg.api_key.get_secret_value(),
-    )
-    return SimpleProofHttpClient(sp_cfg.base_url, creds, client=client, sleep=sleep)
-
-
-def _get_btc_rpc(cfg: Config) -> BitcoinRPC:
-    """Construct the production `BitcoinRPCClient` from `cfg`.
-
-    Tests monkeypatch this seam to inject `FakeBitcoinRPC`.
-    """
-    btc_cfg = cfg.bitcoin
-    if btc_cfg is None:
-        raise RuntimeError("bitcoin config missing")
-
-    creds = f"{btc_cfg.rpc_user}:{btc_cfg.rpc_password.get_secret_value()}"
-    headers = {"Authorization": "Basic " + b64encode(creds.encode()).decode()}
-    client = httpx.Client(timeout=btc_cfg.rpc_timeout_s, headers=headers)
-    return BitcoinRPCClient(btc_cfg.rpc_url, client=client)
 
 
 # ---------------------------------------------------------------------------
@@ -463,11 +416,13 @@ def _build_counts(state: OtsState, non_ots: set[str]) -> dict[str, int]:
     }
 
 
-def _build_bitcoin_section(cfg: Config | None) -> dict[str, object] | None:
+def _build_bitcoin_section(
+    cfg: Config | None, btc_factory: BtcRpcFactory
+) -> dict[str, object] | None:
     if cfg is None or cfg.bitcoin is None:
         return None
     try:
-        info = _get_btc_rpc(cfg).getblockchaininfo()
+        info = btc_factory(cfg).getblockchaininfo()
     except BitcoinError as e:
         logger.warning("bitcoin RPC unreachable, omitting bitcoin section: %s", e)
         return None
@@ -485,6 +440,8 @@ def status_ots_dict(
     root_path: str,
     object_id: str,
     staging_dir: Path,
+    *,
+    btc_factory: BtcRpcFactory,
 ) -> dict[str, Any]:
     """Build the JSON-shaped OTS status payload (commands.py renders human form)."""
     state = load_ots(staging_dir)
@@ -503,7 +460,7 @@ def status_ots_dict(
         "phase": state.phase.value,
         "counts": counts,
         "outstanding_jobs": _build_outstanding_jobs(state, _status_now()),
-        "bitcoin": _build_bitcoin_section(cfg),
+        "bitcoin": _build_bitcoin_section(cfg, btc_factory),
         "simpleproof": {
             "configured": cfg is not None and cfg.simpleproof is not None,
             "category_id": state.category_id,
@@ -837,6 +794,9 @@ def _upgrade_pass_locked(
     root_path: str,
     object_id: str,
     staging_dir: Path,
+    *,
+    sp_factory: SpClientFactory,
+    btc_factory: BtcRpcFactory,
 ) -> None:
     """One `--upgrade` pass. Caller MUST hold the staging lock."""
     btc_cfg = cfg.bitcoin
@@ -849,8 +809,8 @@ def _upgrade_pass_locked(
     check_transition(state.phase, "timestamp content --upgrade")
     apply_category_id(state, cfg.simpleproof.proof_category_id)
 
-    sp = _get_sp_client(cfg)
-    btc = _get_btc_rpc(cfg)
+    sp = sp_factory(cfg)
+    btc = btc_factory(cfg)
 
     state = _reverify_existing_proofs(state, btc, sp, staging_dir, min_confs)
     save_ots(staging_dir, state)
@@ -892,10 +852,22 @@ def _upgrade_pass(
     root_path: str,
     object_id: str,
     staging_dir: Path,
+    *,
+    sp_factory: SpClientFactory,
+    btc_factory: BtcRpcFactory,
 ) -> None:
     """Drive `stage timestamp content --upgrade` end-to-end under the lock."""
     with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
-        _upgrade_pass_locked(cfg, store, sr, root_path, object_id, staging_dir)
+        _upgrade_pass_locked(
+            cfg,
+            store,
+            sr,
+            root_path,
+            object_id,
+            staging_dir,
+            sp_factory=sp_factory,
+            btc_factory=btc_factory,
+        )
 
 
 def submit_content_locked(
@@ -905,6 +877,8 @@ def submit_content_locked(
     root_path: str,
     object_id: str,
     staging_dir: Path,
+    *,
+    sp_factory: SpClientFactory,
 ) -> bool:
     """One `stage timestamp content` (default path) submit pass under the lock.
 
@@ -966,7 +940,7 @@ def submit_content_locked(
         ),
     )
 
-    sp = _get_sp_client(cfg)
+    sp = sp_factory(cfg)
     for i in range(0, len(ordered), _SUBMIT_CHUNK_SIZE):
         sp.submit_hashes(list(ordered[i : i + _SUBMIT_CHUNK_SIZE]), category_id)
 
@@ -991,7 +965,11 @@ class NoFailedSubmissionsError(Exception):
 
 
 def retry_content_locked(
-    cfg: Config, staging_dir: Path, object_id: str
+    cfg: Config,
+    staging_dir: Path,
+    object_id: str,
+    *,
+    sp_factory: SpClientFactory,
 ) -> None:
     """One `stage timestamp content --retry` pass under the lock."""
     sp_cfg = cfg.simpleproof
@@ -1023,7 +1001,7 @@ def retry_content_locked(
         replace(state, category_id=category_id, submissions=tuple(subs)),
     )
 
-    sp = _get_sp_client(cfg)
+    sp = sp_factory(cfg)
     for i in failed_indices:
         digests = list(subs[i].digests)
         for j in range(0, len(digests), _SUBMIT_CHUNK_SIZE):
@@ -1200,7 +1178,13 @@ def _process_completed_inventory_job(
     return state
 
 
-def _inventory_upgrade_pass_locked(cfg: Config, staging_dir: Path) -> None:
+def _inventory_upgrade_pass_locked(
+    cfg: Config,
+    staging_dir: Path,
+    *,
+    sp_factory: SpClientFactory,
+    btc_factory: BtcRpcFactory,
+) -> None:
     """One inventory `--upgrade` pass. Caller MUST hold the staging lock."""
     btc_cfg = cfg.bitcoin
     if btc_cfg is None or cfg.simpleproof is None:
@@ -1215,8 +1199,8 @@ def _inventory_upgrade_pass_locked(cfg: Config, staging_dir: Path) -> None:
     if state.inventory_proof is None:
         raise PhaseError(f"inventory_proof missing in phase {state.phase.value!r}")
 
-    sp = _get_sp_client(cfg)
-    btc = _get_btc_rpc(cfg)
+    sp = sp_factory(cfg)
+    btc = btc_factory(cfg)
 
     state = _inventory_reverify_existing_proof(state, btc, sp, staging_dir, min_confs)
     save_ots(staging_dir, state)
@@ -1248,10 +1232,18 @@ def _inventory_upgrade_pass_locked(cfg: Config, staging_dir: Path) -> None:
         _log_phase(prev_phase, Phase.INVENTORY_UPGRADED)
 
 
-def _inventory_upgrade_pass(cfg: Config, staging_dir: Path) -> None:
+def _inventory_upgrade_pass(
+    cfg: Config,
+    staging_dir: Path,
+    *,
+    sp_factory: SpClientFactory,
+    btc_factory: BtcRpcFactory,
+) -> None:
     """Drive `stage timestamp inventory --upgrade` end-to-end under the lock."""
     with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
-        _inventory_upgrade_pass_locked(cfg, staging_dir)
+        _inventory_upgrade_pass_locked(
+            cfg, staging_dir, sp_factory=sp_factory, btc_factory=btc_factory
+        )
 
 
 def submit_inventory_locked(
@@ -1261,6 +1253,8 @@ def submit_inventory_locked(
     root_path: str,
     object_id: str,
     staging_dir: Path,
+    *,
+    sp_factory: SpClientFactory,
 ) -> None:
     """One `stage timestamp inventory` (default path) submit pass under the lock."""
     sp_cfg = cfg.simpleproof
@@ -1305,7 +1299,7 @@ def submit_inventory_locked(
         ),
     )
 
-    sp = _get_sp_client(cfg)
+    sp = sp_factory(cfg)
     sp.submit_hashes([inv_digest], category_id)
 
     plan_path(staging_dir).write_bytes(serialize(plan))
@@ -1319,7 +1313,11 @@ class InventoryProofMissingError(Exception):
 
 
 def retry_inventory_locked(
-    cfg: Config, staging_dir: Path, object_id: str
+    cfg: Config,
+    staging_dir: Path,
+    object_id: str,
+    *,
+    sp_factory: SpClientFactory,
 ) -> None:
     """One `stage timestamp inventory --retry` pass under the lock."""
     sp_cfg = cfg.simpleproof
@@ -1331,7 +1329,7 @@ def retry_inventory_locked(
     if state.inventory_proof is None:
         raise InventoryProofMissingError("inventory_proof missing")
     inv_digest = state.inventory_proof.digest
-    sp = _get_sp_client(cfg)
+    sp = sp_factory(cfg)
     sp.submit_hashes([inv_digest], category_id)
     logger.info("retried inventory submission for %s", object_id)
 
