@@ -9,15 +9,15 @@ from typing import Annotated
 import typer
 
 from ocfl_cli import _style
-from ocfl_cli.commands.diff import diff
-from ocfl_cli.commands.export import export
-from ocfl_cli.commands.info import info
-from ocfl_cli.commands.init import init
-from ocfl_cli.commands.log import log
-from ocfl_cli.commands.ls import ls
-from ocfl_cli.commands.purge import purge
-from ocfl_cli.commands.show import show
-from ocfl_cli.commands.validate import validate
+from ocfl_cli.archive.diff import diff
+from ocfl_cli.archive.export import export
+from ocfl_cli.archive.info import info
+from ocfl_cli.archive.init import init
+from ocfl_cli.archive.log import log
+from ocfl_cli.archive.ls import ls
+from ocfl_cli.archive.purge import purge
+from ocfl_cli.archive.show import show
+from ocfl_cli.archive.validate import validate
 from ocfl_cli.config import ConfigError, load_config
 from ocfl_cli.ots.bitcoin import default_btc_factory
 from ocfl_cli.ots.simpleproof import default_sp_factory
