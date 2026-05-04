@@ -6,7 +6,7 @@ Pinned by ``OTS workflow contract``:
   object; ``--no-verify-ots`` opts out (offline CI).
 - Default-on requires ``[bitcoin]`` config; missing config raises
   ``ConfigError`` with an actionable hint mentioning ``[bitcoin]``
-  (CLI exit 2 per ``error_taxonomy.exit_codes``).
+  (CLI exit 6 per the canonical exit-code mapping).
 - Default-on walks the attestation chain via ``verify_attestation`` and
   cross-checks the merkle root against the Bitcoin chain. A mismatch
   surfaces a new ``E906`` (verify-time mismatch) error and exits 1.
@@ -318,7 +318,7 @@ class TestNoVerifyOtsSkipsWalk:
 
 
 # =========================================================================== #
-# Test 3: missing [bitcoin] config + default-on → ConfigError, exit 2
+# Test 3: missing [bitcoin] config + default-on → ConfigError, exit 6
 # =========================================================================== #
 
 
@@ -329,11 +329,10 @@ class TestMissingBitcoinConfig:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Extension present + default-on + no ``[bitcoin]`` section → exit 2.
+        """Extension present + default-on + no ``[bitcoin]`` section → exit 6.
 
         The error message must mention ``[bitcoin]`` so the operator
-        knows which section to add. Exit code 2 per
-        ``error_taxonomy.exit_codes`` (config error).
+        knows which section to add.
         """
         # Config has [simpleproof] only; no [bitcoin] section.
         _write_config(tmp_path, monkeypatch, body=_SP_OK)
@@ -341,7 +340,7 @@ class TestMissingBitcoinConfig:
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
 
         r = runner.invoke(app, ["--root", str(root), "validate", "obj-test"])
-        assert r.exit_code == 2, r.output
+        assert r.exit_code == 6, r.output
         # Hint must reference the missing section by name.
         combined = (r.stdout or "") + (r.stderr or "") + (r.output or "")
         assert "[bitcoin]" in combined, (

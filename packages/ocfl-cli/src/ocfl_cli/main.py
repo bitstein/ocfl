@@ -10,6 +10,7 @@ import typer
 
 from ocfl_cli import _style
 from ocfl_cli._appctx import install_app_ctx
+from ocfl_cli._exit import exit_for_error
 from ocfl_cli.archive.diff import diff
 from ocfl_cli.archive.export import export
 from ocfl_cli.archive.info import info
@@ -119,10 +120,7 @@ def main(
     try:
         config = load_config()
     except ConfigError as e:
-        from ocfl_cli._common import err
-
-        err(str(e))
-        raise typer.Exit(1) from None
+        exit_for_error(e)
 
     # Resolve `-r` through config: alias → archive root. Precedence:
     # flag > OCFL_ROOT env > implicit-single-archive default.

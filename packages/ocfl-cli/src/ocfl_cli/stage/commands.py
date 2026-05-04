@@ -16,10 +16,13 @@ from rich.text import Text
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import err, open_root, output_json
+from ocfl_cli._exit import exit_for_error
 from ocfl_cli.errors import (
     AttestationMismatchError,
+    ConfigError,
     PhaseError,
     ReorgDetectedError,
+    StagingError,
 )
 from ocfl_cli.stage import service, watch
 from ocfl_cli.stage.fsm import Phase
@@ -83,20 +86,28 @@ def require_config(ctx: typer.Context) -> Config:
 
 def require_simpleproof(ctx: typer.Context, cfg: Config) -> None:
     if cfg.simpleproof is None:
-        err(f"{appctx.command_path(ctx)!r} requires [simpleproof] config section")
-        raise typer.Exit(2)
+        exit_for_error(
+            ConfigError(
+                f"{appctx.command_path(ctx)!r} requires [simpleproof] config section"
+            )
+        )
 
 
 def require_bitcoin(ctx: typer.Context, cfg: Config) -> None:
     if cfg.bitcoin is None:
-        err(f"{appctx.command_path(ctx)!r} requires [bitcoin] config section")
-        raise typer.Exit(2)
+        exit_for_error(
+            ConfigError(
+                f"{appctx.command_path(ctx)!r} requires [bitcoin] config section"
+            )
+        )
 
 
 def validate_timestamp_flags(
     ctx: typer.Context, *, upgrade: bool, watch: bool, retry: bool
 ) -> None:
     command = appctx.command_path(ctx)
+    # These are post-parse usage errors: Click accepted the tokens, but the
+    # resulting invocation shape is invalid.
     if retry:
         for other_name, other_set in (("--upgrade", upgrade), ("--watch", watch)):
             if other_set:
@@ -117,15 +128,17 @@ def require_existing_staging(
         message = f"no staging exists for {object_id!r}"
         if hint is not None:
             message = f"{message} ({hint})"
-        err(message)
-        raise typer.Exit(1)
+        exit_for_error(StagingError(message))
     return StagingResolved(store=store, root_path=root_path, staging_dir=staging_dir)
 
 
 def require_ots_staging(staging_dir: Path, object_id: str) -> None:
     if not has_ots(staging_dir):
-        err(f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)")
-        raise typer.Exit(2)
+        exit_for_error(
+            StagingError(
+                f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)"
+            )
+        )
 
 
 def get_factories(ctx: typer.Context) -> tuple[SpClientFactory, BtcRpcFactory]:
@@ -171,11 +184,9 @@ def _require_ots_config(cfg: Config | None, digest: str | None) -> SimpleProofCo
         else "in your ocfl config"
     )
     if cfg is None or cfg.simpleproof is None:
-        err(f"--ots requires [simpleproof] section {where}")
-        raise typer.Exit(2)
+        exit_for_error(ConfigError(f"--ots requires [simpleproof] section {where}"))
     if cfg.bitcoin is None:
-        err(f"--ots requires [bitcoin] section {where}")
-        raise typer.Exit(2)
+        exit_for_error(ConfigError(f"--ots requires [bitcoin] section {where}"))
     return cfg.simpleproof
 
 

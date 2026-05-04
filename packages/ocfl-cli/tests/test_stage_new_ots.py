@@ -5,7 +5,7 @@ Pins step 9 of `OTS workflow contract`:
   SHA-256 reference; non-zero exit).
 - `--ots` requires `[simpleproof]` + `[bitcoin]` config to be present and
   valid; missing sections fail early with actionable hints (config error
-  → exit 2 per `errors.exit_codes`).
+  → exit 6 per the canonical exit-code mapping).
 - On success, writes initial `<staging>/ots.json` at schema_version=1
   with phase=drafting, category_id=[simpleproof].proof_category_id,
   empty submissions/verify_jobs/content_proofs/pending_digests, and
@@ -184,7 +184,7 @@ class TestConfigValidation:
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new"),
         )
-        assert result.exit_code == 2, result.output
+        assert result.exit_code == 6, result.output
         combined = _strip_paths((result.output + (result.stderr or "")).lower())
         assert "no such option" not in combined, result.output
         assert "simpleproof" in combined, result.output
@@ -206,7 +206,7 @@ class TestConfigValidation:
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new"),
         )
-        assert result.exit_code == 2, result.output
+        assert result.exit_code == 6, result.output
         combined = _strip_paths((result.output + (result.stderr or "")).lower())
         assert "no such option" not in combined, result.output
         assert "bitcoin" in combined, result.output
@@ -227,7 +227,7 @@ class TestConfigValidation:
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new"),
         )
-        assert result.exit_code == 2, result.output
+        assert result.exit_code == 6, result.output
         combined = _strip_paths((result.output + (result.stderr or "")).lower())
         assert "no such option" not in combined, result.output
         assert "simpleproof" in combined or "bitcoin" in combined, result.output

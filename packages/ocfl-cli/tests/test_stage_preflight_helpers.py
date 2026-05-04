@@ -6,6 +6,7 @@ import typer
 from pydantic import SecretStr
 
 from ocfl_cli.config import BitcoinConfig, Config, SimpleProofConfig
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.stage.commands import (
     StagingResolved,
     TimestampPreflight,
@@ -65,7 +66,7 @@ def test_validate_timestamp_flags_rejects_retry_combinations(
         )
 
     captured = capsys.readouterr()
-    assert exc_info.value.exit_code == 2
+    assert exc_info.value.exit_code == int(ExitCode.USAGE)
     assert expected in captured.err
 
 
@@ -79,7 +80,7 @@ def test_validate_timestamp_flags_rejects_watch_without_upgrade(capsys) -> None:
         )
 
     captured = capsys.readouterr()
-    assert exc_info.value.exit_code == 2
+    assert exc_info.value.exit_code == int(ExitCode.USAGE)
     assert "requires --upgrade" in captured.err
 
 
@@ -90,7 +91,7 @@ def test_require_simpleproof_rejects_missing_section(capsys) -> None:
         require_simpleproof(ctx, Config())
 
     captured = capsys.readouterr()
-    assert exc_info.value.exit_code == 2
+    assert exc_info.value.exit_code == int(ExitCode.CONFIG)
     assert "'stage timestamp content' requires [simpleproof]" in captured.err
 
 
@@ -101,7 +102,7 @@ def test_require_bitcoin_rejects_missing_section(capsys) -> None:
         require_bitcoin(ctx, Config())
 
     captured = capsys.readouterr()
-    assert exc_info.value.exit_code == 2
+    assert exc_info.value.exit_code == int(ExitCode.CONFIG)
     assert "'stage timestamp content' requires [bitcoin]" in captured.err
 
 
@@ -127,7 +128,7 @@ def test_require_existing_staging_includes_optional_hint(tmp_path, capsys) -> No
         require_existing_staging(ctx, "obj:missing", hint="run 'stage new' first")
 
     captured = capsys.readouterr()
-    assert exc_info.value.exit_code == 1
+    assert exc_info.value.exit_code == int(ExitCode.GENERIC)
     assert "run 'stage new' first" in captured.err
 
 
@@ -139,7 +140,7 @@ def test_require_ots_staging_rejects_non_ots_staging(tmp_path, capsys) -> None:
         require_ots_staging(staging_dir, "obj:test")
 
     captured = capsys.readouterr()
-    assert exc_info.value.exit_code == 2
+    assert exc_info.value.exit_code == int(ExitCode.GENERIC)
     assert "is not an OTS staging" in captured.err
 
 

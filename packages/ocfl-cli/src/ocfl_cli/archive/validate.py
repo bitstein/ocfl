@@ -9,6 +9,7 @@ import typer
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import _make_fs, err, open_root, output_json, resolve_root
+from ocfl_cli._exit import exit_for_error
 from ocfl_cli.errors import (
     AttestationMismatchError,
     ConfigError,
@@ -65,8 +66,7 @@ def validate(
         else:
             _validate_root(ctx, check_digests, as_json, suppress)
     except ConfigError as e:
-        err(str(e))
-        raise typer.Exit(2) from None
+        exit_for_error(e)
 
 
 def _suppressed_codes(ctx: typer.Context) -> frozenset[str]:
