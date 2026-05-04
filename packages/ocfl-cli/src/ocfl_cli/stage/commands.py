@@ -5,6 +5,7 @@ Thin glue: parse options, resolve context, call into ``service`` /
 """
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -27,6 +28,7 @@ from ocfl_cli.stage.state import has_ots, load_ots, save_ots, with_lock
 from ocfl_cli.stage.store import StagingStore
 
 if TYPE_CHECKING:
+    from ocfl_cli._appctx import BtcRpcFactory, SpClientFactory
     from ocfl_cli.config import Config, SimpleProofConfig
 
 
@@ -45,6 +47,21 @@ stage_app = typer.Typer(
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class StagingResolved:
+    store: StagingStore
+    root_path: str
+    staging_dir: Path
+
+
+@dataclass(frozen=True, slots=True)
+class TimestampPreflight:
+    cfg: Config
+    resolved: StagingResolved
+    sp_factory: SpClientFactory
+    btc_factory: BtcRpcFactory
+
+
 def _resolve_root_path(ctx: typer.Context) -> str:
     """Resolve absolute root path string for staging path hashing."""
     return str(Path(appctx.root(ctx) or Path.cwd()).resolve())
@@ -58,6 +75,86 @@ def _stage_store(ctx: typer.Context) -> StagingStore:
     if not isinstance(store, StagingStore):
         raise RuntimeError("internal error: missing ctx.obj['staging']")
     return store
+
+
+def require_config(ctx: typer.Context) -> Config:
+    return appctx.config(ctx)
+
+
+def require_simpleproof(ctx: typer.Context, cfg: Config) -> None:
+    if cfg.simpleproof is None:
+        err(f"{appctx.command_path(ctx)!r} requires [simpleproof] config section")
+        raise typer.Exit(2)
+
+
+def require_bitcoin(ctx: typer.Context, cfg: Config) -> None:
+    if cfg.bitcoin is None:
+        err(f"{appctx.command_path(ctx)!r} requires [bitcoin] config section")
+        raise typer.Exit(2)
+
+
+def validate_timestamp_flags(
+    ctx: typer.Context, *, upgrade: bool, watch: bool, retry: bool
+) -> None:
+    command = appctx.command_path(ctx)
+    if retry:
+        for other_name, other_set in (("--upgrade", upgrade), ("--watch", watch)):
+            if other_set:
+                err(f"'{command} --retry' is incompatible with {other_name}")
+                raise typer.Exit(2)
+    if watch and not upgrade:
+        err(f"'{command} --watch' requires --upgrade")
+        raise typer.Exit(2)
+
+
+def require_existing_staging(
+    ctx: typer.Context, object_id: str, *, hint: str | None = None
+) -> StagingResolved:
+    store = _stage_store(ctx)
+    root_path = _resolve_root_path(ctx)
+    staging_dir = store.staging_path(root_path, object_id)
+    if not store.exists(root_path, object_id):
+        message = f"no staging exists for {object_id!r}"
+        if hint is not None:
+            message = f"{message} ({hint})"
+        err(message)
+        raise typer.Exit(1)
+    return StagingResolved(store=store, root_path=root_path, staging_dir=staging_dir)
+
+
+def require_ots_staging(staging_dir: Path, object_id: str) -> None:
+    if not has_ots(staging_dir):
+        err(f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)")
+        raise typer.Exit(2)
+
+
+def get_factories(ctx: typer.Context) -> tuple[SpClientFactory, BtcRpcFactory]:
+    return appctx.sp_client_factory(ctx), appctx.btc_rpc_factory(ctx)
+
+
+def require_timestamp_preflight(
+    ctx: typer.Context,
+    object_id: str,
+    *,
+    upgrade: bool,
+    watch: bool,
+    retry: bool,
+) -> TimestampPreflight:
+    cfg = require_config(ctx)
+    require_simpleproof(ctx, cfg)
+    validate_timestamp_flags(ctx, upgrade=upgrade, watch=watch, retry=retry)
+    if upgrade:
+        require_bitcoin(ctx, cfg)
+
+    resolved = require_existing_staging(ctx, object_id)
+    require_ots_staging(resolved.staging_dir, object_id)
+    sp_factory, btc_factory = get_factories(ctx)
+    return TimestampPreflight(
+        cfg=cfg,
+        resolved=resolved,
+        sp_factory=sp_factory,
+        btc_factory=btc_factory,
+    )
 
 
 def _require_ots_config(cfg: Config | None, digest: str | None) -> SimpleProofConfig:
@@ -194,19 +291,16 @@ def add(
     """Add files to a staged object version."""
     from ocfl_lib import DigestAlgorithm
 
-    store = _stage_store(ctx)
-    root_path = _resolve_root_path(ctx)
-
-    if not store.exists(root_path, object_id):
-        err(f"no staging exists for {object_id!r} (run 'stage new' first)")
-        raise typer.Exit(1)
+    resolved = require_existing_staging(ctx, object_id, hint="run 'stage new' first")
+    store = resolved.store
+    root_path = resolved.root_path
+    staging_dir = resolved.staging_dir
 
     inv = store.load_inventory(root_path, object_id)
     alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
     head = inv.head
     state = dict(inv.versions[head].state)
     content_map = store.load_content_map(root_path, object_id)
-    staging_dir = store.staging_path(root_path, object_id)
 
     path_to_digest: dict[str, str] = {}
     for d, paths in state.items():
@@ -270,12 +364,10 @@ def mv(
     dst_path: Annotated[str, typer.Argument(help="Destination logical path.")],
 ) -> None:
     """Rename a logical path in the staged version."""
-    store = _stage_store(ctx)
-    root_path = _resolve_root_path(ctx)
-
-    if not store.exists(root_path, object_id):
-        err(f"no staging exists for {object_id!r}")
-        raise typer.Exit(1)
+    resolved = require_existing_staging(ctx, object_id)
+    store = resolved.store
+    root_path = resolved.root_path
+    staging_dir = resolved.staging_dir
 
     inv = store.load_inventory(root_path, object_id)
     state = {d: list(ps) for d, ps in inv.versions[inv.head].state.items()}
@@ -292,8 +384,6 @@ def mv(
 
     state[found_digest].remove(src_path)
     state[found_digest].append(dst_path)
-
-    staging_dir = store.staging_path(root_path, object_id)
 
     if has_ots(staging_dir):
         with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
@@ -320,17 +410,14 @@ def rm(
     ] = False,
 ) -> None:
     """Remove logical paths from the staged version."""
-    store = _stage_store(ctx)
-    root_path = _resolve_root_path(ctx)
-
-    if not store.exists(root_path, object_id):
-        err(f"no staging exists for {object_id!r}")
-        raise typer.Exit(1)
+    resolved = require_existing_staging(ctx, object_id)
+    store = resolved.store
+    root_path = resolved.root_path
+    staging_dir = resolved.staging_dir
 
     inv = store.load_inventory(root_path, object_id)
     state = {d: list(ps) for d, ps in inv.versions[inv.head].state.items()}
     content_map = store.load_content_map(root_path, object_id)
-    staging_dir = store.staging_path(root_path, object_id)
 
     removed_paths: list[str] = []
     for target in paths:
@@ -393,12 +480,9 @@ def ls_cmd(
     ] = False,
 ) -> None:
     """List files in the staged head version."""
-    store = _stage_store(ctx)
-    root_path = _resolve_root_path(ctx)
-
-    if not store.exists(root_path, object_id):
-        err(f"no staging exists for {object_id!r}")
-        raise typer.Exit(1)
+    resolved = require_existing_staging(ctx, object_id)
+    store = resolved.store
+    root_path = resolved.root_path
 
     inv = store.load_inventory(root_path, object_id)
     state = inv.versions[inv.head].state
@@ -486,14 +570,11 @@ def status(
     object_id: Annotated[str, typer.Argument(help="Object ID.")],
 ) -> None:
     """Show changes in staged version vs committed head (OTS-aware)."""
-    store = _stage_store(ctx)
-    root_path = _resolve_root_path(ctx)
+    resolved = require_existing_staging(ctx, object_id)
+    store = resolved.store
+    root_path = resolved.root_path
+    staging_dir = resolved.staging_dir
 
-    if not store.exists(root_path, object_id):
-        err(f"no staging exists for {object_id!r}")
-        raise typer.Exit(1)
-
-    staging_dir = store.staging_path(root_path, object_id)
     json_mode = appctx.json_mode(ctx)
     if has_ots(staging_dir):
         cfg = appctx.config(ctx)
@@ -541,15 +622,12 @@ def commit(
     from ocfl_cli.stage.state import plan_path
     from ocfl_lib.inventory import UserInfo
 
-    store = _stage_store(ctx)
     sr, fs = open_root(appctx.root(ctx))
-    root_path = _resolve_root_path(ctx)
+    resolved = require_existing_staging(ctx, object_id)
+    store = resolved.store
+    root_path = resolved.root_path
+    staging_dir = resolved.staging_dir
 
-    if not store.exists(root_path, object_id):
-        err(f"no staging exists for {object_id!r}")
-        raise typer.Exit(1)
-
-    staging_dir = store.staging_path(root_path, object_id)
     obj = sr.get_object(object_id)
 
     # OTS commit path: phase=INVENTORY_UPGRADED + serialized plan on disk.
@@ -640,52 +718,29 @@ def timestamp_content(
     ] = False,
 ) -> None:
     """Submit staged content digests to SimpleProof."""
-    cfg = appctx.config(ctx)
-    if cfg is None or cfg.simpleproof is None:
-        err("'stage timestamp content' requires [simpleproof] config section")
-        raise typer.Exit(2)
-    if retry:
-        for other_name, other_set in (("--upgrade", upgrade), ("--watch", watch_flag)):
-            if other_set:
-                err(
-                    "'stage timestamp content --retry' is incompatible with "
-                    f"{other_name}"
-                )
-                raise typer.Exit(2)
-    if upgrade and cfg.bitcoin is None:
-        err("'stage timestamp content --upgrade' requires [bitcoin] config section")
-        raise typer.Exit(2)
-    if watch_flag and not upgrade:
-        err("'stage timestamp content --watch' requires --upgrade")
-        raise typer.Exit(2)
+    preflight = require_timestamp_preflight(
+        ctx,
+        object_id,
+        upgrade=upgrade,
+        watch=watch_flag,
+        retry=retry,
+    )
+    cfg = preflight.cfg
+    resolved = preflight.resolved
 
-    store = _stage_store(ctx)
     sr, _fs = open_root(appctx.root(ctx))
-    root_path = _resolve_root_path(ctx)
-
-    if not store.exists(root_path, object_id):
-        err(f"no staging exists for {object_id!r}")
-        raise typer.Exit(1)
-
-    staging_dir = store.staging_path(root_path, object_id)
-    if not has_ots(staging_dir):
-        err(f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)")
-        raise typer.Exit(2)
-
-    sp_factory = appctx.sp_client_factory(ctx)
-    btc_factory = appctx.btc_rpc_factory(ctx)
 
     if watch_flag:
         try:
             exit_code = watch._watch_loop(
                 cfg,
-                store,
+                resolved.store,
                 sr,
-                root_path,
+                resolved.root_path,
                 object_id,
-                staging_dir,
-                sp_factory=sp_factory,
-                btc_factory=btc_factory,
+                resolved.staging_dir,
+                sp_factory=preflight.sp_factory,
+                btc_factory=preflight.btc_factory,
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             err(f"halt: {e}")
@@ -696,13 +751,13 @@ def timestamp_content(
         try:
             service._upgrade_pass(
                 cfg,
-                store,
+                resolved.store,
                 sr,
-                root_path,
+                resolved.root_path,
                 object_id,
-                staging_dir,
-                sp_factory=sp_factory,
-                btc_factory=btc_factory,
+                resolved.staging_dir,
+                sp_factory=preflight.sp_factory,
+                btc_factory=preflight.btc_factory,
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             err(f"halt: {e}")
@@ -710,10 +765,13 @@ def timestamp_content(
         return
 
     if retry:
-        with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+        with with_lock(resolved.staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
             try:
                 service.retry_content_locked(
-                    cfg, staging_dir, object_id, sp_factory=sp_factory
+                    cfg,
+                    resolved.staging_dir,
+                    object_id,
+                    sp_factory=preflight.sp_factory,
                 )
             except PhaseError as e:
                 err(str(e))
@@ -723,16 +781,16 @@ def timestamp_content(
                 return
         return
 
-    with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+    with with_lock(resolved.staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
         try:
             advanced = service.submit_content_locked(
                 cfg,
-                store,
+                resolved.store,
                 sr,
-                root_path,
+                resolved.root_path,
                 object_id,
-                staging_dir,
-                sp_factory=sp_factory,
+                resolved.staging_dir,
+                sp_factory=preflight.sp_factory,
             )
         except PhaseError as e:
             err(str(e))
@@ -765,45 +823,25 @@ def timestamp_inventory(
     ] = False,
 ) -> None:
     """Build inventory, submit its digest to SimpleProof, serialize plan."""
-    cfg = appctx.config(ctx)
-    if cfg is None or cfg.simpleproof is None:
-        err("'stage timestamp inventory' requires [simpleproof] config section")
-        raise typer.Exit(2)
-    if retry:
-        for other_name, other_set in (("--upgrade", upgrade), ("--watch", watch_flag)):
-            if other_set:
-                err(
-                    "'stage timestamp inventory --retry' is incompatible with "
-                    f"{other_name}"
-                )
-                raise typer.Exit(2)
-    if upgrade and cfg.bitcoin is None:
-        err("'stage timestamp inventory --upgrade' requires [bitcoin] config section")
-        raise typer.Exit(2)
-    if watch_flag and not upgrade:
-        err("'stage timestamp inventory --watch' requires --upgrade")
-        raise typer.Exit(2)
+    preflight = require_timestamp_preflight(
+        ctx,
+        object_id,
+        upgrade=upgrade,
+        watch=watch_flag,
+        retry=retry,
+    )
+    cfg = preflight.cfg
+    resolved = preflight.resolved
 
-    store = _stage_store(ctx)
     sr, _fs = open_root(appctx.root(ctx))
-    root_path = _resolve_root_path(ctx)
-
-    if not store.exists(root_path, object_id):
-        err(f"no staging exists for {object_id!r}")
-        raise typer.Exit(1)
-
-    staging_dir = store.staging_path(root_path, object_id)
-    if not has_ots(staging_dir):
-        err(f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)")
-        raise typer.Exit(2)
-
-    sp_factory = appctx.sp_client_factory(ctx)
-    btc_factory = appctx.btc_rpc_factory(ctx)
 
     if watch_flag:
         try:
             exit_code = watch._inventory_watch_loop(
-                cfg, staging_dir, sp_factory=sp_factory, btc_factory=btc_factory
+                cfg,
+                resolved.staging_dir,
+                sp_factory=preflight.sp_factory,
+                btc_factory=preflight.btc_factory,
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             err(f"halt: {e}")
@@ -816,7 +854,10 @@ def timestamp_inventory(
     if upgrade:
         try:
             service._inventory_upgrade_pass(
-                cfg, staging_dir, sp_factory=sp_factory, btc_factory=btc_factory
+                cfg,
+                resolved.staging_dir,
+                sp_factory=preflight.sp_factory,
+                btc_factory=preflight.btc_factory,
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             err(f"halt: {e}")
@@ -827,10 +868,13 @@ def timestamp_inventory(
         return
 
     if retry:
-        with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+        with with_lock(resolved.staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
             try:
                 service.retry_inventory_locked(
-                    cfg, staging_dir, object_id, sp_factory=sp_factory
+                    cfg,
+                    resolved.staging_dir,
+                    object_id,
+                    sp_factory=preflight.sp_factory,
                 )
             except PhaseError as e:
                 err(str(e))
@@ -840,16 +884,16 @@ def timestamp_inventory(
                 raise typer.Exit(3) from None
         return
 
-    with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+    with with_lock(resolved.staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
         try:
             service.submit_inventory_locked(
                 cfg,
-                store,
+                resolved.store,
                 sr,
-                root_path,
+                resolved.root_path,
                 object_id,
-                staging_dir,
-                sp_factory=sp_factory,
+                resolved.staging_dir,
+                sp_factory=preflight.sp_factory,
             )
         except PhaseError as e:
             err(str(e) + "; run 'stage timestamp content' first")

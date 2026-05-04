@@ -5,9 +5,8 @@ from typing import Annotated
 import typer
 from rich.text import Text
 
+from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
-from ocfl_cli._appctx import json_mode
-from ocfl_cli._appctx import root as ctx_root
 from ocfl_cli._common import err, open_root, output_json
 from ocfl_lib import ObjectNotFound, OcflError
 
@@ -19,7 +18,7 @@ def info(
     ] = None,
 ) -> None:
     """Show metadata for storage root or a specific object."""
-    as_json = json_mode(ctx)
+    as_json = appctx.json_mode(ctx)
 
     if object_id is not None:
         _info_object(ctx, object_id, as_json)
@@ -28,7 +27,7 @@ def info(
 
 
 def _info_root(ctx: typer.Context, json_mode: bool) -> None:
-    root, _fs = open_root(ctx_root(ctx))
+    root, _fs = open_root(appctx.root(ctx))
 
     layout_name = root.layout.name if root.layout else None
 
@@ -44,7 +43,7 @@ def _info_root(ctx: typer.Context, json_mode: bool) -> None:
 
 
 def _info_object(ctx: typer.Context, object_id: str, json_mode: bool) -> None:
-    root, _fs = open_root(ctx_root(ctx))
+    root, _fs = open_root(appctx.root(ctx))
 
     try:
         obj = root.get_object(object_id)

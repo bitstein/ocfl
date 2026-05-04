@@ -23,6 +23,10 @@ SpClientFactory = Callable[["Config"], "SimpleProofClient"]
 BtcRpcFactory = Callable[["Config"], "BitcoinRPC"]
 
 
+class AppCtxError(RuntimeError):
+    """Raised when Typer context application state is missing or malformed."""
+
+
 @dataclass(frozen=True, slots=True)
 class AppCtx:
     root: str | None
@@ -39,14 +43,14 @@ class AppCtx:
 def _obj(ctx: typer.Context) -> dict[str, object]:
     obj = ctx.obj
     if not isinstance(obj, dict):
-        raise RuntimeError("internal error: expected ctx.obj to be a dict")
+        raise AppCtxError("internal error: expected ctx.obj to be a dict")
     return cast("dict[str, object]", obj)
 
 
 def _required(ctx: typer.Context, key: str) -> object:
     obj = _obj(ctx)
     if key not in obj:
-        raise RuntimeError(f"internal error: missing ctx.obj[{key!r}]")
+        raise AppCtxError(f"internal error: missing ctx.obj[{key!r}]")
     return obj[key]
 
 
@@ -76,6 +80,7 @@ def install_app_ctx(
     obj["quiet"] = quiet
     obj["verbose"] = verbose
     obj["no_color"] = no_color
+    # Factories intentionally preserve runner.invoke(obj=...) test overrides.
     obj.setdefault("sp_client_factory", sp_client_factory)
     obj.setdefault("btc_rpc_factory", btc_rpc_factory)
 
@@ -93,6 +98,14 @@ def app_ctx(ctx: typer.Context) -> AppCtx:
         sp_client_factory=cast("SpClientFactory", _required(ctx, "sp_client_factory")),
         btc_rpc_factory=cast("BtcRpcFactory", _required(ctx, "btc_rpc_factory")),
     )
+
+
+def command_path(ctx: typer.Context) -> str:
+    """Return Click's command path without the root program name."""
+    prog = ctx.find_root().info_name
+    if not prog:
+        return ctx.command_path
+    return ctx.command_path.removeprefix(f"{prog} ")
 
 
 def root(ctx: typer.Context) -> str | None:

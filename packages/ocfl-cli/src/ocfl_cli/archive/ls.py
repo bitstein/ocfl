@@ -5,9 +5,8 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 from rich.text import Text
 
+from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
-from ocfl_cli._appctx import json_mode
-from ocfl_cli._appctx import root as ctx_root
 from ocfl_cli._common import err, open_root, output_json, parse_version
 from ocfl_lib import ObjectNotFound, OcflError
 from ocfl_lib.digest_map import to_path_map
@@ -29,7 +28,7 @@ def ls(
     ] = False,
 ) -> None:
     """List objects in root, or files in an object version."""
-    as_json = json_mode(ctx)
+    as_json = appctx.json_mode(ctx)
 
     if object_id is not None:
         _ls_object(ctx, object_id, version, digests, as_json)
@@ -38,7 +37,7 @@ def ls(
 
 
 def _ls_root(ctx: typer.Context, json_mode: bool) -> None:
-    root, _fs = open_root(ctx_root(ctx))
+    root, _fs = open_root(appctx.root(ctx))
     ids = [obj.id for obj in root.objects()]
     if json_mode:
         output_json(ids)
@@ -54,7 +53,7 @@ def _ls_object(
     digests: bool,
     json_mode: bool,
 ) -> None:
-    root, _fs = open_root(ctx_root(ctx))
+    root, _fs = open_root(appctx.root(ctx))
 
     try:
         obj = root.get_object(object_id)

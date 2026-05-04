@@ -4,7 +4,7 @@ import click
 import pytest
 import typer
 
-from ocfl_cli._appctx import app_ctx, json_mode, root
+from ocfl_cli._appctx import AppCtxError, app_ctx, command_path, json_mode, root
 from ocfl_cli.config import ArchiveConfig, Config
 
 
@@ -46,10 +46,19 @@ def test_app_ctx_builds_typed_view_from_ctx_obj() -> None:
 def test_app_ctx_reports_missing_required_keys() -> None:
     ctx = typer.Context(click.Command("probe"), obj={})
 
-    with pytest.raises(RuntimeError) as exc_info:
+    with pytest.raises(AppCtxError) as exc_info:
         app_ctx(ctx)
 
     assert "ctx.obj['root']" in str(exc_info.value)
+
+
+def test_app_ctx_reports_malformed_ctx_obj() -> None:
+    ctx = typer.Context(click.Command("probe"), obj=object())
+
+    with pytest.raises(AppCtxError) as exc_info:
+        app_ctx(ctx)
+
+    assert "expected ctx.obj to be a dict" in str(exc_info.value)
 
 
 def test_single_value_accessors_only_require_their_key() -> None:
@@ -57,3 +66,16 @@ def test_single_value_accessors_only_require_their_key() -> None:
 
     assert root(ctx) == "/archive"
     assert json_mode(ctx) is True
+
+
+def test_command_path_strips_click_root_program_name() -> None:
+    root_ctx = typer.Context(click.Command("ocfl"), info_name="ocfl")
+    stage_ctx = typer.Context(
+        click.Command("stage"), info_name="stage", parent=root_ctx
+    )
+    content_ctx = typer.Context(
+        click.Command("content"), info_name="content", parent=stage_ctx
+    )
+
+    assert content_ctx.command_path == "ocfl stage content"
+    assert command_path(content_ctx) == "stage content"
