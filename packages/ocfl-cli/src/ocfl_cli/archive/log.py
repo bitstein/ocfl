@@ -6,6 +6,8 @@ import typer
 from rich.text import Text
 
 from ocfl_cli import _style
+from ocfl_cli._appctx import json_mode
+from ocfl_cli._appctx import root as ctx_root
 from ocfl_cli._common import err, open_root, output_json
 from ocfl_lib import ObjectNotFound, OcflError
 
@@ -21,8 +23,8 @@ def log(
     ] = None,
 ) -> None:
     """Show version history of an object."""
-    json_mode = ctx.obj.get("json", False)
-    root, _fs = open_root(ctx.obj.get("root"))
+    as_json = json_mode(ctx)
+    root, _fs = open_root(ctx_root(ctx))
 
     try:
         obj = root.get_object(object_id)
@@ -38,7 +40,7 @@ def log(
     if num is not None:
         versions = versions[:num]
 
-    if json_mode:
+    if as_json:
         entries = []
         for v in versions:
             info = obj.version_info(v)

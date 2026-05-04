@@ -13,6 +13,7 @@ import typer
 from fakes import FakeSimpleProof
 from typer.testing import CliRunner
 
+from ocfl_cli._appctx import app_ctx
 from ocfl_cli.main import app
 from ocfl_cli.stage.fsm import Phase
 from ocfl_cli.stage.state import load_ots
@@ -126,8 +127,9 @@ def test_default_factories_registered_when_obj_omits_them(
 
     @app.command("_factory_probe")
     def _probe(ctx: typer.Context) -> None:
-        seen["sp"] = ctx.obj.get("sp_client_factory")
-        seen["btc"] = ctx.obj.get("btc_rpc_factory")
+        typed = app_ctx(ctx)
+        seen["sp"] = typed.sp_client_factory
+        seen["btc"] = typed.btc_rpc_factory
 
     try:
         r = runner.invoke(app, ["_factory_probe"])

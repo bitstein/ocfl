@@ -78,9 +78,7 @@ def _watch_loop(
                 if block is None:
                     continue
                 try:
-                    with with_lock(
-                        staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS
-                    ):
+                    with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
                         info = btc.getblockchaininfo()
                         height_jumped = (
                             last_height is not None and info.height - last_height > 1
@@ -149,9 +147,7 @@ def _inventory_watch_loop(
                 if block is None:
                     continue
                 try:
-                    with with_lock(
-                        staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS
-                    ):
+                    with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
                         info = btc.getblockchaininfo()
                         height_jumped = (
                             last_height is not None and info.height - last_height > 1

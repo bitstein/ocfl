@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import typer
 
+from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import _make_fs, err, open_root, output_json, resolve_root
 from ocfl_cli.errors import (
@@ -52,27 +53,25 @@ def validate(
     ] = True,
 ) -> None:
     """Validate an OCFL storage root or a specific object."""
-    json_mode = ctx.obj.get("json", False)
+    as_json = appctx.json_mode(ctx)
     check_digests = not no_check_digests
     suppress = _suppressed_codes(ctx)
 
     try:
         if object_id is not None:
             _validate_object(
-                ctx, object_id, check_digests, json_mode, suppress, verify_ots
+                ctx, object_id, check_digests, as_json, suppress, verify_ots
             )
         else:
-            _validate_root(ctx, check_digests, json_mode, suppress)
+            _validate_root(ctx, check_digests, as_json, suppress)
     except ConfigError as e:
         err(str(e))
         raise typer.Exit(2) from None
 
 
 def _suppressed_codes(ctx: typer.Context) -> frozenset[str]:
-    config = ctx.obj.get("config")
-    if config is None:
-        return frozenset()
-    return config.effective_suppress(ctx.obj.get("archive"))
+    config = appctx.config(ctx)
+    return config.effective_suppress(appctx.archive(ctx))
 
 
 def _validate_root(
@@ -81,7 +80,7 @@ def _validate_root(
     json_mode: bool,
     suppress: frozenset[str],
 ) -> None:
-    path = resolve_root(ctx.obj.get("root"))
+    path = resolve_root(appctx.root(ctx))
     try:
         fs = _make_fs(path)
     except (OcflError, OSError) as e:
@@ -103,7 +102,7 @@ def _validate_object(
     verify_ots: bool,
 ) -> None:
     try:
-        root, fs = open_root(ctx.obj.get("root"))
+        root, fs = open_root(appctx.root(ctx))
     except typer.Exit:
         raise typer.Exit(1) from None
 
@@ -116,8 +115,8 @@ def _validate_object(
     validate_object(fs, obj_path, result, check_digests=check_digests)
 
     if verify_ots and _ots_extension_present(fs, obj_path):
-        cfg = ctx.obj.get("config")
-        _verify_ots_walk(fs, obj_path, cfg, result, ctx.obj["btc_rpc_factory"])
+        cfg = appctx.config(ctx)
+        _verify_ots_walk(fs, obj_path, cfg, result, appctx.btc_rpc_factory(ctx))
 
     _output_result(result, json_mode, suppress)
     if not result.is_valid:
@@ -201,7 +200,7 @@ def _enumerate_versions(fs: FS, obj_path: str) -> list[str]:
         return []
     try:
         inv_data = json.loads(inv_bytes)
-    except json.JSONDecodeError, ValueError:
+    except ValueError:
         return []
     if not isinstance(inv_data, dict):
         return []

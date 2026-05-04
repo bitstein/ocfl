@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from pydantic import SecretStr
 
 from ocfl_cli.config import (
     BitcoinConfig,
@@ -434,8 +435,8 @@ class TestSecretRepr:
         sp = SimpleProofConfig(
             base_url="https://x.example",
             proof_category_id=1,
-            access_token="ACCESS_SECRET_VALUE",
-            api_key="API_SECRET_VALUE",
+            access_token=SecretStr("ACCESS_SECRET_VALUE"),
+            api_key=SecretStr("API_SECRET_VALUE"),
         )
         text = repr(sp)
         assert "ACCESS_SECRET_VALUE" not in text
@@ -448,7 +449,7 @@ class TestSecretRepr:
             rpc_url="http://127.0.0.1:8332",
             zmq_endpoint="tcp://127.0.0.1:28332",
             rpc_user="u",
-            rpc_password="RPC_SECRET_VALUE",
+            rpc_password=SecretStr("RPC_SECRET_VALUE"),
         )
         text = repr(btc)
         assert "RPC_SECRET_VALUE" not in text

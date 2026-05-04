@@ -12,6 +12,7 @@ import typer
 from platformdirs import user_state_path
 from rich.text import Text
 
+from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import err, open_root, output_json
 from ocfl_cli.errors import (
@@ -46,7 +47,17 @@ stage_app = typer.Typer(
 
 def _resolve_root_path(ctx: typer.Context) -> str:
     """Resolve absolute root path string for staging path hashing."""
-    return str(Path(ctx.obj.get("root") or Path.cwd()).resolve())
+    return str(Path(appctx.root(ctx) or Path.cwd()).resolve())
+
+
+def _stage_store(ctx: typer.Context) -> StagingStore:
+    obj = ctx.obj
+    if not isinstance(obj, dict):
+        raise RuntimeError("internal error: expected ctx.obj to be a dict")
+    store = obj.get("staging")
+    if not isinstance(store, StagingStore):
+        raise RuntimeError("internal error: missing ctx.obj['staging']")
+    return store
 
 
 def _require_ots_config(cfg: Config | None, digest: str | None) -> SimpleProofConfig:
@@ -119,14 +130,14 @@ def new(
     from ocfl_lib import DigestAlgorithm
     from ocfl_lib.inventory_builder import InventoryBuilder
 
-    cfg = ctx.obj.get("config")
+    cfg = appctx.config(ctx)
     sp_cfg: SimpleProofConfig | None = None
     if ots:
         sp_cfg = _require_ots_config(cfg, digest)
         digest = "sha256"
 
-    store: StagingStore = ctx.obj["staging"]
-    sr, _fs = open_root(ctx.obj.get("root"))
+    store = _stage_store(ctx)
+    sr, _fs = open_root(appctx.root(ctx))
     root_path = _resolve_root_path(ctx)
 
     if store.exists(root_path, object_id):
@@ -143,12 +154,12 @@ def new(
     else:
         alg = DigestAlgorithm.SHA512
         digest_name = digest
-        if digest_name is None and cfg is not None:
-            digest_name = cfg.effective_digest(ctx.obj.get("archive"))
+        if digest_name is None:
+            digest_name = cfg.effective_digest(appctx.archive(ctx))
         if digest_name:
             try:
                 alg = DigestAlgorithm.from_ocfl_name(digest_name)
-            except (KeyError, ValueError):
+            except KeyError, ValueError:
                 err(f"unknown digest algorithm: {digest_name!r}")
                 raise typer.Exit(1) from None
 
@@ -183,7 +194,7 @@ def add(
     """Add files to a staged object version."""
     from ocfl_lib import DigestAlgorithm
 
-    store: StagingStore = ctx.obj["staging"]
+    store = _stage_store(ctx)
     root_path = _resolve_root_path(ctx)
 
     if not store.exists(root_path, object_id):
@@ -247,9 +258,7 @@ def add(
                 logical = f"{as_path}/{rel}" if as_path else rel
                 _add_file(child, logical)
 
-    store.save_inventory(
-        root_path, object_id, service._update_head_state(inv, state)
-    )
+    store.save_inventory(root_path, object_id, service._update_head_state(inv, state))
     store.save_content_map(root_path, object_id, content_map)
 
 
@@ -261,7 +270,7 @@ def mv(
     dst_path: Annotated[str, typer.Argument(help="Destination logical path.")],
 ) -> None:
     """Rename a logical path in the staged version."""
-    store: StagingStore = ctx.obj["staging"]
+    store = _stage_store(ctx)
     root_path = _resolve_root_path(ctx)
 
     if not store.exists(root_path, object_id):
@@ -311,7 +320,7 @@ def rm(
     ] = False,
 ) -> None:
     """Remove logical paths from the staged version."""
-    store: StagingStore = ctx.obj["staging"]
+    store = _stage_store(ctx)
     root_path = _resolve_root_path(ctx)
 
     if not store.exists(root_path, object_id):
@@ -384,7 +393,7 @@ def ls_cmd(
     ] = False,
 ) -> None:
     """List files in the staged head version."""
-    store: StagingStore = ctx.obj["staging"]
+    store = _stage_store(ctx)
     root_path = _resolve_root_path(ctx)
 
     if not store.exists(root_path, object_id):
@@ -400,7 +409,7 @@ def ls_cmd(
             entries.append((p, d))
     entries.sort()
 
-    if ctx.obj.get("json"):
+    if appctx.json_mode(ctx):
         if digests:
             output_json([{"path": p, "digest": d} for p, d in entries])
         else:
@@ -439,8 +448,7 @@ def _render_status_diff(data: dict) -> None:
 def _render_status_ots(data: dict) -> None:
     counts = data["counts"]
     parts = [
-        f"Phase: {data['phase']} "
-        f"({counts['upgraded']} of {counts['total']} upgraded"
+        f"Phase: {data['phase']} ({counts['upgraded']} of {counts['total']} upgraded"
     ]
     if counts["pending"]:
         parts.append(f", {counts['pending']} outstanding")
@@ -478,7 +486,7 @@ def status(
     object_id: Annotated[str, typer.Argument(help="Object ID.")],
 ) -> None:
     """Show changes in staged version vs committed head (OTS-aware)."""
-    store: StagingStore = ctx.obj["staging"]
+    store = _stage_store(ctx)
     root_path = _resolve_root_path(ctx)
 
     if not store.exists(root_path, object_id):
@@ -486,16 +494,16 @@ def status(
         raise typer.Exit(1)
 
     staging_dir = store.staging_path(root_path, object_id)
-    json_mode = bool(ctx.obj.get("json"))
+    json_mode = appctx.json_mode(ctx)
     if has_ots(staging_dir):
-        cfg: Config | None = ctx.obj.get("config")
+        cfg = appctx.config(ctx)
         data = service.status_ots_dict(
             cfg,
             store,
             root_path,
             object_id,
             staging_dir,
-            btc_factory=ctx.obj["btc_rpc_factory"],
+            btc_factory=appctx.btc_rpc_factory(ctx),
         )
         if json_mode:
             output_json(data)
@@ -533,8 +541,8 @@ def commit(
     from ocfl_cli.stage.state import plan_path
     from ocfl_lib.inventory import UserInfo
 
-    store: StagingStore = ctx.obj["staging"]
-    sr, fs = open_root(ctx.obj.get("root"))
+    store = _stage_store(ctx)
+    sr, fs = open_root(appctx.root(ctx))
     root_path = _resolve_root_path(ctx)
 
     if not store.exists(root_path, object_id):
@@ -632,7 +640,7 @@ def timestamp_content(
     ] = False,
 ) -> None:
     """Submit staged content digests to SimpleProof."""
-    cfg: Config | None = ctx.obj.get("config")
+    cfg = appctx.config(ctx)
     if cfg is None or cfg.simpleproof is None:
         err("'stage timestamp content' requires [simpleproof] config section")
         raise typer.Exit(2)
@@ -651,8 +659,8 @@ def timestamp_content(
         err("'stage timestamp content --watch' requires --upgrade")
         raise typer.Exit(2)
 
-    store: StagingStore = ctx.obj["staging"]
-    sr, _fs = open_root(ctx.obj.get("root"))
+    store = _stage_store(ctx)
+    sr, _fs = open_root(appctx.root(ctx))
     root_path = _resolve_root_path(ctx)
 
     if not store.exists(root_path, object_id):
@@ -664,8 +672,8 @@ def timestamp_content(
         err(f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)")
         raise typer.Exit(2)
 
-    sp_factory = ctx.obj["sp_client_factory"]
-    btc_factory = ctx.obj["btc_rpc_factory"]
+    sp_factory = appctx.sp_client_factory(ctx)
+    btc_factory = appctx.btc_rpc_factory(ctx)
 
     if watch_flag:
         try:
@@ -757,7 +765,7 @@ def timestamp_inventory(
     ] = False,
 ) -> None:
     """Build inventory, submit its digest to SimpleProof, serialize plan."""
-    cfg: Config | None = ctx.obj.get("config")
+    cfg = appctx.config(ctx)
     if cfg is None or cfg.simpleproof is None:
         err("'stage timestamp inventory' requires [simpleproof] config section")
         raise typer.Exit(2)
@@ -776,8 +784,8 @@ def timestamp_inventory(
         err("'stage timestamp inventory --watch' requires --upgrade")
         raise typer.Exit(2)
 
-    store: StagingStore = ctx.obj["staging"]
-    sr, _fs = open_root(ctx.obj.get("root"))
+    store = _stage_store(ctx)
+    sr, _fs = open_root(appctx.root(ctx))
     root_path = _resolve_root_path(ctx)
 
     if not store.exists(root_path, object_id):
@@ -789,8 +797,8 @@ def timestamp_inventory(
         err(f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)")
         raise typer.Exit(2)
 
-    sp_factory = ctx.obj["sp_client_factory"]
-    btc_factory = ctx.obj["btc_rpc_factory"]
+    sp_factory = appctx.sp_client_factory(ctx)
+    btc_factory = appctx.btc_rpc_factory(ctx)
 
     if watch_flag:
         try:
@@ -866,7 +874,7 @@ def reset(
     ] = False,
 ) -> None:
     """Delete staging area for an object."""
-    store: StagingStore = ctx.obj["staging"]
+    store = _stage_store(ctx)
     root_path = _resolve_root_path(ctx)
 
     if not store.exists(root_path, object_id):

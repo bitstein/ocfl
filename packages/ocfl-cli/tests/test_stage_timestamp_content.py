@@ -33,6 +33,7 @@ from pathlib import Path
 
 import pytest
 from fakes import FakeSimpleProof
+from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
@@ -103,7 +104,7 @@ def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
     typer-context obj on every ``runner.invoke``; service consumes the
     factory on its kwargs.
     """
-    runner.obj["sp_client_factory"] = lambda cfg: fake
+    runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
 
 
 # --------------------------------------------------------------------------- #

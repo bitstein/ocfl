@@ -6,6 +6,8 @@ import typer
 from rich.text import Text
 
 from ocfl_cli import _style
+from ocfl_cli._appctx import json_mode
+from ocfl_cli._appctx import root as ctx_root
 from ocfl_cli._common import err, open_root, output_json, parse_version
 from ocfl_lib import ObjectNotFound, OcflError
 
@@ -25,8 +27,8 @@ def diff(
     v2: Annotated[str, typer.Argument(help="Second version (e.g. v2 or 2).")],
 ) -> None:
     """Show changes between two object versions."""
-    json_mode = ctx.obj.get("json", False)
-    root, _fs = open_root(ctx.obj.get("root"))
+    as_json = json_mode(ctx)
+    root, _fs = open_root(ctx_root(ctx))
 
     try:
         obj = root.get_object(object_id)
@@ -40,7 +42,7 @@ def diff(
     vnum2 = parse_version(v2)
     entries = obj.diff_versions(vnum1, vnum2)
 
-    if json_mode:
+    if as_json:
         output_json(
             [
                 {

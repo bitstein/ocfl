@@ -5,7 +5,7 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Any, Self
+from typing import TYPE_CHECKING, Annotated, Any, Self
 from urllib.parse import urlsplit
 
 from platformdirs import user_config_path
@@ -25,6 +25,9 @@ from pydantic_settings import (
 )
 
 from ocfl_cli.errors import ConfigError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 __all__ = [
     "ArchiveConfig",
@@ -256,7 +259,7 @@ def _format_validation_error(e: ValidationError, path: Path, label: str) -> str:
     return f"{path}: " + "; ".join(parts)
 
 
-def _clean_msg(err: dict[str, Any]) -> str:
+def _clean_msg(err: Mapping[str, Any]) -> str:
     """Make pydantic's default messages read like the rest of our errors."""
     # Map pydantic error types to phrasing that reads as a continuation of
     # the "<section>.<field>: " label. Fall through to the raw `msg` for

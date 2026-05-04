@@ -9,6 +9,7 @@ from typing import Annotated
 import typer
 
 from ocfl_cli import _style
+from ocfl_cli._appctx import install_app_ctx
 from ocfl_cli.archive.diff import diff
 from ocfl_cli.archive.export import export
 from ocfl_cli.archive.info import info
@@ -138,13 +139,15 @@ def main(
             archive = implicit
             resolved_root = implicit.root
 
-    ctx.obj["root"] = resolved_root
-    ctx.obj["config"] = config
-    ctx.obj["archive"] = archive
-    ctx.obj["json"] = json_output
-    ctx.obj["quiet"] = quiet
-    ctx.obj["verbose"] = verbose
-    ctx.obj["no_color"] = no_color
-    # `setdefault` so tests can pre-inject fakes via `runner.invoke(obj=...)`.
-    ctx.obj.setdefault("sp_client_factory", default_sp_factory)
-    ctx.obj.setdefault("btc_rpc_factory", default_btc_factory)
+    install_app_ctx(
+        ctx,
+        root=resolved_root,
+        config=config,
+        archive=archive,
+        json_output=json_output,
+        quiet=quiet,
+        verbose=verbose,
+        no_color=no_color,
+        sp_client_factory=default_sp_factory,
+        btc_rpc_factory=default_btc_factory,
+    )

@@ -55,6 +55,7 @@ from typing import Any
 import filelock
 import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof, InMemoryHashBlockStream
+from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
@@ -116,12 +117,12 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
 
 def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
     """Inject *fake* via ``runner.obj["sp_client_factory"]``."""
-    runner.obj["sp_client_factory"] = lambda cfg: fake
+    runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
 
 
 def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
     """Inject *fake* via ``runner.obj["btc_rpc_factory"]``."""
-    runner.obj["btc_rpc_factory"] = lambda cfg: fake
+    runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
 
 
 def _inject_fake_zmq(monkeypatch: pytest.MonkeyPatch, stream: HashBlockStream) -> None:
@@ -838,7 +839,7 @@ class TestRegtestRealZmqHashblockDelivery:
         # Fresh CliRunner per thread (process-global stdout/stderr issues
         # with the fixture runner under threads); pass `runner.obj` so the
         # injected sp_client_factory still flows through.
-        thread_obj = dict(runner.obj)
+        thread_obj = dict(runner_obj(runner))
 
         def _run() -> None:
             r = CliRunner().invoke(

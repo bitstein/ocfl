@@ -7,6 +7,7 @@ from typing import Annotated
 
 import typer
 
+from ocfl_cli._appctx import root as ctx_root
 from ocfl_cli._common import err, open_root, parse_version
 from ocfl_lib import ObjectNotFound, OcflError
 from ocfl_lib.digest_map import to_path_map
@@ -33,7 +34,7 @@ def export(
     ] = False,
 ) -> None:
     """Export object content to local filesystem or stdout."""
-    root, _fs = open_root(ctx.obj.get("root"))
+    root, _fs = open_root(ctx_root(ctx))
 
     try:
         obj = root.get_object(object_id)

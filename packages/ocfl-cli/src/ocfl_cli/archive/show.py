@@ -6,6 +6,8 @@ import typer
 from rich.text import Text
 
 from ocfl_cli import _style
+from ocfl_cli._appctx import json_mode
+from ocfl_cli._appctx import root as ctx_root
 from ocfl_cli._common import err, open_root, output_json, parse_version
 from ocfl_lib import ObjectNotFound, OcflError, VNum
 from ocfl_lib.digest_map import to_path_map
@@ -28,8 +30,8 @@ def show(
     ] = None,
 ) -> None:
     """Show version metadata and diff vs previous."""
-    json_mode = ctx.obj.get("json", False)
-    root, _fs = open_root(ctx.obj.get("root"))
+    as_json = json_mode(ctx)
+    root, _fs = open_root(ctx_root(ctx))
 
     try:
         obj = root.get_object(object_id)
@@ -54,7 +56,7 @@ def show(
         prev_v = VNum(v.number - 1, v.padding)
         changes = obj.diff_versions(prev_v, v)
 
-    if json_mode:
+    if as_json:
         output_json(
             {
                 "version": str(v),

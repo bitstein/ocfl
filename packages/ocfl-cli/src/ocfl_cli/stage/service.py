@@ -297,9 +297,7 @@ def build_inventory_plan(
 # ---------------------------------------------------------------------------
 
 
-def _pair_ots_companion_remove(
-    state: StateMap, removed_paths: list[str]
-) -> None:
+def _pair_ots_companion_remove(state: StateMap, removed_paths: list[str]) -> None:
     """Remove `<path>.ots` companions from *state* for each non-`.ots` path removed."""
     for p in removed_paths:
         if p.endswith(".ots"):

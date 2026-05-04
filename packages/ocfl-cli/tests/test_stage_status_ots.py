@@ -31,6 +31,7 @@ from pathlib import Path
 
 import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof
+from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
@@ -107,11 +108,11 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
 
 
 def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
-    runner.obj["sp_client_factory"] = lambda cfg: fake
+    runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
 
 
 def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
-    runner.obj["btc_rpc_factory"] = lambda cfg: fake
+    runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
 
 
 # --------------------------------------------------------------------------- #

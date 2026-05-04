@@ -5,6 +5,7 @@ from typing import Annotated
 
 import typer
 
+from ocfl_cli._appctx import root as ctx_root
 from ocfl_cli._common import _make_fs, err, resolve_root
 from ocfl_lib import Spec, StorageRoot, get_layout
 
@@ -28,7 +29,7 @@ def init(
     ] = "",
 ) -> None:
     """Initialize a new OCFL storage root."""
-    root_path = resolve_root(ctx.obj.get("root"))
+    root_path = resolve_root(ctx_root(ctx))
 
     try:
         ocfl_spec = Spec(spec)
