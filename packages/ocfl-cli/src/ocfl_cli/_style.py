@@ -38,7 +38,12 @@ def _should_color(stream: Any) -> bool:
 
 def _make_console(stream: IO, *, stderr: bool = False) -> Console:
     if _should_color(stream):
-        return Console(highlight=False, stderr=stderr, force_terminal=True)
+        return Console(
+            color_system="truecolor",
+            highlight=False,
+            stderr=stderr,
+            force_terminal=True,
+        )
     return Console(color_system=None, highlight=False, stderr=stderr)
 
 
