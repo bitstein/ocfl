@@ -24,8 +24,8 @@ from typing import TYPE_CHECKING, Protocol
 
 import msgspec
 
-from ocfl_lib.digest import DigestAlgorithm
-from ocfl_lib.errors import RevertCompletedError, RevertError
+from ocfl_lib.digest import DigestAlgorithm, bytes_digest
+from ocfl_lib.errors import RevertCompletedError, RevertError, StaleHeadError
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.inventory import StoredInventory
 from ocfl_lib.spec import Namaste, Spec, VNum
@@ -89,6 +89,15 @@ class UpdatePlan:
     old_sidecar_alg: str = ""  # Non-empty when algorithm migration happened
     revert_inv: StoredInventory | None = None  # Original pre-migration inv for revert
     extension_files: dict[str, bytes] = field(default_factory=dict)
+    expected_root_sidecar_digest: str | None = None
+    expected_root_sidecar_algorithm: str = ""
+
+    def __post_init__(self) -> None:
+        if self.old_inv is not None and self.expected_root_sidecar_digest is None:
+            self.expected_root_sidecar_digest = self.old_inv.digest
+            self.expected_root_sidecar_algorithm = (
+                self.old_inv.digest_algorithm.ocfl_name
+            )
 
 
 # --- Wire format (msgspec structs for serialization) ---
@@ -125,6 +134,8 @@ class _PlanState(msgspec.Struct):
     old_inv: _StoredInvState | None = None
     old_sidecar_alg: str = ""
     revert_inv: _StoredInvState | None = None
+    expected_root_sidecar_digest: str | None = None
+    expected_root_sidecar_algorithm: str = ""
     version: int = _PLAN_WIRE_VERSION
 
 
@@ -162,6 +173,8 @@ def serialize(plan: UpdatePlan) -> bytes:
         old_inv=_inv_to_state(plan.old_inv) if plan.old_inv else None,
         old_sidecar_alg=plan.old_sidecar_alg,
         revert_inv=_inv_to_state(plan.revert_inv) if plan.revert_inv else None,
+        expected_root_sidecar_digest=plan.expected_root_sidecar_digest,
+        expected_root_sidecar_algorithm=plan.expected_root_sidecar_algorithm,
     )
     return msgspec.json.encode(state)
 
@@ -192,6 +205,8 @@ def deserialize(data: bytes) -> UpdatePlan:
         old_inv=_state_to_inv(state.old_inv) if state.old_inv else None,
         old_sidecar_alg=state.old_sidecar_alg,
         revert_inv=_state_to_inv(state.revert_inv) if state.revert_inv else None,
+        expected_root_sidecar_digest=state.expected_root_sidecar_digest,
+        expected_root_sidecar_algorithm=state.expected_root_sidecar_algorithm,
     )
 
 
@@ -210,6 +225,86 @@ def _noop_run() -> int:
 
 def _noop_revert() -> None:
     pass
+
+
+def _read_sidecar_digest(fsys: FS, path: str) -> str | None:
+    try:
+        parts = fs_utils.read_text(fsys, path).split(maxsplit=1)
+    except FileNotFoundError:
+        return None
+    return parts[0] if parts else None
+
+
+def _expected_root_sidecar_path(plan: UpdatePlan, obj_dir: str) -> str:
+    if plan.expected_root_sidecar_algorithm:
+        return _join(obj_dir, f"inventory.json.{plan.expected_root_sidecar_algorithm}")
+    return _join(obj_dir, plan.new_inv.sidecar_filename)
+
+
+def _head_matches_expected(plan: UpdatePlan, fsys: FS, obj_dir: str) -> bool:
+    return (
+        _read_sidecar_digest(fsys, _expected_root_sidecar_path(plan, obj_dir))
+        == plan.expected_root_sidecar_digest
+    )
+
+
+def _head_matches_plan(plan: UpdatePlan, fsys: FS, obj_dir: str) -> bool:
+    return (
+        _read_sidecar_digest(fsys, _join(obj_dir, plan.new_inv.sidecar_filename))
+        == plan.new_inv.digest
+    )
+
+
+def _read_root_inventory_digest(plan: UpdatePlan, fsys: FS, obj_dir: str) -> str | None:
+    try:
+        data = fs_utils.read_all(fsys, _join(obj_dir, "inventory.json"))
+    except FileNotFoundError:
+        return None
+    return bytes_digest(data, plan.new_inv.digest_algorithm)
+
+
+def _check_planned_root_inventory(
+    plan: UpdatePlan,
+    fsys: FS,
+    obj_dir: str,
+) -> None:
+    actual = _read_root_inventory_digest(plan, fsys, obj_dir)
+    if actual != plan.new_inv.digest:
+        raise StaleHeadError(
+            object_path=obj_dir,
+            expected_digest=plan.new_inv.digest,
+            actual_digest=actual,
+        )
+
+
+def _check_stale_head(
+    plan: UpdatePlan,
+    fsys: FS,
+    obj_dir: str,
+    *,
+    allow_planned_root_inventory: bool = False,
+) -> None:
+    expected = plan.expected_root_sidecar_digest
+    if expected is None:
+        inv_path = _join(obj_dir, "inventory.json")
+        sidecar_path = _join(obj_dir, plan.new_inv.sidecar_filename)
+        if (
+            not allow_planned_root_inventory and fs_utils.exists(fsys, inv_path)
+        ) or fs_utils.exists(fsys, sidecar_path):
+            raise StaleHeadError(
+                object_path=obj_dir,
+                expected_digest=None,
+                actual_digest=_read_sidecar_digest(fsys, sidecar_path),
+            )
+        return
+
+    actual = _read_sidecar_digest(fsys, _expected_root_sidecar_path(plan, obj_dir))
+    if actual != expected:
+        raise StaleHeadError(
+            object_path=obj_dir,
+            expected_digest=expected,
+            actual_digest=actual,
+        )
 
 
 def prepare_steps(
@@ -283,6 +378,7 @@ def prepare_steps(
 
     # 3. Version directory
     def _make_version_dir() -> int:
+        _check_stale_head(plan, fsys, obj_dir)
         fsys.mkdir(version_dir)
         return 0
 
@@ -373,18 +469,33 @@ def prepare_steps(
     rinv_path = _join(obj_dir, "inventory.json")
     if revert_src is not None:
         revert_rinv_bytes = revert_src.raw_bytes
+        revert_sidecar_path_for_root_inv = _join(obj_dir, revert_src.sidecar_filename)
+        revert_sidecar_bytes_for_root_inv = revert_src.sidecar_content.encode()
 
         def _revert_root_inv() -> None:
-            fs_utils.write_bytes(fsys, rinv_path, revert_rinv_bytes)
+            if _head_matches_plan(plan, fsys, obj_dir):
+                _try_remove(fsys, _join(obj_dir, plan.new_inv.sidecar_filename))
+                fs_utils.write_bytes(
+                    fsys,
+                    revert_sidecar_path_for_root_inv,
+                    revert_sidecar_bytes_for_root_inv,
+                )
+                fs_utils.write_bytes(fsys, rinv_path, revert_rinv_bytes)
+            elif _head_matches_expected(plan, fsys, obj_dir):
+                fs_utils.write_bytes(fsys, rinv_path, revert_rinv_bytes)
     else:
 
         def _revert_root_inv() -> None:
-            _try_remove(fsys, rinv_path)
+            if _head_matches_plan(plan, fsys, obj_dir):
+                _try_remove(fsys, _join(obj_dir, plan.new_inv.sidecar_filename))
+                _try_remove(fsys, rinv_path)
+            elif _head_matches_expected(plan, fsys, obj_dir):
+                _try_remove(fsys, rinv_path)
 
     steps.append(
         PlanStep(
             name="root-inv",
-            run=lambda: fs_utils.write_bytes(fsys, rinv_path, new_inv.raw_bytes),
+            run=lambda: _write_root_inventory(plan, fsys, obj_dir, rinv_path),
             revert=_revert_root_inv,
         )
     )
@@ -407,7 +518,9 @@ def prepare_steps(
     steps.append(
         PlanStep(
             name="root-sidecar",
-            run=lambda: fs_utils.write_bytes(fsys, rsidecar_path, rsidecar_bytes),
+            run=lambda: _write_root_sidecar(
+                plan, fsys, obj_dir, rsidecar_path, rsidecar_bytes
+            ),
             revert=_revert_root_sidecar,
         )
     )
@@ -458,6 +571,31 @@ def prepare_steps(
 def _try_remove(fsys: WriteFS, path: str) -> None:
     with contextlib.suppress(FileNotFoundError):
         fsys.remove(path)
+
+
+def _write_root_inventory(
+    plan: UpdatePlan,
+    fsys: WriteFS,
+    obj_dir: str,
+    rinv_path: str,
+) -> int:
+    _check_stale_head(plan, fsys, obj_dir)
+    return fs_utils.write_bytes(fsys, rinv_path, plan.new_inv.raw_bytes)
+
+
+def _write_root_sidecar(
+    plan: UpdatePlan,
+    fsys: WriteFS,
+    obj_dir: str,
+    rsidecar_path: str,
+    rsidecar_bytes: bytes,
+) -> int:
+    _check_stale_head(plan, fsys, obj_dir, allow_planned_root_inventory=True)
+    # The root sidecar certifies the root inventory. Re-read storage here so a
+    # racing writer cannot replace inventory.json between our root-inv and
+    # root-sidecar steps without being detected.
+    _check_planned_root_inventory(plan, fsys, obj_dir)
+    return fs_utils.write_bytes(fsys, rsidecar_path, rsidecar_bytes)
 
 
 # --- Plan execution ---

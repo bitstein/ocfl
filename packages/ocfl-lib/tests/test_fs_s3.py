@@ -208,6 +208,50 @@ class TestRemoveAll:
         assert root.get_object("abcd").exists
         assert any(key.startswith("abcd/") for key in _keys(s3_client, "abcd"))
 
+    def test_stale_update_plan_cannot_publish(
+        self, s3_client: S3Client, tmp_path: Path
+    ):
+        from ocfl_lib.digest import DigestAlgorithm
+        from ocfl_lib.errors import StaleHeadError
+        from ocfl_lib.fs.local import LocalFS
+        from ocfl_lib.fs.s3 import S3FS
+        from ocfl_lib.layout import FlatDirectLayout
+        from ocfl_lib.object import Object
+        from ocfl_lib.root import StorageRoot
+        from ocfl_lib.spec import VNum
+        from ocfl_lib.stage import stage_dir
+
+        s3fs = S3FS(BUCKET, client=s3_client)
+        root = StorageRoot.init(s3fs, s3fs, layout=FlatDirectLayout())
+
+        src1 = tmp_path / "src1"
+        src1.mkdir()
+        (src1 / "base.txt").write_text("v1")
+        stage1 = stage_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
+        root.commit(s3fs, "obj:stale", stage1, created="2024-01-01T00:00:00Z")
+
+        src2a = tmp_path / "src2a"
+        src2a.mkdir()
+        (src2a / "a.txt").write_text("writer a")
+        src2b = tmp_path / "src2b"
+        src2b.mkdir()
+        (src2b / "b.txt").write_text("writer b")
+        stage_a = stage_dir(LocalFS(tmp_path), "src2a", DigestAlgorithm.SHA512)
+        stage_b = stage_dir(LocalFS(tmp_path), "src2b", DigestAlgorithm.SHA512)
+
+        obj_path = root.object_path("obj:stale")
+        obj_a = Object(s3fs, obj_path)
+        obj_b = Object(s3fs, obj_path)
+        plan_a = obj_a.new_update_plan(stage_a, created="2024-02-01T00:00:00Z")
+        plan_b = obj_b.new_update_plan(stage_b, created="2024-02-01T00:00:01Z")
+
+        obj_a.apply_update_plan(s3fs, plan_a, stage_a.content_source)
+
+        with pytest.raises(StaleHeadError):
+            obj_b.apply_update_plan(s3fs, plan_b, stage_b.content_source)
+
+        assert Object(s3fs, obj_path).head == VNum(2)
+
 
 class TestMkdir:
     def test_noop(self, fs: S3FS, s3_client: S3Client):

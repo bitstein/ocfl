@@ -7,11 +7,15 @@ returned data; watch loops in `stage/watch.py` reuse these primitives
 under a ZMQ-driven block loop.
 """
 
+import hashlib
 import logging
+import tempfile
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import filelock
 from msgspec.structs import replace
 
 from ocfl_cli.errors import (
@@ -19,6 +23,7 @@ from ocfl_cli.errors import (
     BitcoinError,
     CommitFailedError,
     InventoryProofMissingError,
+    LockTimeoutError,
     PhaseError,
     StagingFileChangedError,
     StagingFileMissingError,
@@ -81,6 +86,7 @@ type StateMap = dict[str, list[str]]
 
 _SUBMIT_CHUNK_SIZE = 1000
 _LOCK_TIMEOUT_SECONDS = 30
+_OBJECT_LOCK_DIR = "ocfl-cli-object-locks"
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +147,36 @@ def _submission_age_seconds(submitted_at: str, now: datetime) -> int:
     except ValueError:
         return 0
     return max(0, int((now - dt).total_seconds()))
+
+
+@contextmanager
+def _object_commit_lock(
+    root_path: str,
+    object_id: str,
+    *,
+    timeout: float = _LOCK_TIMEOUT_SECONDS,
+):
+    """Serialize local CLI commits for one storage-root/object pair.
+
+    This is an operator-ergonomics lock: it prevents ordinary same-machine CLI
+    commits from racing into retryable stale-head failures. The library still
+    enforces optimistic stale-head checks because S3 and non-CLI callers need a
+    backend-independent correctness guard.
+    """
+    key = hashlib.sha256(f"{root_path}\0{object_id}".encode()).hexdigest()
+    lock_dir = Path(tempfile.gettempdir()) / _OBJECT_LOCK_DIR
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock = filelock.FileLock(str(lock_dir / f"{key}.lock"))
+    try:
+        lock.acquire(timeout=timeout)
+    except filelock.Timeout as e:
+        raise LockTimeoutError(
+            f"could not acquire commit lock for {object_id!r} within {timeout}s"
+        ) from e
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 def next_action_for(state: OtsState, has_files: bool) -> tuple[NextActionKind, str]:
@@ -1343,31 +1379,32 @@ def commit_bare(
     created: str | None,
 ) -> None:
     """`stage commit` (non-OTS path): build plan, prepare, execute, purge."""
-    plan, content_source = build_inventory_plan(
-        store,
-        sr,
-        root_path,
-        object_id,
-        message=message,
-        user=user,
-        created=created,
-    )
-    prepare_steps(plan, fs, obj_dir, content_source)
+    with _object_commit_lock(root_path, object_id):
+        plan, content_source = build_inventory_plan(
+            store,
+            sr,
+            root_path,
+            object_id,
+            message=message,
+            user=user,
+            created=created,
+        )
+        prepare_steps(plan, fs, obj_dir, content_source)
 
-    # Transactional boundary: execute_plan failure -> revert + preserve staging
-    # for retry. revert_plan failures propagate as-is.
-    try:
-        execute_plan(plan)
-    except KeyboardInterrupt:
-        revert_plan(plan)
-        raise CommitFailedError(
-            "commit interrupted, reverting...", interrupted=True
-        ) from None
-    except Exception as exc:
-        revert_plan(plan)
-        raise CommitFailedError(str(exc)) from exc
+        # Transactional boundary: execute_plan failure -> revert + preserve staging
+        # for retry. revert_plan failures propagate as-is.
+        try:
+            execute_plan(plan)
+        except KeyboardInterrupt:
+            revert_plan(plan)
+            raise CommitFailedError(
+                "commit interrupted, reverting...", interrupted=True
+            ) from None
+        except Exception as exc:
+            revert_plan(plan)
+            raise CommitFailedError(str(exc)) from exc
 
-    store.purge(root_path, object_id)
+        store.purge(root_path, object_id)
 
 
 def commit_ots(
@@ -1387,64 +1424,70 @@ def commit_ots(
     object directory, not staging, so a concurrent `--upgrade --watch`
     can keep running.
     """
-    with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
-        state = load_ots(staging_dir)
-        target_phase = check_transition(state.phase, "commit (ots path)")
+    with _object_commit_lock(root_path, object_id):
+        with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
+            state = load_ots(staging_dir)
+            target_phase = check_transition(state.phase, "commit (ots path)")
 
-        if state.inventory_proof is None or not state.inventory_proof.proof.verified:
-            raise AttestationMismatchError(
-                "inventory_proof missing or unverified; "
-                "re-run `stage timestamp inventory --upgrade`"
+            if (
+                state.inventory_proof is None
+                or not state.inventory_proof.proof.verified
+            ):
+                raise AttestationMismatchError(
+                    "inventory_proof missing or unverified; "
+                    "re-run `stage timestamp inventory --upgrade`"
+                )
+
+            inv_digest = state.inventory_proof.digest
+            plan = deserialize(plan_path(staging_dir).read_bytes())
+
+            try:
+                inv_ots = ots_cache_path(staging_dir, inv_digest).read_bytes()
+            except FileNotFoundError:
+                raise AttestationMismatchError(
+                    f"ots-cache/{inv_digest}.ots missing; "
+                    f"re-run `stage timestamp inventory --upgrade`"
+                ) from None
+
+            try:
+                parsed = parse_ots(inv_ots)
+            except OtsParseError as exc:
+                raise AttestationMismatchError(
+                    f"failed to parse cached inventory .ots ({exc}); "
+                    f"re-run `stage timestamp inventory --upgrade`"
+                ) from None
+
+            if parsed.commitment_digest.hex() != inv_digest:
+                raise AttestationMismatchError(
+                    f"cached inventory .ots commits to "
+                    f"{parsed.commitment_digest.hex()}, plan expects "
+                    f"{inv_digest}; re-run `stage timestamp inventory --upgrade`"
+                )
+
+            head = plan.new_inv.inventory.head
+            plan.extension_files[
+                f"extensions/NNNN-ots-timestamps/inventory.json.{head}.ots"
+            ] = inv_ots
+
+            content_source = _validate_and_build_content_source(
+                store, root_path, object_id
             )
+            prev_phase = state.phase
 
-        inv_digest = state.inventory_proof.digest
-        plan = deserialize(plan_path(staging_dir).read_bytes())
-
+        prepare_steps(plan, fs, obj_dir, content_source)
+        # Transactional boundary: execute_plan failure -> revert + preserve staging
+        # for retry. revert_plan failures propagate as-is.
         try:
-            inv_ots = ots_cache_path(staging_dir, inv_digest).read_bytes()
-        except FileNotFoundError:
-            raise AttestationMismatchError(
-                f"ots-cache/{inv_digest}.ots missing; "
-                f"re-run `stage timestamp inventory --upgrade`"
+            execute_plan(plan)
+        except KeyboardInterrupt:
+            revert_plan(plan)
+            raise CommitFailedError(
+                "commit interrupted, reverting...", interrupted=True
             ) from None
+        except Exception as exc:
+            revert_plan(plan)
+            raise CommitFailedError(str(exc)) from exc
 
-        try:
-            parsed = parse_ots(inv_ots)
-        except OtsParseError as exc:
-            raise AttestationMismatchError(
-                f"failed to parse cached inventory .ots ({exc}); "
-                f"re-run `stage timestamp inventory --upgrade`"
-            ) from None
-
-        if parsed.commitment_digest.hex() != inv_digest:
-            raise AttestationMismatchError(
-                f"cached inventory .ots commits to "
-                f"{parsed.commitment_digest.hex()}, plan expects "
-                f"{inv_digest}; re-run `stage timestamp inventory --upgrade`"
-            )
-
-        head = plan.new_inv.inventory.head
-        plan.extension_files[
-            f"extensions/NNNN-ots-timestamps/inventory.json.{head}.ots"
-        ] = inv_ots
-
-        content_source = _validate_and_build_content_source(store, root_path, object_id)
-        prev_phase = state.phase
-
-    prepare_steps(plan, fs, obj_dir, content_source)
-    # Transactional boundary: execute_plan failure -> revert + preserve staging
-    # for retry. revert_plan failures propagate as-is.
-    try:
-        execute_plan(plan)
-    except KeyboardInterrupt:
-        revert_plan(plan)
-        raise CommitFailedError(
-            "commit interrupted, reverting...", interrupted=True
-        ) from None
-    except Exception as exc:
-        revert_plan(plan)
-        raise CommitFailedError(str(exc)) from exc
-
-    # Purge staging on success (also removes ots-cache/, ots.json, plan.json).
-    store.purge(root_path, object_id)
-    _log_phase(prev_phase, target_phase)
+        # Purge staging on success (also removes ots-cache/, ots.json, plan.json).
+        store.purge(root_path, object_id)
+        _log_phase(prev_phase, target_phase)

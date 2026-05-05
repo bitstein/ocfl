@@ -5,12 +5,13 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ocfl_lib.digest import DigestAlgorithm
+from ocfl_lib.errors import StaleHeadError
 from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.inventory import UserInfo
 from ocfl_lib.object import Object
 from ocfl_lib.spec import Spec, VNum
 from ocfl_lib.stage import Stage, stage_dir
-from ocfl_lib.update_plan import deserialize, serialize
+from ocfl_lib.update_plan import deserialize, revert_plan, serialize
 from ocfl_lib.validation.object import validate_object
 from ocfl_lib.validation.result import ValidationResult
 
@@ -566,3 +567,79 @@ class TestTwoStepWrite:
         result = ValidationResult()
         validate_object(obj_fs, "", result)
         assert result.is_valid
+
+    def test_independently_built_stale_plan_cannot_publish(self, tmp_path: Path):
+        """Two v2 plans built from the same v1 head cannot both publish."""
+        src1 = _make_src_dir(tmp_path, {"base.txt": "v1"})
+        obj_dir = tmp_path / "obj"
+        obj_dir.mkdir()
+
+        obj_fs = LocalFS(obj_dir)
+        obj = Object(obj_fs, "")
+        obj.update(
+            obj_fs,
+            stage_dir(LocalFS(src1.parent), "src", DigestAlgorithm.SHA512),
+            id="test:stale",
+            spec=Spec.V1_1,
+            created="2024-01-01T00:00:00Z",
+        )
+
+        src2a = tmp_path / "src2a"
+        src2a.mkdir()
+        (src2a / "a.txt").write_text("writer a")
+        src2b = tmp_path / "src2b"
+        src2b.mkdir()
+        (src2b / "b.txt").write_text("writer b")
+
+        stage_a = stage_dir(LocalFS(tmp_path), "src2a", DigestAlgorithm.SHA512)
+        stage_b = stage_dir(LocalFS(tmp_path), "src2b", DigestAlgorithm.SHA512)
+
+        obj_a = Object(obj_fs, "")
+        obj_b = Object(obj_fs, "")
+        plan_a = obj_a.new_update_plan(stage_a, created="2024-02-01T00:00:00Z")
+        plan_b = obj_b.new_update_plan(stage_b, created="2024-02-01T00:00:01Z")
+
+        obj_a.apply_update_plan(obj_fs, plan_a, stage_a.content_source)
+
+        with pytest.raises(StaleHeadError):
+            obj_b.apply_update_plan(obj_fs, plan_b, stage_b.content_source)
+
+        assert Object(obj_fs, "").head == VNum(2)
+        result = ValidationResult()
+        validate_object(obj_fs, "", result)
+        assert result.is_valid, f"errors: {[e.message for e in result.errors]}"
+
+    def test_stale_plan_revert_removes_copied_content(self, tmp_path: Path):
+        """A stale plan can be reverted without leaving unmanifested content."""
+        src1 = _make_src_dir(tmp_path, {"base.txt": "v1"})
+        obj_dir = tmp_path / "obj"
+        obj_dir.mkdir()
+
+        obj_fs = LocalFS(obj_dir)
+        obj = Object(obj_fs, "")
+        obj.update(
+            obj_fs,
+            stage_dir(LocalFS(src1.parent), "src", DigestAlgorithm.SHA512),
+            id="test:stale-revert",
+            spec=Spec.V1_1,
+            created="2024-01-01T00:00:00Z",
+        )
+
+        src2 = tmp_path / "src2"
+        src2.mkdir()
+        (src2 / "new.txt").write_text("new content")
+        stage = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+
+        plan = Object(obj_fs, "").new_update_plan(stage, created="2024-02-01T00:00:00Z")
+        (obj_dir / "inventory.json.sha512").write_text("0" * 128 + " inventory.json\n")
+
+        with pytest.raises(StaleHeadError):
+            Object(obj_fs, "").apply_update_plan(obj_fs, plan, stage.content_source)
+
+        revert_plan(plan)
+
+        assert not (obj_dir / "v2").exists()
+        (obj_dir / "inventory.json.sha512").write_text(obj.inventory.sidecar_content)
+        result = ValidationResult()
+        validate_object(obj_fs, "", result)
+        assert result.is_valid, f"errors: {[e.message for e in result.errors]}"

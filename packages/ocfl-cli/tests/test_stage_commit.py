@@ -1,15 +1,18 @@
 """Tests for ocfl stage commit."""
 
+import threading
 import time
 from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
 
+from ocfl_cli.errors import LockTimeoutError
 from ocfl_cli.main import app
 from ocfl_cli.stage import service
 from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import LocalFS, StorageRoot
+from ocfl_lib.errors import StaleHeadError
 
 
 @pytest.fixture
@@ -285,3 +288,96 @@ class TestCrashRecovery:
         assert obj.exists
         assert obj.head.number == 1
         assert not store.exists(root_path, oid)
+
+
+class TestCommitLocking:
+    def test_object_commit_lock_timeout_raises(self, tmp_path):
+        """A contended object commit lock raises the canonical lock timeout."""
+        root_path = str(tmp_path / "root")
+        object_id = "obj:locked"
+
+        with (
+            service._object_commit_lock(root_path, object_id, timeout=1),
+            pytest.raises(LockTimeoutError, match="commit lock"),
+            service._object_commit_lock(root_path, object_id, timeout=0.01),
+        ):
+            pytest.fail("second lock acquire should time out")
+
+    def test_bare_commits_for_same_object_are_serialized(self, tmp_path):
+        """Local CLI commits for one object do not overlap plan execution."""
+        current = 0
+        peak = 0
+        guard = threading.Lock()
+
+        def fake_execute_plan(_plan):
+            nonlocal current, peak
+            with guard:
+                current += 1
+                peak = max(peak, current)
+            time.sleep(0.05)
+            with guard:
+                current -= 1
+
+        with (
+            patch(
+                "ocfl_cli.stage.service.build_inventory_plan",
+                return_value=(object(), object()),
+            ),
+            patch("ocfl_cli.stage.service.prepare_steps"),
+            patch("ocfl_cli.stage.service.execute_plan", side_effect=fake_execute_plan),
+        ):
+            threads = [
+                threading.Thread(
+                    target=service.commit_bare,
+                    kwargs={
+                        "store": StagingStore(tmp_path / "staging"),
+                        "sr": object(),
+                        "fs": object(),
+                        "obj_dir": "obj",
+                        "root_path": str(tmp_path / "root"),
+                        "object_id": "obj:locked",
+                        "message": None,
+                        "user": None,
+                        "created": None,
+                    },
+                    daemon=True,
+                )
+                for _ in range(2)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=5)
+
+        assert all(not thread.is_alive() for thread in threads)
+        assert peak == 1
+
+    def test_stale_head_preserves_staging_for_retry(
+        self, runner, storage_root, tmp_path
+    ):
+        """A stale-head commit failure rolls back and leaves staging intact."""
+        oid = "obj:stale"
+        staging = tmp_path / "staging"
+        src = tmp_path / "file.txt"
+        src.write_text("content")
+
+        _invoke(runner, storage_root, staging, "new", oid)
+        _invoke(runner, storage_root, staging, "add", oid, str(src))
+
+        stale = StaleHeadError(
+            object_path="",
+            expected_digest="a" * 128,
+            actual_digest="b" * 128,
+        )
+        with (
+            patch("ocfl_cli.stage.service.execute_plan", side_effect=stale),
+            patch("ocfl_cli.stage.service.revert_plan", wraps=service.revert_plan),
+        ):
+            result = _invoke(runner, storage_root, staging, "commit", oid)
+
+        assert result.exit_code == 1, result.output
+        assert "stale" in result.output.lower()
+
+        store = StagingStore(staging)
+        root_path = str(storage_root.resolve())
+        assert store.exists(root_path, oid)

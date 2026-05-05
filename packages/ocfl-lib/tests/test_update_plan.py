@@ -12,7 +12,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from ocfl_lib.digest import DigestAlgorithm
-from ocfl_lib.errors import RevertCompletedError
+from ocfl_lib.errors import RevertCompletedError, StaleHeadError
 from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.inventory import Inventory, StoredInventory, VersionInfo
 
@@ -218,6 +218,23 @@ class TestSerialization:
         data = serialize(plan)
         restored = deserialize(data)
         assert restored.revert_inv is None
+
+    def test_expected_root_sidecar_round_trip(self):
+        """Expected root sidecar digest survives serialization round-trip."""
+        old_inv = _make_stored_inventory(obj_id="test:old")
+        new_inv = _make_stored_inventory(obj_id="test:new", head="v2")
+        plan = UpdatePlan(
+            steps=[],
+            new_inv=new_inv,
+            old_inv=old_inv,
+            expected_root_sidecar_digest="a" * 128,
+            expected_root_sidecar_algorithm="sha512",
+        )
+
+        restored = deserialize(serialize(plan))
+
+        assert restored.expected_root_sidecar_digest == "a" * 128
+        assert restored.expected_root_sidecar_algorithm == "sha512"
 
     def test_step_error_fields_preserved(self):
         steps = [
@@ -473,6 +490,70 @@ class TestExecutePlan:
 
         for step in plan.steps:
             assert step.completed, f"step {step.name!r} not completed"
+
+    def test_stale_sidecar_revert_preserves_newer_head(self, tmp_path: Path):
+        """Rollback after root-inv must not clobber a newer committed head."""
+        old_inv = _build_v1_inventory(files={"a.txt": "d1"})
+        fsys = LocalFS(tmp_path)
+        source1 = _DictContentSource({"d1": b"aaa"})
+        plan1 = UpdatePlan(steps=[], new_inv=old_inv, old_inv=None)
+        prepare_steps(plan1, fsys, "obj1", source1)
+        execute_plan(plan1)
+
+        inv_a = _build_v2_inventory(old_inv, new_files={"a.txt": "d1", "a2.txt": "d2"})
+        plan_a = UpdatePlan(steps=[], new_inv=inv_a, old_inv=old_inv)
+        prepare_steps(plan_a, fsys, "obj1", _DictContentSource({"d2": b"bbb"}))
+
+        root_sidecar_idx = [s.name for s in plan_a.steps].index("root-sidecar")
+        for step in plan_a.steps[:root_sidecar_idx]:
+            assert step.run is not None
+            step.size = step.run()
+            step.completed = True
+
+        inv_b = _build_v2_inventory(old_inv, new_files={"a.txt": "d1", "b2.txt": "d3"})
+        obj_dir = tmp_path / "obj1"
+        (obj_dir / "inventory.json").write_bytes(inv_b.raw_bytes)
+        (obj_dir / inv_b.sidecar_filename).write_text(inv_b.sidecar_content)
+
+        with pytest.raises(StaleHeadError):
+            execute_plan(plan_a)
+
+        revert_plan(plan_a)
+
+        assert (obj_dir / "inventory.json").read_bytes() == inv_b.raw_bytes
+        assert (obj_dir / inv_b.sidecar_filename).read_text() == inv_b.sidecar_content
+
+    def test_root_sidecar_requires_matching_root_inventory(self, tmp_path: Path):
+        """Do not publish a sidecar over another plan's root inventory."""
+        old_inv = _build_v1_inventory(files={"a.txt": "d1"})
+        fsys = LocalFS(tmp_path)
+        plan1 = UpdatePlan(steps=[], new_inv=old_inv, old_inv=None)
+        prepare_steps(plan1, fsys, "obj1", _DictContentSource({"d1": b"aaa"}))
+        execute_plan(plan1)
+
+        inv_a = _build_v2_inventory(old_inv, new_files={"a.txt": "d1", "a2.txt": "d2"})
+        plan_a = UpdatePlan(steps=[], new_inv=inv_a, old_inv=old_inv)
+        prepare_steps(plan_a, fsys, "obj1", _DictContentSource({"d2": b"bbb"}))
+
+        root_sidecar_idx = [s.name for s in plan_a.steps].index("root-sidecar")
+        for step in plan_a.steps[:root_sidecar_idx]:
+            assert step.run is not None
+            step.size = step.run()
+            step.completed = True
+
+        inv_b = _build_v2_inventory(old_inv, new_files={"a.txt": "d1", "b2.txt": "d3"})
+        obj_dir = tmp_path / "obj1"
+        (obj_dir / "inventory.json").write_bytes(inv_b.raw_bytes)
+
+        with pytest.raises(StaleHeadError):
+            execute_plan(plan_a)
+
+        revert_plan(plan_a)
+
+        assert (obj_dir / "inventory.json").read_bytes() == old_inv.raw_bytes
+        assert (obj_dir / old_inv.sidecar_filename).read_text() == (
+            old_inv.sidecar_content
+        )
 
     def test_skips_completed_steps(self, tmp_path: Path):
         """Steps already marked completed should be skipped."""

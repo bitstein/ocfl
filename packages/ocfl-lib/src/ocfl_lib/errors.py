@@ -61,6 +61,39 @@ class InventorySidecarMismatch(OcflError):
         )
 
 
+class StaleHeadError(OcflError):
+    """Object root inventory changed after an update plan was built.
+
+    This signals optimistic stale-head detection, not a multi-file atomic
+    publish guarantee. Backends without conditional writes can still expose a
+    short transient mismatch while inventory.json and its sidecar are being
+    replaced.
+    """
+
+    def __init__(
+        self,
+        *,
+        object_path: str,
+        expected_digest: str | None,
+        actual_digest: str | None,
+    ) -> None:
+        self.object_path = object_path
+        self.expected_digest = expected_digest
+        self.actual_digest = actual_digest
+        expected = _short_digest(expected_digest)
+        actual = _short_digest(actual_digest)
+        super().__init__(
+            f"stale object head at {object_path or '.'}: "
+            f"expected {expected}, got {actual}"
+        )
+
+
+def _short_digest(digest: str | None) -> str:
+    if digest is None:
+        return "missing"
+    return f"{digest[:16]}..."
+
+
 class OcflFileTypeError(OcflError):
     """Non-regular, non-directory entry encountered (symlink, fifo, etc.)."""
 

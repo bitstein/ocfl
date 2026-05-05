@@ -12,6 +12,7 @@ from ocfl_lib.errors import (
     OcflFileTypeError,
     OcflNotFoundError,
     RevertError,
+    StaleHeadError,
     VersionNotFound,
 )
 from ocfl_lib.fs import FS, CopyFS, FileWalker, LocalFS, WriteFS
@@ -53,6 +54,7 @@ __all__ = [
     "RevertError",
     "Spec",
     "Stage",
+    "StaleHeadError",
     "StorageRoot",
     "StoredInventory",
     "UpdatePlan",

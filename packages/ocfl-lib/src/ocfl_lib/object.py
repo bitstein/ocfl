@@ -345,6 +345,11 @@ class Object:
         old_stored = self.inventory if self.exists else None
         prev = old_stored.inventory if old_stored else None
 
+        expected_root_sidecar_digest = old_stored.digest if old_stored else None
+        expected_root_sidecar_algorithm = (
+            old_stored.digest_algorithm.ocfl_name if old_stored else ""
+        )
+
         # Detect algorithm migration
         old_sidecar_alg = ""
         revert_stored = None
@@ -386,6 +391,8 @@ class Object:
             old_inv=old_stored,
             old_sidecar_alg=old_sidecar_alg,
             revert_inv=revert_stored,
+            expected_root_sidecar_digest=expected_root_sidecar_digest,
+            expected_root_sidecar_algorithm=expected_root_sidecar_algorithm,
         )
 
     def apply_update_plan(
