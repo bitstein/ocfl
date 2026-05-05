@@ -139,6 +139,21 @@ def _make_client(
     )
 
 
+def test_simpleproof_http_client_closes_injected_http_client() -> None:
+    http = httpx.Client(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200))
+    )
+    client = SimpleProofHttpClient(
+        BASE,
+        SimpleProofCreds(access_token=ACCESS_TOKEN, api_key=API_KEY),
+        client=http,
+    )
+
+    client.close()
+
+    assert http.is_closed
+
+
 def _ok_submit(hashes: list[str], *, offset: int = 0) -> httpx.Response:
     body = {
         "records": [

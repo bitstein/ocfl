@@ -29,6 +29,17 @@ def _make_client(
     return BitcoinRPCClient("http://node:8332/", client=http)
 
 
+def test_bitcoin_rpc_client_closes_injected_http_client() -> None:
+    http = httpx.Client(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200))
+    )
+    client = BitcoinRPCClient("http://node:8332/", client=http)
+
+    client.close()
+
+    assert http.is_closed
+
+
 def _exc_chain_text(exc: BaseException) -> str:
     """Concatenate str(exc) across the full __cause__/__context__ chain."""
     parts: list[str] = []

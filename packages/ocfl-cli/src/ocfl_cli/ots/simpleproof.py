@@ -105,6 +105,9 @@ class SimpleProofHttpClient:
         self._sleep = sleep
         self._attempts = attempts
 
+    def close(self) -> None:
+        self._client.close()
+
     def _request(
         self,
         method: str,

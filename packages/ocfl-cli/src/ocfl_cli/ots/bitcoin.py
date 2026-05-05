@@ -109,6 +109,9 @@ class BitcoinRPCClient:
         self._rpc_url = rpc_url
         self._client = client
 
+    def close(self) -> None:
+        self._client.close()
+
     def _call(self, method: str, params: list[Any]) -> Any:
         payload = {
             "jsonrpc": "1.0",

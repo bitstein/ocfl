@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 if TYPE_CHECKING:
     import typer
@@ -38,6 +38,62 @@ class AppCtx:
     no_color: bool
     sp_client_factory: SpClientFactory
     btc_rpc_factory: BtcRpcFactory
+
+
+_SP_FACTORY_SOURCE = "_sp_client_factory_source"
+_BTC_FACTORY_SOURCE = "_btc_rpc_factory_source"
+_SP_FACTORY_WRAPPER = "_sp_client_factory_wrapper"
+_BTC_FACTORY_WRAPPER = "_btc_rpc_factory_wrapper"
+_CLIENT_LIFECYCLE = "client_lifecycle"
+
+
+@dataclass(slots=True)
+class ClientLifecycle:
+    """Per-invocation client cache with best-effort close support."""
+
+    sp_source: SpClientFactory
+    btc_source: BtcRpcFactory
+
+    _missing: ClassVar[object] = object()
+    _sp_client: object = _missing
+    _btc_client: object = _missing
+    _closed: bool = False
+
+    def sp_client_factory(self, cfg: Config) -> SimpleProofClient:
+        if self._sp_client is self._missing:
+            self._sp_client = self.sp_source(cfg)
+        return cast("SimpleProofClient", self._sp_client)
+
+    def btc_rpc_factory(self, cfg: Config) -> BitcoinRPC:
+        if self._btc_client is self._missing:
+            self._btc_client = self.btc_source(cfg)
+        return cast("BitcoinRPC", self._btc_client)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        for client in (self._sp_client, self._btc_client):
+            if client is self._missing:
+                continue
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
+
+
+def _factory_source[T](
+    obj: dict[str, object],
+    *,
+    source_key: str,
+    wrapper_key: str,
+    factory_key: str,
+    default: T,
+) -> T:
+    """Return the original factory source for a possibly reused ``ctx.obj``."""
+    candidate = obj.get(factory_key, default)
+    if candidate is obj.get(wrapper_key):
+        return cast("T", obj.get(source_key, default))
+    return cast("T", candidate)
 
 
 def _obj(ctx: typer.Context) -> dict[str, object]:
@@ -69,8 +125,8 @@ def install_app_ctx(
 ) -> None:
     """Install application defaults into ``ctx.obj``.
 
-    Factory values use ``setdefault`` so ``runner.invoke(obj=...)`` injection
-    wins over production defaults.
+    Factory source values preserve ``runner.invoke(obj=...)`` injection, then
+    get wrapped in a per-invocation cache registered with Click's close hooks.
     """
     obj = _obj(ctx)
     obj["root"] = root
@@ -80,9 +136,33 @@ def install_app_ctx(
     obj["quiet"] = quiet
     obj["verbose"] = verbose
     obj["no_color"] = no_color
-    # Factories intentionally preserve runner.invoke(obj=...) test overrides.
-    obj.setdefault("sp_client_factory", sp_client_factory)
-    obj.setdefault("btc_rpc_factory", btc_rpc_factory)
+    # Factory sources intentionally preserve runner.invoke(obj=...) test overrides.
+    sp_source = _factory_source(
+        obj,
+        source_key=_SP_FACTORY_SOURCE,
+        wrapper_key=_SP_FACTORY_WRAPPER,
+        factory_key="sp_client_factory",
+        default=sp_client_factory,
+    )
+    btc_source = _factory_source(
+        obj,
+        source_key=_BTC_FACTORY_SOURCE,
+        wrapper_key=_BTC_FACTORY_WRAPPER,
+        factory_key="btc_rpc_factory",
+        default=btc_rpc_factory,
+    )
+    obj[_SP_FACTORY_SOURCE] = sp_source
+    obj[_BTC_FACTORY_SOURCE] = btc_source
+
+    lifecycle = ClientLifecycle(sp_source=sp_source, btc_source=btc_source)
+    sp_wrapper = lifecycle.sp_client_factory
+    btc_wrapper = lifecycle.btc_rpc_factory
+    obj["sp_client_factory"] = sp_wrapper
+    obj["btc_rpc_factory"] = btc_wrapper
+    obj[_SP_FACTORY_WRAPPER] = sp_wrapper
+    obj[_BTC_FACTORY_WRAPPER] = btc_wrapper
+    obj[_CLIENT_LIFECYCLE] = lifecycle
+    ctx.call_on_close(lifecycle.close)
 
 
 def app_ctx(ctx: typer.Context) -> AppCtx:

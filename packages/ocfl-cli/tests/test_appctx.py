@@ -1,10 +1,23 @@
 """Typed CLI context accessors."""
 
+from typing import cast
+
 import click
 import pytest
 import typer
 
-from ocfl_cli._appctx import AppCtxError, app_ctx, command_path, json_mode, root
+from ocfl_cli._appctx import (
+    AppCtxError,
+    BtcRpcFactory,
+    SpClientFactory,
+    app_ctx,
+    btc_rpc_factory,
+    command_path,
+    install_app_ctx,
+    json_mode,
+    root,
+    sp_client_factory,
+)
 from ocfl_cli.config import ArchiveConfig, Config
 
 
@@ -79,3 +92,106 @@ def test_command_path_strips_click_root_program_name() -> None:
 
     assert content_ctx.command_path == "ocfl stage content"
     assert command_path(content_ctx) == "stage content"
+
+
+def test_install_app_ctx_caches_and_closes_clients_per_invocation() -> None:
+    archive = ArchiveConfig(name="main", root="/archive")
+    cfg = Config(archives={"main": archive})
+    closed: list[str] = []
+
+    class Client:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def close(self) -> None:
+            closed.append(self.name)
+
+    created: list[Client] = []
+
+    def factory(_cfg: Config) -> Client:
+        client = Client(f"client-{len(created)}")
+        created.append(client)
+        return client
+
+    ctx = typer.Context(click.Command("probe"), obj={})
+    install_app_ctx(
+        ctx,
+        root="/archive",
+        config=cfg,
+        archive=archive,
+        json_output=False,
+        quiet=False,
+        verbose=False,
+        no_color=False,
+        sp_client_factory=cast("SpClientFactory", factory),
+        btc_rpc_factory=cast("BtcRpcFactory", factory),
+    )
+
+    sp_factory = sp_client_factory(ctx)
+    btc_factory = btc_rpc_factory(ctx)
+
+    assert sp_factory(cfg) is sp_factory(cfg)
+    assert btc_factory(cfg) is btc_factory(cfg)
+    assert len(created) == 2
+
+    ctx.close()
+
+    assert closed == ["client-0", "client-1"]
+
+
+def test_install_app_ctx_accepts_fakes_without_close_method() -> None:
+    cfg = Config()
+    client = object()
+
+    def factory(_cfg: Config) -> object:
+        return client
+
+    ctx = typer.Context(click.Command("probe"), obj={})
+    install_app_ctx(
+        ctx,
+        root=None,
+        config=cfg,
+        archive=None,
+        json_output=False,
+        quiet=False,
+        verbose=False,
+        no_color=False,
+        sp_client_factory=cast("SpClientFactory", factory),
+        btc_rpc_factory=cast("BtcRpcFactory", factory),
+    )
+
+    assert sp_client_factory(ctx)(cfg) is client
+    assert btc_rpc_factory(ctx)(cfg) is client
+    ctx.close()
+
+
+def test_install_app_ctx_reuses_injected_factory_source_across_invocations() -> None:
+    cfg = Config()
+    shared_obj: dict[str, object] = {}
+    created: list[object] = []
+
+    def factory(_cfg: Config) -> object:
+        client = object()
+        created.append(client)
+        return client
+
+    for _ in range(2):
+        ctx = typer.Context(click.Command("probe"), obj=shared_obj)
+        install_app_ctx(
+            ctx,
+            root=None,
+            config=cfg,
+            archive=None,
+            json_output=False,
+            quiet=False,
+            verbose=False,
+            no_color=False,
+            sp_client_factory=cast("SpClientFactory", factory),
+            btc_rpc_factory=cast("BtcRpcFactory", factory),
+        )
+
+        sp_factory = sp_client_factory(ctx)
+        assert sp_factory(cfg) is sp_factory(cfg)
+        ctx.close()
+
+    assert len(created) == 2
