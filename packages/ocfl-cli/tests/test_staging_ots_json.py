@@ -36,6 +36,10 @@ from ocfl_cli.stage.state import (
 )
 
 
+def _set_attr(obj: object, name: str, value: object) -> None:
+    setattr(obj, name, value)
+
+
 def _bare_hex(prefix: str) -> str:
     """Return a 64-char lowercase hex digest derived from a prefix."""
     return (prefix * 64)[:64].lower()
@@ -99,6 +103,11 @@ class TestRoundTrip:
         save_ots(tmp_path, empty_state)
         loaded = load_ots(tmp_path)
         assert loaded == empty_state
+        assert (tmp_path / "ots.json").read_bytes() == (
+            b'{"phase":"drafting","category_id":641,"schema_version":1,'
+            b'"pending_digests":[],"submissions":[],"verify_jobs":[],'
+            b'"content_proofs":{},"inventory_proof":null}'
+        )
 
     def test_populated_round_trip(self, tmp_path: Path, populated_state: OtsState):
         save_ots(tmp_path, populated_state)
@@ -143,6 +152,142 @@ class TestRoundTrip:
         assert loaded.inventory_proof.digest == inv_d
         assert loaded.inventory_proof.proof.verified is True
         assert loaded.inventory_proof.proof.block_height == 923500
+        assert (tmp_path / "ots.json").read_bytes() == (
+            b'{"phase":"inventory-upgraded","category_id":641,'
+            b'"schema_version":1,"pending_digests":[],"submissions":[],'
+            b'"verify_jobs":[],"content_proofs":{},"inventory_proof":{'
+            b'"version":"v3","digest":"' + inv_d.encode() + b'",'
+            b'"job_id":"job-inv-1","ots_path":"ots-cache/'
+            + inv_d.encode()
+            + b'.ots","verified":true,"block_height":923500,'
+            b'"confirmations_at_verify":3,'
+            b'"verified_at":"2026-04-23T17:02:08+00:00"}}'
+        )
+
+
+class TestTypedDecoding:
+    def test_unknown_fields_are_ignored_for_forward_compat(self, tmp_path: Path):
+        digest = _bare_hex("a")
+        (tmp_path / "ots.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "phase": "inventory-pending",
+                    "category_id": 641,
+                    "pending_digests": [],
+                    "submissions": [],
+                    "verify_jobs": [],
+                    "content_proofs": {
+                        digest: {
+                            "ots_path": f"ots-cache/{digest}.ots",
+                            "verified": True,
+                            "block_height": 923451,
+                            "confirmations_at_verify": 3,
+                            "verified_at": "2026-04-23T16:45:12+00:00",
+                            "future_proof_field": "ignored",
+                        }
+                    },
+                    "inventory_proof": {
+                        "version": "v3",
+                        "digest": digest,
+                        "job_id": "job-inv-1",
+                        "verified": False,
+                        "future_inventory_field": "ignored",
+                    },
+                    "future_top_level_field": "ignored",
+                }
+            )
+        )
+
+        state = load_ots(tmp_path)
+
+        assert state.content_proofs[digest].verified is True
+        assert state.inventory_proof is not None
+        assert state.inventory_proof.digest == digest
+
+    def test_rejects_string_submission_digests(self, tmp_path: Path):
+        (tmp_path / "ots.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "phase": "content-pending",
+                    "category_id": 641,
+                    "pending_digests": [],
+                    "submissions": [
+                        {
+                            "submitted_at": "2026-04-23T16:30:00+00:00",
+                            "digests": "abc",
+                            "status": "submitted",
+                            "job_id": "job-1",
+                            "attempts": 1,
+                        }
+                    ],
+                    "verify_jobs": [],
+                    "content_proofs": {},
+                    "inventory_proof": None,
+                }
+            )
+        )
+
+        with pytest.raises(StagingError, match="submissions"):
+            load_ots(tmp_path)
+
+    def test_rejects_string_verified_flag(self, tmp_path: Path):
+        digest = _bare_hex("a")
+        (tmp_path / "ots.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "phase": "content-pending",
+                    "category_id": 641,
+                    "pending_digests": [],
+                    "submissions": [],
+                    "verify_jobs": [],
+                    "content_proofs": {
+                        digest: {
+                            "ots_path": f"ots-cache/{digest}.ots",
+                            "verified": "yes",
+                            "block_height": 923451,
+                            "confirmations_at_verify": 3,
+                            "verified_at": "2026-04-23T16:45:12+00:00",
+                        }
+                    },
+                    "inventory_proof": None,
+                }
+            )
+        )
+
+        with pytest.raises(StagingError, match="content_proofs"):
+            load_ots(tmp_path)
+
+    def test_rejects_string_inventory_verified_flag(self, tmp_path: Path):
+        digest = _bare_hex("c")
+        (tmp_path / "ots.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "phase": "inventory-upgraded",
+                    "category_id": 641,
+                    "pending_digests": [],
+                    "submissions": [],
+                    "verify_jobs": [],
+                    "content_proofs": {},
+                    "inventory_proof": {
+                        "version": "v3",
+                        "digest": digest,
+                        "job_id": "job-inv-1",
+                        "ots_path": f"ots-cache/{digest}.ots",
+                        "verified": "true",
+                        "block_height": 923500,
+                        "confirmations_at_verify": 3,
+                        "verified_at": "2026-04-23T17:02:08+00:00",
+                    },
+                }
+            )
+        )
+
+        with pytest.raises(StagingError, match="inventory_proof"):
+            load_ots(tmp_path)
 
 
 class TestBareHexConvention:
@@ -425,16 +570,23 @@ class TestSubmissionShape:
     are immutable once recorded."""
 
     def test_submission_frozen(self):
-        params = Submission.__dataclass_params__
-        assert params.frozen is True
+        s = Submission(
+            submitted_at="2026-04-23T16:30:00+00:00",
+            digests=(_bare_hex("a"),),
+            status="submitted",
+        )
+        with pytest.raises(AttributeError):
+            _set_attr(s, "status", "failed")
 
     def test_verify_job_frozen(self):
-        params = VerifyJob.__dataclass_params__
-        assert params.frozen is True
+        job = VerifyJob(job_id="j", digests=(_bare_hex("a"),), status="IN_PROGRESS")
+        with pytest.raises(AttributeError):
+            _set_attr(job, "status", "COMPLETED")
 
     def test_verified_proof_frozen(self):
-        params = VerifiedProof.__dataclass_params__
-        assert params.frozen is True
+        proof = VerifiedProof(verified=False)
+        with pytest.raises(AttributeError):
+            _set_attr(proof, "verified", True)
 
     def test_submission_digests_is_tuple(self):
         s = Submission(

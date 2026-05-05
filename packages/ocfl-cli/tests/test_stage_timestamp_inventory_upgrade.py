@@ -27,12 +27,12 @@ import hashlib
 import json
 import logging
 import os
-from dataclasses import replace
 from pathlib import Path
 
 import filelock
 import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof
+from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 

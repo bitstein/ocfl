@@ -23,11 +23,11 @@ reason — the flag does not exist).
 """
 
 import hashlib
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from fakes import FakeSimpleProof
+from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 

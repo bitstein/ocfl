@@ -48,13 +48,13 @@ diagnostic.
 import hashlib
 import logging
 import threading
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import filelock
 import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof, InMemoryHashBlockStream
+from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 

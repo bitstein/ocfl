@@ -8,10 +8,11 @@ under a ZMQ-driven block loop.
 """
 
 import logging
-from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from msgspec.structs import replace
 
 from ocfl_cli.errors import (
     AttestationMismatchError,

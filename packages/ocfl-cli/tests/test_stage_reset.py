@@ -1,9 +1,9 @@
 """Tests for ocfl stage reset."""
 
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from msgspec.structs import replace
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app

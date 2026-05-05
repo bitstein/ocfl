@@ -502,6 +502,7 @@ source = { editable = "packages/ocfl-cli" }
 dependencies = [
     { name = "filelock" },
     { name = "httpx" },
+    { name = "msgspec" },
     { name = "ocfl-lib" },
     { name = "platformdirs" },
     { name = "pydantic-settings" },
@@ -522,6 +523,7 @@ requires-dist = [
     { name = "filelock", specifier = ">=3.13" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "moto", extras = ["s3"], marker = "extra == 'test'", specifier = ">=5.0.0" },
+    { name = "msgspec", specifier = ">=0.20.0" },
     { name = "ocfl-lib", editable = "packages/ocfl-lib" },
     { name = "ocfl-lib", extras = ["s3"], marker = "extra == 's3'", editable = "packages/ocfl-lib" },
     { name = "platformdirs", specifier = ">=4.9.6" },

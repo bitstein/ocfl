@@ -26,11 +26,11 @@ RED until ``stage status`` learns the OTS shape.
 
 import hashlib
 import json
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof
+from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 

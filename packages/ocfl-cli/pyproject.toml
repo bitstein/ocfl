@@ -6,6 +6,7 @@ requires-python = ">=3.14"
 dependencies = [
     "filelock>=3.13",
     "httpx>=0.27",
+    "msgspec>=0.20.0",
     "ocfl-lib",
     "platformdirs>=4.9.6",
     "pydantic-settings>=2.6",
