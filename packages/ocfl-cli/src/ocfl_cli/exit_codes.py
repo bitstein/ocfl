@@ -6,7 +6,9 @@ from enum import IntEnum
 from ocfl_cli.errors import (
     AttestationMismatchError,
     CLIError,
+    CommitFailedError,
     ConfigError,
+    InventoryProofMissingError,
     LockTimeoutError,
     PhaseError,
     ReorgDetectedError,
@@ -64,6 +66,10 @@ def exit_code_for(exc: BaseException) -> ExitCode:
         return ExitCode.ATTESTATION
     if isinstance(exc, LockTimeoutError):
         return ExitCode.LOCK_TIMEOUT
+    if isinstance(exc, CommitFailedError) and exc.interrupted:
+        return ExitCode.INTERRUPTED
+    if isinstance(exc, InventoryProofMissingError):
+        return ExitCode.PHASE
     if isinstance(exc, PhaseError):
         return ExitCode.PHASE
     if isinstance(exc, CLIError):

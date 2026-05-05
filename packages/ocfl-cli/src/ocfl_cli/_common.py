@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
+from ocfl_cli._exit import exit_for_error
+from ocfl_cli._io import err
 from ocfl_lib import LocalFS, OcflError, StorageRoot, VNum
 
 if TYPE_CHECKING:
@@ -59,8 +61,7 @@ def open_root(root: str | None) -> tuple[StorageRoot, Any]:
         sr = StorageRoot(fs)
         return sr, fs
     except (OcflError, OSError) as e:
-        err(str(e))
-        raise typer.Exit(1) from None
+        exit_for_error(e)
 
 
 def parse_version(v: str) -> VNum:
@@ -78,10 +79,3 @@ def output_json(data: Any) -> None:
     """Print JSON to stdout."""
     sys.stdout.write(json.dumps(data, indent=2))
     sys.stdout.write("\n")
-
-
-def err(msg: str) -> None:
-    """Print error message to stderr."""
-    from ocfl_cli import _style
-
-    _style.echo(_style.error(f"Error: {msg}"), err=True)

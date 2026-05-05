@@ -7,7 +7,8 @@ from rich.text import Text
 
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
-from ocfl_cli._common import err, open_root, output_json, parse_version
+from ocfl_cli._common import open_root, output_json, parse_version
+from ocfl_cli._exit import exit_for_error
 from ocfl_lib import ObjectNotFound, OcflError
 
 _ACTION_SYMBOLS = {"added": "A", "deleted": "D", "modified": "M", "renamed": "R"}
@@ -34,8 +35,7 @@ def diff(
         if not obj.exists:
             raise ObjectNotFound(object_id)
     except OcflError as e:
-        err(str(e))
-        raise typer.Exit(1) from None
+        exit_for_error(e)
 
     vnum1 = parse_version(v1)
     vnum2 = parse_version(v2)

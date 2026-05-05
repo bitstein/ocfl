@@ -29,12 +29,32 @@ class StagingError(CLIError):
     """Base class for staging-directory faults."""
 
 
+class StagingFileMissingError(StagingError):
+    """A content map entry refers to a missing source file."""
+
+
+class StagingFileChangedError(StagingError):
+    """A content map entry's source file changed since staging."""
+
+
 class PhaseError(StagingError):
     """Command is not legal in the staging directory's current phase."""
 
 
+class InventoryProofMissingError(PhaseError):
+    """Inventory retry requested without a persisted inventory proof."""
+
+
 class LockTimeoutError(StagingError):
     """Could not acquire the staging lock within the allowed timeout."""
+
+
+class CommitFailedError(StagingError):
+    """Plan execution failed; staging was preserved for retry."""
+
+    def __init__(self, message: str, *, interrupted: bool = False) -> None:
+        super().__init__(message)
+        self.interrupted = interrupted
 
 
 class OTSError(CLIError):

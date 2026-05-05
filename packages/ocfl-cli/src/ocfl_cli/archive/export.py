@@ -8,7 +8,9 @@ from typing import Annotated
 import typer
 
 from ocfl_cli import _appctx as appctx
-from ocfl_cli._common import err, open_root, parse_version
+from ocfl_cli._common import open_root, parse_version
+from ocfl_cli._exit import exit_for_error
+from ocfl_cli._io import err
 from ocfl_lib import ObjectNotFound, OcflError
 from ocfl_lib.digest_map import to_path_map
 
@@ -41,8 +43,7 @@ def export(
         if not obj.exists:
             raise ObjectNotFound(object_id)
     except OcflError as e:
-        err(str(e))
-        raise typer.Exit(1) from None
+        exit_for_error(e)
 
     v = parse_version(version) if version else obj.head
     state = obj.version_state(v)

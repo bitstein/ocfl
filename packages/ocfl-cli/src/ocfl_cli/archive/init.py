@@ -6,7 +6,8 @@ from typing import Annotated
 import typer
 
 from ocfl_cli import _appctx as appctx
-from ocfl_cli._common import _make_fs, err, resolve_root
+from ocfl_cli._common import _make_fs, resolve_root
+from ocfl_cli._exit import exit_for_error
 from ocfl_lib import Spec, StorageRoot, get_layout
 
 
@@ -36,14 +37,12 @@ def init(
         try:
             config = json.loads(layout_config)
         except json.JSONDecodeError as e:
-            err(f"invalid layout config JSON: {e}")
-            raise typer.Exit(1) from None
+            exit_for_error(e, message=f"invalid layout config JSON: {e}")
 
     try:
         layout_obj = get_layout(layout, config=config)
     except (KeyError, ValueError) as e:
-        err(str(e))
-        raise typer.Exit(1) from None
+        exit_for_error(e)
 
     try:
         fs = _make_fs(root_path)
@@ -55,5 +54,4 @@ def init(
             layout_description=layout_description,
         )
     except (ValueError, OSError) as e:
-        err(str(e))
-        raise typer.Exit(1) from None
+        exit_for_error(e)

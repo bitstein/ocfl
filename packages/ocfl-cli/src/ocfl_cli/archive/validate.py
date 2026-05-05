@@ -8,8 +8,9 @@ import typer
 
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
-from ocfl_cli._common import _make_fs, err, open_root, output_json, resolve_root
+from ocfl_cli._common import _make_fs, open_root, output_json, resolve_root
 from ocfl_cli._exit import exit_for_error
+from ocfl_cli._io import err
 from ocfl_cli.errors import (
     AttestationMismatchError,
     ConfigError,

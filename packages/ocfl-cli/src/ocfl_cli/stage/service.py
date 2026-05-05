@@ -17,7 +17,11 @@ from msgspec.structs import replace
 from ocfl_cli.errors import (
     AttestationMismatchError,
     BitcoinError,
+    CommitFailedError,
+    InventoryProofMissingError,
     PhaseError,
+    StagingFileChangedError,
+    StagingFileMissingError,
 )
 from ocfl_cli.ots.bitcoin import (
     BitcoinRPC,
@@ -207,14 +211,6 @@ def _update_head_state(inv: Inventory, state: StateMap) -> Inventory:
         content_directory=inv.content_directory,
         fixity=inv.fixity,
     )
-
-
-class StagingFileMissingError(Exception):
-    """A content map entry refers to a missing source file."""
-
-
-class StagingFileChangedError(Exception):
-    """A content map entry's source file changed since staging."""
 
 
 class _StagingContentSource:
@@ -1307,10 +1303,6 @@ def submit_inventory_locked(
     logger.info("submitted inventory digest %s for %s", inv_digest, object_id)
 
 
-class InventoryProofMissingError(Exception):
-    """`--retry` invoked at inventory-pending but no inventory_proof persisted."""
-
-
 def retry_inventory_locked(
     cfg: Config,
     staging_dir: Path,
@@ -1336,14 +1328,6 @@ def retry_inventory_locked(
 # ---------------------------------------------------------------------------
 # Commit primitives.
 # ---------------------------------------------------------------------------
-
-
-class CommitFailedError(Exception):
-    """Plan execution failed; staging preserved so the user can retry."""
-
-    def __init__(self, message: str, *, interrupted: bool = False) -> None:
-        super().__init__(message)
-        self.interrupted = interrupted
 
 
 def commit_bare(

@@ -5,7 +5,8 @@ from typing import Annotated
 import typer
 
 from ocfl_cli import _appctx as appctx
-from ocfl_cli._common import err, open_root
+from ocfl_cli._common import open_root
+from ocfl_cli._exit import exit_for_error
 from ocfl_lib import OcflError
 
 
@@ -29,5 +30,4 @@ def purge(
     try:
         root.purge(fs, object_id)
     except (OcflError, OSError) as e:
-        err(str(e))
-        raise typer.Exit(1) from None
+        exit_for_error(e)

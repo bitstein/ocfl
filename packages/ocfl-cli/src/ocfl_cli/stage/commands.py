@@ -16,8 +16,9 @@ from rich.text import Text
 
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
-from ocfl_cli._common import err, open_root, output_json
+from ocfl_cli._common import open_root, output_json
 from ocfl_cli._exit import exit_for_error
+from ocfl_cli._io import err
 from ocfl_cli.errors import (
     AttestationMismatchError,
     ConfigError,
@@ -667,17 +668,17 @@ def commit(
                 staging_dir=staging_dir,
             )
         except PhaseError as e:
-            err(
-                f"{e}; run 'stage timestamp inventory --upgrade' to advance "
-                f"to phase=inventory-upgraded"
+            exit_for_error(
+                e,
+                message=(
+                    f"{e}; run 'stage timestamp inventory --upgrade' to advance "
+                    f"to phase=inventory-upgraded"
+                ),
             )
-            raise typer.Exit(3) from None
         except AttestationMismatchError as e:
-            err(str(e))
-            raise typer.Exit(5) from None
+            exit_for_error(e)
         except service.CommitFailedError as e:
-            err(str(e))
-            raise typer.Exit(130 if e.interrupted else 1) from None
+            exit_for_error(e)
         return
 
     user = None
@@ -697,11 +698,9 @@ def commit(
             created=created,
         )
     except (service.StagingFileMissingError, service.StagingFileChangedError) as e:
-        err(str(e))
-        raise typer.Exit(1) from None
+        exit_for_error(e)
     except service.CommitFailedError as e:
-        err(str(e))
-        raise typer.Exit(130 if e.interrupted else 1) from None
+        exit_for_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -766,8 +765,7 @@ def timestamp_content(
                 btc_factory=preflight.btc_factory,
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
-            err(f"halt: {e}")
-            raise typer.Exit(5) from None
+            exit_for_error(e, message=f"halt: {e}")
         raise typer.Exit(exit_code)
 
     if upgrade:
@@ -783,8 +781,7 @@ def timestamp_content(
                 btc_factory=preflight.btc_factory,
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
-            err(f"halt: {e}")
-            raise typer.Exit(5) from None
+            exit_for_error(e, message=f"halt: {e}")
         return
 
     if retry:
@@ -797,8 +794,7 @@ def timestamp_content(
                     sp_factory=preflight.sp_factory,
                 )
             except PhaseError as e:
-                err(str(e))
-                raise typer.Exit(3) from None
+                exit_for_error(e)
             except service.NoFailedSubmissionsError as e:
                 typer.echo(str(e))
                 return
@@ -816,8 +812,7 @@ def timestamp_content(
                 sp_factory=preflight.sp_factory,
             )
         except PhaseError as e:
-            err(str(e))
-            raise typer.Exit(3) from None
+            exit_for_error(e)
         if advanced:
             typer.echo("nothing to timestamp; advancing to content-upgraded")
 
@@ -867,11 +862,9 @@ def timestamp_inventory(
                 btc_factory=preflight.btc_factory,
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
-            err(f"halt: {e}")
-            raise typer.Exit(5) from None
+            exit_for_error(e, message=f"halt: {e}")
         except PhaseError as e:
-            err(str(e))
-            raise typer.Exit(3) from None
+            exit_for_error(e)
         raise typer.Exit(exit_code)
 
     if upgrade:
@@ -883,11 +876,9 @@ def timestamp_inventory(
                 btc_factory=preflight.btc_factory,
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
-            err(f"halt: {e}")
-            raise typer.Exit(5) from None
+            exit_for_error(e, message=f"halt: {e}")
         except PhaseError as e:
-            err(str(e))
-            raise typer.Exit(3) from None
+            exit_for_error(e)
         return
 
     if retry:
@@ -900,11 +891,9 @@ def timestamp_inventory(
                     sp_factory=preflight.sp_factory,
                 )
             except PhaseError as e:
-                err(str(e))
-                raise typer.Exit(3) from None
+                exit_for_error(e)
             except service.InventoryProofMissingError as e:
-                err(str(e))
-                raise typer.Exit(3) from None
+                exit_for_error(e)
         return
 
     with with_lock(resolved.staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
@@ -919,8 +908,7 @@ def timestamp_inventory(
                 sp_factory=preflight.sp_factory,
             )
         except PhaseError as e:
-            err(str(e) + "; run 'stage timestamp content' first")
-            raise typer.Exit(3) from None
+            exit_for_error(e, message=f"{e}; run 'stage timestamp content' first")
 
 
 # ---------------------------------------------------------------------------
