@@ -1369,6 +1369,8 @@ def commit_bare(
     )
     prepare_steps(plan, fs, obj_dir, content_source)
 
+    # Transactional boundary: execute_plan failure -> revert + preserve staging
+    # for retry. revert_plan failures propagate as-is.
     try:
         execute_plan(plan)
     except KeyboardInterrupt:
@@ -1445,6 +1447,8 @@ def commit_ots(
         prev_phase = state.phase
 
     prepare_steps(plan, fs, obj_dir, content_source)
+    # Transactional boundary: execute_plan failure -> revert + preserve staging
+    # for retry. revert_plan failures propagate as-is.
     try:
         execute_plan(plan)
     except KeyboardInterrupt:

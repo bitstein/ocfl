@@ -7,6 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
+from ocfl_cli.stage import service
 from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import LocalFS, StorageRoot
 
@@ -240,3 +241,47 @@ class TestSignalHandling:
         obj = sr.get_object("obj:retried")
         assert obj.exists
         assert obj.head.number == 1
+
+
+class TestCrashRecovery:
+    def test_generic_crash_then_retry_converges(self, runner, storage_root, tmp_path):
+        """After a generic execution failure, rollback runs and retry succeeds."""
+        oid = "obj:crash"
+        staging = tmp_path / "staging"
+        src = tmp_path / "file.txt"
+        src.write_text("content")
+
+        _invoke(runner, storage_root, staging, "new", oid)
+        _invoke(runner, storage_root, staging, "add", oid, str(src))
+
+        with (
+            patch(
+                "ocfl_cli.stage.service.execute_plan",
+                side_effect=RuntimeError("simulated crash"),
+            ),
+            patch(
+                "ocfl_cli.stage.service.revert_plan",
+                wraps=service.revert_plan,
+            ) as revert_spy,
+        ):
+            result = _invoke(runner, storage_root, staging, "commit", oid)
+
+        assert result.exit_code == 1, result.output
+        assert "simulated crash" in result.output
+        assert revert_spy.call_count == 1
+
+        store = StagingStore(staging)
+        root_path = str(storage_root.resolve())
+        assert store.exists(root_path, oid)
+
+        fs = LocalFS(storage_root)
+        sr = StorageRoot(fs)
+        assert not sr.get_object(oid).exists
+
+        result = _invoke(runner, storage_root, staging, "commit", oid, "-m", "retry")
+        assert result.exit_code == 0, result.output
+
+        obj = sr.get_object(oid)
+        assert obj.exists
+        assert obj.head.number == 1
+        assert not store.exists(root_path, oid)
