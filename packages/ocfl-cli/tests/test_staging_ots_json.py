@@ -36,10 +36,6 @@ from ocfl_cli.stage.state import (
 )
 
 
-def _set_attr(obj: object, name: str, value: object) -> None:
-    setattr(obj, name, value)
-
-
 def _bare_hex(prefix: str) -> str:
     """Return a 64-char lowercase hex digest derived from a prefix."""
     return (prefix * 64)[:64].lower()
@@ -103,11 +99,17 @@ class TestRoundTrip:
         save_ots(tmp_path, empty_state)
         loaded = load_ots(tmp_path)
         assert loaded == empty_state
-        assert (tmp_path / "ots.json").read_bytes() == (
-            b'{"phase":"drafting","category_id":641,"schema_version":1,'
-            b'"pending_digests":[],"submissions":[],"verify_jobs":[],'
-            b'"content_proofs":{},"inventory_proof":null}'
-        )
+        raw = json.loads((tmp_path / "ots.json").read_bytes())
+        assert raw == {
+            "schema_version": 1,
+            "phase": "drafting",
+            "category_id": 641,
+            "pending_digests": [],
+            "submissions": [],
+            "verify_jobs": [],
+            "content_proofs": {},
+            "inventory_proof": None,
+        }
 
     def test_populated_round_trip(self, tmp_path: Path, populated_state: OtsState):
         save_ots(tmp_path, populated_state)
@@ -152,17 +154,18 @@ class TestRoundTrip:
         assert loaded.inventory_proof.digest == inv_d
         assert loaded.inventory_proof.proof.verified is True
         assert loaded.inventory_proof.proof.block_height == 923500
-        assert (tmp_path / "ots.json").read_bytes() == (
-            b'{"phase":"inventory-upgraded","category_id":641,'
-            b'"schema_version":1,"pending_digests":[],"submissions":[],'
-            b'"verify_jobs":[],"content_proofs":{},"inventory_proof":{'
-            b'"version":"v3","digest":"' + inv_d.encode() + b'",'
-            b'"job_id":"job-inv-1","ots_path":"ots-cache/'
-            + inv_d.encode()
-            + b'.ots","verified":true,"block_height":923500,'
-            b'"confirmations_at_verify":3,'
-            b'"verified_at":"2026-04-23T17:02:08+00:00"}}'
-        )
+        raw = json.loads((tmp_path / "ots.json").read_bytes())
+        assert raw["inventory_proof"] == {
+            "version": "v3",
+            "digest": inv_d,
+            "job_id": "job-inv-1",
+            "ots_path": f"ots-cache/{inv_d}.ots",
+            "verified": True,
+            "block_height": 923500,
+            "confirmations_at_verify": 3,
+            "verified_at": "2026-04-23T17:02:08+00:00",
+        }
+        assert "proof" not in raw["inventory_proof"]
 
 
 class TestTypedDecoding:
@@ -575,18 +578,21 @@ class TestSubmissionShape:
             digests=(_bare_hex("a"),),
             status="submitted",
         )
+        attr = "status"
         with pytest.raises(AttributeError):
-            _set_attr(s, "status", "failed")
+            setattr(s, attr, "failed")
 
     def test_verify_job_frozen(self):
         job = VerifyJob(job_id="j", digests=(_bare_hex("a"),), status="IN_PROGRESS")
+        attr = "status"
         with pytest.raises(AttributeError):
-            _set_attr(job, "status", "COMPLETED")
+            setattr(job, attr, "COMPLETED")
 
     def test_verified_proof_frozen(self):
         proof = VerifiedProof(verified=False)
+        attr = "verified"
         with pytest.raises(AttributeError):
-            _set_attr(proof, "verified", True)
+            setattr(proof, attr, True)
 
     def test_submission_digests_is_tuple(self):
         s = Submission(

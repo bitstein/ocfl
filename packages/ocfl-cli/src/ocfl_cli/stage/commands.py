@@ -39,6 +39,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+OTS_HELP_PANEL = "OTS"
+
 
 stage_app = typer.Typer(
     name="stage",
@@ -712,7 +714,7 @@ timestamp_app = typer.Typer(
     help="Timestamp staged content / inventory via SimpleProof.",
     no_args_is_help=True,
 )
-stage_app.add_typer(timestamp_app)
+stage_app.add_typer(timestamp_app, rich_help_panel=OTS_HELP_PANEL)
 
 
 @timestamp_app.command("content")

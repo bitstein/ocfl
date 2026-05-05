@@ -7,13 +7,13 @@ schema-migration helpers.
 import logging
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import filelock
 import msgspec
 
 from ocfl_cli.errors import LockTimeoutError, StagingError
-from ocfl_cli.stage import store
+from ocfl_cli.stage import _wire, store
 from ocfl_cli.stage.fsm import Phase  # noqa: TC001 - msgspec decodes this at runtime.
 
 if TYPE_CHECKING:
@@ -31,7 +31,7 @@ _OTS_STATE_VERSION = 1
 # ---------------------------------------------------------------------------
 
 
-class VerifiedProof(msgspec.Struct, frozen=True, omit_defaults=False):
+class VerifiedProof(msgspec.Struct, frozen=True):
     """Shared sub-shape: present in every `content_proofs` entry and in
     `inventory_proof`. Adding a field requires a schema bump on both.
     """
@@ -43,7 +43,7 @@ class VerifiedProof(msgspec.Struct, frozen=True, omit_defaults=False):
     verified_at: str | None = None
 
 
-class Submission(msgspec.Struct, frozen=True, omit_defaults=False):
+class Submission(msgspec.Struct, frozen=True):
     """A round of `/api/proof/timestamp/hashes` POSTs."""
 
     submitted_at: str
@@ -52,24 +52,16 @@ class Submission(msgspec.Struct, frozen=True, omit_defaults=False):
     job_id: str | None = None
     attempts: int = 0
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.digests, tuple):
-            object.__setattr__(self, "digests", tuple(self.digests))
 
-
-class VerifyJob(msgspec.Struct, frozen=True, omit_defaults=False):
+class VerifyJob(msgspec.Struct, frozen=True):
     """An outstanding `verify-batches` job awaiting download/verify."""
 
     job_id: str
     digests: tuple[str, ...]
     status: str  # "IN_PROGRESS" | "COMPLETED" | "FAILED"
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.digests, tuple):
-            object.__setattr__(self, "digests", tuple(self.digests))
 
-
-class InventoryProof(msgspec.Struct, frozen=True, omit_defaults=False):
+class InventoryProof(msgspec.Struct, frozen=True):
     """`inventory_proof`: inventory digest + version + verify job_id plus a
     nested shared `VerifiedProof`. The JSON wire shape flattens `proof`
     into the top level of `inventory_proof` (see plan §`ots.json` schema)."""
@@ -80,12 +72,11 @@ class InventoryProof(msgspec.Struct, frozen=True, omit_defaults=False):
     job_id: str | None = None
 
 
-class OtsState(msgspec.Struct, frozen=True, omit_defaults=False):
+class OtsState(msgspec.Struct, frozen=True):
     """In-memory representation of `<staging>/ots.json` (schema v1).
 
     Frozen so callers must rebuild via `msgspec.structs.replace` to advance
-    phase or append submissions. Iterable fields are normalized to tuples in
-    `__post_init__` so callers may pass either a list or a tuple.
+    phase or append submissions.
 
     Persisted via `save_ots` (atomic write-temp + fsync + replace).
     """
@@ -98,12 +89,6 @@ class OtsState(msgspec.Struct, frozen=True, omit_defaults=False):
     verify_jobs: tuple[VerifyJob, ...] = ()
     content_proofs: dict[str, VerifiedProof] = msgspec.field(default_factory=dict)
     inventory_proof: InventoryProof | None = None
-
-    def __post_init__(self) -> None:
-        for name in ("pending_digests", "submissions", "verify_jobs"):
-            v = getattr(self, name)
-            if not isinstance(v, tuple):
-                object.__setattr__(self, name, tuple(v))
 
 
 # ---------------------------------------------------------------------------
@@ -180,12 +165,12 @@ def load_ots(staging: Path) -> OtsState:
             ) from None
         raw = migrate(raw)
         raw["schema_version"] = i + 1
-    return _parse(raw)
+    return _wire.decode_ots_state(raw)
 
 
 def save_ots(staging: Path, state: OtsState) -> None:
     """Atomically write `state` to `<staging>/ots.json` (temp + fsync + replace)."""
-    raw_bytes = msgspec.json.encode(_serialize(state))
+    raw_bytes = msgspec.json.encode(_wire.encode_ots_state(state))
     store._atomic_write_bytes(_ots_path(staging), raw_bytes)
 
 
@@ -226,49 +211,3 @@ def apply_category_id(state: OtsState, cfg_category_id: int) -> int:
             cfg_category_id,
         )
     return state.category_id
-
-
-# ---------------------------------------------------------------------------
-# Internal serialize / parse
-# ---------------------------------------------------------------------------
-
-
-def _serialize(state: OtsState) -> dict[str, Any]:
-    raw = msgspec.to_builtins(state)
-    _flatten_inventory_proof(raw)
-    return raw
-
-
-def _parse(raw: dict[str, Any]) -> OtsState:
-    """Decode a dict already at `_OTS_STATE_VERSION`. No I/O, no migrations."""
-    _nest_inventory_proof(raw)
-    try:
-        return msgspec.convert(raw, OtsState)
-    except msgspec.ValidationError as e:
-        raise StagingError(f"ots.json: invalid OTS state: {e}") from None
-
-
-def _flatten_inventory_proof(raw: dict[str, Any]) -> None:
-    inv = raw.get("inventory_proof")
-    if not isinstance(inv, dict):
-        return
-    proof = inv.pop("proof", None)
-    if isinstance(proof, dict):
-        inv.update(proof)
-
-
-def _nest_inventory_proof(raw: dict[str, Any]) -> None:
-    inv = raw.get("inventory_proof")
-    if not isinstance(inv, dict):
-        return
-    proof = {}
-    for key in (
-        "ots_path",
-        "verified",
-        "block_height",
-        "confirmations_at_verify",
-        "verified_at",
-    ):
-        if key in inv:
-            proof[key] = inv.pop(key)
-    inv["proof"] = proof

@@ -21,9 +21,14 @@ from ocfl_cli.archive.purge import purge
 from ocfl_cli.archive.show import show
 from ocfl_cli.archive.validate import validate
 from ocfl_cli.config import ConfigError, load_config
+from ocfl_cli.exit_codes import format_exit_code_help
 from ocfl_cli.ots.bitcoin import default_btc_factory
 from ocfl_cli.ots.simpleproof import default_sp_factory
 from ocfl_cli.stage import stage_app
+
+ARCHIVE_PANEL = "Archive"
+STAGING_PANEL = "Staging"
+STORAGE_ADMIN_PANEL = "Storage admin"
 
 
 class _JsonFormatter(logging.Formatter):
@@ -62,19 +67,20 @@ def _configure_logging(json_mode: bool, verbose: bool, quiet: bool) -> None:
 app = typer.Typer(
     name="ocfl",
     help="CLI for managing an OCFL archive.",
+    epilog=format_exit_code_help(),
     no_args_is_help=True,
 )
 
-app.command()(diff)
-app.command()(export)
-app.command()(info)
-app.command()(init)
-app.command()(log)
-app.command()(ls)
-app.command()(purge)
-app.command()(show)
-app.command()(validate)
-app.add_typer(stage_app)
+app.command(rich_help_panel=ARCHIVE_PANEL)(diff)
+app.command(rich_help_panel=ARCHIVE_PANEL)(export)
+app.command(rich_help_panel=ARCHIVE_PANEL)(info)
+app.command(rich_help_panel=STORAGE_ADMIN_PANEL)(init)
+app.command(rich_help_panel=ARCHIVE_PANEL)(log)
+app.command(rich_help_panel=ARCHIVE_PANEL)(ls)
+app.command(rich_help_panel=STORAGE_ADMIN_PANEL)(purge)
+app.command(rich_help_panel=ARCHIVE_PANEL)(show)
+app.command(rich_help_panel=STORAGE_ADMIN_PANEL)(validate)
+app.add_typer(stage_app, rich_help_panel=STAGING_PANEL)
 
 
 @app.callback()

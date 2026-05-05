@@ -1,5 +1,6 @@
 """Canonical process exit codes for the CLI."""
 
+from dataclasses import dataclass
 from enum import IntEnum
 
 from ocfl_cli.errors import (
@@ -23,6 +24,34 @@ class ExitCode(IntEnum):
     ATTESTATION = 5
     CONFIG = 6
     INTERRUPTED = 130
+
+
+@dataclass(frozen=True, slots=True)
+class ExitCodeDoc:
+    code: ExitCode
+    description: str
+
+
+EXIT_CODE_DOCS: tuple[ExitCodeDoc, ...] = (
+    ExitCodeDoc(ExitCode.SUCCESS, "success"),
+    ExitCodeDoc(ExitCode.GENERIC, "generic CLI/domain error"),
+    ExitCodeDoc(ExitCode.USAGE, "usage error"),
+    ExitCodeDoc(ExitCode.PHASE, "staging phase error"),
+    ExitCodeDoc(ExitCode.LOCK_TIMEOUT, "staging lock timeout; retry with backoff"),
+    ExitCodeDoc(
+        ExitCode.ATTESTATION,
+        "attestation mismatch or Bitcoin reorg; retry after re-fetch",
+    ),
+    ExitCodeDoc(ExitCode.CONFIG, "configuration error"),
+    ExitCodeDoc(ExitCode.INTERRUPTED, "interrupted"),
+)
+
+
+def format_exit_code_help() -> str:
+    """Return user-facing help text for the canonical process exits."""
+    lines = ["Exit codes:"]
+    lines.extend(f"  {int(doc.code)}  {doc.description}" for doc in EXIT_CODE_DOCS)
+    return "\n".join(lines)
 
 
 def exit_code_for(exc: BaseException) -> ExitCode:
