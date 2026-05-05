@@ -188,32 +188,30 @@ class S3FS(CopyFS, FileWalker):
         key = self._resolve(name)
         prefix = f"{key}/" if key else ""
 
-        # Collect all keys under this prefix (or the exact key).
-        to_delete: list[dict[str, str]] = []
-        paginator = self._client.get_paginator("list_objects_v2")
+        to_delete: list[str] = []
 
-        # Check the exact key first, then everything beneath it.
-        for search_prefix in (key, prefix):
-            if not search_prefix:
-                continue
-            for page in paginator.paginate(Bucket=self._bucket, Prefix=search_prefix):
-                for obj in page.get("Contents", ()):
-                    to_delete.append({"Key": obj["Key"]})
+        if key:
+            try:
+                self._client.head_object(Bucket=self._bucket, Key=key)
+            except ClientError as e:
+                if not _not_found(e):
+                    raise
+            else:
+                to_delete.append(key)
+
+        paginator = self._client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+            for obj in page.get("Contents", ()):
+                to_delete.append(obj["Key"])
 
         if not to_delete:
             raise FileNotFoundError(f"s3://{self._bucket}/{key}")
 
-        # Deduplicate (exact key may also appear under prefix listing).
-        seen: set[str] = set()
-        unique: list[dict[str, str]] = []
-        for item in to_delete:
-            if item["Key"] not in seen:
-                seen.add(item["Key"])
-                unique.append(item)
+        unique = list(dict.fromkeys(to_delete))
 
         # Batch delete in groups of 1000 (S3 limit).
         for i in range(0, len(unique), 1000):
-            batch = unique[i : i + 1000]
+            batch = [{"Key": delete_key} for delete_key in unique[i : i + 1000]]
             self._client.delete_objects(
                 Bucket=self._bucket,
                 Delete={"Objects": batch, "Quiet": True},

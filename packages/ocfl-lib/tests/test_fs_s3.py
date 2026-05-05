@@ -10,6 +10,8 @@ from moto import mock_aws
 from ocfl_lib.fs import CopyFS
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from mypy_boto3_s3 import S3Client
 
     from ocfl_lib.fs.s3 import S3FS
@@ -31,6 +33,11 @@ def _seed(client: S3Client) -> None:
     client.put_object(Bucket=BUCKET, Key="a.txt", Body=b"hello")
     client.put_object(Bucket=BUCKET, Key="sub/b.txt", Body=b"world")
     client.put_object(Bucket=BUCKET, Key="sub/deep/c.txt", Body=b"\x00\x01\x02")
+
+
+def _keys(client: S3Client, prefix: str = "") -> list[str]:
+    resp = client.list_objects_v2(Bucket=BUCKET, Prefix=prefix)
+    return sorted(obj["Key"] for obj in resp.get("Contents", ()))
 
 
 @pytest.fixture
@@ -131,6 +138,25 @@ class TestRemove:
 
 
 class TestRemoveAll:
+    def test_remove_exact_key_preserves_siblings(self, fs: S3FS, s3_client: S3Client):
+        s3_client.put_object(Bucket=BUCKET, Key="abc", Body=b"exact")
+        s3_client.put_object(Bucket=BUCKET, Key="abcd/file.txt", Body=b"sibling")
+        s3_client.put_object(Bucket=BUCKET, Key="abcde", Body=b"sibling")
+
+        fs.remove_all("abc")
+
+        assert _keys(s3_client, "abc") == ["abcd/file.txt", "abcde"]
+
+    def test_remove_dir_preserves_sibling_prefixes(self, fs: S3FS, s3_client: S3Client):
+        s3_client.put_object(Bucket=BUCKET, Key="abc/file.txt", Body=b"target")
+        s3_client.put_object(Bucket=BUCKET, Key="abc/deep/file.txt", Body=b"target")
+        s3_client.put_object(Bucket=BUCKET, Key="abcd/file.txt", Body=b"sibling")
+        s3_client.put_object(Bucket=BUCKET, Key="abcde", Body=b"sibling")
+
+        fs.remove_all("abc")
+
+        assert _keys(s3_client, "abc") == ["abcd/file.txt", "abcde"]
+
     def test_remove_dir(self, fs: S3FS, s3_client: S3Client):
         fs.remove_all("sub")
         resp = s3_client.list_objects_v2(Bucket=BUCKET, Prefix="sub/")
@@ -155,6 +181,32 @@ class TestRemoveAll:
         s3fs.remove_all("bulk")
         resp = s3_client.list_objects_v2(Bucket=BUCKET, Prefix="bulk/")
         assert resp.get("KeyCount", 0) == 0
+
+    def test_storage_root_purge_preserves_sibling_object_path(
+        self, s3_client: S3Client, tmp_path: Path
+    ):
+        from ocfl_lib.digest import DigestAlgorithm
+        from ocfl_lib.fs.local import LocalFS
+        from ocfl_lib.fs.s3 import S3FS
+        from ocfl_lib.layout import FlatDirectLayout
+        from ocfl_lib.root import StorageRoot
+        from ocfl_lib.stage import stage_dir
+
+        s3fs = S3FS(BUCKET, client=s3_client)
+        root = StorageRoot.init(s3fs, s3fs, layout=FlatDirectLayout())
+
+        for obj_id, content in {"abc": "target", "abcd": "sibling"}.items():
+            src = tmp_path / obj_id
+            src.mkdir()
+            (src / "file.txt").write_text(content)
+            stage = stage_dir(LocalFS(src.parent), src.name, DigestAlgorithm.SHA512)
+            root.commit(s3fs, obj_id, stage, created="2024-01-01T00:00:00Z")
+
+        root.purge(s3fs, "abc")
+
+        assert not root.get_object("abc").exists
+        assert root.get_object("abcd").exists
+        assert any(key.startswith("abcd/") for key in _keys(s3_client, "abcd"))
 
 
 class TestMkdir:
@@ -314,6 +366,22 @@ class TestPrefix:
         prefixed_fs.remove_all("sub")
         resp = s3_client.list_objects_v2(Bucket=BUCKET, Prefix="myprefix/sub/")
         assert resp.get("KeyCount", 0) == 0
+
+    def test_remove_all_preserves_sibling_prefixes(
+        self, prefixed_fs: S3FS, s3_client: S3Client
+    ):
+        s3_client.put_object(Bucket=BUCKET, Key="myprefix/abc/file.txt", Body=b"target")
+        s3_client.put_object(
+            Bucket=BUCKET, Key="myprefix/abcd/file.txt", Body=b"sibling"
+        )
+        s3_client.put_object(Bucket=BUCKET, Key="myprefix/abcde", Body=b"sibling")
+
+        prefixed_fs.remove_all("abc")
+
+        assert _keys(s3_client, "myprefix/abc") == [
+            "myprefix/abcd/file.txt",
+            "myprefix/abcde",
+        ]
 
     def test_copy(self, prefixed_fs: S3FS, s3_client: S3Client):
         prefixed_fs.copy("a.txt", "a_copy.txt")
