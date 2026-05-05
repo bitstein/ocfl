@@ -114,6 +114,18 @@ class TestConfigParse:
         assert mss.digest == "sha512"
         assert mss.suppress is None
 
+    def test_archive_invalid_digest_errors(self, tmp_path):
+        path = _write_config(
+            tmp_path / "c.toml",
+            """
+            [archives.bad]
+            root = "/srv/ocfl/bad"
+            digest = "bogus"
+            """,
+        )
+        with pytest.raises(ConfigError, match=r"archives\.bad\.digest"):
+            load_config(path)
+
     def test_archive_missing_root_errors(self, tmp_path):
         path = _write_config(
             tmp_path / "c.toml",
@@ -256,6 +268,41 @@ class TestAliasResolution:
 
 
 class TestConfigDigestDefault:
+    def test_stage_new_rejects_invalid_config_digest(
+        self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
+    ):
+        cfg = _write_config(
+            tmp_path / "config.toml",
+            """
+            [defaults]
+            digest = "bogus"
+            """,
+        )
+        monkeypatch.setenv("OCFL_CONFIG", str(cfg))
+
+        staging = tmp_path / "staging"
+        result = runner.invoke(
+            app,
+            [
+                "--root",
+                str(storage_root),
+                "stage",
+                "--staging-root",
+                str(staging),
+                "new",
+                "obj:bad-cfg",
+            ],
+        )
+        assert result.exit_code == 6
+        assert "defaults.digest" in result.output
+        assert "bogus" in result.output
+        assert "traceback" not in result.output.lower()
+
+        from ocfl_cli.stage.store import StagingStore
+
+        store = StagingStore(staging)
+        assert not store.exists(str(storage_root.resolve()), "obj:bad-cfg")
+
     def test_stage_new_uses_config_digest(
         self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
     ):

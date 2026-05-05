@@ -13,8 +13,8 @@ from ocfl_lib import Spec, StorageRoot, get_layout
 def init(
     ctx: typer.Context,
     spec: Annotated[
-        str, typer.Option("--spec", help="OCFL spec version (1.0 or 1.1).")
-    ] = "1.1",
+        Spec, typer.Option("--spec", help="OCFL spec version (1.0 or 1.1).")
+    ] = Spec.V1_1,
     layout: Annotated[
         str,
         typer.Option("--layout", help="Storage layout extension name."),
@@ -30,12 +30,6 @@ def init(
 ) -> None:
     """Initialize a new OCFL storage root."""
     root_path = resolve_root(appctx.root(ctx))
-
-    try:
-        ocfl_spec = Spec(spec)
-    except ValueError:
-        err(f"invalid spec: {spec!r}")
-        raise typer.Exit(1) from None
 
     config = None
     if layout_config is not None:
@@ -56,7 +50,7 @@ def init(
         StorageRoot.init(
             fs,
             fs,
-            spec=ocfl_spec,
+            spec=spec,
             layout=layout_obj,
             layout_description=layout_description,
         )

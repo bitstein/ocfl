@@ -6,6 +6,7 @@ Thin glue: parse options, resolve context, call into ``service`` /
 
 import logging
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -29,6 +30,7 @@ from ocfl_cli.stage.fsm import Phase
 from ocfl_cli.stage.ingest import ingest_file
 from ocfl_cli.stage.state import has_ots, load_ots, save_ots, with_lock
 from ocfl_cli.stage.store import StagingStore
+from ocfl_lib import DigestAlgorithm
 
 if TYPE_CHECKING:
     from ocfl_cli._appctx import BtcRpcFactory, SpClientFactory
@@ -63,6 +65,17 @@ class TimestampPreflight:
     resolved: StagingResolved
     sp_factory: SpClientFactory
     btc_factory: BtcRpcFactory
+
+
+class DigestOption(StrEnum):
+    SHA512 = "sha512"
+    SHA256 = "sha256"
+    SHA1 = "sha1"
+    MD5 = "md5"
+    BLAKE2B_512 = "blake2b-512"
+    BLAKE2B_256 = "blake2b-256"
+    BLAKE2B_160 = "blake2b-160"
+    SHA512_256 = "sha512/256"
 
 
 def _resolve_root_path(ctx: typer.Context) -> str:
@@ -170,12 +183,14 @@ def require_timestamp_preflight(
     )
 
 
-def _require_ots_config(cfg: Config | None, digest: str | None) -> SimpleProofConfig:
+def _require_ots_config(
+    cfg: Config | None, digest: DigestOption | None
+) -> SimpleProofConfig:
     """Preflight `stage new --ots`. Returns validated [simpleproof] config."""
-    if digest is not None and digest != "sha256":
+    if digest is not None and digest is not DigestOption.SHA256:
         err(
             f"--ots requires SHA-256 (SimpleProof API constraint); "
-            f"got --digest={digest!r}"
+            f"got --digest={digest.value!r}"
         )
         raise typer.Exit(2)
     where = (
@@ -222,7 +237,7 @@ def new(
     ctx: typer.Context,
     object_id: Annotated[str, typer.Argument(help="Object ID to stage.")],
     digest: Annotated[
-        str | None,
+        DigestOption | None,
         typer.Option("--digest", help="Digest algorithm (new objects only)."),
     ] = None,
     ots: Annotated[
@@ -235,14 +250,13 @@ def new(
 ) -> None:
     """Create a new staging area for an object."""
     from ocfl_cli.stage.state import OtsState
-    from ocfl_lib import DigestAlgorithm
     from ocfl_lib.inventory_builder import InventoryBuilder
 
     cfg = appctx.config(ctx)
     sp_cfg: SimpleProofConfig | None = None
     if ots:
         sp_cfg = _require_ots_config(cfg, digest)
-        digest = "sha256"
+        digest = DigestOption.SHA256
 
     store = _stage_store(ctx)
     sr, _fs = open_root(appctx.root(ctx))
@@ -261,15 +275,11 @@ def new(
         inv = builder.build()
     else:
         alg = DigestAlgorithm.SHA512
-        digest_name = digest
+        digest_name = digest.value if digest is not None else None
         if digest_name is None:
             digest_name = cfg.effective_digest(appctx.archive(ctx))
         if digest_name:
-            try:
-                alg = DigestAlgorithm.from_ocfl_name(digest_name)
-            except KeyError, ValueError:
-                err(f"unknown digest algorithm: {digest_name!r}")
-                raise typer.Exit(1) from None
+            alg = DigestAlgorithm.from_ocfl_name(digest_name)
 
         inv = (
             InventoryBuilder()

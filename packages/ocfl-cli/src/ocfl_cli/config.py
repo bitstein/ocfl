@@ -25,6 +25,7 @@ from pydantic_settings import (
 )
 
 from ocfl_cli.errors import ConfigError
+from ocfl_lib import DigestAlgorithm
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -58,6 +59,11 @@ def _validate_zmq_endpoint(value: str) -> str:
     return value
 
 
+def _validate_digest_name(value: str) -> str:
+    DigestAlgorithm.from_ocfl_name(value)
+    return value
+
+
 class _EnvOverInitSettings:
     """Mixin: rank env_settings above init kwargs so env beats TOML."""
 
@@ -83,6 +89,13 @@ class ArchiveConfig(BaseModel):
     digest: str | None = None
     # None = inherit defaults, () = suppress nothing
     suppress: tuple[str, ...] | None = None
+
+    @field_validator("digest")
+    @classmethod
+    def _digest(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return _validate_digest_name(v)
 
 
 class SimpleProofConfig(_EnvOverInitSettings, BaseSettings):
@@ -203,6 +216,11 @@ def load_config(path: Path | None = None) -> Config:
 def _build(data: dict[str, Any], path: Path) -> Config:
     defaults = _require_table(data.get("defaults", {}), path, "defaults")
     d_digest = _opt_str(defaults, "digest", path, "defaults.digest")
+    if d_digest is not None:
+        try:
+            d_digest = _validate_digest_name(d_digest)
+        except ValueError as e:
+            raise ConfigError(f"{path}: defaults.digest: {e}") from None
     d_suppress = _opt_str_list(defaults, "suppress", path, "defaults.suppress")
 
     archives_tbl = _require_table(data.get("archives", {}), path, "archives")

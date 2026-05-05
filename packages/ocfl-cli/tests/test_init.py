@@ -84,7 +84,8 @@ class TestInit:
 
     def test_init_invalid_spec(self, runner: CliRunner, tmp_path: Path):
         result = runner.invoke(app, ["--root", str(tmp_path), "init", "--spec", "2.0"])
-        assert result.exit_code == 1
+        assert result.exit_code == 2
+        assert "invalid value" in result.output.lower()
 
     def test_init_invalid_layout(self, runner: CliRunner, tmp_path: Path):
         result = runner.invoke(

@@ -118,6 +118,31 @@ class TestStageNew:
         inv = store.load_inventory(root_path, "obj:sha256")
         assert inv.digest_algorithm == "sha256"
 
+    def test_invalid_digest_is_usage_error(self, runner, storage_root, tmp_path):
+        """Unknown --digest values are rejected by option parsing."""
+        staging = tmp_path / "staging"
+        result = runner.invoke(
+            app,
+            [
+                "--root",
+                str(storage_root),
+                "stage",
+                "--staging-root",
+                str(staging),
+                "new",
+                "obj:bad-digest",
+                "--digest",
+                "bogus",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "invalid value" in result.output.lower()
+
+        from ocfl_cli.stage.store import StagingStore
+
+        store = StagingStore(staging)
+        assert not store.exists(str(storage_root.resolve()), "obj:bad-digest")
+
     def test_digest_inheritance_existing(self, runner, storage_root, tmp_path):
         """Existing objects inherit digest algorithm from head inventory."""
         staging = tmp_path / "staging"
