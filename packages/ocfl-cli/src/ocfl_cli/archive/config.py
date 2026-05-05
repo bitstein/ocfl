@@ -8,7 +8,9 @@ __all__ = ["ArchiveConfig", "validate_digest_name"]
 
 
 def validate_digest_name(value: str) -> str:
-    DigestAlgorithm.from_ocfl_name(value)
+    alg = DigestAlgorithm.from_ocfl_name(value)
+    if not alg.is_spec_algorithm:
+        raise ValueError("content digest must be sha512 or sha256")
     return value
 
 

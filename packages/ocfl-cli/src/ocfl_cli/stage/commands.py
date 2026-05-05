@@ -19,6 +19,7 @@ from ocfl_cli import _style
 from ocfl_cli._common import open_root, output_json
 from ocfl_cli._exit import exit_for_error
 from ocfl_cli._io import err
+from ocfl_cli.archive.config import validate_digest_name
 from ocfl_cli.errors import (
     AttestationMismatchError,
     ConfigError,
@@ -208,6 +209,26 @@ def _require_ots_config(
     return cfg.simpleproof
 
 
+def _require_spec_digest(digest_name: str) -> DigestAlgorithm:
+    try:
+        validate_digest_name(digest_name)
+    except ValueError:
+        err("content digest must be sha512 or sha256")
+        raise typer.Exit(2) from None
+    return DigestAlgorithm.from_ocfl_name(digest_name)
+
+
+def _validate_logical_path(logical_path: str) -> None:
+    if (
+        not logical_path
+        or logical_path.startswith("/")
+        or logical_path.endswith("/")
+        or any(part in ("", ".", "..") for part in logical_path.split("/"))
+    ):
+        err(f"invalid logical path: {logical_path!r}")
+        raise typer.Exit(1)
+
+
 # ---------------------------------------------------------------------------
 # stage callback + lifecycle commands.
 # ---------------------------------------------------------------------------
@@ -282,7 +303,7 @@ def new(
         if digest_name is None:
             digest_name = cfg.effective_digest(appctx.archive(ctx))
         if digest_name:
-            alg = DigestAlgorithm.from_ocfl_name(digest_name)
+            alg = _require_spec_digest(digest_name)
 
         inv = (
             InventoryBuilder()
@@ -334,6 +355,7 @@ def add(
     prior_digests = set(inv.manifest.keys())
 
     def _add_file(file_path: Path, logical_path: str) -> None:
+        _validate_logical_path(logical_path)
         result = ingest_file(
             file_path,
             logical_path,
@@ -407,6 +429,7 @@ def mv(
         raise typer.Exit(1)
 
     state[found_digest].remove(src_path)
+    _validate_logical_path(dst_path)
     state[found_digest].append(dst_path)
 
     if has_ots(staging_dir):

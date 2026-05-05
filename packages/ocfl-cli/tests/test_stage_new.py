@@ -143,6 +143,35 @@ class TestStageNew:
         store = StagingStore(staging)
         assert not store.exists(str(storage_root.resolve()), "obj:bad-digest")
 
+    @pytest.mark.parametrize("digest", ["md5", "sha1", "blake2b-512"])
+    def test_non_spec_content_digest_is_usage_error(
+        self, runner, storage_root, tmp_path, digest
+    ):
+        """OCFL content-addressing digestAlgorithm is limited to sha512/sha256."""
+        staging = tmp_path / "staging"
+        result = runner.invoke(
+            app,
+            [
+                "--root",
+                str(storage_root),
+                "stage",
+                "--staging-root",
+                str(staging),
+                "new",
+                "obj:bad-content-digest",
+                "--digest",
+                digest,
+            ],
+        )
+        assert result.exit_code == 2
+        assert "sha512" in result.output
+        assert "sha256" in result.output
+
+        from ocfl_cli.stage.store import StagingStore
+
+        store = StagingStore(staging)
+        assert not store.exists(str(storage_root.resolve()), "obj:bad-content-digest")
+
     def test_digest_inheritance_existing(self, runner, storage_root, tmp_path):
         """Existing objects inherit digest algorithm from head inventory."""
         staging = tmp_path / "staging"

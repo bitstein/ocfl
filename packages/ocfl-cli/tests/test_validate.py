@@ -35,6 +35,25 @@ class TestValidateRoot:
         )
         assert result.exit_code == 0
 
+    def test_root_json_reports_invalid_contained_object(
+        self, runner: CliRunner, storage_root: Path
+    ):
+        """Root validation must fail when a discovered object is invalid."""
+        from ocfl_lib import LocalFS, StorageRoot
+
+        root = StorageRoot(LocalFS(storage_root))
+        obj_path = storage_root / root.object_path("obj:test")
+        inv_path = obj_path / "inventory.json"
+        inv = json.loads(inv_path.read_text())
+        inv["digestAlgorithm"] = "md5"
+        inv_path.write_text(json.dumps(inv, separators=(",", ":")))
+
+        result = runner.invoke(app, ["--root", str(storage_root), "--json", "validate"])
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert data["valid"] is False
+        assert any(e["code"] == "E025a" for e in data["errors"])
+
 
 class TestValidateObject:
     def test_valid_object(self, runner: CliRunner, storage_root: Path):

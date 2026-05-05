@@ -113,6 +113,33 @@ class TestStageAdd:
         paths = [p for ps in inv.versions["v1"].state.values() for p in ps]
         assert "docs/readme.txt" in paths
 
+    @pytest.mark.parametrize(
+        "logical_path",
+        ["/absolute.txt", "../escape.txt", "a/../b.txt", "a//b.txt", "a/./b.txt"],
+    )
+    def test_add_rejects_invalid_logical_path(
+        self, runner, storage_root, tmp_path, logical_path
+    ):
+        staging = tmp_path / "staging"
+        src = tmp_path / "data.txt"
+        src.write_text("data")
+
+        _invoke_new(runner, storage_root, staging)
+        result = _invoke_add(
+            runner,
+            storage_root,
+            staging,
+            "obj:new",
+            src,
+            extra_args=["--as", logical_path],
+        )
+        assert result.exit_code == 1
+        assert "invalid logical path" in result.output.lower()
+
+        store, root_path = _store_and_root(storage_root, staging)
+        inv = store.load_inventory(root_path, "obj:new")
+        assert inv.versions["v1"].state == {}
+
     def test_add_dir_with_as_prefix(self, runner, storage_root, tmp_path):
         """--as with directory sets parent logical path prefix."""
         staging = tmp_path / "staging"

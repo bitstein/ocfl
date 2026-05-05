@@ -24,6 +24,7 @@ from ocfl_cli.ots.bitcoin import (
 )
 from ocfl_lib import OcflError, ValidationResult, validate_object, validate_root
 from ocfl_lib.fs import utils as fs_utils
+from ocfl_lib.validation.result import ValidationError
 
 if TYPE_CHECKING:
     from ocfl_cli._appctx import BtcRpcFactory
@@ -88,7 +89,8 @@ def _validate_root(
         _fail(str(e), json_mode)
 
     result = ValidationResult()
-    validate_root(fs, "", result, check_digests=check_digests)
+    summary = validate_root(fs, "", result, check_digests=check_digests)
+    _merge_object_results(result, summary.object_errors)
     _output_result(result, json_mode, suppress)
     if not result.is_valid:
         raise typer.Exit(1)
@@ -218,6 +220,29 @@ def _fail(msg: str, json_mode: bool) -> NoReturn:
     else:
         err(msg)
     raise typer.Exit(1)
+
+
+def _merge_object_results(
+    result: ValidationResult, object_errors: list[tuple[str, ValidationResult]]
+) -> None:
+    """Flatten contained-object validation failures into root validation output."""
+    for obj_path, obj_result in object_errors:
+        for e in obj_result.errors:
+            result.errors.append(
+                ValidationError(
+                    code=e.code,
+                    message=f"{obj_path}: {e.message}",
+                    is_warning=False,
+                )
+            )
+        for w in obj_result.warnings:
+            result.warnings.append(
+                ValidationError(
+                    code=w.code,
+                    message=f"{obj_path}: {w.message}",
+                    is_warning=True,
+                )
+            )
 
 
 def _output_result(

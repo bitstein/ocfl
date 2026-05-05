@@ -87,7 +87,11 @@ class InventoryBuilder:
         if not self._pending_versions:
             raise ValueError("at least one version must be added")
 
-        content_dir = self._content_dir or DEFAULT_CONTENT_DIRECTORY
+        if self._content_dir is None:
+            content_dir = DEFAULT_CONTENT_DIRECTORY
+        else:
+            _validate_content_directory(self._content_dir)
+            content_dir = self._content_dir
         prev = self._prev
 
         # Start from previous inventory data or empty
@@ -114,6 +118,15 @@ class InventoryBuilder:
         head_vnum = VNum.parse(prev.head) if prev else VNum.first()
 
         for state, created, message, user in self._pending_versions:
+            for digest, logical_paths in state.items():
+                if not logical_paths:
+                    raise ValueError(
+                        f"state digest {digest!r} must include at least one "
+                        "logical path"
+                    )
+                for logical_path in logical_paths:
+                    _validate_relative_path(logical_path, kind="logical path")
+
             vnum = next_vnum
             head_vnum = vnum
             vnum_str = str(vnum)
@@ -155,3 +168,17 @@ class InventoryBuilder:
             content_directory=self._content_dir,
             fixity=fixity or None,
         )
+
+
+def _validate_relative_path(path: str, *, kind: str) -> None:
+    """Validate OCFL relative paths used in inventory state/manifest derivation."""
+    if not path or path.startswith("/") or path.endswith("/"):
+        raise ValueError(f"invalid {kind}: {path!r}")
+    segments = path.split("/")
+    if any(segment in ("", ".", "..") for segment in segments):
+        raise ValueError(f"invalid {kind}: {path!r}")
+
+
+def _validate_content_directory(content_dir: str) -> None:
+    if not content_dir or "/" in content_dir or content_dir in (".", ".."):
+        raise ValueError(f"invalid content directory: {content_dir!r}")
