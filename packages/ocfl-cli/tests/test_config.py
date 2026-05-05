@@ -18,6 +18,12 @@ from ocfl_cli.main import app
 from ocfl_lib import DigestAlgorithm, LocalFS, Spec, StorageRoot, get_layout, stage_dir
 
 
+def test_archive_config_reexported_from_domain_module() -> None:
+    from ocfl_cli.archive.config import ArchiveConfig as DomainArchiveConfig
+
+    assert ArchiveConfig is DomainArchiveConfig
+
+
 def _write_config(path: Path, body: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body)

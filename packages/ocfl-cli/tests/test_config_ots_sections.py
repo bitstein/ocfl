@@ -1,9 +1,9 @@
 """Tests for [simpleproof] + [bitcoin] config sections.
 
-Covers SimpleProofConfig + BitcoinConfig dataclasses with __post_init__
-validation: URL schemes, rpc_user/rpc_password requirements, confirmations
-range, env override precedence, secret repr redaction, and loose-perms
-warning. Locks in the API exposed by :mod:`ocfl_cli.config`.
+Covers the SimpleProofConfig + BitcoinConfig pydantic settings models: URL
+schemes, rpc_user/rpc_password requirements, confirmations range, env override
+precedence, secret repr redaction, and loose-perms warning. Locks in the API
+exposed by :mod:`ocfl_cli.config`.
 
 Decision: WARNING assertions go through ``caplog`` (Python logging), not
 ``capsys``. ``main._configure_logging`` already routes the root logger to
@@ -26,6 +26,14 @@ from ocfl_cli.config import (
     SimpleProofConfig,
     load_config,
 )
+
+
+def test_ots_config_classes_reexported_from_domain_module() -> None:
+    from ocfl_cli.ots.config import BitcoinConfig as DomainBitcoinConfig
+    from ocfl_cli.ots.config import SimpleProofConfig as DomainSimpleProofConfig
+
+    assert SimpleProofConfig is DomainSimpleProofConfig
+    assert BitcoinConfig is DomainBitcoinConfig
 
 
 def _write(path: Path, body: str) -> Path:
@@ -369,8 +377,6 @@ class TestBitcoinEnvOverride:
 
 class TestSecretStrAPI:
     def test_simpleproof_secrets_are_secret_str(self, tmp_path: Path) -> None:
-        from pydantic import SecretStr
-
         path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
         cfg = load_config(path)
         assert cfg.simpleproof is not None
@@ -380,8 +386,6 @@ class TestSecretStrAPI:
         assert cfg.simpleproof.api_key.get_secret_value() == "key"
 
     def test_bitcoin_password_is_secret_str(self, tmp_path: Path) -> None:
-        from pydantic import SecretStr
-
         path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
         cfg = load_config(path)
         assert cfg.bitcoin is not None
