@@ -54,6 +54,19 @@ CREATE TABLE ots_attestations (
 );
 CREATE INDEX ots_attestations_by_attested ON ots_attestations(attested_digest);
 
+CREATE TABLE ots_content (
+  object_id    TEXT NOT NULL,
+  version_num  INTEGER NOT NULL,
+  logical_path TEXT NOT NULL,
+  proof_digest TEXT NOT NULL,
+  PRIMARY KEY (object_id, version_num, logical_path),
+  FOREIGN KEY (object_id, version_num, logical_path)
+    REFERENCES content_paths(object_id, version_num, logical_path)
+    ON DELETE CASCADE,
+  FOREIGN KEY (proof_digest)
+    REFERENCES ots_attestations(proof_digest)
+);
+
 CREATE TABLE ots_inventory (
   object_id    TEXT NOT NULL,
   version_num  INTEGER NOT NULL,

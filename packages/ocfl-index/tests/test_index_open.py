@@ -73,3 +73,43 @@ def test_reopen_with_stale_schema_rebuilds(
         rows = idx2._conn.execute("SELECT count(*) FROM objects").fetchone()
         assert rows[0] == 0
         assert db.meta_get(idx2._conn, "schema_version") == str(db.SCHEMA_VERSION)
+
+
+def test_reopen_without_root_with_stale_schema_rebuilds_from_stored_root(
+    tmp_path: Path, fixture_root: FixtureRoot
+) -> None:
+    db_path = tmp_path / "i.db"
+    idx = Index.open(db_path, fixture_root.path)
+    idx._conn.execute(
+        "INSERT INTO objects(object_id, root_relpath, spec_version, "
+        "digest_algorithm, head_version, head_version_num, head_created_at, "
+        "inventory_digest, indexed_at) VALUES "
+        "('o', 'p', '1.1', 'sha256', 'v1', 1, 'now', 'd', 'now')"
+    )
+    db.meta_set(idx._conn, "schema_version", "0")
+    idx._conn.commit()
+    idx.close()
+
+    with Index.open(db_path) as idx2:
+        rows = idx2._conn.execute("SELECT count(*) FROM objects").fetchone()
+        assert rows[0] == 0
+        assert idx2.root_path == fixture_root.path
+        assert db.meta_get(idx2._conn, "schema_version") == str(db.SCHEMA_VERSION)
+
+
+def test_reopen_with_mismatched_root_raises_before_stale_schema_rebuild(
+    tmp_path: Path, fixture_root: FixtureRoot
+) -> None:
+    db_path = tmp_path / "i.db"
+    Index.open(db_path, fixture_root.path).close()
+    conn = db.connect(db_path)
+    db.meta_set(conn, "schema_version", "0")
+    conn.commit()
+    conn.close()
+
+    other = FixtureRoot(tmp_path / "other_base")
+    with pytest.raises(IndexRootMismatch):
+        Index.open(db_path, other.path)
+
+    conn2 = db.connect(db_path)
+    assert db.meta_get(conn2, "schema_version") == "0"

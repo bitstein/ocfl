@@ -9,6 +9,7 @@ SCHEMA_VERSION = 1
 
 _TABLES = (
     "ots_inventory",
+    "ots_content",
     "ots_attestations",
     "blobs",
     "content_paths",
@@ -19,6 +20,7 @@ _TABLES = (
 
 _CACHE_TABLES = (
     "ots_inventory",
+    "ots_content",
     "ots_attestations",
     "blobs",
     "content_paths",

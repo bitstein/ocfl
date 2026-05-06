@@ -25,6 +25,7 @@ _COUNT_TABLES = (
     "content_paths",
     "blobs",
     "ots_attestations",
+    "ots_content",
     "ots_inventory",
 )
 
@@ -38,6 +39,36 @@ def _stored_root_path(conn: sqlite3.Connection) -> str | None:
         "SELECT name FROM sqlite_master WHERE type='table' AND name='meta'"
     ).fetchone()
     return db.meta_get(conn, "root_path") if meta_exists else None
+
+
+def _open_root_path(
+    conn: sqlite3.Connection,
+    db_path: Path | str,
+    root: Path | str | None,
+) -> str:
+    stored = _stored_root_path(conn)
+    if root is None:
+        if not stored:
+            conn.close()
+            raise IndexRootMismatch(f"index db has no recorded root_path: {db_path}")
+        root_path = stored
+    else:
+        root_path = str(Path(root))
+        if stored is not None and stored != root_path:
+            conn.close()
+            raise IndexRootMismatch(
+                f"index was initialized for root {stored!r}, got {root_path!r}"
+            )
+
+    db.ensure_schema(conn, root_path=root_path)
+    # Catch malformed meta or future schema paths that fail to preserve root_path.
+    stored_after = db.meta_get(conn, "root_path")
+    if stored_after != root_path:
+        conn.close()
+        raise IndexRootMismatch(
+            f"index was initialized for root {stored_after!r}, got {root_path!r}"
+        )
+    return root_path
 
 
 class Index:
@@ -56,23 +87,7 @@ class Index:
     @classmethod
     def open(cls, db_path: Path | str, root: Path | str | None = None) -> Self:
         conn = db.connect(db_path)
-        if root is None:
-            stored = _stored_root_path(conn)
-            if not stored:
-                conn.close()
-                raise IndexRootMismatch(
-                    f"index db has no recorded root_path: {db_path}"
-                )
-            root_path = stored
-        else:
-            root_path = str(Path(root))
-            db.ensure_schema(conn, root_path=root_path)
-            stored = db.meta_get(conn, "root_path")
-            if stored != root_path:
-                conn.close()
-                raise IndexRootMismatch(
-                    f"index was initialized for root {stored!r}, got {root_path!r}"
-                )
+        root_path = _open_root_path(conn, db_path, root)
         storage_root = StorageRoot(LocalFS(Path(root_path)))
         return cls(conn, storage_root, root_path)
 
@@ -189,7 +204,7 @@ class Index:
         self, object_id: str, version_num: int, logical_path: str
     ) -> OtsAttestation | None:
         row = self._conn.execute(
-            "SELECT digest FROM content_paths WHERE object_id = ? AND "
+            "SELECT proof_digest FROM ots_content WHERE object_id = ? AND "
             "version_num = ? AND logical_path = ?",
             (object_id, version_num, f"{logical_path}.ots"),
         ).fetchone()

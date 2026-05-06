@@ -93,6 +93,52 @@ def test_content_attestation_resolves_sibling_path(tmp_path: Path) -> None:
         assert att.block_height == 860_000
 
 
+def test_content_attestation_resolves_sha512_object(tmp_path: Path) -> None:
+    fixture = FixtureRoot(tmp_path)
+    payload = b"bytes in sha512 object"
+    proof = build_proof(payload, height=861_000)
+    fixture.commit(
+        "alpha",
+        {"file.txt": payload, "file.txt.ots": proof},
+        algorithm=DigestAlgorithm.SHA512,
+    )
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        idx.refresh()
+        proof_content_digest = idx._conn.execute(
+            "SELECT digest FROM content_paths WHERE object_id = 'alpha' "
+            "AND version_num = 1 AND logical_path = 'file.txt.ots'"
+        ).fetchone()[0]
+        linked_proof_digest = idx._conn.execute(
+            "SELECT proof_digest FROM ots_content WHERE object_id = 'alpha' "
+            "AND version_num = 1 AND logical_path = 'file.txt.ots'"
+        ).fetchone()[0]
+        att = idx.content_attestation("alpha", 1, "file.txt")
+
+    assert proof_content_digest == hashlib.sha512(proof).hexdigest()
+    assert linked_proof_digest == hashlib.sha256(proof).hexdigest()
+    assert att is not None
+    assert att.block_height == 861_000
+
+
+def test_content_attestation_returns_parse_error_proof(tmp_path: Path) -> None:
+    fixture = FixtureRoot(tmp_path)
+    bad_proof = b"\x00garbage-not-an-ots-proof"
+    fixture.commit(
+        "alpha",
+        {"file.txt": b"payload", "file.txt.ots": bad_proof},
+        algorithm=DigestAlgorithm.SHA512,
+    )
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        idx.refresh()
+        att = idx.content_attestation("alpha", 1, "file.txt")
+
+    assert att is not None
+    assert att.proof_digest == hashlib.sha256(bad_proof).hexdigest()
+    assert att.parse_error
+
+
 def test_inventory_proof_indexed_with_block_height(tmp_path: Path) -> None:
     fixture = FixtureRoot(tmp_path)
     commit_with_inventory_proof(
@@ -229,4 +275,8 @@ def test_duplicate_proof_across_objects_parses_once(tmp_path: Path) -> None:
     with patch.object(ots, "parse", wraps=ots.parse) as mock_parse:
         with Index.open(tmp_path / "i.db", fixture.path) as idx:
             idx.refresh()
+            link_count = idx._conn.execute(
+                "SELECT count(*) FROM ots_content"
+            ).fetchone()[0]
         assert mock_parse.call_count == 1
+        assert link_count == 2

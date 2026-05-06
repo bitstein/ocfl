@@ -53,6 +53,7 @@ def test_status_shows_row_counts(tmp_path: Path) -> None:
         "content_paths",
         "blobs",
         "ots_attestations",
+        "ots_content",
         "ots_inventory",
     }
     assert data["counts"]["objects"] == 1

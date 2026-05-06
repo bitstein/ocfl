@@ -12,9 +12,7 @@ def _index(tmp_path: Path, fixture: FixtureRoot) -> Index:
     return idx
 
 
-def test_counts_returns_six_table_counts(
-    tmp_path: Path, fixture_root: FixtureRoot
-) -> None:
+def test_counts_returns_table_counts(tmp_path: Path, fixture_root: FixtureRoot) -> None:
     fixture_root.commit("alpha", {"a.txt": "x"})
     with _index(tmp_path, fixture_root) as idx:
         counts = idx.counts()
@@ -24,6 +22,7 @@ def test_counts_returns_six_table_counts(
         "content_paths",
         "blobs",
         "ots_attestations",
+        "ots_content",
         "ots_inventory",
     }
     assert counts["objects"] == 1

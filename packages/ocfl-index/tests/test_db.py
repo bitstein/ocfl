@@ -21,6 +21,7 @@ def test_ensure_schema_creates_tables_and_seeds_meta(tmp_path: Path) -> None:
         "content_paths",
         "blobs",
         "ots_attestations",
+        "ots_content",
         "ots_inventory",
     } <= tables
 

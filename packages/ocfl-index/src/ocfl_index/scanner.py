@@ -257,20 +257,27 @@ def _ingest_ots_companions(
     inventory: StoredInventory,
 ) -> None:
     inv = inventory.inventory
-    seen_in_object: set[str] = set()
-    for version_info in inv.versions.values():
+    proof_digest_by_content_digest: dict[str, str] = {}
+    for raw_key, version_info in inv.versions.items():
+        vnum = VNum.parse(raw_key)
         for digest, logical_paths in version_info.state.items():
-            if not any(p.endswith(".ots") for p in logical_paths):
+            ots_paths = [p for p in logical_paths if p.endswith(".ots")]
+            if not ots_paths:
                 continue
-            if digest in seen_in_object:
-                continue
-            seen_in_object.add(digest)
-            content_paths = inv.manifest.get(digest)
-            if not content_paths:
-                continue
-            with fs.open_file(f"{relpath}/{content_paths[0]}") as f:
-                proof_bytes = f.read()
-            ots.upsert_attestation(conn, proof_bytes)
+            pdigest = proof_digest_by_content_digest.get(digest)
+            if pdigest is None:
+                content_paths = inv.manifest.get(digest)
+                if not content_paths:
+                    continue
+                with fs.open_file(f"{relpath}/{content_paths[0]}") as f:
+                    proof_bytes = f.read()
+                pdigest = ots.upsert_attestation(conn, proof_bytes)
+                proof_digest_by_content_digest[digest] = pdigest
+            conn.executemany(
+                "INSERT OR REPLACE INTO ots_content(object_id, version_num, "
+                "logical_path, proof_digest) VALUES (?, ?, ?, ?)",
+                [(inv.id, vnum.number, path, pdigest) for path in ots_paths],
+            )
 
 
 def _ingest_ots_inventory_proofs(

@@ -2,7 +2,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from index_fixtures import FixtureRoot
+from index_fixtures import FixtureRoot, build_proof
 
 from ocfl_index import Index
 from ocfl_index.scanner import scan
@@ -43,6 +43,26 @@ def test_cascades_to_versions_and_paths(tmp_path: Path) -> None:
         ).fetchone()[0]
         assert v == 0
         assert cp == 0
+
+
+def test_purge_cascades_to_content_ots_links(tmp_path: Path) -> None:
+    fixture = FixtureRoot(tmp_path)
+    proof = build_proof(b"x", height=911_000)
+    fixture.commit(
+        "alpha",
+        {"a.txt": b"x", "a.txt.ots": proof},
+        algorithm=DigestAlgorithm.SHA512,
+    )
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        scan(idx._conn, idx.storage_root, full=False)
+        before = idx._conn.execute("SELECT count(*) FROM ots_content").fetchone()[0]
+        assert before == 1
+
+        fixture.remove_object("alpha")
+        scan(idx._conn, idx.storage_root, full=False)
+        after = idx._conn.execute("SELECT count(*) FROM ots_content").fetchone()[0]
+        assert after == 0
 
 
 def test_blobs_retained_after_purge(tmp_path: Path) -> None:
