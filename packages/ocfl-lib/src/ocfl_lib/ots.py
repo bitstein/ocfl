@@ -27,13 +27,16 @@ def parse(ots_bytes: bytes) -> ParsedOts:
     except (DeserializationError, ValueError) as exc:
         raise OtsParseError("failed to deserialize .ots bytes") from exc
 
-    attested_digest: bytes | None = None
-    block_height: int | None = None
+    bitcoin_attestations: list[tuple[int, bytes]] = []
     for msg, attestation in detached.timestamp.all_attestations():
         if isinstance(attestation, BitcoinBlockHeaderAttestation):
-            attested_digest = msg
-            block_height = attestation.height
-            break
+            bitcoin_attestations.append((attestation.height, msg))
+
+    if bitcoin_attestations:
+        block_height, attested_digest = min(bitcoin_attestations, key=lambda x: x[0])
+    else:
+        block_height = None
+        attested_digest = None
 
     return ParsedOts(
         commitment_digest=detached.timestamp.msg,

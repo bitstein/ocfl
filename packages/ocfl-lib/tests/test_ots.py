@@ -3,6 +3,10 @@
 import hashlib
 
 import pytest
+from opentimestamps.core.notary import BitcoinBlockHeaderAttestation
+from opentimestamps.core.op import OpSHA256
+from opentimestamps.core.serialize import BytesSerializationContext
+from opentimestamps.core.timestamp import DetachedTimestampFile, Timestamp
 
 from ocfl_lib import ots
 from ocfl_lib.errors import OtsParseError
@@ -20,6 +24,22 @@ def test_parse_bitcoin_anchored_returns_block_height_and_attested_digest() -> No
     assert parsed.commitment_digest == file_digest
     assert parsed.block_height == expected_height
     assert parsed.attested_digest == file_digest
+
+
+def test_parse_reports_earliest_bitcoin_attestation_height() -> None:
+    file_digest = hashlib.sha256(b"multi-attestation payload").digest()
+    timestamp = Timestamp(file_digest)
+    timestamp.attestations.add(BitcoinBlockHeaderAttestation(900_000))
+    timestamp.ops.add(OpSHA256()).attestations.add(
+        BitcoinBlockHeaderAttestation(800_000)
+    )
+    ctx = BytesSerializationContext()
+    DetachedTimestampFile(OpSHA256(), timestamp).serialize(ctx)
+
+    parsed = ots.parse(ctx.getbytes())
+
+    assert parsed.commitment_digest == file_digest
+    assert parsed.block_height == 800_000
 
 
 def test_parse_pending_only_returns_none_for_block_and_attested_digest() -> None:
