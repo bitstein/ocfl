@@ -13,7 +13,7 @@ import tempfile
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import filelock
 from msgspec.structs import replace
@@ -38,11 +38,7 @@ from ocfl_cli.ots.bitcoin import (
 from ocfl_cli.stage import store as _store_mod
 from ocfl_cli.stage.fsm import Phase, check_transition
 from ocfl_cli.stage.ingest import ingest_file
-from ocfl_cli.stage.schemas import (
-    _NEXT_ACTION_HUMAN,
-    NextActionKind,
-    _OutstandingJobJson,
-)
+from ocfl_cli.stage.schemas import NextActionKind
 from ocfl_cli.stage.state import (
     InventoryProof,
     OtsState,
@@ -87,6 +83,30 @@ type StateMap = dict[str, list[str]]
 _SUBMIT_CHUNK_SIZE = 1000
 _LOCK_TIMEOUT_SECONDS = 30
 _OBJECT_LOCK_DIR = "ocfl-cli-object-locks"
+
+_NEXT_ACTION_HUMAN: dict[NextActionKind, str] = {
+    NextActionKind.ADD_CONTENT: "stage add <path>",
+    NextActionKind.TIMESTAMP_CONTENT: "stage timestamp content",
+    NextActionKind.RETRY_CONTENT: "stage timestamp content --retry",
+    NextActionKind.UPGRADE_CONTENT: (
+        "stage timestamp content --upgrade (or --upgrade --watch)"
+    ),
+    NextActionKind.TIMESTAMP_INVENTORY: "stage timestamp inventory",
+    NextActionKind.RETRY_INVENTORY: "stage timestamp inventory --retry",
+    NextActionKind.UPGRADE_INVENTORY: (
+        "stage timestamp inventory --upgrade (or --upgrade --watch)"
+    ),
+    NextActionKind.COMMIT: "stage commit",
+    NextActionKind.NONE: "",
+}
+
+
+class _OutstandingJobJson(TypedDict):
+    job_id: str
+    digests: list[str]
+    status: str
+    submitted_at: str
+    age_seconds: int
 
 
 # ---------------------------------------------------------------------------

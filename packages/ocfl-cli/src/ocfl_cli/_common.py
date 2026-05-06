@@ -41,7 +41,7 @@ def resolve_root(root: str | None) -> str:
     return str(Path(raw).resolve())
 
 
-def _make_fs(location: str):
+def make_fs(location: str):
     """Create FS backend for *location* (local path or s3:// URI)."""
     if location.startswith("s3://"):
         parsed = urllib.parse.urlparse(location)
@@ -57,7 +57,7 @@ def open_root(root: str | None) -> tuple[StorageRoot, Any]:
     """Open an existing storage root. Exits on error."""
     location = resolve_root(root)
     try:
-        fs = _make_fs(location)
+        fs = make_fs(location)
         sr = StorageRoot(fs)
         return sr, fs
     except (OcflError, OSError) as e:

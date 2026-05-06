@@ -8,7 +8,7 @@ import typer
 
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
-from ocfl_cli._common import _make_fs, open_root, output_json, resolve_root
+from ocfl_cli._common import make_fs, open_root, output_json, resolve_root
 from ocfl_cli._exit import exit_for_error
 from ocfl_cli._io import err
 from ocfl_cli.errors import (
@@ -84,7 +84,7 @@ def _validate_root(
 ) -> None:
     path = resolve_root(appctx.root(ctx))
     try:
-        fs = _make_fs(path)
+        fs = make_fs(path)
     except (OcflError, OSError) as e:
         _fail(str(e), json_mode)
 

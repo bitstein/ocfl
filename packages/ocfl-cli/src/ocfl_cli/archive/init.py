@@ -6,7 +6,7 @@ from typing import Annotated
 import typer
 
 from ocfl_cli import _appctx as appctx
-from ocfl_cli._common import _make_fs, resolve_root
+from ocfl_cli._common import make_fs, resolve_root
 from ocfl_cli._exit import exit_for_error
 from ocfl_lib import Spec, StorageRoot, get_layout
 
@@ -45,7 +45,7 @@ def init(
         exit_for_error(e)
 
     try:
-        fs = _make_fs(root_path)
+        fs = make_fs(root_path)
         StorageRoot.init(
             fs,
             fs,
