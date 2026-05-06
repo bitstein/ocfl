@@ -9,8 +9,8 @@ from index_fixtures import (
     commit_with_inventory_proof,
 )
 
-from ocfl_index import Index, db, ots
-from ocfl_lib import DigestAlgorithm
+from ocfl_index import Index, db, ots, scanner
+from ocfl_lib import DigestAlgorithm, LocalFS
 
 
 def _open_db(tmp_path: Path) -> sqlite3.Connection:
@@ -107,6 +107,72 @@ def test_inventory_proof_indexed_with_block_height(tmp_path: Path) -> None:
             "WHERE i.object_id = 'alpha' AND i.version_num = 1"
         ).fetchone()
         assert row == (880_000,)
+
+
+def test_inventory_proof_uses_raw_version_key_for_path(tmp_path: Path) -> None:
+    conn = _open_db(tmp_path)
+    conn.execute(
+        "INSERT INTO objects(object_id, root_relpath, spec_version, "
+        "digest_algorithm, head_version, head_version_num, head_created_at, "
+        "inventory_digest, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "alpha",
+            "alpha",
+            "1.1",
+            "sha256",
+            "v001",
+            1,
+            "2024-01-01T00:00:00+00:00",
+            "abc123",
+            db.now_iso(),
+        ),
+    )
+    conn.execute(
+        "INSERT INTO versions(object_id, version_num, version, created_at) "
+        "VALUES (?, ?, ?, ?)",
+        ("alpha", 1, "v001", "2024-01-01T00:00:00+00:00"),
+    )
+    proof = build_proof(b"inventory", height=881_000)
+    ext_dir = tmp_path / "root" / "alpha" / "extensions" / "NNNN-ots-timestamps"
+    ext_dir.mkdir(parents=True)
+    (ext_dir / "inventory.json.v001.ots").write_bytes(proof)
+
+    scanner._ingest_ots_inventory_proofs(
+        conn,
+        LocalFS(tmp_path / "root"),
+        relpath="alpha",
+        object_id="alpha",
+        added_versions=[(1, "v001")],
+    )
+
+    row = conn.execute(
+        "SELECT a.block_height FROM ots_inventory i "
+        "JOIN ots_attestations a ON a.proof_digest = i.proof_digest "
+        "WHERE i.object_id = 'alpha' AND i.version_num = 1"
+    ).fetchone()
+    assert row == (881_000,)
+
+
+def test_refresh_indexes_zero_padded_inventory_proof_path(tmp_path: Path) -> None:
+    fixture = FixtureRoot(tmp_path)
+    commit_with_inventory_proof(
+        fixture,
+        "alpha",
+        {"a.txt": b"x"},
+        version_num=1,
+        version_key="v001",
+        height=882_000,
+    )
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        idx.refresh()
+        att = idx.get_inventory_attestation("alpha", 1)
+        version = idx.get_version("alpha", 1)
+
+    assert version is not None
+    assert version.version == "v001"
+    assert att is not None
+    assert att.block_height == 882_000
 
 
 def test_missing_inventory_proof_is_fine(tmp_path: Path) -> None:

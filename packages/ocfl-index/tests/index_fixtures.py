@@ -1,9 +1,11 @@
 """Shared helpers for ocfl-index tests."""
 
 import hashlib
+import json
 from collections.abc import Mapping
 from pathlib import Path
 
+import msgspec
 from opentimestamps.core.notary import (
     BitcoinBlockHeaderAttestation,
     PendingAttestation,
@@ -19,6 +21,7 @@ from ocfl_lib import (
     UserInfo,
     stage_dir,
 )
+from ocfl_lib.inventory import Inventory, StoredInventory
 from ocfl_lib.layout import FlatDirectLayout
 
 
@@ -99,12 +102,59 @@ def commit_with_inventory_proof(
     *,
     version_num: int,
     height: int,
+    version_key: str | None = None,
 ) -> None:
     fixture.commit(object_id, files, algorithm=DigestAlgorithm.SHA256)
+    raw_version_key = version_key or f"v{version_num}"
+    if raw_version_key != f"v{version_num}":
+        rewrite_object_version_key(
+            fixture,
+            object_id,
+            old_key=f"v{version_num}",
+            new_key=raw_version_key,
+        )
+
     relpath = fixture.root.object_path(object_id)
-    inv_path = fixture.root_dir / relpath / f"v{version_num}" / "inventory.json"
+    inv_path = fixture.root_dir / relpath / raw_version_key / "inventory.json"
     payload = inv_path.read_bytes()
     proof = build_proof(payload, height=height)
     ext_dir = fixture.root_dir / relpath / "extensions" / "NNNN-ots-timestamps"
     ext_dir.mkdir(parents=True, exist_ok=True)
-    (ext_dir / f"inventory.json.v{version_num}.ots").write_bytes(proof)
+    (ext_dir / f"inventory.json.{raw_version_key}.ots").write_bytes(proof)
+
+
+def rewrite_object_version_key(
+    fixture: FixtureRoot,
+    object_id: str,
+    *,
+    old_key: str,
+    new_key: str,
+) -> None:
+    relpath = fixture.root.object_path(object_id)
+    obj_dir = fixture.root_dir / relpath
+    old_version_dir = obj_dir / old_key
+    new_version_dir = obj_dir / new_key
+    old_version_dir.rename(new_version_dir)
+
+    _rewrite_inventory_version_key(obj_dir / "inventory.json", old_key, new_key)
+    _rewrite_inventory_version_key(
+        new_version_dir / "inventory.json", old_key, new_key
+    )
+
+
+def _rewrite_inventory_version_key(inv_path: Path, old_key: str, new_key: str) -> None:
+    data = json.loads(inv_path.read_bytes())
+    if data.get("head") == old_key:
+        data["head"] = new_key
+    versions = data["versions"]
+    versions[new_key] = versions.pop(old_key)
+    for paths in data["manifest"].values():
+        for i, path in enumerate(paths):
+            paths[i] = path.replace(f"{old_key}/", f"{new_key}/", 1)
+
+    raw = json.dumps(data, ensure_ascii=False).encode()
+    inv = msgspec.json.decode(raw, type=Inventory)
+    stored = StoredInventory.from_inventory(inv, DigestAlgorithm.SHA256)
+    inv_path.write_bytes(stored.raw_bytes)
+    sidecar_path = inv_path.with_name(stored.sidecar_filename)
+    sidecar_path.write_text(stored.sidecar_content)

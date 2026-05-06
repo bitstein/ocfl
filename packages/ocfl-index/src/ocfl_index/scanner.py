@@ -282,8 +282,8 @@ def _ingest_ots_inventory_proofs(
     added_versions: list[tuple[int, str]],
 ) -> None:
     base = f"{relpath}/extensions/{OTS_EXTENSION_DIR}"
-    for vnum, _vkey in added_versions:
-        proof_path = f"{base}/inventory.json.v{vnum}.ots"
+    for vnum, vkey in added_versions:
+        proof_path = f"{base}/inventory.json.{vkey}.ots"
         try:
             with fs.open_file(proof_path) as f:
                 proof_bytes = f.read()
