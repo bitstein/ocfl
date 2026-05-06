@@ -2,11 +2,11 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from index_fixtures import FixtureRoot
 from typer.testing import CliRunner
 
 from ocfl_index.cli import app
 from ocfl_lib import DigestAlgorithm
-from tests.conftest import FixtureRoot
 
 runner = CliRunner()
 

@@ -1,11 +1,12 @@
 from collections.abc import Callable
 from pathlib import Path
 
+from index_fixtures import FixtureRoot
+
 from ocfl_index import Index
 from ocfl_index.mediatype import OCTET_STREAM
 from ocfl_index.scanner import scan, sniff_pass
 from ocfl_lib import DigestAlgorithm
-from tests.conftest import FixtureRoot
 
 
 def test_sniff_sets_media_type(tmp_path: Path) -> None:

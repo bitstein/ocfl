@@ -2,10 +2,10 @@ import logging
 from pathlib import Path
 
 import pytest
+from index_fixtures import FixtureRoot
 
 from ocfl_index.scanner import _read_sidecar
 from ocfl_lib import DigestAlgorithm
-from tests.conftest import FixtureRoot
 
 
 def _object_relpath(fixture: FixtureRoot, object_id: str) -> str:

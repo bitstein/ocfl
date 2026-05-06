@@ -1,7 +1,8 @@
 from pathlib import Path
 
+from index_fixtures import FixtureRoot
+
 from ocfl_index import Index, ObjectDetail, StatusReport
-from tests.conftest import FixtureRoot
 
 
 def _index(tmp_path: Path, fixture: FixtureRoot) -> Index:

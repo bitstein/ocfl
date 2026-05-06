@@ -3,31 +3,14 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
-from opentimestamps.core.notary import (
-    BitcoinBlockHeaderAttestation,
-    PendingAttestation,
+from index_fixtures import (
+    FixtureRoot,
+    build_proof,
+    commit_with_inventory_proof,
 )
-from opentimestamps.core.op import OpSHA256
-from opentimestamps.core.serialize import BytesSerializationContext
-from opentimestamps.core.timestamp import DetachedTimestampFile, Timestamp
 
 from ocfl_index import Index, db, ots
 from ocfl_lib import DigestAlgorithm
-from tests.conftest import FixtureRoot
-
-
-def _build_proof(payload: bytes, *, height: int | None = 854_321) -> bytes:
-    file_hash = hashlib.sha256(payload).digest()
-    ts = Timestamp(file_hash)
-    sub = ts.ops.add(OpSHA256())
-    if height is None:
-        sub.attestations.add(PendingAttestation("https://example.invalid"))
-    else:
-        sub.attestations.add(BitcoinBlockHeaderAttestation(height))
-    dtsf = DetachedTimestampFile(OpSHA256(), ts)
-    ctx = BytesSerializationContext()
-    dtsf.serialize(ctx)
-    return ctx.getbytes()
 
 
 def _open_db(tmp_path: Path) -> sqlite3.Connection:
@@ -37,7 +20,7 @@ def _open_db(tmp_path: Path) -> sqlite3.Connection:
 
 
 def test_parse_extracts_attested_digest_and_height() -> None:
-    proof = _build_proof(b"hello", height=900_000)
+    proof = build_proof(b"hello", height=900_000)
     result = ots.parse(proof)
     assert isinstance(result, ots.ParsedOts)
     assert result.attested_digest == hashlib.sha256(b"hello").hexdigest()
@@ -46,7 +29,7 @@ def test_parse_extracts_attested_digest_and_height() -> None:
 
 
 def test_pending_proof_stores_null_height_no_error(tmp_path: Path) -> None:
-    proof = _build_proof(b"pending", height=None)
+    proof = build_proof(b"pending", height=None)
     conn = _open_db(tmp_path)
     pdigest = ots.upsert_attestation(conn, proof)
     row = conn.execute(
@@ -68,7 +51,7 @@ def test_unparseable_stores_parse_error_no_crash(tmp_path: Path) -> None:
 
 
 def test_parse_once_per_proof_digest(tmp_path: Path) -> None:
-    proof = _build_proof(b"once", height=800_000)
+    proof = build_proof(b"once", height=800_000)
     conn = _open_db(tmp_path)
     ots.upsert_attestation(conn, proof)
 
@@ -80,7 +63,7 @@ def test_parse_once_per_proof_digest(tmp_path: Path) -> None:
 def test_content_companion_populates_attestations(tmp_path: Path) -> None:
     fixture = FixtureRoot(tmp_path)
     payload = b"hello payload"
-    proof = _build_proof(payload, height=850_000)
+    proof = build_proof(payload, height=850_000)
     fixture.commit(
         "alpha",
         {"data.bin": payload, "data.bin.ots": proof},
@@ -96,7 +79,7 @@ def test_content_companion_populates_attestations(tmp_path: Path) -> None:
 def test_content_attestation_resolves_sibling_path(tmp_path: Path) -> None:
     fixture = FixtureRoot(tmp_path)
     payload = b"bytes for sibling"
-    proof = _build_proof(payload, height=860_000)
+    proof = build_proof(payload, height=860_000)
     fixture.commit(
         "alpha",
         {"file.txt": payload, "file.txt.ots": proof},
@@ -110,27 +93,9 @@ def test_content_attestation_resolves_sibling_path(tmp_path: Path) -> None:
         assert att.block_height == 860_000
 
 
-def _commit_with_inventory_proof(
-    fixture: FixtureRoot,
-    object_id: str,
-    files: dict[str, bytes],
-    *,
-    version_num: int,
-    height: int,
-) -> None:
-    fixture.commit(object_id, files, algorithm=DigestAlgorithm.SHA256)
-    relpath = fixture.root.object_path(object_id)
-    inv_path = fixture.root_dir / relpath / f"v{version_num}" / "inventory.json"
-    payload = inv_path.read_bytes()
-    proof = _build_proof(payload, height=height)
-    ext_dir = fixture.root_dir / relpath / "extensions" / "NNNN-ots-timestamps"
-    ext_dir.mkdir(parents=True, exist_ok=True)
-    (ext_dir / f"inventory.json.v{version_num}.ots").write_bytes(proof)
-
-
 def test_inventory_proof_indexed_with_block_height(tmp_path: Path) -> None:
     fixture = FixtureRoot(tmp_path)
-    _commit_with_inventory_proof(
+    commit_with_inventory_proof(
         fixture, "alpha", {"a.txt": b"x"}, version_num=1, height=880_000
     )
 
@@ -156,7 +121,7 @@ def test_missing_inventory_proof_is_fine(tmp_path: Path) -> None:
 
 def test_get_inventory_attestation_returns_row(tmp_path: Path) -> None:
     fixture = FixtureRoot(tmp_path)
-    _commit_with_inventory_proof(
+    commit_with_inventory_proof(
         fixture, "alpha", {"a.txt": b"x"}, version_num=1, height=890_000
     )
 
@@ -169,7 +134,7 @@ def test_get_inventory_attestation_returns_row(tmp_path: Path) -> None:
 
 def test_first_version_attestation_sugar(tmp_path: Path) -> None:
     fixture = FixtureRoot(tmp_path)
-    _commit_with_inventory_proof(
+    commit_with_inventory_proof(
         fixture, "alpha", {"a.txt": b"x"}, version_num=1, height=900_000
     )
 
@@ -183,7 +148,7 @@ def test_first_version_attestation_sugar(tmp_path: Path) -> None:
 def test_duplicate_proof_across_objects_parses_once(tmp_path: Path) -> None:
     fixture = FixtureRoot(tmp_path)
     payload = b"shared bytes"
-    proof = _build_proof(payload, height=870_000)
+    proof = build_proof(payload, height=870_000)
     fixture.commit(
         "alpha",
         {"f.txt": payload, "f.txt.ots": proof},

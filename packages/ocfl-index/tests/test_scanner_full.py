@@ -1,9 +1,10 @@
 from pathlib import Path
 
+from index_fixtures import FixtureRoot
+
 from ocfl_index import Index
 from ocfl_index.scanner import scan
 from ocfl_lib import DigestAlgorithm
-from tests.conftest import FixtureRoot
 
 
 def test_full_scan_populates_objects(tmp_path: Path) -> None:

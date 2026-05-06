@@ -1,9 +1,9 @@
 from pathlib import Path
 
 import pytest
+from index_fixtures import FixtureRoot
 
 from ocfl_index import Index, IndexRootMismatch, db
-from tests.conftest import FixtureRoot
 
 
 def test_open_creates_db_and_seeds_root(

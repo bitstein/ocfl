@@ -2,11 +2,11 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from index_fixtures import FixtureRoot
 
 from ocfl_index import Index
 from ocfl_index.scanner import scan
 from ocfl_lib import DigestAlgorithm
-from tests.conftest import FixtureRoot
 
 
 def test_removed_object_row_deleted(tmp_path: Path) -> None:

@@ -1,10 +1,10 @@
 from pathlib import Path
 
 import pytest
+from index_fixtures import FixtureRoot
 
 from ocfl_index import Index, ObjectRow
 from ocfl_lib import DigestAlgorithm
-from tests.conftest import FixtureRoot
 
 
 def test_get_object_returns_frozen_row(tmp_path: Path) -> None:

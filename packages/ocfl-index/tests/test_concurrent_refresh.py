@@ -1,10 +1,10 @@
 from pathlib import Path
 
 import pytest
+from index_fixtures import FixtureRoot
 
 from ocfl_index import Index, RefreshInProgress, db
 from ocfl_lib import DigestAlgorithm
-from tests.conftest import FixtureRoot
 
 
 def test_second_refresh_raises_busy_error(tmp_path: Path) -> None:

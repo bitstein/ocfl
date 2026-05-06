@@ -1,8 +1,9 @@
 from pathlib import Path
 
+from index_fixtures import FixtureRoot
+
 from ocfl_index import Index
 from ocfl_lib import DigestAlgorithm
-from tests.conftest import FixtureRoot
 
 
 def test_counters_reflect_actual_changes(tmp_path: Path) -> None:

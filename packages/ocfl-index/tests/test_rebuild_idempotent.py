@@ -1,8 +1,9 @@
 from pathlib import Path
 
+from index_fixtures import FixtureRoot
+
 from ocfl_index import Index, db
 from ocfl_lib import DigestAlgorithm
-from tests.conftest import FixtureRoot
 
 
 def test_full_rebuild_matches_prior_heads(tmp_path: Path) -> None:
@@ -31,10 +32,10 @@ def test_full_rebuild_updates_last_full_scan_at(tmp_path: Path) -> None:
 
 
 def test_rebuild_clears_ots_tables(tmp_path: Path) -> None:
-    from tests.test_ots import _commit_with_inventory_proof
+    from index_fixtures import commit_with_inventory_proof
 
     fixture = FixtureRoot(tmp_path)
-    _commit_with_inventory_proof(
+    commit_with_inventory_proof(
         fixture, "alpha", {"a.txt": b"x"}, version_num=1, height=910_000
     )
 
