@@ -4,11 +4,9 @@ import hashlib
 import sqlite3
 from dataclasses import dataclass
 
-from opentimestamps.core.notary import BitcoinBlockHeaderAttestation
-from opentimestamps.core.serialize import BytesDeserializationContext
-from opentimestamps.core.timestamp import DetachedTimestampFile, Timestamp
-
 from ocfl_index import db
+from ocfl_lib.errors import OtsParseError
+from ocfl_lib.ots import parse as parse_ots
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,14 +30,13 @@ def parse(proof_bytes: bytes) -> ParsedOts | ParseFailure:
     """Parse OTS bytes. Returns a ParsedOts (height may be None) or ParseFailure."""
     pdigest = proof_digest(proof_bytes)
     try:
-        ctx = BytesDeserializationContext(proof_bytes)
-        dtsf = DetachedTimestampFile.deserialize(ctx)
-    except Exception as exc:
+        parsed = parse_ots(proof_bytes)
+    except OtsParseError as exc:
         return ParseFailure(proof_digest=pdigest, error=str(exc))
     return ParsedOts(
         proof_digest=pdigest,
-        attested_digest=dtsf.file_digest.hex(),
-        block_height=_first_btc_height(dtsf.timestamp),
+        attested_digest=parsed.commitment_digest.hex(),
+        block_height=parsed.block_height,
     )
 
 
@@ -73,18 +70,3 @@ def upsert_attestation(conn: sqlite3.Connection, proof_bytes: bytes) -> str:
                 (result.proof_digest, now, result.error),
             )
     return pdigest
-
-
-def _first_btc_height(timestamp: Timestamp) -> int | None:
-    """Return the smallest Bitcoin block height across the proof tree, or None."""
-    heights: list[int] = []
-    _collect_heights(timestamp, heights)
-    return min(heights) if heights else None
-
-
-def _collect_heights(timestamp: Timestamp, out: list[int]) -> None:
-    for att in timestamp.attestations:
-        if isinstance(att, BitcoinBlockHeaderAttestation):
-            out.append(att.height)
-    for sub in timestamp.ops.values():
-        _collect_heights(sub, out)
