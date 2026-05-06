@@ -215,8 +215,6 @@ def bitcoin_config_toml(node: RegtestNode, *, confirmations: int = 3) -> str:
         "[bitcoin]\n"
         f'rpc_url = "{node.rpc_url}"\n'
         f'zmq_endpoint = "{node.zmq_endpoint}"\n'
-        f'rpc_user = "{node.rpc_user}"\n'
-        f'rpc_password = "{node.rpc_password}"\n'
         f"confirmations = {confirmations}\n"
     )
 

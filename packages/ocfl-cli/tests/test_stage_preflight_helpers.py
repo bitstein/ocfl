@@ -181,9 +181,11 @@ def test_require_timestamp_preflight_returns_validated_context(tmp_path) -> None
         simpleproof=SimpleProofConfig(
             base_url="https://simpleproof.example",
             proof_category_id=641,
+            access_token=SecretStr("token"),
+            api_key=SecretStr("key"),
         ),
         bitcoin=BitcoinConfig(
-            rpc_url="http://bitcoin.example",
+            rpc_url="https://bitcoin.example",
             zmq_endpoint="tcp://127.0.0.1:28332",
             rpc_user="user",
             rpc_password=SecretStr("pass"),

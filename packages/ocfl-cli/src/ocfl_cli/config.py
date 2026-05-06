@@ -1,6 +1,5 @@
 """User configuration for the ocfl CLI (XDG-located config.toml)."""
 
-import logging
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -13,7 +12,7 @@ from pydantic_settings import BaseSettings
 
 from ocfl_cli.archive.config import ArchiveConfig, validate_digest_name
 from ocfl_cli.errors import ConfigError
-from ocfl_cli.ots.config import BitcoinConfig, SimpleProofConfig
+from ocfl_cli.ots.config import BitcoinConfig, SimpleProofConfig, env_file_path
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -25,10 +24,9 @@ __all__ = [
     "ConfigError",
     "SimpleProofConfig",
     "config_path",
+    "env_file_path",
     "load_config",
 ]
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -74,6 +72,7 @@ def load_config(path: Path | None = None) -> Config:
     """Load config from *path* (default: `config_path()`). Missing file → empty."""
     if path is None:
         path = config_path()
+    _check_env_file_perms()
     if not path.is_file():
         return Config()
     try:
@@ -83,9 +82,7 @@ def load_config(path: Path | None = None) -> Config:
         raise ConfigError(f"{path}: {e}") from None
     except OSError as e:
         raise ConfigError(f"{path}: {e}") from None
-    cfg = _build(data, path)
-    _maybe_warn_loose_perms(path, cfg)
-    return cfg
+    return _build(data, path)
 
 
 def _build(data: dict[str, Any], path: Path) -> Config:
@@ -112,9 +109,19 @@ def _build(data: dict[str, Any], path: Path) -> Config:
         )
 
     simpleproof = _build_section(
-        SimpleProofConfig, data.get("simpleproof"), path, "simpleproof"
+        SimpleProofConfig,
+        data.get("simpleproof"),
+        path,
+        "simpleproof",
+        forbidden_keys=("access_token", "api_key"),
     )
-    bitcoin = _build_section(BitcoinConfig, data.get("bitcoin"), path, "bitcoin")
+    bitcoin = _build_section(
+        BitcoinConfig,
+        data.get("bitcoin"),
+        path,
+        "bitcoin",
+        forbidden_keys=("rpc_user", "rpc_password"),
+    )
 
     return Config(
         path=path,
@@ -127,11 +134,17 @@ def _build(data: dict[str, Any], path: Path) -> Config:
 
 
 def _build_section[T: BaseSettings](
-    cls: type[T], section: Any, path: Path, label: str
+    cls: type[T],
+    section: Any,
+    path: Path,
+    label: str,
+    *,
+    forbidden_keys: tuple[str, ...] = (),
 ) -> T | None:
     if section is None:
         return None
     section = _require_table(section, path, label)
+    _reject_forbidden_keys(cls, section, path, label, forbidden_keys)
     return _validate(cls, section, path, label)
 
 
@@ -142,6 +155,42 @@ def _validate[T: BaseModel](
         return cls(**data)
     except ValidationError as e:
         raise ConfigError(_format_validation_error(e, path, label)) from None
+
+
+def _reject_forbidden_keys[T: BaseSettings](
+    cls: type[T],
+    section: dict[str, Any],
+    path: Path,
+    label: str,
+    forbidden_keys: tuple[str, ...],
+) -> None:
+    prefix = cls.model_config.get("env_prefix", "")
+    for key in forbidden_keys:
+        if key in section:
+            env_name = f"{prefix}{key}".upper()
+            raise ConfigError(
+                f"{path}: {label}.{key} is secret and must be set via {env_name}, "
+                "not config.toml"
+            )
+
+
+def _check_env_file_perms() -> None:
+    path = env_file_path()
+    if path is None:
+        return
+    if not path.is_file():
+        if os.environ.get("OCFL_ENV_FILE"):
+            raise ConfigError(f"{path}: OCFL_ENV_FILE does not exist")
+        return
+    try:
+        mode = path.stat().st_mode
+    except OSError as e:
+        raise ConfigError(f"{path}: {e}") from None
+    if mode & 0o077:
+        raise ConfigError(
+            f"{path}: mode {mode & 0o777:o} is too permissive for a secrets file; "
+            f"chmod 600 {path}"
+        )
 
 
 def _format_validation_error(e: ValidationError, path: Path, label: str) -> str:
@@ -193,29 +242,3 @@ def _opt_str_list(
     if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
         raise ConfigError(f"{path}: {label} must be a list of strings")
     return tuple(v)
-
-
-def _has_secret(cfg: Config) -> bool:
-    sp = cfg.simpleproof
-    if sp is not None and (
-        sp.access_token.get_secret_value() or sp.api_key.get_secret_value()
-    ):
-        return True
-    btc = cfg.bitcoin
-    return bool(btc is not None and btc.rpc_password.get_secret_value())
-
-
-def _maybe_warn_loose_perms(path: Path, cfg: Config) -> None:
-    if not _has_secret(cfg):
-        return
-    try:
-        mode = path.stat().st_mode
-    except OSError:
-        return
-    if mode & 0o077:
-        logger.warning(
-            "config file %s has loose permissions (mode %o); "
-            "secrets present — chmod 600 recommended",
-            path,
-            mode & 0o777,
-        )

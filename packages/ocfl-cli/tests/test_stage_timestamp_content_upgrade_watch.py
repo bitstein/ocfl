@@ -80,16 +80,12 @@ _SP_OK = """\
 [simpleproof]
 base_url = "https://stage.example"
 proof_category_id = 641
-access_token = "tok"
-api_key = "key"
 """
 
 _BTC_OK_COOKIE = """\
 [bitcoin]
 rpc_url = "http://127.0.0.1:8332"
 zmq_endpoint = "tcp://127.0.0.1:28332"
-rpc_user = "u"
-rpc_password = "p"
 confirmations = 3
 """
 
@@ -806,6 +802,8 @@ class TestRegtestRealZmqHashblockDelivery:
         from tests.helpers.regtest import bitcoin_config_toml
 
         cfg_body = _SP_OK + bitcoin_config_toml(bitcoind_regtest, confirmations=3)
+        monkeypatch.setenv("BITCOIN_RPC_USER", bitcoind_regtest.rpc_user)
+        monkeypatch.setenv("BITCOIN_RPC_PASSWORD", bitcoind_regtest.rpc_password)
         _write_config(tmp_path, monkeypatch, body=cfg_body)
         _inject_fake_sp(runner, sp_fake)
         # Production btc_rpc_factory + _get_zmq_subscriber paths used.

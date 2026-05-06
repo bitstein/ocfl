@@ -43,9 +43,19 @@ def pytest_collection_modifyitems(
 
 @pytest.fixture(autouse=True)
 def _isolate_user_config(tmp_path_factory, monkeypatch):
-    """Point `OCFL_CONFIG` at nonexistent path; tests must not read real user config."""
-    sentinel = tmp_path_factory.mktemp("ocfl-config") / "config.toml"
+    """Keep config and dotenv reads inside pytest-owned temp paths."""
+    base = tmp_path_factory.mktemp("ocfl-config")
+    sentinel = base / "config.toml"
+    env_file = base / ".env"
+    env_file.write_text(
+        "SIMPLEPROOF_ACCESS_TOKEN=tok\n"
+        "SIMPLEPROOF_API_KEY=key\n"
+        "BITCOIN_RPC_USER=u\n"
+        "BITCOIN_RPC_PASSWORD=p\n"
+    )
+    env_file.chmod(0o600)
     monkeypatch.setenv("OCFL_CONFIG", str(sentinel))
+    monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
 
 
 @pytest.fixture

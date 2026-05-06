@@ -1,14 +1,9 @@
 """Tests for [simpleproof] + [bitcoin] config sections.
 
 Covers the SimpleProofConfig + BitcoinConfig pydantic settings models: URL
-schemes, rpc_user/rpc_password requirements, confirmations range, env override
-precedence, secret repr redaction, and loose-perms warning. Locks in the API
-exposed by :mod:`ocfl_cli.config`.
-
-Decision: WARNING assertions go through ``caplog`` (Python logging), not
-``capsys``. ``main._configure_logging`` already routes the root logger to
-stderr via ``StreamHandler(sys.stderr)`` — capturing logs is cleaner and
-avoids coupling tests to formatter output.
+schemes, rpc_user/rpc_password requirements, confirmations range, env/dotenv
+precedence, secret repr redaction, and dotenv permission enforcement. Locks in
+the API exposed by :mod:`ocfl_cli.config`.
 """
 
 import logging
@@ -49,16 +44,12 @@ _SP_OK = """\
 [simpleproof]
 base_url = "https://stage.example"
 proof_category_id = 641
-access_token = "tok"
-api_key = "key"
 """
 
 _BTC_OK = """\
 [bitcoin]
 rpc_url = "http://127.0.0.1:8332"
 zmq_endpoint = "tcp://127.0.0.1:28332"
-rpc_user = "u"
-rpc_password = "p"
 """
 
 
@@ -113,19 +104,33 @@ class TestValidLoad:
 
 class TestUrlSchemes:
     @pytest.mark.parametrize(
-        "scheme",
-        ["http://stage.example", "https://stage.example"],
+        "url",
+        [
+            "http://127.0.0.1",
+            "http://192.168.1.10",
+            "http://100.64.0.42",
+            "http://bitcoin.tail-abc.ts.net",
+            "http://node.local",
+            "https://stage.example",
+        ],
     )
-    def test_simpleproof_base_url_ok(self, scheme: str, tmp_path: Path) -> None:
-        body = _SP_OK.replace("https://stage.example", scheme) + _BTC_OK
+    def test_simpleproof_base_url_ok(self, url: str, tmp_path: Path) -> None:
+        body = _SP_OK.replace("https://stage.example", url) + _BTC_OK
         path = _write(tmp_path / "c.toml", body)
         cfg = load_config(path)
         assert cfg.simpleproof is not None
-        assert cfg.simpleproof.base_url == scheme
+        assert cfg.simpleproof.base_url == url
 
     @pytest.mark.parametrize(
         "bad_url",
-        ["ftp://stage.example", "tcp://x", "file:///x", "stage.example"],
+        [
+            "ftp://stage.example",
+            "tcp://x",
+            "file:///x",
+            "stage.example",
+            "http://stage.example",
+            "http://bitcoin-node",
+        ],
     )
     def test_simpleproof_base_url_rejects_non_http(
         self, bad_url: str, tmp_path: Path
@@ -136,19 +141,32 @@ class TestUrlSchemes:
             load_config(path)
 
     @pytest.mark.parametrize(
-        "scheme",
-        ["http://127.0.0.1:8332", "https://node.example:8332"],
+        "url",
+        [
+            "http://127.0.0.1:8332",
+            "http://10.0.0.1:8332",
+            "http://100.64.0.1:8332",
+            "http://bitcoin.tail-abc.ts.net:8332",
+            "http://node.local:8332",
+            "https://node.example:8332",
+        ],
     )
-    def test_bitcoin_rpc_url_ok(self, scheme: str, tmp_path: Path) -> None:
-        body = _SP_OK + _BTC_OK.replace("http://127.0.0.1:8332", scheme)
+    def test_bitcoin_rpc_url_ok(self, url: str, tmp_path: Path) -> None:
+        body = _SP_OK + _BTC_OK.replace("http://127.0.0.1:8332", url)
         path = _write(tmp_path / "c.toml", body)
         cfg = load_config(path)
         assert cfg.bitcoin is not None
-        assert cfg.bitcoin.rpc_url == scheme
+        assert cfg.bitcoin.rpc_url == url
 
     @pytest.mark.parametrize(
         "bad_url",
-        ["ftp://x", "tcp://127.0.0.1:8332", "127.0.0.1:8332"],
+        [
+            "ftp://x",
+            "tcp://127.0.0.1:8332",
+            "127.0.0.1:8332",
+            "http://node.example:8332",
+            "http://bitcoin-node:8332",
+        ],
     )
     def test_bitcoin_rpc_url_rejects_non_http(
         self, bad_url: str, tmp_path: Path
@@ -193,29 +211,56 @@ class TestRpcAuth:
         assert cfg.bitcoin.rpc_user == "u"
         assert cfg.bitcoin.rpc_password.get_secret_value() == "p"
 
-    def test_missing_user_rejected(self, tmp_path: Path) -> None:
+    def test_missing_user_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env_file = _write(
+            tmp_path / ".env",
+            "SIMPLEPROOF_ACCESS_TOKEN=dot-token\n"
+            "SIMPLEPROOF_API_KEY=dot-key\n"
+            "BITCOIN_RPC_PASSWORD=dot-pass\n",
+        )
+        os.chmod(env_file, 0o600)
+        monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
         body = _SP_OK + (
             "[bitcoin]\n"
             'rpc_url = "http://127.0.0.1:8332"\n'
             'zmq_endpoint = "tcp://127.0.0.1:28332"\n'
-            'rpc_password = "p"\n'
         )
         path = _write(tmp_path / "c.toml", body)
-        with pytest.raises(ConfigError):
+        with pytest.raises(ConfigError, match=r"bitcoin\.rpc_user"):
             load_config(path)
 
-    def test_missing_password_rejected(self, tmp_path: Path) -> None:
+    def test_missing_password_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env_file = _write(
+            tmp_path / ".env",
+            "SIMPLEPROOF_ACCESS_TOKEN=dot-token\n"
+            "SIMPLEPROOF_API_KEY=dot-key\n"
+            "BITCOIN_RPC_USER=dot-user\n",
+        )
+        os.chmod(env_file, 0o600)
+        monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
         body = _SP_OK + (
             "[bitcoin]\n"
             'rpc_url = "http://127.0.0.1:8332"\n'
             'zmq_endpoint = "tcp://127.0.0.1:28332"\n'
-            'rpc_user = "u"\n'
         )
         path = _write(tmp_path / "c.toml", body)
-        with pytest.raises(ConfigError):
+        with pytest.raises(ConfigError, match=r"bitcoin\.rpc_password"):
             load_config(path)
 
-    def test_missing_both_rejected(self, tmp_path: Path) -> None:
+    def test_missing_both_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env_file = _write(
+            tmp_path / ".env",
+            "SIMPLEPROOF_ACCESS_TOKEN=dot-token\n"
+            "SIMPLEPROOF_API_KEY=dot-key\n",
+        )
+        os.chmod(env_file, 0o600)
+        monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
         body = _SP_OK + (
             "[bitcoin]\n"
             'rpc_url = "http://127.0.0.1:8332"\n'
@@ -316,6 +361,86 @@ class TestEnvOverride:
         path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
         with pytest.raises(ConfigError):
             load_config(path)
+
+
+class TestDotenv:
+    def test_dotenv_file_is_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env_file = _write(
+            tmp_path / ".env",
+            "SIMPLEPROOF_ACCESS_TOKEN=dot-token\n"
+            "SIMPLEPROOF_API_KEY=dot-key\n"
+            "BITCOIN_RPC_USER=dot-user\n"
+            "BITCOIN_RPC_PASSWORD=dot-pass\n",
+        )
+        os.chmod(env_file, 0o600)
+        monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
+        cfg = load_config(_write(tmp_path / "c.toml", _SP_OK + _BTC_OK))
+        assert cfg.simpleproof is not None
+        assert cfg.bitcoin is not None
+        assert cfg.simpleproof.access_token.get_secret_value() == "dot-token"
+        assert cfg.simpleproof.api_key.get_secret_value() == "dot-key"
+        assert cfg.bitcoin.rpc_user == "dot-user"
+        assert cfg.bitcoin.rpc_password.get_secret_value() == "dot-pass"
+
+    def test_process_env_overrides_dotenv(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env_file = _write(
+            tmp_path / ".env",
+            "SIMPLEPROOF_ACCESS_TOKEN=dot-token\n"
+            "SIMPLEPROOF_API_KEY=dot-key\n"
+            "BITCOIN_RPC_USER=dot-user\n"
+            "BITCOIN_RPC_PASSWORD=dot-pass\n",
+        )
+        os.chmod(env_file, 0o600)
+        monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
+        monkeypatch.setenv("SIMPLEPROOF_ACCESS_TOKEN", "env-token")
+        cfg = load_config(_write(tmp_path / "c.toml", _SP_OK + _BTC_OK))
+        assert cfg.simpleproof is not None
+        assert cfg.simpleproof.access_token.get_secret_value() == "env-token"
+
+    def test_dotenv_overrides_toml_for_non_secret_fields(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env_file = _write(
+            tmp_path / ".env",
+            "SIMPLEPROOF_BASE_URL=https://dotenv.example\n"
+            "SIMPLEPROOF_ACCESS_TOKEN=dot-token\n"
+            "SIMPLEPROOF_API_KEY=dot-key\n"
+            "BITCOIN_RPC_USER=dot-user\n"
+            "BITCOIN_RPC_PASSWORD=dot-pass\n",
+        )
+        os.chmod(env_file, 0o600)
+        monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
+        cfg = load_config(_write(tmp_path / "c.toml", _SP_OK + _BTC_OK))
+        assert cfg.simpleproof is not None
+        assert cfg.simpleproof.base_url == "https://dotenv.example"
+
+    def test_unknown_dotenv_key_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env_file = _write(
+            tmp_path / ".env",
+            "SIMPLEPROOF_ACCESS_TOKEN=dot-token\n"
+            "SIMPLEPROOF_API_KEY=dot-key\n"
+            "SIMPLEPROOF_ACESS_TOKEN=typo\n"
+            "BITCOIN_RPC_USER=dot-user\n"
+            "BITCOIN_RPC_PASSWORD=dot-pass\n",
+        )
+        os.chmod(env_file, 0o600)
+        monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
+        with pytest.raises(ConfigError, match="Extra"):
+            load_config(_write(tmp_path / "c.toml", _SP_OK + _BTC_OK))
+
+    def test_explicit_missing_dotenv_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        missing = tmp_path / "missing.env"
+        monkeypatch.setenv("OCFL_ENV_FILE", str(missing))
+        with pytest.raises(ConfigError, match="OCFL_ENV_FILE does not exist"):
+            load_config(_write(tmp_path / "c.toml", _SP_OK + _BTC_OK))
 
 
 # --------------------------------------------------------------------------- #
@@ -462,7 +587,7 @@ class TestSecretRepr:
 
 
 # --------------------------------------------------------------------------- #
-# 10. File-permission warning on loose perms + secret
+# 10. File-permission hard error on loose dotenv perms
 # --------------------------------------------------------------------------- #
 
 
@@ -470,51 +595,60 @@ class TestSecretRepr:
     sys.platform == "win32" or os.name == "nt",
     reason="POSIX file modes only",
 )
-class TestLoosePermsWarning:
-    def _warn_records(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> list[logging.LogRecord]:
-        return [
-            r
-            for r in caplog.records
-            if r.levelno >= logging.WARNING
-            and (
-                "permission" in r.message.lower()
-                or "chmod" in r.message.lower()
-                or "world-readable" in r.message.lower()
-                or "group-readable" in r.message.lower()
-            )
-        ]
-
-    def test_loose_perms_with_secret_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+class TestLooseEnvPerms:
+    def test_loose_dotenv_perms_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        env_file = _write(
+            tmp_path / ".env",
+            "SIMPLEPROOF_ACCESS_TOKEN=dot-token\n"
+            "SIMPLEPROOF_API_KEY=dot-key\n"
+            "BITCOIN_RPC_USER=dot-user\n"
+            "BITCOIN_RPC_PASSWORD=dot-pass\n",
+        )
+        os.chmod(env_file, 0o644)
+        monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
         path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
-        os.chmod(path, 0o644)  # group/world-readable
-        with caplog.at_level(logging.WARNING):
+        with pytest.raises(ConfigError, match=r"chmod 600"):
             load_config(path)
-        records = self._warn_records(caplog)
-        assert records, "expected loose-perms WARNING when secret present"
 
-    def test_tight_perms_no_warn(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    def test_tight_dotenv_perms_load(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        env_file = _write(
+            tmp_path / ".env",
+            "SIMPLEPROOF_ACCESS_TOKEN=dot-token\n"
+            "SIMPLEPROOF_API_KEY=dot-key\n"
+            "BITCOIN_RPC_USER=dot-user\n"
+            "BITCOIN_RPC_PASSWORD=dot-pass\n",
+        )
+        os.chmod(env_file, 0o600)
+        monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
         path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
-        os.chmod(path, 0o600)
-        with caplog.at_level(logging.WARNING):
-            load_config(path)
-        assert not self._warn_records(caplog)
+        assert load_config(path).bitcoin is not None
 
-    def test_loose_perms_without_secret_no_warn(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+
+class TestTomlSecretsRejected:
+    @pytest.mark.parametrize(
+        ("section", "field", "env_name"),
+        [
+            ("simpleproof", "access_token", "SIMPLEPROOF_ACCESS_TOKEN"),
+            ("simpleproof", "api_key", "SIMPLEPROOF_API_KEY"),
+            ("bitcoin", "rpc_user", "BITCOIN_RPC_USER"),
+            ("bitcoin", "rpc_password", "BITCOIN_RPC_PASSWORD"),
+        ],
+    )
+    def test_forbidden_keys_name_env_var(
+        self, section: str, field: str, env_name: str, tmp_path: Path
     ) -> None:
-        # No [simpleproof], no [bitcoin] — no secret-bearing section.
-        body = '[archives.alpha]\nroot = "/srv/a"\n'
+        extra = f'{field} = "secret-in-toml"\n'
+        if section == "simpleproof":
+            body = _SP_OK + extra + _BTC_OK
+        else:
+            body = _SP_OK + _BTC_OK + extra
         path = _write(tmp_path / "c.toml", body)
-        os.chmod(path, 0o644)
-        with caplog.at_level(logging.WARNING):
+        with pytest.raises(ConfigError, match=env_name):
             load_config(path)
-        assert not self._warn_records(caplog)
 
 
 # --------------------------------------------------------------------------- #
