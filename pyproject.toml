@@ -59,9 +59,17 @@ select = [
     "UP",    # pyupgrade
     "B",     # flake8-bugbear
     "SIM",   # flake8-simplify
+    "TC",    # flake8-type-checking
     "RUF",   # ruff-specific
 ]
 
 [tool.ruff.lint.isort]
 known-first-party = ["ocfl_lib", "ocfl_cli", "ocfl_index"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["TC"]
+# ocfl-index intentionally hoists imports to module scope; PEP 649 makes
+# from __future__ import annotations a no-op on 3.14+ and none of its
+# TYPE_CHECKING guards were circular or expensive (see 58fd37e).
+"packages/ocfl-index/src/**" = ["TC"]
 
