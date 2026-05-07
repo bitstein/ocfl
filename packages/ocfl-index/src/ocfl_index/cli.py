@@ -7,11 +7,13 @@ from typing import Annotated
 
 import typer
 
-from ocfl_index import Index
+from ocfl_index import Index, RefreshInProgress
 
 app = typer.Typer(no_args_is_help=True, help="OCFL storage root index")
 
 DEFAULT_DB = Path("./ocfl-index.db")
+
+_BUSY_MESSAGE = "index busy: another refresh in progress"
 
 
 def _print_json(payload: object) -> None:
@@ -22,6 +24,15 @@ def _require_db(db_path: Path) -> None:
     if not db_path.exists():
         typer.echo(f"index db not found: {db_path}", err=True)
         raise typer.Exit(code=2)
+
+
+def _open_index_or_exit(db_path: Path) -> Index:
+    """Open an index, exiting with a friendly message on writer-lock contention."""
+    try:
+        return Index.open(db_path)
+    except RefreshInProgress as exc:
+        typer.echo(_BUSY_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
 
 
 @app.command()
@@ -43,12 +54,17 @@ def refresh(
 ) -> None:
     """Refresh the index against the OCFL root."""
     _require_db(db_path)
+    idx = _open_index_or_exit(db_path)
     try:
-        with Index.open(db_path) as idx:
-            report = idx.refresh(full=full)
+        report = idx.refresh(full=full)
+    except RefreshInProgress as exc:
+        typer.echo(_BUSY_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
     except Exception as exc:
         typer.echo(f"refresh failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+    finally:
+        idx.close()
     typer.echo(json.dumps(dataclasses.asdict(report), sort_keys=True))
 
 
@@ -59,7 +75,7 @@ def status(
 ) -> None:
     """Show row counts and last scan timestamps."""
     _require_db(db_path)
-    with Index.open(db_path) as idx:
+    with _open_index_or_exit(db_path) as idx:
         report = idx.status()
     if json_output:
         _print_json(dataclasses.asdict(report))
@@ -80,7 +96,7 @@ def show(
 ) -> None:
     """Render an object: head versions, head paths."""
     _require_db(db_path)
-    with Index.open(db_path) as idx:
+    with _open_index_or_exit(db_path) as idx:
         detail = idx.get_object_detail(object_id)
     if detail is None:
         typer.echo(f"object {object_id!r} not in index", err=True)

@@ -1,14 +1,26 @@
 import json
+import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from index_fixtures import FixtureRoot
 from typer.testing import CliRunner
 
+from ocfl_index import db
 from ocfl_index.cli import app
 from ocfl_lib import DigestAlgorithm
 
 runner = CliRunner()
+
+
+def _combined_output(result: object) -> str:
+    """Return stdout plus any captured stderr, robust across Click versions."""
+    text = getattr(result, "output", "")
+    stderr_bytes = getattr(result, "stderr_bytes", None)
+    if stderr_bytes:
+        text += getattr(result, "stderr", "")
+    return text
 
 
 def _db(tmp_path: Path) -> Path:
@@ -108,3 +120,67 @@ def test_refresh_error_exit_code_1(tmp_path: Path) -> None:
     with patch("ocfl_index.scanner.scan", side_effect=RuntimeError("boom")):
         result = runner.invoke(app, ["refresh", "--db", str(db_path)])
     assert result.exit_code == 1
+
+
+def _stale_db_with_writer_lock(
+    tmp_path: Path,
+) -> tuple[Path, sqlite3.Connection]:
+    """Build an initialized DB with stale schema_version, hold a writer lock."""
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
+    db_path = _db(tmp_path)
+    runner.invoke(app, ["init", "--root", fixture.path, "--db", str(db_path)])
+    runner.invoke(app, ["refresh", "--db", str(db_path)])
+
+    side = db.connect(db_path)
+    db.meta_set(side, "schema_version", "0")
+    side.commit()
+    side.close()
+
+    holder = db.connect(db_path)
+    holder.execute("BEGIN IMMEDIATE")
+    return db_path, holder
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["refresh"],
+        ["status"],
+        ["show", "alpha"],
+    ],
+)
+def test_cli_open_time_contention_is_friendly(tmp_path: Path, argv: list[str]) -> None:
+    db_path, holder = _stale_db_with_writer_lock(tmp_path)
+    try:
+        result = runner.invoke(app, [*argv, "--db", str(db_path)])
+    finally:
+        holder.rollback()
+        holder.close()
+
+    output = _combined_output(result)
+    assert result.exit_code == 1, output
+    assert "index busy" in output
+    assert "database is locked" not in output
+
+
+def test_cli_refresh_time_contention_is_friendly(tmp_path: Path) -> None:
+    """Clean schema: open succeeds, refresh's BEGIN IMMEDIATE hits the lock."""
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
+    db_path = _db(tmp_path)
+    runner.invoke(app, ["init", "--root", fixture.path, "--db", str(db_path)])
+    runner.invoke(app, ["refresh", "--db", str(db_path)])
+
+    holder = db.connect(db_path)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        result = runner.invoke(app, ["refresh", "--db", str(db_path)])
+    finally:
+        holder.rollback()
+        holder.close()
+
+    output = _combined_output(result)
+    assert result.exit_code == 1, output
+    assert "index busy" in output
+    assert "database is locked" not in output

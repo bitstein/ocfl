@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -61,3 +62,97 @@ def test_reader_not_blocked_during_refresh(tmp_path: Path) -> None:
         finally:
             writer.rollback()
             writer.close()
+
+
+def test_open_with_stale_schema_under_writer_lock_raises_refresh_in_progress(
+    tmp_path: Path,
+) -> None:
+    """ensure_schema must write to rebuild; a held write lock should normalize."""
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
+
+    db_path = tmp_path / "i.db"
+    Index.open(db_path, fixture.path).close()
+
+    side = db.connect(db_path)
+    db.meta_set(side, "schema_version", "0")
+    side.commit()
+    side.close()
+
+    holder = db.connect(db_path)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        with pytest.raises(RefreshInProgress):
+            Index.open(db_path)
+    finally:
+        holder.rollback()
+        holder.close()
+
+
+def test_open_with_clean_schema_under_writer_lock_succeeds(tmp_path: Path) -> None:
+    """A current-schema open must not need the write lock."""
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
+
+    db_path = tmp_path / "i.db"
+    Index.open(db_path, fixture.path).close()
+
+    holder = db.connect(db_path)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        with Index.open(db_path) as idx:
+            assert idx.root_path == fixture.path
+    finally:
+        holder.rollback()
+        holder.close()
+
+
+def test_open_non_lock_operational_error_propagates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-lock OperationalError from ensure_schema must surface unchanged."""
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
+
+    db_path = tmp_path / "i.db"
+    Index.open(db_path, fixture.path).close()
+
+    def boom(_conn: sqlite3.Connection, root_path: str) -> None:
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr("ocfl_index.index.db.ensure_schema", boom)
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+        Index.open(db_path)
+
+
+def test_open_closes_connection_on_non_lock_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed open must not leak the SQLite connection."""
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
+
+    db_path = tmp_path / "i.db"
+    Index.open(db_path, fixture.path).close()
+
+    captured: list[sqlite3.Connection] = []
+    real_connect = db.connect
+
+    def spy(path: Path | str) -> sqlite3.Connection:
+        conn = real_connect(path)
+        captured.append(conn)
+        return conn
+
+    def boom(_conn: sqlite3.Connection, root_path: str) -> None:
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr("ocfl_index.index.db.connect", spy)
+    monkeypatch.setattr("ocfl_index.index.db.ensure_schema", boom)
+    with pytest.raises(sqlite3.OperationalError):
+        Index.open(db_path)
+
+    assert len(captured) == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        captured[0].execute("SELECT 1")

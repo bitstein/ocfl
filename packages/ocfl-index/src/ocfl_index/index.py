@@ -46,25 +46,30 @@ def _open_root_path(
     db_path: Path | str,
     root: Path | str | None,
 ) -> str:
+    """Resolve and validate the root path. Caller owns ``conn`` lifecycle."""
     stored = _stored_root_path(conn)
     if root is None:
         if not stored:
-            conn.close()
             raise IndexRootMismatch(f"index db has no recorded root_path: {db_path}")
         root_path = stored
     else:
         root_path = str(Path(root))
         if stored is not None and stored != root_path:
-            conn.close()
             raise IndexRootMismatch(
                 f"index was initialized for root {stored!r}, got {root_path!r}"
             )
 
-    db.ensure_schema(conn, root_path=root_path)
+    try:
+        db.ensure_schema(conn, root_path=root_path)
+    except sqlite3.OperationalError as err:
+        if db.is_lock_error(err):
+            raise scanner.RefreshInProgress(
+                "another writer holds the index lock"
+            ) from err
+        raise
     # Catch malformed meta or future schema paths that fail to preserve root_path.
     stored_after = db.meta_get(conn, "root_path")
     if stored_after != root_path:
-        conn.close()
         raise IndexRootMismatch(
             f"index was initialized for root {stored_after!r}, got {root_path!r}"
         )
@@ -87,9 +92,13 @@ class Index:
     @classmethod
     def open(cls, db_path: Path | str, root: Path | str | None = None) -> Self:
         conn = db.connect(db_path)
-        root_path = _open_root_path(conn, db_path, root)
-        storage_root = StorageRoot(LocalFS(Path(root_path)))
-        return cls(conn, storage_root, root_path)
+        try:
+            root_path = _open_root_path(conn, db_path, root)
+            storage_root = StorageRoot(LocalFS(Path(root_path)))
+            return cls(conn, storage_root, root_path)
+        except BaseException:
+            conn.close()
+            raise
 
     @property
     def root_path(self) -> str:

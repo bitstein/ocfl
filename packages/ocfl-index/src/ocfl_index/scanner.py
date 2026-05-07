@@ -435,7 +435,7 @@ def scan(
     try:
         conn.execute("BEGIN IMMEDIATE")
     except sqlite3.OperationalError as err:
-        if "locked" in str(err) or "busy" in str(err):
+        if db.is_lock_error(err):
             raise RefreshInProgress(
                 "another refresh is holding the write lock"
             ) from err

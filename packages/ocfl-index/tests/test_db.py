@@ -1,7 +1,15 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from ocfl_index import db
+
+
+class _CodedOperationalError(sqlite3.OperationalError):
+    """OperationalError subclass that allows assigning sqlite_errorcode in tests."""
+
+    sqlite_errorcode: int
 
 
 def _table_names(conn: sqlite3.Connection) -> set[str]:
@@ -63,3 +71,38 @@ def test_schema_version_mismatch_triggers_rebuild(tmp_path: Path) -> None:
     rows = conn2.execute("SELECT count(*) FROM objects").fetchone()
     assert rows[0] == 0
     assert db.meta_get(conn2, "schema_version") == str(db.SCHEMA_VERSION)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED],
+)
+def test_is_lock_error_true_for_lock_errorcodes(code: int) -> None:
+    err = _CodedOperationalError("ignored")
+    err.sqlite_errorcode = code
+    assert db.is_lock_error(err) is True
+
+
+def test_is_lock_error_false_for_non_lock_errorcode() -> None:
+    err = _CodedOperationalError("ignored")
+    err.sqlite_errorcode = sqlite3.SQLITE_IOERR
+    assert db.is_lock_error(err) is False
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "database is locked",
+        "Database is Locked",
+        "database table is locked",
+        "database is busy",
+    ],
+)
+def test_is_lock_error_message_fallback_true(message: str) -> None:
+    err = sqlite3.OperationalError(message)
+    assert db.is_lock_error(err) is True
+
+
+def test_is_lock_error_message_fallback_false() -> None:
+    err = sqlite3.OperationalError("disk I/O error")
+    assert db.is_lock_error(err) is False

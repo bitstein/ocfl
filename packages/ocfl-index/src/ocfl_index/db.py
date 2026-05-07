@@ -33,6 +33,22 @@ def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+_LOCK_MESSAGE_FRAGMENTS = (
+    "database is locked",
+    "database table is locked",
+    "database is busy",
+)
+
+
+def is_lock_error(err: sqlite3.OperationalError) -> bool:
+    """True when ``err`` is SQLite contention (BUSY/LOCKED), not a hard failure."""
+    code = getattr(err, "sqlite_errorcode", None)
+    if code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+        return True
+    msg = str(err).lower()
+    return any(fragment in msg for fragment in _LOCK_MESSAGE_FRAGMENTS)
+
+
 def connect(path: Path | str) -> sqlite3.Connection:
     """Open a SQLite connection with WAL + foreign keys enforced."""
     conn = sqlite3.connect(path, timeout=0)

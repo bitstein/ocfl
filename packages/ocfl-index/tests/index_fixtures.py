@@ -137,9 +137,7 @@ def rewrite_object_version_key(
     old_version_dir.rename(new_version_dir)
 
     _rewrite_inventory_version_key(obj_dir / "inventory.json", old_key, new_key)
-    _rewrite_inventory_version_key(
-        new_version_dir / "inventory.json", old_key, new_key
-    )
+    _rewrite_inventory_version_key(new_version_dir / "inventory.json", old_key, new_key)
 
 
 def _rewrite_inventory_version_key(inv_path: Path, old_key: str, new_key: str) -> None:
