@@ -441,10 +441,14 @@ def scan(
             ) from err
         raise
     current_relpath: str | None = None
+    current_phase = "object walk"
     try:
         if full:
+            current_phase = "cache reset"
             db.reset_cache(conn)
+        current_phase = "blob digest load"
         blob_seen = _existing_blob_digests(conn)
+        current_phase = "object walk"
         for relpath in storage_root.object_paths(strict=True):
             current_relpath = relpath
             _scan_object(
@@ -456,22 +460,31 @@ def scan(
                 blob_seen=blob_seen,
                 size_cache=size_cache,
             )
+        current_relpath = None
+        current_phase = "purge sweep"
+        counters.objects_purged = sweep_objects(conn, walked)
+        current_phase = "media type sniff"
+        sniff_pass(conn, fs)
+        current_phase = "metadata update"
+        now = db.now_iso()
+        db.meta_set(conn, "last_scan_at", now)
+        if full:
+            db.meta_set(conn, "last_full_scan_at", now)
+        conn.commit()
     except Exception as exc:
+        failure_at = (
+            f"{current_phase} at {current_relpath}"
+            if current_relpath is not None
+            else current_phase
+        )
         _log.warning(
-            "scan failed at %s: %s; rolled back, skipped purge sweep",
-            current_relpath,
+            "scan failed during %s: %s; rolled back refresh transaction",
+            failure_at,
             exc,
-            extra={"relpath": current_relpath},
+            extra={"phase": current_phase, "relpath": current_relpath},
             exc_info=True,
         )
         conn.rollback()
         raise
-    counters.objects_purged = sweep_objects(conn, walked)
-    sniff_pass(conn, fs)
-    now = db.now_iso()
-    db.meta_set(conn, "last_scan_at", now)
-    if full:
-        db.meta_set(conn, "last_full_scan_at", now)
-    conn.commit()
     elapsed = time.perf_counter() - start
     return ScanReport(**vars(counters), elapsed_seconds=elapsed)

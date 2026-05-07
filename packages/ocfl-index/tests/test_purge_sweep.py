@@ -142,8 +142,8 @@ def test_partial_walk_failure_logs_warning_before_first_yield(
     ]
     assert len(records) == 1, [r.message for r in records]
     rec = records[0]
-    assert "rolled back, skipped purge sweep" in rec.message
-    assert rec.relpath is None
+    assert "rolled back refresh transaction" in rec.message
+    assert rec.__dict__["relpath"] is None
 
 
 def test_partial_walk_failure_logs_warning_with_current_relpath(
@@ -158,7 +158,7 @@ def test_partial_walk_failure_logs_warning_with_current_relpath(
     real_scan_object = scanner._scan_object
     failing_relpath = "beta"
 
-    def fail_on_beta(conn, fs, relpath, counters, **kwargs):  # type: ignore[no-untyped-def]
+    def fail_on_beta(conn, fs, relpath, counters, **kwargs):
         if relpath == failing_relpath:
             raise RuntimeError("injected-mid-walk")
         return real_scan_object(conn, fs, relpath, counters, **kwargs)
@@ -178,9 +178,9 @@ def test_partial_walk_failure_logs_warning_with_current_relpath(
     ]
     assert len(records) == 1, [r.message for r in records]
     rec = records[0]
-    assert "rolled back, skipped purge sweep" in rec.message
-    assert rec.relpath == failing_relpath
-    assert f"scan failed at {failing_relpath}" in rec.message
+    assert "rolled back refresh transaction" in rec.message
+    assert rec.__dict__["relpath"] == failing_relpath
+    assert f"scan failed during object walk at {failing_relpath}" in rec.message
 
 
 def test_oserror_partial_walk_skips_sweep(
@@ -222,4 +222,58 @@ def test_oserror_partial_walk_skips_sweep(
     ]
     assert len(records) == 1, [r.message for r in records]
     rec = records[0]
-    assert "rolled back, skipped purge sweep" in rec.message
+    assert "rolled back refresh transaction" in rec.message
+
+
+def test_sweep_failure_rolls_back_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        scan(idx._conn, idx.storage_root, full=False)
+        fixture.commit("beta", {"b.txt": "y"}, algorithm=DigestAlgorithm.SHA256)
+
+        def boom(_conn, _walked) -> int:
+            raise RuntimeError("injected-sweep")
+
+        monkeypatch.setattr(scanner, "sweep_objects", boom)
+        with pytest.raises(RuntimeError, match="injected-sweep"):
+            scan(idx._conn, idx.storage_root, full=False)
+
+        rows = idx._conn.execute(
+            "SELECT object_id FROM objects ORDER BY object_id"
+        ).fetchall()
+        assert rows == [("alpha",)]
+
+        idx._conn.execute("BEGIN IMMEDIATE")
+        idx._conn.rollback()
+
+
+def test_sniff_failure_rolls_back_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        scan(idx._conn, idx.storage_root, full=False)
+        fixture.commit("beta", {"b.txt": "y"}, algorithm=DigestAlgorithm.SHA256)
+
+        def boom(_conn, _fs) -> int:
+            raise RuntimeError("injected-sniff")
+
+        monkeypatch.setattr(scanner, "sniff_pass", boom)
+        with pytest.raises(RuntimeError, match="injected-sniff"):
+            scan(idx._conn, idx.storage_root, full=False)
+
+        rows = idx._conn.execute(
+            "SELECT object_id FROM objects ORDER BY object_id"
+        ).fetchall()
+        assert rows == [("alpha",)]
+
+        idx._conn.execute("BEGIN IMMEDIATE")
+        idx._conn.rollback()
