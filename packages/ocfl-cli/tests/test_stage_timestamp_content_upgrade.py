@@ -284,6 +284,12 @@ class TestUpgradeHappyPath:
             ),
         )
         assert r.exit_code == 0, r.output
+        assert "Content:" in r.output
+        assert "Object: obj:up" in r.output
+        assert "Checked SimpleProof jobs" in r.output
+        assert "Workflow:" in r.output
+        assert "Phase: content-pending -> content-upgraded" in r.output
+        assert "Next: stage timestamp inventory" in r.output
 
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
@@ -356,6 +362,13 @@ class TestUpgradeHappyPath:
             ),
         )
         assert r.exit_code == 0, r.output
+        assert "Content:" in r.output
+        assert "Object: obj:multi" in r.output
+        assert "Checked SimpleProof jobs" in r.output
+        assert "Waiting on 1 pending digest" in r.output
+        assert "Workflow:" in r.output
+        assert "Phase: content-pending" in r.output
+        assert "Next: stage timestamp content --upgrade --watch" in r.output
 
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
@@ -486,6 +499,8 @@ class TestPendingHeld:
             ),
         )
         assert r.exit_code == 0, r.output
+        assert "Waiting on 1 pending digest" in r.output
+        assert "Phase: content-pending" in r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
         assert state.content_proofs[d].verified is False
@@ -508,6 +523,7 @@ class TestPendingHeld:
             ),
         )
         assert r.exit_code == 0, r.output
+        assert "Phase: content-pending -> content-upgraded" in r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
         assert state.content_proofs[d].verified is True
@@ -586,6 +602,7 @@ class TestReorgShallow:
             ),
         )
         assert r.exit_code == 0, r.output
+        assert "Waiting on 1 pending digest" in r.output
         state = load_ots(sd)
         # Reorg absorbed: proof was reset, no HALT.
         assert state.content_proofs[d].verified is False
@@ -996,6 +1013,8 @@ class TestOrphanGuard:
             ),
         )
         assert r.exit_code == 0, r.output
+        assert "Held by 1 orphan digest" in r.output
+        assert "Phase: content-pending" in r.output
         state = load_ots(sd)
         # Orphan-guard: phase MUST NOT advance even though d verifies.
         assert state.phase is Phase.CONTENT_PENDING

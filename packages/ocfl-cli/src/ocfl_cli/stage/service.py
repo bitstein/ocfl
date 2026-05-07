@@ -118,6 +118,14 @@ class SubmitContentResult:
     noop_advanced: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class UpgradeContentResult:
+    previous_phase: Phase
+    phase: Phase
+    unverified_pending_count: int = 0
+    orphan_count: int = 0
+
+
 # ---------------------------------------------------------------------------
 # Small workflow utilities.
 # ---------------------------------------------------------------------------
@@ -596,6 +604,7 @@ def _reverify_existing_proofs(
     sp: SimpleProofClient,
     staging_dir: Path,
     min_confirmations: int,
+    category_id: int,
 ) -> OtsState:
     """Re-verify every `verified=True` content_proof against the local chain.
 
@@ -645,7 +654,7 @@ def _reverify_existing_proofs(
     affected = set(needs_resubmit)
     kept_jobs = tuple(j for j in state.verify_jobs if affected.isdisjoint(j.digests))
     new_job = VerifyJob(
-        job_id=sp.verify_batch(list(needs_resubmit)),
+        job_id=sp.verify_batch(list(needs_resubmit), category_id),
         digests=tuple(needs_resubmit),
         status="IN_PROGRESS",
     )
@@ -656,7 +665,9 @@ def _reverify_existing_proofs(
     )
 
 
-def _submit_new_verify_batches(state: OtsState, sp: SimpleProofClient) -> OtsState:
+def _submit_new_verify_batches(
+    state: OtsState, sp: SimpleProofClient, category_id: int
+) -> OtsState:
     """POST `verify-batches` for every submitted digest not already covered."""
     covered = _covered_digests(state)
     new_jobs: list[VerifyJob] = []
@@ -668,7 +679,7 @@ def _submit_new_verify_batches(state: OtsState, sp: SimpleProofClient) -> OtsSta
             continue
         new_jobs.append(
             VerifyJob(
-                job_id=sp.verify_batch(list(uncovered)),
+                job_id=sp.verify_batch(list(uncovered), category_id),
                 digests=uncovered,
                 status="IN_PROGRESS",
             )
@@ -858,7 +869,7 @@ def _upgrade_pass_locked(
     *,
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
-) -> None:
+) -> UpgradeContentResult:
     """One `--upgrade` pass. Caller MUST hold the staging lock."""
     btc_cfg = cfg.bitcoin
     if btc_cfg is None or cfg.simpleproof is None:
@@ -868,15 +879,17 @@ def _upgrade_pass_locked(
     state = load_ots(staging_dir)
     prev_phase = state.phase
     check_transition(state.phase, "timestamp content --upgrade")
-    apply_category_id(state, cfg.simpleproof.proof_category_id)
+    category_id = apply_category_id(state, cfg.simpleproof.proof_category_id)
 
     sp = sp_factory(cfg)
     btc = btc_factory(cfg)
 
-    state = _reverify_existing_proofs(state, btc, sp, staging_dir, min_confs)
+    state = _reverify_existing_proofs(
+        state, btc, sp, staging_dir, min_confs, category_id
+    )
     save_ots(staging_dir, state)
 
-    state = _submit_new_verify_batches(state, sp)
+    state = _submit_new_verify_batches(state, sp, category_id)
     save_ots(staging_dir, state)
 
     state = _poll_outstanding_jobs(state, sp)
@@ -893,17 +906,23 @@ def _upgrade_pass_locked(
         state = replace(state, phase=Phase.CONTENT_UPGRADED)
         save_ots(staging_dir, state)
         _log_phase(prev_phase, Phase.CONTENT_UPGRADED)
-        return
+        return UpgradeContentResult(previous_phase=prev_phase, phase=state.phase)
     if unverified_pending:
-        logger.warning(
+        logger.debug(
             "phase advance held: %d pending digest(s) not yet verified",
             len(unverified_pending),
         )
     if orphans:
-        logger.warning(
+        logger.debug(
             "phase advance held: %d orphan digest(s) outside pending set",
             len(orphans),
         )
+    return UpgradeContentResult(
+        previous_phase=prev_phase,
+        phase=state.phase,
+        unverified_pending_count=len(unverified_pending),
+        orphan_count=len(orphans),
+    )
 
 
 def _upgrade_pass(
@@ -916,10 +935,10 @@ def _upgrade_pass(
     *,
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
-) -> None:
+) -> UpgradeContentResult:
     """Drive `stage timestamp content --upgrade` end-to-end under the lock."""
     with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
-        _upgrade_pass_locked(
+        return _upgrade_pass_locked(
             cfg,
             store,
             sr,
@@ -1105,7 +1124,11 @@ def retry_content_locked(
 
 
 def _reset_inv_proof_and_resubmit(
-    state: OtsState, sp: SimpleProofClient, *, ots_path: str | None
+    state: OtsState,
+    sp: SimpleProofClient,
+    *,
+    ots_path: str | None,
+    category_id: int,
 ) -> OtsState:
     """Reset `inventory_proof.proof` to unverified and queue a fresh verify_batch."""
     if state.inventory_proof is None:
@@ -1115,7 +1138,7 @@ def _reset_inv_proof_and_resubmit(
     new_inv = replace(state.inventory_proof, proof=new_proof)
     kept_jobs = tuple(j for j in state.verify_jobs if inv_digest not in j.digests)
     new_job = VerifyJob(
-        job_id=sp.verify_batch([inv_digest]),
+        job_id=sp.verify_batch([inv_digest], category_id),
         digests=(inv_digest,),
         status="IN_PROGRESS",
     )
@@ -1128,6 +1151,7 @@ def _inventory_reverify_existing_proof(
     sp: SimpleProofClient,
     staging_dir: Path,
     min_confirmations: int,
+    category_id: int,
 ) -> OtsState:
     """Re-verify a `verified=True` ``inventory_proof.proof`` against the chain.
 
@@ -1152,7 +1176,9 @@ def _inventory_reverify_existing_proof(
             min_confirmations=min_confirmations,
         )
     except AttestationMismatchError:
-        return _reset_inv_proof_and_resubmit(state, sp, ots_path=proof.ots_path)
+        return _reset_inv_proof_and_resubmit(
+            state, sp, ots_path=proof.ots_path, category_id=category_id
+        )
 
     match result:
         case VerifiedAttestation(block_height=h, confirmations=c):
@@ -1166,7 +1192,9 @@ def _inventory_reverify_existing_proof(
             new_inv = replace(state.inventory_proof, proof=new_proof)
             return replace(state, inventory_proof=new_inv)
         case PendingVerification():
-            return _reset_inv_proof_and_resubmit(state, sp, ots_path=proof.ots_path)
+            return _reset_inv_proof_and_resubmit(
+                state, sp, ots_path=proof.ots_path, category_id=category_id
+            )
 
 
 def _verify_inventory_digest(
@@ -1267,7 +1295,7 @@ def _inventory_upgrade_pass_locked(
     state = load_ots(staging_dir)
     prev_phase = state.phase
     check_transition(state.phase, "timestamp inventory --upgrade")
-    apply_category_id(state, cfg.simpleproof.proof_category_id)
+    category_id = apply_category_id(state, cfg.simpleproof.proof_category_id)
 
     if state.inventory_proof is None:
         raise PhaseError(f"inventory_proof missing in phase {state.phase.value!r}")
@@ -1275,7 +1303,9 @@ def _inventory_upgrade_pass_locked(
     sp = sp_factory(cfg)
     btc = btc_factory(cfg)
 
-    state = _inventory_reverify_existing_proof(state, btc, sp, staging_dir, min_confs)
+    state = _inventory_reverify_existing_proof(
+        state, btc, sp, staging_dir, min_confs, category_id
+    )
     save_ots(staging_dir, state)
 
     inv_proof = state.inventory_proof
@@ -1286,7 +1316,7 @@ def _inventory_upgrade_pass_locked(
         )
         if not has_job:
             new_job = VerifyJob(
-                job_id=sp.verify_batch([inv_digest]),
+                job_id=sp.verify_batch([inv_digest], category_id),
                 digests=(inv_digest,),
                 status="IN_PROGRESS",
             )

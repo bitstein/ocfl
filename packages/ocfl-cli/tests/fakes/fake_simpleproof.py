@@ -45,7 +45,7 @@ class FakeSimpleProof:
         )
         return SubmitResult(digests=tuple(digests), record_ids=record_ids)
 
-    def verify_batch(self, digests: list[str]) -> str:
+    def verify_batch(self, digests: list[str], category_id: int = 0) -> str:
         job_id = f"job-{self._alloc_job()}"
         self._jobs[job_id] = _Job(job_id=job_id, digests=tuple(digests))
         return job_id

@@ -608,6 +608,34 @@ def _render_watch_progress(kind: str, data: dict, *, next_action: str) -> None:
         typer.echo(f"  Next: {next_action}")
 
 
+def _render_content_upgrade_result(
+    object_id: str, result: service.UpgradeContentResult
+) -> None:
+    _render_status_section("Content")
+    typer.echo(f"  Object: {object_id}")
+    typer.echo("  Checked SimpleProof jobs")
+    if result.unverified_pending_count:
+        count = result.unverified_pending_count
+        typer.echo(f"  Waiting on {count} pending {_plural(count, 'digest')}")
+    if result.orphan_count:
+        count = result.orphan_count
+        typer.echo(f"  Held by {count} orphan {_plural(count, 'digest')}")
+
+    _render_status_section("Workflow", leading_blank=True)
+    if result.previous_phase is result.phase:
+        typer.echo(f"  Phase: {result.phase.value}")
+    else:
+        typer.echo(
+            f"  Phase: {result.previous_phase.value} -> {result.phase.value}"
+        )
+    next_action = (
+        "stage timestamp inventory"
+        if result.phase is Phase.CONTENT_UPGRADED
+        else "stage timestamp content --upgrade --watch"
+    )
+    typer.echo(f"  Next: {next_action}")
+
+
 def _render_status_ots(data: dict) -> None:
     _render_status_section("Object")
     if data["changes"]:
@@ -841,7 +869,7 @@ def timestamp_content(
 
     if upgrade:
         try:
-            service._upgrade_pass(
+            result = service._upgrade_pass(
                 cfg,
                 resolved.store,
                 sr,
@@ -855,6 +883,7 @@ def timestamp_content(
             exit_for_error(e, message=f"halt: {e}")
         except SimpleProofError as e:
             exit_for_error(e)
+        _render_content_upgrade_result(object_id, result)
         return
 
     if retry:

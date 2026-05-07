@@ -67,7 +67,7 @@ class SimpleProofCreds:
 class SimpleProofClient(Protocol):
     def submit_hashes(self, digests: list[str], category_id: int) -> SubmitResult: ...
 
-    def verify_batch(self, digests: list[str]) -> str: ...
+    def verify_batch(self, digests: list[str], category_id: int) -> str: ...
 
     def poll_job(self, job_id: str) -> JobStatus: ...
 
@@ -101,6 +101,26 @@ def _missing_response_key(
     return SimpleProofError(
         f"SimpleProof {context} response missing {key!r} field (keys: {keys})"
     )
+
+
+def _data_or_body(body: dict[str, Any]) -> dict[str, Any]:
+    data = body.get("data")
+    return data if isinstance(data, dict) else body
+
+
+def _response_error_detail(resp: httpx.Response) -> str | None:
+    try:
+        body = resp.json()
+    except ValueError:
+        text = resp.text.strip()
+        return text[:200] if text else None
+    if not isinstance(body, dict):
+        return None
+    for key in ("message", "msg", "error"):
+        value = body.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:200]
+    return None
 
 
 class SimpleProofHttpClient:
@@ -149,8 +169,10 @@ class SimpleProofHttpClient:
                     f"SimpleProof auth failed: HTTP {status}"
                 ) from exc
             if status in (400, 422):
+                detail = _response_error_detail(exc.response)
+                suffix = f": {detail}" if detail is not None else ""
                 raise SimpleProofBadRequest(
-                    f"SimpleProof rejected request: HTTP {status}"
+                    f"SimpleProof rejected request: HTTP {status}{suffix}"
                 ) from exc
             if status == 429:
                 transient = SimpleProofTransient(
@@ -215,21 +237,23 @@ class SimpleProofHttpClient:
             raise _missing_response_key("submit", "files", body)
         return [str(file_hash) for file_hash in files]
 
-    def verify_batch(self, digests: list[str]) -> str:
+    def verify_batch(self, digests: list[str], category_id: int) -> str:
         resp = retry(
             lambda: self._request(
                 "POST",
                 self._base_url + _VERIFY_PATH,
                 headers={"x-api-key": self._creds.api_key},
-                json_body={"hashes": digests},
+                json_body={"proofCategoryId": category_id, "hashes": digests},
             ),
             sleep=self._sleep,
             attempts=self._attempts,
         )
         body = _json_object(resp, "verify-batch")
-        if "jobId" not in body:
-            raise _missing_response_key("verify-batch", "jobId", body)
-        return str(body["jobId"])
+        payload = _data_or_body(body)
+        for key in ("jobId", "job_id", "id"):
+            if key in payload:
+                return str(payload[key])
+        raise _missing_response_key("verify-batch", "jobId", payload)
 
     def poll_job(self, job_id: str) -> JobStatus:
         resp = retry(
@@ -242,14 +266,15 @@ class SimpleProofHttpClient:
             attempts=self._attempts,
         )
         body = _json_object(resp, "job-status")
-        if "jobId" not in body:
-            raise _missing_response_key("job-status", "jobId", body)
-        if "status" not in body:
-            raise _missing_response_key("job-status", "status", body)
-        results_url = body.get("resultsUrl")
+        payload = _data_or_body(body)
+        if "jobId" not in payload:
+            raise _missing_response_key("job-status", "jobId", payload)
+        if "status" not in payload:
+            raise _missing_response_key("job-status", "status", payload)
+        results_url = payload.get("resultsUrl")
         return JobStatus(
-            job_id=str(body["jobId"]),
-            status=str(body["status"]),
+            job_id=str(payload["jobId"]),
+            status=str(payload["status"]),
             results_url=str(results_url) if results_url is not None else None,
         )
 
@@ -263,9 +288,10 @@ class SimpleProofHttpClient:
         )
         out: dict[str, bytes] = {}
         body = _json_object(resp, "results")
-        results = body.get("results")
+        payload = _data_or_body(body)
+        results = payload.get("results")
         if not isinstance(results, list):
-            raise _missing_response_key("results", "results", body)
+            raise _missing_response_key("results", "results", payload)
         for entry in results:
             if not isinstance(entry, dict):
                 raise SimpleProofError(

@@ -29,7 +29,7 @@ Wire shapes
 
     POST {base}/api/v2/proofs/verify-batches
         headers: x-api-key: <key>
-        body:    {"hashes": [<hex>, ...]}
+        body:    {"proofCategoryId": <int>, "hashes": [<hex>, ...]}
         200:     {"jobId": <str>}
 
     GET {base}/api/v2/proofs/jobs/{job_id}
@@ -425,7 +425,7 @@ class TestVerifyBatch:
         client = _make_client(handler)
         digests = _digests(5)
 
-        job_id = client.verify_batch(digests)
+        job_id = client.verify_batch(digests, CATEGORY)
 
         assert job_id == "job-abc-123"
         assert len(captured) == 1
@@ -436,7 +436,38 @@ class TestVerifyBatch:
         # /hashes auth header MUST NOT be sent on v2
         assert "x-access-token" not in req.headers
         body = json.loads(req.content)
-        assert body == {"hashes": digests}
+        assert body == {"proofCategoryId": CATEGORY, "hashes": digests}
+
+    def test_decodes_verify_batch_data_envelope(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={"status": "success", "data": {"jobId": "job-nested-123"}},
+            )
+
+        client = _make_client(handler)
+
+        assert client.verify_batch(_digests(1), CATEGORY) == "job-nested-123"
+
+    def test_400_includes_response_message(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                400,
+                json={
+                    "status": "error",
+                    "message": "Missing proofCategoryId or empty hashes array",
+                },
+            )
+
+        client = _make_client(handler)
+
+        with pytest.raises(SimpleProofBadRequest) as info:
+            client.verify_batch(_digests(1), CATEGORY)
+
+        assert str(info.value) == (
+            "SimpleProof rejected request: HTTP 400: "
+            "Missing proofCategoryId or empty hashes array"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -490,6 +521,28 @@ class TestPollJob:
 
         assert status.status == "IN_PROGRESS"
         assert status.results_url is None
+
+    def test_decodes_job_status_data_envelope(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": {
+                        "jobId": "job-nested",
+                        "status": "COMPLETED",
+                        "resultsUrl": "https://sp-results.test/job-nested",
+                    },
+                },
+            )
+
+        client = _make_client(handler)
+
+        status = client.poll_job("job-nested")
+
+        assert status.job_id == "job-nested"
+        assert status.status == "COMPLETED"
+        assert status.results_url == "https://sp-results.test/job-nested"
 
     def test_decodes_failed_job(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -548,6 +601,36 @@ class TestDownloadResults:
         assert set(out) == {digest_a, digest_b}
         assert out[digest_a] == ots_a
         assert out[digest_b] == ots_b
+
+    def test_decodes_results_data_envelope(self) -> None:
+        digest_bytes = _bytes_digest("file-envelope")
+        digest = digest_bytes.hex()
+        ots_bytes = build_attestation(digest_bytes, block_height=800_000)
+
+        results_url = "https://sp-results.test/job-envelope"
+        ots_url = "https://sp-blobs.test/envelope.ots"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if url == results_url:
+                return httpx.Response(
+                    200,
+                    json={
+                        "status": "success",
+                        "data": {
+                            "results": [
+                                {"digest": digest, "otsDownloadUrl": ots_url},
+                            ],
+                        },
+                    },
+                )
+            if url == ots_url:
+                return httpx.Response(200, content=ots_bytes)
+            return httpx.Response(404)
+
+        client = _make_client(handler)
+
+        assert client.download_results(results_url, {digest}) == {digest: ots_bytes}
 
     def test_commitment_digest_mismatch_raises_attestation_mismatch(self) -> None:
         # .ots bytes commit to digest X but the server claims they belong
@@ -705,7 +788,7 @@ class TestAuthHeaderScrubbing:
         client = _make_client(handler, sleep=sleep, attempts=2)
 
         with pytest.raises(SimpleProofTransient) as info:
-            client.verify_batch(_digests(3))
+            client.verify_batch(_digests(3), CATEGORY)
 
         assert seen["key"] == API_KEY
         self._assert_no_plaintext_creds(info.value)
