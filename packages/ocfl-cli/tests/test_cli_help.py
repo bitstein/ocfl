@@ -1,11 +1,12 @@
 """CLI help contract."""
 
+import logging
 import re
 
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import EXIT_CODE_DOCS, ExitCode, format_exit_code_help
-from ocfl_cli.main import app
+from ocfl_cli.main import _configure_logging, app
 
 
 def test_root_help_groups_commands_and_documents_exit_codes(
@@ -36,3 +37,16 @@ def test_exit_code_help_is_generated_from_canonical_values() -> None:
     assert tuple(doc.code for doc in EXIT_CODE_DOCS) == tuple(ExitCode)
     for doc in EXIT_CODE_DOCS:
         assert f"{int(doc.code)}  {doc.description}" in help_text
+
+
+def test_default_logging_suppresses_httpx_info() -> None:
+    _configure_logging(json_mode=False, verbose=False, quiet=False)
+
+    assert logging.getLogger().level == logging.INFO
+    assert logging.getLogger("httpx").getEffectiveLevel() == logging.WARNING
+
+
+def test_verbose_logging_allows_httpx_info() -> None:
+    _configure_logging(json_mode=False, verbose=True, quiet=False)
+
+    assert logging.getLogger("httpx").getEffectiveLevel() == logging.INFO

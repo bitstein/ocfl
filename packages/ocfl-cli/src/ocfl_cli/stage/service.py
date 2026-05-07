@@ -509,6 +509,7 @@ def status_ots_dict(
         "schema_version": 1,
         "extension": "NNNN-ots-timestamps",
         "phase": state.phase.value,
+        "changes": status_diff_dict(store, root_path, object_id)["changes"],
         "counts": counts,
         "outstanding_jobs": _build_outstanding_jobs(state, _status_now()),
         "bitcoin": _build_bitcoin_section(cfg, btc_factory),

@@ -2,12 +2,13 @@
 
 Pins the contract from ``OTS workflow contract::stage_status``:
 
-- Dense human output (``Phase:``, ``Bitcoin:``, ``Next:`` lines + per-job
+- Dense human output (``Object:``, ``Workflow:``, ``Network:`` sections,
+  staged diff lines, ``Phase:``, ``Bitcoin:``, ``Next:`` lines + per-job
   outstanding lines with humanized "ago" text).
 - ``--json`` emits ``schema_version=1`` per the pinned schema with keys:
-  ``schema_version``, ``extension``, ``phase``, ``counts`` (5 keys),
-  ``outstanding_jobs``, ``bitcoin``, ``simpleproof``, ``cache_bytes``,
-  ``next_action_kind``, ``next_action``.
+  ``schema_version``, ``extension``, ``phase``, ``changes``, ``counts``
+  (5 keys), ``outstanding_jobs``, ``bitcoin``, ``simpleproof``,
+  ``cache_bytes``, ``next_action_kind``, ``next_action``.
 - ``next_action_kind`` is the stable enum
   ``{timestamp_content, upgrade_content, retry_content,
      timestamp_inventory, upgrade_inventory, retry_inventory,
@@ -622,6 +623,8 @@ class TestStageStatusOts:
         assert isinstance(data, dict)
         assert data["schema_version"] == 1
         assert data["extension"] == "NNNN-ots-timestamps"
+        assert isinstance(data["changes"], list)
+        assert data["changes"] == [{"path": "a.txt", "action": "added"}]
         counts = data["counts"]
         assert isinstance(counts, dict)
         for key in ("total", "submitted", "upgraded", "pending", "failed"):
@@ -787,6 +790,13 @@ class TestStageStatusOts:
         )
         assert r.exit_code == 0, r.output
         out = r.output
+        assert "Object:" in out
+        assert "Workflow:" in out
+        assert "Network:" in out
+        assert "a.txt\n\nWorkflow:" in out
+        assert "Next: stage timestamp content --upgrade" in out
+        assert "Network:\n  Bitcoin:" in out
+        assert "A a.txt" in out
         assert "Phase:" in out
         assert "Bitcoin:" in out
         assert "Next:" in out

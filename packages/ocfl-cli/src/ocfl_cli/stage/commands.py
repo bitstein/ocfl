@@ -576,10 +576,23 @@ def _render_status_diff(data: dict) -> None:
         _style.echo(Text.assemble(*parts))
 
 
+def _render_status_section(title: str, *, leading_blank: bool = False) -> None:
+    if leading_blank:
+        typer.echo()
+    _style.echo(_style.key(f"{title}:"))
+
+
 def _render_status_ots(data: dict) -> None:
+    _render_status_section("Object")
+    if data["changes"]:
+        _render_status_diff({"changes": data["changes"]})
+    else:
+        typer.echo("  no staged changes")
+
+    _render_status_section("Workflow", leading_blank=True)
     counts = data["counts"]
     parts = [
-        f"Phase: {data['phase']} ({counts['upgraded']} of {counts['total']} upgraded"
+        f"  Phase: {data['phase']} ({counts['upgraded']} of {counts['total']} upgraded"
     ]
     if counts["pending"]:
         parts.append(f", {counts['pending']} outstanding")
@@ -590,25 +603,28 @@ def _render_status_ots(data: dict) -> None:
 
     outstanding = data["outstanding_jobs"]
     if outstanding:
-        typer.echo("Outstanding:")
+        typer.echo("  Outstanding:")
         for o in outstanding:
             short = f"{o['digests'][0][:12]}..." if o["digests"] else ""
             typer.echo(
-                f"  sha256:{short} — job {o['job_id']}, {o['status']}, "
+                f"    sha256:{short} — job {o['job_id']}, {o['status']}, "
                 f"submitted {service.humanize_age(o['age_seconds'])}"
             )
+    typer.echo(f"  Next: {data['next_action']}")
 
+    _render_status_section("Network", leading_blank=True)
     bitcoin = data["bitcoin"]
     if bitcoin is not None:
         sync_str = "node in sync" if bitcoin["in_sync"] else "node not in sync"
-        typer.echo(f"Bitcoin: height {bitcoin['height']} ({sync_str})")
+        typer.echo(f"  Bitcoin: height {bitcoin['height']} ({sync_str})")
+    else:
+        typer.echo("  Bitcoin: unavailable")
 
     typer.echo(
-        "SimpleProof: configured"
+        "  SimpleProof: configured"
         if data["simpleproof"]["configured"]
-        else "SimpleProof: not configured"
+        else "  SimpleProof: not configured"
     )
-    typer.echo(f"Next: {data['next_action']}")
 
 
 @stage_app.command()
