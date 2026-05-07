@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import pytest
@@ -6,8 +7,12 @@ from index_fixtures import FixtureRoot
 from ocfl_index import Index, RefreshInProgress, db
 from ocfl_lib import DigestAlgorithm
 
+_SCANNER_LOGGER = "ocfl_index.scanner"
 
-def test_second_refresh_raises_busy_error(tmp_path: Path) -> None:
+
+def test_second_refresh_raises_busy_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     fixture = FixtureRoot(tmp_path)
     fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
 
@@ -19,11 +24,22 @@ def test_second_refresh_raises_busy_error(tmp_path: Path) -> None:
         other = db.connect(db_path)
         other.execute("BEGIN IMMEDIATE")
         try:
-            with pytest.raises(RefreshInProgress):
+            with (
+                caplog.at_level(logging.WARNING, logger=_SCANNER_LOGGER),
+                pytest.raises(RefreshInProgress),
+            ):
                 idx.refresh()
         finally:
             other.rollback()
             other.close()
+
+    # Refresh contention is normal — must not surface as scan-failure warnings
+    scan_warnings = [
+        r
+        for r in caplog.records
+        if r.name == _SCANNER_LOGGER and "scan failed" in r.message
+    ]
+    assert scan_warnings == []
 
 
 def test_reader_not_blocked_during_refresh(tmp_path: Path) -> None:

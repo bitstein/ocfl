@@ -271,8 +271,23 @@ def _ingest_ots_companions(
                     continue
                 with fs.open_file(f"{relpath}/{content_paths[0]}") as f:
                     proof_bytes = f.read()
-                pdigest = ots.upsert_attestation(conn, proof_bytes)
+                result = ots.upsert_attestation(conn, proof_bytes)
+                pdigest = result.proof_digest
                 proof_digest_by_content_digest[digest] = pdigest
+                if result.was_inserted and result.parse_error is not None:
+                    first_path = ots_paths[0]
+                    _log.warning(
+                        "ots proof parse failed for %s: proof_digest=%s error=%s",
+                        first_path,
+                        pdigest,
+                        result.parse_error,
+                        extra={
+                            "object_id": inv.id,
+                            "version_num": vnum.number,
+                            "logical_path": first_path,
+                            "proof_digest": pdigest,
+                        },
+                    )
             conn.executemany(
                 "INSERT OR REPLACE INTO ots_content(object_id, version_num, "
                 "logical_path, proof_digest) VALUES (?, ?, ?, ?)",
@@ -296,7 +311,22 @@ def _ingest_ots_inventory_proofs(
                 proof_bytes = f.read()
         except FileNotFoundError:
             continue
-        pdigest = ots.upsert_attestation(conn, proof_bytes)
+        result = ots.upsert_attestation(conn, proof_bytes)
+        pdigest = result.proof_digest
+        if result.was_inserted and result.parse_error is not None:
+            _log.warning(
+                "ots inventory proof parse failed for proof_path=%s: "
+                "proof_digest=%s error=%s",
+                proof_path,
+                pdigest,
+                result.parse_error,
+                extra={
+                    "object_id": object_id,
+                    "version_num": vnum,
+                    "proof_path": proof_path,
+                    "proof_digest": pdigest,
+                },
+            )
         conn.execute(
             "INSERT OR REPLACE INTO ots_inventory(object_id, version_num, "
             "proof_digest) VALUES (?, ?, ?)",
@@ -410,11 +440,13 @@ def scan(
                 "another refresh is holding the write lock"
             ) from err
         raise
+    current_relpath: str | None = None
     try:
         if full:
             db.reset_cache(conn)
         blob_seen = _existing_blob_digests(conn)
         for relpath in storage_root.object_paths():
+            current_relpath = relpath
             _scan_object(
                 conn,
                 fs,
@@ -424,7 +456,14 @@ def scan(
                 blob_seen=blob_seen,
                 size_cache=size_cache,
             )
-    except Exception:
+    except Exception as exc:
+        _log.warning(
+            "scan failed at %s: %s; rolled back, skipped purge sweep",
+            current_relpath,
+            exc,
+            extra={"relpath": current_relpath},
+            exc_info=True,
+        )
         conn.rollback()
         raise
     counters.objects_purged = sweep_objects(conn, walked)

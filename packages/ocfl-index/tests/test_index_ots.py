@@ -1,8 +1,10 @@
 import hashlib
+import logging
 import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from index_fixtures import (
     FixtureRoot,
     build_proof,
@@ -11,6 +13,8 @@ from index_fixtures import (
 
 from ocfl_index import Index, db, ots, scanner
 from ocfl_lib import DigestAlgorithm, LocalFS
+
+_SCANNER_LOGGER = "ocfl_index.scanner"
 
 
 def _open_db(tmp_path: Path) -> sqlite3.Connection:
@@ -31,20 +35,24 @@ def test_parse_extracts_attested_digest_and_height() -> None:
 def test_pending_proof_stores_null_height_no_error(tmp_path: Path) -> None:
     proof = build_proof(b"pending", height=None)
     conn = _open_db(tmp_path)
-    pdigest = ots.upsert_attestation(conn, proof)
+    result = ots.upsert_attestation(conn, proof)
+    assert result.was_inserted is True
+    assert result.parse_error is None
     row = conn.execute(
         "SELECT block_height, parse_error FROM ots_attestations WHERE proof_digest = ?",
-        (pdigest,),
+        (result.proof_digest,),
     ).fetchone()
     assert row == (None, None)
 
 
 def test_unparseable_stores_parse_error_no_crash(tmp_path: Path) -> None:
     conn = _open_db(tmp_path)
-    pdigest = ots.upsert_attestation(conn, b"\x00garbage-not-an-ots-proof")
+    result = ots.upsert_attestation(conn, b"\x00garbage-not-an-ots-proof")
+    assert result.was_inserted is True
+    assert result.parse_error
     row = conn.execute(
         "SELECT block_height, parse_error FROM ots_attestations WHERE proof_digest = ?",
-        (pdigest,),
+        (result.proof_digest,),
     ).fetchone()
     assert row[0] is None
     assert row[1]
@@ -53,11 +61,14 @@ def test_unparseable_stores_parse_error_no_crash(tmp_path: Path) -> None:
 def test_parse_once_per_proof_digest(tmp_path: Path) -> None:
     proof = build_proof(b"once", height=800_000)
     conn = _open_db(tmp_path)
-    ots.upsert_attestation(conn, proof)
+    first = ots.upsert_attestation(conn, proof)
+    assert first.was_inserted is True
 
     with patch.object(ots, "parse", wraps=ots.parse) as mock_parse:
-        ots.upsert_attestation(conn, proof)
+        second = ots.upsert_attestation(conn, proof)
         assert mock_parse.call_count == 0
+    assert second.was_inserted is False
+    assert second.parse_error is None
 
 
 def test_content_companion_populates_attestations(tmp_path: Path) -> None:
@@ -255,6 +266,98 @@ def test_first_version_attestation_sugar(tmp_path: Path) -> None:
         att = idx.first_version_attestation("alpha")
         assert att is not None
         assert att.block_height == 900_000
+
+
+def test_unparseable_content_proof_warns_once_per_proof_digest(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fixture = FixtureRoot(tmp_path)
+    bad_proof = b"\x00garbage-not-an-ots-proof"
+    fixture.commit(
+        "alpha",
+        {"file.txt": b"payload", "file.txt.ots": bad_proof},
+        algorithm=DigestAlgorithm.SHA256,
+    )
+    expected_pdigest = hashlib.sha256(bad_proof).hexdigest()
+
+    with (
+        Index.open(tmp_path / "i.db", fixture.path) as idx,
+        caplog.at_level(logging.WARNING, logger=_SCANNER_LOGGER),
+    ):
+        idx.refresh()
+        idx.refresh()
+
+    records = [
+        r
+        for r in caplog.records
+        if r.name == _SCANNER_LOGGER and "ots proof parse failed" in r.message
+    ]
+    assert len(records) == 1, [r.message for r in records]
+    rec = records[0]
+    assert f"proof_digest={expected_pdigest}" in rec.message
+    assert "error=" in rec.message
+    assert rec.object_id == "alpha"
+    assert rec.version_num == 1
+    assert rec.logical_path == "file.txt.ots"
+    assert rec.proof_digest == expected_pdigest
+
+
+def test_unparseable_inventory_proof_warns_with_proof_path(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    conn = _open_db(tmp_path)
+    conn.execute(
+        "INSERT INTO objects(object_id, root_relpath, spec_version, "
+        "digest_algorithm, head_version, head_version_num, head_created_at, "
+        "inventory_digest, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "alpha",
+            "alpha",
+            "1.1",
+            "sha256",
+            "v001",
+            1,
+            "2024-01-01T00:00:00+00:00",
+            "abc123",
+            db.now_iso(),
+        ),
+    )
+    conn.execute(
+        "INSERT INTO versions(object_id, version_num, version, created_at) "
+        "VALUES (?, ?, ?, ?)",
+        ("alpha", 1, "v001", "2024-01-01T00:00:00+00:00"),
+    )
+    bad_proof = b"\x00garbage-not-an-ots-proof"
+    expected_pdigest = hashlib.sha256(bad_proof).hexdigest()
+    ext_dir = tmp_path / "root" / "alpha" / "extensions" / "NNNN-ots-timestamps"
+    ext_dir.mkdir(parents=True)
+    proof_path = ext_dir / "inventory.json.v001.ots"
+    proof_path.write_bytes(bad_proof)
+    expected_relpath = "alpha/extensions/NNNN-ots-timestamps/inventory.json.v001.ots"
+
+    with caplog.at_level(logging.WARNING, logger=_SCANNER_LOGGER):
+        scanner._ingest_ots_inventory_proofs(
+            conn,
+            LocalFS(tmp_path / "root"),
+            relpath="alpha",
+            object_id="alpha",
+            added_versions=[(1, "v001")],
+        )
+
+    records = [
+        r
+        for r in caplog.records
+        if r.name == _SCANNER_LOGGER and "ots inventory proof parse failed" in r.message
+    ]
+    assert len(records) == 1, [r.message for r in records]
+    rec = records[0]
+    assert f"proof_path={expected_relpath}" in rec.message
+    assert f"proof_digest={expected_pdigest}" in rec.message
+    assert "error=" in rec.message
+    assert rec.object_id == "alpha"
+    assert rec.version_num == 1
+    assert rec.proof_path == expected_relpath
+    assert rec.proof_digest == expected_pdigest
 
 
 def test_duplicate_proof_across_objects_parses_once(tmp_path: Path) -> None:

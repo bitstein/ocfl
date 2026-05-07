@@ -1,12 +1,15 @@
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from index_fixtures import FixtureRoot, build_proof
 
-from ocfl_index import Index
+from ocfl_index import Index, scanner
 from ocfl_index.scanner import scan
 from ocfl_lib import DigestAlgorithm
+
+_SCANNER_LOGGER = "ocfl_index.scanner"
 
 
 def test_removed_object_row_deleted(tmp_path: Path) -> None:
@@ -107,3 +110,73 @@ def test_partial_walk_failure_skips_sweep(
             r[0] for r in idx._conn.execute("SELECT object_id FROM objects").fetchall()
         )
         assert after == original
+
+
+def test_partial_walk_failure_logs_warning_before_first_yield(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        scan(idx._conn, idx.storage_root, full=False)
+
+        def boom() -> Iterator[str]:
+            yield from []
+            raise RuntimeError("injected-pre-yield")
+
+        monkeypatch.setattr(idx.storage_root, "object_paths", boom)
+        with (
+            caplog.at_level(logging.WARNING, logger=_SCANNER_LOGGER),
+            pytest.raises(RuntimeError, match="injected-pre-yield"),
+        ):
+            scan(idx._conn, idx.storage_root, full=False)
+
+    records = [
+        r
+        for r in caplog.records
+        if r.name == _SCANNER_LOGGER and "scan failed" in r.message
+    ]
+    assert len(records) == 1, [r.message for r in records]
+    rec = records[0]
+    assert "rolled back, skipped purge sweep" in rec.message
+    assert rec.relpath is None
+
+
+def test_partial_walk_failure_logs_warning_with_current_relpath(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
+    fixture.commit("beta", {"b.txt": "y"}, algorithm=DigestAlgorithm.SHA256)
+
+    real_scan_object = scanner._scan_object
+    failing_relpath = "beta"
+
+    def fail_on_beta(conn, fs, relpath, counters, **kwargs):  # type: ignore[no-untyped-def]
+        if relpath == failing_relpath:
+            raise RuntimeError("injected-mid-walk")
+        return real_scan_object(conn, fs, relpath, counters, **kwargs)
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        monkeypatch.setattr(scanner, "_scan_object", fail_on_beta)
+        with (
+            caplog.at_level(logging.WARNING, logger=_SCANNER_LOGGER),
+            pytest.raises(RuntimeError, match="injected-mid-walk"),
+        ):
+            scan(idx._conn, idx.storage_root, full=False)
+
+    records = [
+        r
+        for r in caplog.records
+        if r.name == _SCANNER_LOGGER and "scan failed" in r.message
+    ]
+    assert len(records) == 1, [r.message for r in records]
+    rec = records[0]
+    assert "rolled back, skipped purge sweep" in rec.message
+    assert rec.relpath == failing_relpath
+    assert f"scan failed at {failing_relpath}" in rec.message
