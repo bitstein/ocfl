@@ -6,13 +6,18 @@ from index_fixtures import FixtureRoot
 from ocfl_index import Index, IndexRootMismatch, db
 
 
+def _canonical(path: str | Path) -> str:
+    return str(Path(path).resolve())
+
+
 def test_open_creates_db_and_seeds_root(
     tmp_path: Path, fixture_root: FixtureRoot
 ) -> None:
     db_path = tmp_path / "i.db"
     with Index.open(db_path, fixture_root.path) as idx:
         assert db_path.exists()
-        assert idx.root_path == fixture_root.path
+        assert idx.root_path == _canonical(fixture_root.path)
+        assert db.meta_get(idx._conn, "root_path") == _canonical(fixture_root.path)
         assert idx.storage_root is not None
 
 
@@ -34,7 +39,7 @@ def test_reopen_without_root_uses_stored_root(
     Index.open(db_path, fixture_root.path).close()
 
     with Index.open(db_path) as idx:
-        assert idx.root_path == fixture_root.path
+        assert idx.root_path == _canonical(fixture_root.path)
         assert idx.storage_root is not None
 
 
@@ -45,7 +50,45 @@ def test_reopen_with_matching_root_succeeds(
     Index.open(db_path, fixture_root.path).close()
 
     with Index.open(db_path, fixture_root.path) as idx:
-        assert idx.root_path == fixture_root.path
+        assert idx.root_path == _canonical(fixture_root.path)
+
+
+def test_reopen_with_equivalent_root_path_succeeds(
+    tmp_path: Path, fixture_root: FixtureRoot
+) -> None:
+    db_path = tmp_path / "i.db"
+    Index.open(db_path, fixture_root.root_dir / ".").close()
+
+    with Index.open(db_path, fixture_root.path) as idx:
+        assert idx.root_path == _canonical(fixture_root.path)
+
+
+def test_open_with_relative_root_stores_canonical_path(
+    tmp_path: Path,
+    fixture_root: FixtureRoot,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "i.db"
+    relative_root = fixture_root.root_dir.relative_to(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    with Index.open(db_path, relative_root) as idx:
+        assert idx.root_path == _canonical(fixture_root.path)
+        assert db.meta_get(idx._conn, "root_path") == _canonical(fixture_root.path)
+
+
+def test_reopen_relative_root_with_absolute_root_succeeds(
+    tmp_path: Path,
+    fixture_root: FixtureRoot,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "i.db"
+    relative_root = fixture_root.root_dir.relative_to(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    Index.open(db_path, relative_root).close()
+
+    with Index.open(db_path, fixture_root.path) as idx:
+        assert idx.root_path == _canonical(fixture_root.path)
 
 
 def test_open_without_root_on_uninitialized_db_raises(tmp_path: Path) -> None:
@@ -93,7 +136,7 @@ def test_reopen_without_root_with_stale_schema_rebuilds_from_stored_root(
     with Index.open(db_path) as idx2:
         rows = idx2._conn.execute("SELECT count(*) FROM objects").fetchone()
         assert rows[0] == 0
-        assert idx2.root_path == fixture_root.path
+        assert idx2.root_path == _canonical(fixture_root.path)
         assert db.meta_get(idx2._conn, "schema_version") == str(db.SCHEMA_VERSION)
 
 

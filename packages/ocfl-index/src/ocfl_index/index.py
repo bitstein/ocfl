@@ -30,6 +30,10 @@ _COUNT_TABLES = (
 )
 
 
+def _canonical_root_path(root: Path | str) -> str:
+    return str(Path(root).resolve())
+
+
 class IndexRootMismatch(ValueError):
     """Raised when an index is reopened against a different root path."""
 
@@ -53,7 +57,7 @@ def _open_root_path(
             raise IndexRootMismatch(f"index db has no recorded root_path: {db_path}")
         root_path = stored
     else:
-        root_path = str(Path(root))
+        root_path = _canonical_root_path(root)
         if stored is not None and stored != root_path:
             raise IndexRootMismatch(
                 f"index was initialized for root {stored!r}, got {root_path!r}"
