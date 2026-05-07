@@ -8,6 +8,7 @@ from index_fixtures import FixtureRoot, build_proof
 from ocfl_index import Index, scanner
 from ocfl_index.scanner import scan
 from ocfl_lib import DigestAlgorithm
+from ocfl_lib.fs.protocols import FileRef
 
 _SCANNER_LOGGER = "ocfl_index.scanner"
 
@@ -98,7 +99,7 @@ def test_partial_walk_failure_skips_sweep(
 
         fixture.remove_object("beta")
 
-        def boom() -> Iterator[str]:
+        def boom(*, strict: bool = False) -> Iterator[str]:
             yield from []
             raise RuntimeError("injected")
 
@@ -123,7 +124,7 @@ def test_partial_walk_failure_logs_warning_before_first_yield(
     with Index.open(tmp_path / "i.db", fixture.path) as idx:
         scan(idx._conn, idx.storage_root, full=False)
 
-        def boom() -> Iterator[str]:
+        def boom(*, strict: bool = False) -> Iterator[str]:
             yield from []
             raise RuntimeError("injected-pre-yield")
 
@@ -180,3 +181,45 @@ def test_partial_walk_failure_logs_warning_with_current_relpath(
     assert "rolled back, skipped purge sweep" in rec.message
     assert rec.relpath == failing_relpath
     assert f"scan failed at {failing_relpath}" in rec.message
+
+
+def test_oserror_partial_walk_skips_sweep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
+    fixture.commit("beta", {"b.txt": "y"}, algorithm=DigestAlgorithm.SHA256)
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        scan(idx._conn, idx.storage_root, full=False)
+        original = sorted(
+            r[0] for r in idx._conn.execute("SELECT object_id FROM objects").fetchall()
+        )
+        assert original == ["alpha", "beta"]
+
+        def torn_walk(_name: str) -> Iterator[FileRef]:
+            yield FileRef(path="alpha/0=ocfl_object_1.1", size=0)
+            raise OSError("injected")
+
+        monkeypatch.setattr(idx.storage_root._fsys, "walk_files", torn_walk)
+        with (
+            caplog.at_level(logging.WARNING, logger=_SCANNER_LOGGER),
+            pytest.raises(OSError, match="injected"),
+        ):
+            scan(idx._conn, idx.storage_root, full=False)
+
+        after = sorted(
+            r[0] for r in idx._conn.execute("SELECT object_id FROM objects").fetchall()
+        )
+        assert after == original
+
+    records = [
+        r
+        for r in caplog.records
+        if r.name == _SCANNER_LOGGER and "scan failed" in r.message
+    ]
+    assert len(records) == 1, [r.message for r in records]
+    rec = records[0]
+    assert "rolled back, skipped purge sweep" in rec.message

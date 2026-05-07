@@ -175,8 +175,14 @@ class StorageRoot:
         )
         return obj
 
-    def object_paths(self) -> Iterator[str]:
-        """Walk the hierarchy and yield paths to all OCFL objects."""
+    def object_paths(self, *, strict: bool = False) -> Iterator[str]:
+        """Walk the hierarchy and yield paths to all OCFL objects.
+
+        With ``strict=True``, ``OSError`` raised mid-walk propagates so the
+        caller can distinguish a partial walk from a clean one. Default
+        tolerates ``OSError`` for ad-hoc tooling that prefers a best-effort
+        listing.
+        """
         seen: set[str] = set()
         try:
             for ref in self._fsys.walk_files(self._path):
@@ -186,6 +192,8 @@ class StorageRoot:
                     seen.add(parent)
                     yield parent
         except OSError:
+            if strict:
+                raise
             return
 
     def objects(self) -> Iterator[Object]:

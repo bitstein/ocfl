@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 from ocfl_lib.errors import (
@@ -15,6 +16,7 @@ from ocfl_lib.errors import (
     NotAnOcflRoot,
 )
 from ocfl_lib.fs.local import LocalFS
+from ocfl_lib.fs.protocols import FileRef
 from ocfl_lib.object import Object
 from ocfl_lib.root import StorageRoot
 from ocfl_lib.spec import Spec
@@ -214,6 +216,39 @@ class TestStorageRootObjectPaths:
         root = StorageRoot(fsys)
         paths = list(root.object_paths())
         assert paths == ["abc/def/obj1"]
+
+    def test_object_paths_swallows_oserror_by_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_root(tmp_path)
+        _make_object(tmp_path, "obj-a", "http://example.org/a")
+        fsys = LocalFS(tmp_path)
+        root = StorageRoot(fsys)
+
+        def torn_walk(_name: str) -> Iterator[FileRef]:
+            yield FileRef(path="obj-a/0=ocfl_object_1.1", size=0)
+            raise OSError("injected")
+
+        monkeypatch.setattr(root._fsys, "walk_files", torn_walk)
+
+        assert list(root.object_paths()) == ["obj-a"]
+
+    def test_object_paths_strict_propagates_oserror(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_root(tmp_path)
+        _make_object(tmp_path, "obj-a", "http://example.org/a")
+        fsys = LocalFS(tmp_path)
+        root = StorageRoot(fsys)
+
+        def torn_walk(_name: str) -> Iterator[FileRef]:
+            yield FileRef(path="obj-a/0=ocfl_object_1.1", size=0)
+            raise OSError("injected")
+
+        monkeypatch.setattr(root._fsys, "walk_files", torn_walk)
+
+        with pytest.raises(OSError, match="injected"):
+            list(root.object_paths(strict=True))
 
 
 class TestStorageRootObjects:

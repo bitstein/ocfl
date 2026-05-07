@@ -445,7 +445,7 @@ def scan(
         if full:
             db.reset_cache(conn)
         blob_seen = _existing_blob_digests(conn)
-        for relpath in storage_root.object_paths():
+        for relpath in storage_root.object_paths(strict=True):
             current_relpath = relpath
             _scan_object(
                 conn,
