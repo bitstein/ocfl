@@ -67,20 +67,21 @@ def immediate_transaction(conn: sqlite3.Connection) -> Iterator[None]:
     The only sanctioned grouping primitive outside ``scanner.scan``. Rejects
     nested calls so accidental nesting fails loudly at the call site instead of
     silently sharing a tx. Catches ``BaseException`` so interrupt-style exits
-    still roll back.
+    still roll back. Also rolls back if ``COMMIT`` itself raises (e.g. deferred
+    FK violation), so the writer lock is never held past helper exit.
     """
     if conn.in_transaction:
         raise RuntimeError("nested SQLite transaction")
+    # Under autocommit=True, Connection.commit/rollback are no-ops, so we
+    # drive the explicit transaction with raw SQL.
     conn.execute("BEGIN IMMEDIATE")
     try:
         yield
-    except BaseException:
-        # Under autocommit=True, Connection.commit/rollback are no-ops, so we
-        # drive the explicit transaction with raw SQL.
-        conn.execute("ROLLBACK")
-        raise
-    else:
         conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
 
 
 def ensure_schema(conn: sqlite3.Connection, root_path: str) -> None:

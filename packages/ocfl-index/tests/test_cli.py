@@ -134,7 +134,6 @@ def _stale_db_with_writer_lock(
 
     side = db.connect(db_path)
     db.meta_set(side, "schema_version", "0")
-    side.commit()
     side.close()
 
     holder = db.connect(db_path)
@@ -155,7 +154,7 @@ def test_cli_open_time_contention_is_friendly(tmp_path: Path, argv: list[str]) -
     try:
         result = runner.invoke(app, [*argv, "--db", str(db_path)])
     finally:
-        holder.rollback()
+        holder.execute("ROLLBACK")
         holder.close()
 
     output = _combined_output(result)
@@ -177,7 +176,7 @@ def test_cli_refresh_time_contention_is_friendly(tmp_path: Path) -> None:
     try:
         result = runner.invoke(app, ["refresh", "--db", str(db_path)])
     finally:
-        holder.rollback()
+        holder.execute("ROLLBACK")
         holder.close()
 
     output = _combined_output(result)

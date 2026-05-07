@@ -487,7 +487,8 @@ def scan(
                 extra={"phase": current_phase, "relpath": current_relpath},
                 exc_info=True,
             )
-        conn.execute("ROLLBACK")
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
         raise
     elapsed = time.perf_counter() - start
     return ScanReport(**vars(counters), elapsed_seconds=elapsed)

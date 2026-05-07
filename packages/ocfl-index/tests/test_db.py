@@ -179,6 +179,41 @@ def test_standalone_writes_autocommit_cross_connection(tmp_path: Path) -> None:
     conn_b.close()
 
 
+def test_immediate_transaction_rolls_back_on_commit_failure(tmp_path: Path) -> None:
+    """Deferred-FK violations raise at COMMIT; helper must release the writer lock."""
+    conn = db.connect(tmp_path / "i.db")
+    db.ensure_schema(conn, root_path="/srv/root")
+    conn.execute("PRAGMA defer_foreign_keys = ON")
+
+    with pytest.raises(sqlite3.IntegrityError), db.immediate_transaction(conn):
+        conn.execute(
+            "INSERT INTO versions(object_id, version_num, version, "
+            "created_at) VALUES ('missing', 1, 'v1', 'now')"
+        )
+
+    assert conn.in_transaction is False
+    conn.close()
+
+
+def test_immediate_transaction_rolls_back_on_base_exception(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "i.db")
+    db.ensure_schema(conn, root_path="/srv/root")
+
+    with pytest.raises(KeyboardInterrupt), db.immediate_transaction(conn):
+        conn.execute(
+            "INSERT INTO objects(object_id, root_relpath, spec_version, "
+            "digest_algorithm, head_version, head_version_num, "
+            "head_created_at, inventory_digest, indexed_at) VALUES "
+            "('o', 'p', '1.1', 'sha256', 'v1', 1, 'now', 'd', 'now')"
+        )
+        raise KeyboardInterrupt
+
+    assert conn.in_transaction is False
+    rows = conn.execute("SELECT count(*) FROM objects").fetchone()
+    assert rows[0] == 0
+    conn.close()
+
+
 def test_immediate_transaction_rejects_nesting(tmp_path: Path) -> None:
     conn = db.connect(tmp_path / "i.db")
     db.ensure_schema(conn, root_path="/srv/root")

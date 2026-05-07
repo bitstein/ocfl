@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from index_fixtures import FixtureRoot, build_proof
 
-from ocfl_index import Index, scanner
+from ocfl_index import Index, db, scanner
 from ocfl_index.scanner import scan
 from ocfl_lib import DigestAlgorithm
 from ocfl_lib.fs.protocols import FileRef
@@ -248,8 +248,8 @@ def test_sweep_failure_rolls_back_transaction(
         ).fetchall()
         assert rows == [("alpha",)]
 
-        idx._conn.execute("BEGIN IMMEDIATE")
-        idx._conn.rollback()
+        with db.immediate_transaction(idx._conn):
+            pass
 
 
 def test_sniff_failure_rolls_back_transaction(
@@ -275,5 +275,5 @@ def test_sniff_failure_rolls_back_transaction(
         ).fetchall()
         assert rows == [("alpha",)]
 
-        idx._conn.execute("BEGIN IMMEDIATE")
-        idx._conn.rollback()
+        with db.immediate_transaction(idx._conn):
+            pass

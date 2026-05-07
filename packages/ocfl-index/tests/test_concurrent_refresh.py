@@ -31,7 +31,7 @@ def test_second_refresh_raises_busy_error(
             ):
                 idx.refresh()
         finally:
-            other.rollback()
+            other.execute("ROLLBACK")
             other.close()
 
     # Refresh contention is normal — must not surface as scan-failure warnings
@@ -60,7 +60,7 @@ def test_reader_not_blocked_during_refresh(tmp_path: Path) -> None:
             assert rows == [("alpha",)]
             reader.close()
         finally:
-            writer.rollback()
+            writer.execute("ROLLBACK")
             writer.close()
 
 
@@ -76,7 +76,6 @@ def test_open_with_stale_schema_under_writer_lock_raises_refresh_in_progress(
 
     side = db.connect(db_path)
     db.meta_set(side, "schema_version", "0")
-    side.commit()
     side.close()
 
     holder = db.connect(db_path)
@@ -85,7 +84,7 @@ def test_open_with_stale_schema_under_writer_lock_raises_refresh_in_progress(
         with pytest.raises(RefreshInProgress):
             Index.open(db_path)
     finally:
-        holder.rollback()
+        holder.execute("ROLLBACK")
         holder.close()
 
 
@@ -103,7 +102,7 @@ def test_open_with_clean_schema_under_writer_lock_succeeds(tmp_path: Path) -> No
         with Index.open(db_path) as idx:
             assert idx.root_path == fixture.path
     finally:
-        holder.rollback()
+        holder.execute("ROLLBACK")
         holder.close()
 
 
