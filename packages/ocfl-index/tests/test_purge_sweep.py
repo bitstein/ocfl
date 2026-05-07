@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -275,5 +276,36 @@ def test_sniff_failure_rolls_back_transaction(
         ).fetchall()
         assert rows == [("alpha",)]
 
+        with db.immediate_transaction(idx._conn):
+            pass
+
+
+def test_commit_failure_releases_writer_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deferred-FK violations surface at COMMIT; scanner must release the lock."""
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        scan(idx._conn, idx.storage_root, full=False)
+
+        def inject_deferred_violation(conn: sqlite3.Connection, _fs: object) -> int:
+            # PRAGMA resets at COMMIT/ROLLBACK, so it's set per refresh tx.
+            conn.execute("PRAGMA defer_foreign_keys = ON")
+            conn.execute(
+                "INSERT INTO content_paths(object_id, version_num, "
+                "logical_path, digest) VALUES "
+                "('does-not-exist', 1, 'p.txt', 'd')"
+            )
+            return 0
+
+        monkeypatch.setattr(scanner, "sniff_pass", inject_deferred_violation)
+        with pytest.raises(sqlite3.IntegrityError):
+            scan(idx._conn, idx.storage_root, full=False)
+
+        assert idx._conn.in_transaction is False
+        # Writer lock released — a fresh tx must succeed.
         with db.immediate_transaction(idx._conn):
             pass
