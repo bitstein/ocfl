@@ -63,7 +63,6 @@ def test_schema_version_mismatch_triggers_rebuild(tmp_path: Path) -> None:
         "('o', 'p', '1.1', 'sha256', 'v1', 1, 'now', 'd', 'now')"
     )
     db.meta_set(conn, "schema_version", "0")
-    conn.commit()
     conn.close()
 
     conn2 = db.connect(path)
@@ -106,3 +105,89 @@ def test_is_lock_error_message_fallback_true(message: str) -> None:
 def test_is_lock_error_message_fallback_false() -> None:
     err = sqlite3.OperationalError("disk I/O error")
     assert db.is_lock_error(err) is False
+
+
+def _seed_stale_schema(path: Path) -> None:
+    conn = db.connect(path)
+    db.ensure_schema(conn, root_path="/srv/root")
+    conn.execute(
+        "INSERT INTO objects(object_id, root_relpath, spec_version, "
+        "digest_algorithm, head_version, head_version_num, head_created_at, "
+        "inventory_digest, indexed_at) VALUES "
+        "('o', 'p', '1.1', 'sha256', 'v1', 1, 'now', 'd', 'now')"
+    )
+    db.meta_set(conn, "schema_version", "0")
+    conn.close()
+
+
+def test_rebuild_atomic_when_create_fails_before_ddl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "i.db"
+    _seed_stale_schema(path)
+
+    def boom(conn: sqlite3.Connection, root_path: str) -> None:
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(db, "_create_schema_uncommitted", boom)
+
+    conn = db.connect(path)
+    with pytest.raises(RuntimeError):
+        db.ensure_schema(conn, root_path="/srv/root")
+
+    rows = conn.execute("SELECT count(*) FROM objects").fetchone()
+    assert rows[0] == 1
+    assert db.meta_get(conn, "schema_version") == "0"
+    conn.close()
+
+
+def test_rebuild_atomic_when_partial_ddl_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "i.db"
+    _seed_stale_schema(path)
+
+    def partial(conn: sqlite3.Connection, sql: str) -> None:
+        first_stmt, _, _ = sql.partition(";")
+        first_stmt = first_stmt.strip()
+        if not first_stmt:
+            raise sqlite3.OperationalError("empty schema sql")
+        conn.execute(first_stmt)
+        raise RuntimeError("ddl fail mid-rebuild")
+
+    monkeypatch.setattr(db, "_execute_schema_sql_uncommitted", partial)
+
+    conn = db.connect(path)
+    with pytest.raises(RuntimeError):
+        db.ensure_schema(conn, root_path="/srv/root")
+
+    rows = conn.execute("SELECT count(*) FROM objects").fetchone()
+    assert rows[0] == 1
+    assert db.meta_get(conn, "schema_version") == "0"
+    conn.close()
+
+
+def test_standalone_writes_autocommit_cross_connection(tmp_path: Path) -> None:
+    path = tmp_path / "i.db"
+    conn_a = db.connect(path)
+    db.ensure_schema(conn_a, root_path="/srv/root")
+    db.meta_set(conn_a, "probe", "value-A")
+
+    conn_b = db.connect(path)
+    assert db.meta_get(conn_b, "probe") == "value-A"
+    conn_a.close()
+    conn_b.close()
+
+
+def test_immediate_transaction_rejects_nesting(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "i.db")
+    db.ensure_schema(conn, root_path="/srv/root")
+    # Inner immediate_transaction(conn).__enter__ raises before the body runs;
+    # pytest.raises catches it, the outer tx commits cleanly on exit.
+    with (
+        db.immediate_transaction(conn),
+        pytest.raises(RuntimeError, match="nested SQLite transaction"),
+        db.immediate_transaction(conn),
+    ):
+        pass
+    conn.close()

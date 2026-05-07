@@ -470,21 +470,24 @@ def scan(
         db.meta_set(conn, "last_scan_at", now)
         if full:
             db.meta_set(conn, "last_full_scan_at", now)
-        conn.commit()
-    except Exception as exc:
-        failure_at = (
-            f"{current_phase} at {current_relpath}"
-            if current_relpath is not None
-            else current_phase
-        )
-        _log.warning(
-            "scan failed during %s: %s; rolled back refresh transaction",
-            failure_at,
-            exc,
-            extra={"phase": current_phase, "relpath": current_relpath},
-            exc_info=True,
-        )
-        conn.rollback()
+        # Under autocommit=True, Connection.commit/rollback are no-ops, so the
+        # explicit refresh tx is driven with raw SQL.
+        conn.execute("COMMIT")
+    except BaseException as exc:
+        if isinstance(exc, Exception):
+            failure_at = (
+                f"{current_phase} at {current_relpath}"
+                if current_relpath is not None
+                else current_phase
+            )
+            _log.warning(
+                "scan failed during %s: %s; rolled back refresh transaction",
+                failure_at,
+                exc,
+                extra={"phase": current_phase, "relpath": current_relpath},
+                exc_info=True,
+            )
+        conn.execute("ROLLBACK")
         raise
     elapsed = time.perf_counter() - start
     return ScanReport(**vars(counters), elapsed_seconds=elapsed)

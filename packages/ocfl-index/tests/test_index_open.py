@@ -109,7 +109,6 @@ def test_reopen_with_stale_schema_rebuilds(
         "('o', 'p', '1.1', 'sha256', 'v1', 1, 'now', 'd', 'now')"
     )
     db.meta_set(idx._conn, "schema_version", "0")
-    idx._conn.commit()
     idx.close()
 
     with Index.open(db_path, fixture_root.path) as idx2:
@@ -130,7 +129,6 @@ def test_reopen_without_root_with_stale_schema_rebuilds_from_stored_root(
         "('o', 'p', '1.1', 'sha256', 'v1', 1, 'now', 'd', 'now')"
     )
     db.meta_set(idx._conn, "schema_version", "0")
-    idx._conn.commit()
     idx.close()
 
     with Index.open(db_path) as idx2:
@@ -147,7 +145,6 @@ def test_reopen_with_mismatched_root_raises_before_stale_schema_rebuild(
     Index.open(db_path, fixture_root.path).close()
     conn = db.connect(db_path)
     db.meta_set(conn, "schema_version", "0")
-    conn.commit()
     conn.close()
 
     other = FixtureRoot(tmp_path / "other_base")
