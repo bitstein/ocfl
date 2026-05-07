@@ -296,10 +296,10 @@ def test_unparseable_content_proof_warns_once_per_proof_digest(
     rec = records[0]
     assert f"proof_digest={expected_pdigest}" in rec.message
     assert "error=" in rec.message
-    assert rec.object_id == "alpha"
-    assert rec.version_num == 1
-    assert rec.logical_path == "file.txt.ots"
-    assert rec.proof_digest == expected_pdigest
+    assert rec.__dict__["object_id"] == "alpha"
+    assert rec.__dict__["version_num"] == 1
+    assert rec.__dict__["logical_path"] == "file.txt.ots"
+    assert rec.__dict__["proof_digest"] == expected_pdigest
 
 
 def test_unparseable_inventory_proof_warns_with_proof_path(
@@ -354,10 +354,10 @@ def test_unparseable_inventory_proof_warns_with_proof_path(
     assert f"proof_path={expected_relpath}" in rec.message
     assert f"proof_digest={expected_pdigest}" in rec.message
     assert "error=" in rec.message
-    assert rec.object_id == "alpha"
-    assert rec.version_num == 1
-    assert rec.proof_path == expected_relpath
-    assert rec.proof_digest == expected_pdigest
+    assert rec.__dict__["object_id"] == "alpha"
+    assert rec.__dict__["version_num"] == 1
+    assert rec.__dict__["proof_path"] == expected_relpath
+    assert rec.__dict__["proof_digest"] == expected_pdigest
 
 
 def test_duplicate_proof_across_objects_parses_once(tmp_path: Path) -> None:
