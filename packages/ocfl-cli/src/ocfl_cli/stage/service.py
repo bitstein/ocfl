@@ -11,6 +11,7 @@ import hashlib
 import logging
 import tempfile
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -107,6 +108,14 @@ class _OutstandingJobJson(TypedDict):
     status: str
     submitted_at: str
     age_seconds: int
+
+
+@dataclass(frozen=True, slots=True)
+class SubmitContentResult:
+    submitted_count: int
+    previous_phase: Phase
+    phase: Phase
+    noop_advanced: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -931,11 +940,10 @@ def submit_content_locked(
     staging_dir: Path,
     *,
     sp_factory: SpClientFactory,
-) -> bool:
+) -> SubmitContentResult:
     """One `stage timestamp content` (default path) submit pass under the lock.
 
-    Returns True when a noop-advance to CONTENT_UPGRADED occurred (so the
-    caller can echo the corresponding message).
+    Returns a summary for command rendering.
     """
     sp_cfg = cfg.simpleproof
     if sp_cfg is None:
@@ -966,11 +974,20 @@ def submit_content_locked(
         if not state.pending_digests and non_ots <= carry:
             save_ots(staging_dir, replace(state, phase=Phase.CONTENT_UPGRADED))
             _log_phase(state.phase, Phase.CONTENT_UPGRADED)
-            return True
+            return SubmitContentResult(
+                submitted_count=0,
+                previous_phase=state.phase,
+                phase=Phase.CONTENT_UPGRADED,
+                noop_advanced=True,
+            )
         if target_phase is not state.phase:
             save_ots(staging_dir, replace(state, phase=target_phase))
             _log_phase(state.phase, target_phase)
-        return False
+        return SubmitContentResult(
+            submitted_count=0,
+            previous_phase=state.phase,
+            phase=target_phase,
+        )
 
     ordered = tuple(sorted(submission_set))
     kept = tuple(s for s in state.submissions if s.status != "submitting")
@@ -1009,7 +1026,11 @@ def submit_content_locked(
 
     logger.info("submitted %d digests for %s", len(ordered), object_id)
     _log_phase(state.phase, target_phase)
-    return False
+    return SubmitContentResult(
+        submitted_count=len(ordered),
+        previous_phase=state.phase,
+        phase=target_phase,
+    )
 
 
 class NoFailedSubmissionsError(Exception):

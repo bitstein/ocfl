@@ -25,6 +25,7 @@ from ocfl_cli.errors import (
     ConfigError,
     PhaseError,
     ReorgDetectedError,
+    SimpleProofError,
     StagingError,
 )
 from ocfl_cli.stage import service, watch
@@ -582,6 +583,31 @@ def _render_status_section(title: str, *, leading_blank: bool = False) -> None:
     _style.echo(_style.key(f"{title}:"))
 
 
+def _plural(n: int, singular: str, plural: str | None = None) -> str:
+    return singular if n == 1 else (plural or f"{singular}s")
+
+
+def _render_watch_start(object_id: str) -> None:
+    _render_status_section("Watch")
+    typer.echo(f"  Object: {object_id}")
+    typer.echo("  Waiting for Bitcoin blocks")
+
+
+def _render_watch_progress(kind: str, data: dict, *, next_action: str) -> None:
+    if kind == "block":
+        _render_status_section("Block", leading_blank=True)
+        typer.echo(f"  Height: {data['height']}")
+        typer.echo("  Checking SimpleProof jobs")
+        typer.echo(f"  Phase: {data['phase']}")
+        if data.get("reverify"):
+            typer.echo("  Rechecking cached proofs after chain movement")
+        return
+    if kind == "advanced":
+        _render_status_section("Workflow", leading_blank=True)
+        typer.echo(f"  Phase: {data['previous_phase']} -> {data['phase']}")
+        typer.echo(f"  Next: {next_action}")
+
+
 def _render_status_ots(data: dict) -> None:
     _render_status_section("Object")
     if data["changes"]:
@@ -792,6 +818,7 @@ def timestamp_content(
     sr, _fs = open_root(appctx.root(ctx))
 
     if watch_flag:
+        _render_watch_start(object_id)
         try:
             exit_code = watch._watch_loop(
                 cfg,
@@ -802,9 +829,14 @@ def timestamp_content(
                 resolved.staging_dir,
                 sp_factory=preflight.sp_factory,
                 btc_factory=preflight.btc_factory,
+                progress=lambda kind, data: _render_watch_progress(
+                    kind, data, next_action="stage timestamp inventory"
+                ),
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             exit_for_error(e, message=f"halt: {e}")
+        except SimpleProofError as e:
+            exit_for_error(e)
         raise typer.Exit(exit_code)
 
     if upgrade:
@@ -821,6 +853,8 @@ def timestamp_content(
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             exit_for_error(e, message=f"halt: {e}")
+        except SimpleProofError as e:
+            exit_for_error(e)
         return
 
     if retry:
@@ -834,6 +868,8 @@ def timestamp_content(
                 )
             except PhaseError as e:
                 exit_for_error(e)
+            except SimpleProofError as e:
+                exit_for_error(e)
             except service.NoFailedSubmissionsError as e:
                 typer.echo(str(e))
                 return
@@ -841,7 +877,7 @@ def timestamp_content(
 
     with with_lock(resolved.staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
         try:
-            advanced = service.submit_content_locked(
+            result = service.submit_content_locked(
                 cfg,
                 resolved.store,
                 sr,
@@ -852,8 +888,29 @@ def timestamp_content(
             )
         except PhaseError as e:
             exit_for_error(e)
-        if advanced:
-            typer.echo("nothing to timestamp; advancing to content-upgraded")
+        except SimpleProofError as e:
+            exit_for_error(e)
+        _render_status_section("Content")
+        typer.echo(f"  Object: {object_id}")
+        if result.submitted_count:
+            typer.echo(
+                f"  Submitted {result.submitted_count} "
+                f"{_plural(result.submitted_count, 'digest')} to SimpleProof"
+            )
+        else:
+            typer.echo("  Nothing to timestamp")
+
+        _render_status_section("Workflow", leading_blank=True)
+        if result.previous_phase is result.phase:
+            typer.echo(f"  Phase: {result.phase.value}")
+        else:
+            typer.echo(
+                f"  Phase: {result.previous_phase.value} -> {result.phase.value}"
+            )
+        if result.noop_advanced:
+            typer.echo("  Next: stage timestamp inventory")
+        else:
+            typer.echo("  Next: stage timestamp content --upgrade --watch")
 
 
 @timestamp_app.command("inventory")
@@ -893,15 +950,21 @@ def timestamp_inventory(
     sr, _fs = open_root(appctx.root(ctx))
 
     if watch_flag:
+        _render_watch_start(object_id)
         try:
             exit_code = watch._inventory_watch_loop(
                 cfg,
                 resolved.staging_dir,
                 sp_factory=preflight.sp_factory,
                 btc_factory=preflight.btc_factory,
+                progress=lambda kind, data: _render_watch_progress(
+                    kind, data, next_action="stage commit"
+                ),
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             exit_for_error(e, message=f"halt: {e}")
+        except SimpleProofError as e:
+            exit_for_error(e)
         except PhaseError as e:
             exit_for_error(e)
         raise typer.Exit(exit_code)
@@ -916,6 +979,8 @@ def timestamp_inventory(
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             exit_for_error(e, message=f"halt: {e}")
+        except SimpleProofError as e:
+            exit_for_error(e)
         except PhaseError as e:
             exit_for_error(e)
         return
@@ -930,6 +995,8 @@ def timestamp_inventory(
                     sp_factory=preflight.sp_factory,
                 )
             except PhaseError as e:
+                exit_for_error(e)
+            except SimpleProofError as e:
                 exit_for_error(e)
             except service.InventoryProofMissingError as e:
                 exit_for_error(e)
@@ -948,6 +1015,8 @@ def timestamp_inventory(
             )
         except PhaseError as e:
             exit_for_error(e, message=f"{e}; run 'stage timestamp content' first")
+        except SimpleProofError as e:
+            exit_for_error(e)
 
 
 # ---------------------------------------------------------------------------

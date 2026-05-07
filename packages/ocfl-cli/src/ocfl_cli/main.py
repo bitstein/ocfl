@@ -61,7 +61,7 @@ def _configure_logging(json_mode: bool, verbose: bool, quiet: bool) -> None:
     elif verbose:
         root.setLevel(logging.DEBUG)
     else:
-        root.setLevel(logging.INFO)
+        root.setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.INFO if verbose else logging.WARNING)
 
 

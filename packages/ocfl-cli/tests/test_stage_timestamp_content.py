@@ -9,8 +9,8 @@ Pins step 10 of `OTS workflow contract`:
   this round's submission set.
 - Extend ``ots.json.pending_digests`` with the submission set.
 - Delete/rename-only no-op: empty submission set AND empty
-  ``pending_digests`` → print "nothing to timestamp; advancing to
-  content-upgraded" and advance phase to ``content-upgraded``.
+  ``pending_digests`` → print "Nothing to timestamp" and advance phase
+  to ``content-upgraded``.
 - Crash-safe submit protocol: persist ``Submission(status="submitting")``
   intent → POST → update entry to ``submitted``.
 - POST in chunks of 1000 (``SimpleProofClient.submit_hashes`` chunks).
@@ -183,6 +183,13 @@ class TestFullSubmitFlow:
             _stage_args(empty_sha256_root, staging, "timestamp", "content", "obj:new"),
         )
         assert r.exit_code == 0, r.output
+        assert "Content:" in r.output
+        assert "Object: obj:new" in r.output
+        assert "Submitted 2 digests to SimpleProof" in r.output
+        assert "Workflow:" in r.output
+        assert "Phase: drafting -> content-pending" in r.output
+        assert "Next: stage timestamp content --upgrade --watch" in r.output
+        assert "INFO " not in r.output
 
         sd = _staging_dir(empty_sha256_root, staging, "obj:new")
         state = load_ots(sd)
@@ -275,7 +282,7 @@ class TestDeleteRenameOnlyNoop:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Stage state ⊆ obj.inventory.manifest, pending_digests=() →
-        prints `nothing to timestamp; advancing to content-upgraded`,
+        prints `Nothing to timestamp` and the phase transition,
         advances phase to ``content-upgraded``, no SP calls."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
@@ -313,8 +320,11 @@ class TestDeleteRenameOnlyNoop:
         )
         assert r.exit_code == 0, r.output
         combined = (r.output + (r.stderr or "")).lower()
+        assert "object: obj:test" in combined
         assert "nothing to timestamp" in combined
-        assert "content-upgraded" in combined
+        assert "phase: drafting -> content-upgraded" in combined
+        assert "next: stage timestamp inventory" in combined
+        assert "INFO " not in r.output
 
         sd = _staging_dir(sha256_root_with_v1, staging, "obj:test")
         state = load_ots(sd)

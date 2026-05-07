@@ -82,6 +82,27 @@ _JOBS_PATH = "/api/v2/proofs/jobs"
 _CHUNK_SIZE = 1000
 
 
+def _json_object(resp: httpx.Response, context: str) -> dict[str, Any]:
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        raise SimpleProofError(f"SimpleProof {context} response was not JSON") from exc
+    if not isinstance(body, dict):
+        raise SimpleProofError(
+            f"SimpleProof {context} response was {type(body).__name__}, expected object"
+        )
+    return body
+
+
+def _missing_response_key(
+    context: str, key: str, body: dict[str, Any]
+) -> SimpleProofError:
+    keys = ", ".join(sorted(str(k) for k in body)) or "<none>"
+    return SimpleProofError(
+        f"SimpleProof {context} response missing {key!r} field (keys: {keys})"
+    )
+
+
 class SimpleProofHttpClient:
     """Real HTTP implementation.
 
@@ -159,7 +180,7 @@ class SimpleProofHttpClient:
         ]
         for chunk in chunks:
             try:
-                records = retry(
+                returned_hashes = retry(
                     lambda c=chunk: self._submit_chunk(c, category_id),
                     sleep=self._sleep,
                     attempts=self._attempts,
@@ -172,22 +193,27 @@ class SimpleProofHttpClient:
                     )
                 raise
             all_digests.extend(chunk)
-            all_record_ids.extend(str(rec["recordId"]) for rec in records)
+            all_record_ids.extend(returned_hashes)
         return SubmitResult(
             digests=tuple(all_digests),
             record_ids=tuple(all_record_ids),
         )
 
-    def _submit_chunk(
-        self, hashes: list[str], category_id: int
-    ) -> list[dict[str, Any]]:
+    def _submit_chunk(self, hashes: list[str], category_id: int) -> list[str]:
         resp = self._request(
             "POST",
             self._base_url + _SUBMIT_PATH,
             headers={"x-access-token": self._creds.access_token},
             json_body={"proofCategoryId": category_id, "hashes": hashes},
         )
-        return list(resp.json()["records"])
+        body = _json_object(resp, "submit")
+        if body.get("ok") is False:
+            msg = body.get("msg", "request failed")
+            raise SimpleProofBadRequest(f"SimpleProof rejected request: {msg}")
+        files = body.get("files")
+        if not isinstance(files, list):
+            raise _missing_response_key("submit", "files", body)
+        return [str(file_hash) for file_hash in files]
 
     def verify_batch(self, digests: list[str]) -> str:
         resp = retry(
@@ -200,7 +226,10 @@ class SimpleProofHttpClient:
             sleep=self._sleep,
             attempts=self._attempts,
         )
-        return str(resp.json()["jobId"])
+        body = _json_object(resp, "verify-batch")
+        if "jobId" not in body:
+            raise _missing_response_key("verify-batch", "jobId", body)
+        return str(body["jobId"])
 
     def poll_job(self, job_id: str) -> JobStatus:
         resp = retry(
@@ -212,7 +241,11 @@ class SimpleProofHttpClient:
             sleep=self._sleep,
             attempts=self._attempts,
         )
-        body = resp.json()
+        body = _json_object(resp, "job-status")
+        if "jobId" not in body:
+            raise _missing_response_key("job-status", "jobId", body)
+        if "status" not in body:
+            raise _missing_response_key("job-status", "status", body)
         results_url = body.get("resultsUrl")
         return JobStatus(
             job_id=str(body["jobId"]),
@@ -229,7 +262,19 @@ class SimpleProofHttpClient:
             attempts=self._attempts,
         )
         out: dict[str, bytes] = {}
-        for entry in resp.json()["results"]:
+        body = _json_object(resp, "results")
+        results = body.get("results")
+        if not isinstance(results, list):
+            raise _missing_response_key("results", "results", body)
+        for entry in results:
+            if not isinstance(entry, dict):
+                raise SimpleProofError(
+                    "SimpleProof results response contained a non-object result"
+                )
+            if "digest" not in entry:
+                raise _missing_response_key("results", "digest", entry)
+            if "otsDownloadUrl" not in entry:
+                raise _missing_response_key("results", "otsDownloadUrl", entry)
             claimed = str(entry["digest"])
             if claimed not in expected_digests:
                 raise AttestationMismatchError(

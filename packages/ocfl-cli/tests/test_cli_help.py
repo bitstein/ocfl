@@ -42,7 +42,7 @@ def test_exit_code_help_is_generated_from_canonical_values() -> None:
 def test_default_logging_suppresses_httpx_info() -> None:
     _configure_logging(json_mode=False, verbose=False, quiet=False)
 
-    assert logging.getLogger().level == logging.INFO
+    assert logging.getLogger().level == logging.WARNING
     assert logging.getLogger("httpx").getEffectiveLevel() == logging.WARNING
 
 

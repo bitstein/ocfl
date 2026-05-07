@@ -25,7 +25,7 @@ Wire shapes
     POST {base}/api/proof/timestamp/hashes
         headers: x-access-token: <token>
         body:    {"proofCategoryId": <int>, "hashes": [<hex>, ...]}
-        200:     {"records": [{"hash": <hex>, "recordId": <str>}, ...]}
+        200:     {"ok": true, "files": [<hex>, ...]}
 
     POST {base}/api/v2/proofs/verify-batches
         headers: x-api-key: <key>
@@ -49,7 +49,7 @@ Per-chunk atomicity
     ``submit_hashes`` POSTs each ≤1000-hash chunk independently. When a
     chunk fails after retries, the proximate ``SimpleProofError`` instance
     carries a per-instance attribute ``partial_result: SubmitResult | None``
-    aggregating digests/record_ids from chunks that succeeded before the
+    aggregating digests/returned hashes from chunks that succeeded before the
     failure (``None`` when no chunks succeeded yet). Same per-instance
     pattern as ``Transient.retry_after``.
 
@@ -79,6 +79,7 @@ from ocfl_cli.errors import (
     AttestationMismatchError,
     SimpleProofAuthError,
     SimpleProofBadRequest,
+    SimpleProofError,
     SimpleProofTransient,
 )
 from ocfl_cli.ots.simpleproof import (
@@ -154,13 +155,8 @@ def test_simpleproof_http_client_closes_injected_http_client() -> None:
     assert http.is_closed
 
 
-def _ok_submit(hashes: list[str], *, offset: int = 0) -> httpx.Response:
-    body = {
-        "records": [
-            {"hash": h, "recordId": f"rec-{offset + i}"} for i, h in enumerate(hashes)
-        ],
-    }
-    return httpx.Response(200, json=body)
+def _ok_submit(hashes: list[str]) -> httpx.Response:
+    return httpx.Response(200, json={"ok": True, "files": hashes})
 
 
 def _exc_chain_text(exc: BaseException) -> str:
@@ -203,7 +199,7 @@ class TestSubmitHashesChunking:
             payload = json.loads(request.content)
             captured.append(list(payload["hashes"]))
             assert payload["proofCategoryId"] == CATEGORY
-            return _ok_submit(payload["hashes"], offset=len(captured) * 1000)
+            return _ok_submit(payload["hashes"])
 
         client = _make_client(handler)
 
@@ -239,9 +235,7 @@ class TestSubmitHashesChunking:
         def handler(request: httpx.Request) -> httpx.Response:
             payload = json.loads(request.content)
             sizes.append(len(payload["hashes"]))
-            return _ok_submit(
-                payload["hashes"], offset=sum(sizes) - len(payload["hashes"])
-            )
+            return _ok_submit(payload["hashes"])
 
         client = _make_client(handler)
 
@@ -250,8 +244,7 @@ class TestSubmitHashesChunking:
         assert sizes == [1000, 1]
         assert result.digests == tuple(digests)
         assert len(result.record_ids) == 1001
-        # record_ids are unique per submission
-        assert len(set(result.record_ids)) == 1001
+        assert result.record_ids == tuple(digests)
 
     def test_sets_x_access_token_header(self) -> None:
         seen: list[str] = []
@@ -322,6 +315,29 @@ class TestSubmitHashesErrors:
 
         assert len(attempts) == 1
         assert sleeps == []
+
+    def test_200_missing_files_raises_simpleproof_error(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"message": "ok"})
+
+        client = _make_client(handler)
+
+        with pytest.raises(SimpleProofError) as info:
+            client.submit_hashes(_digests(3), CATEGORY)
+
+        assert "submit response missing 'files'" in str(info.value)
+        assert "message" in str(info.value)
+
+    def test_200_ok_false_raises_bad_request_with_message(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"ok": False, "msg": "bad hash"})
+
+        client = _make_client(handler)
+
+        with pytest.raises(SimpleProofBadRequest) as info:
+            client.submit_hashes(_digests(1), CATEGORY)
+
+        assert "bad hash" in str(info.value)
 
     def test_500_twice_then_200(self) -> None:
         n = 0

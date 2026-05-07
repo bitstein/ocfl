@@ -719,6 +719,16 @@ class TestInventoryWatchLoop:
             ),
         )
         assert r.exit_code == 0, r.output
+        assert "Watch:" in r.output
+        assert "Object: obj:inv-watch-ok" in r.output
+        assert "Waiting for Bitcoin blocks" in r.output
+        assert "Block:" in r.output
+        assert "Height:" in r.output
+        assert "Checking SimpleProof jobs" in r.output
+        assert "Phase: inventory-pending" in r.output
+        assert "Workflow:" in r.output
+        assert "Phase: inventory-pending -> inventory-upgraded" in r.output
+        assert "Next: stage commit" in r.output
         assert load_ots(sd).phase is Phase.INVENTORY_UPGRADED
 
     def test_watch_sigint_exits_130_without_torn_checkpoint(

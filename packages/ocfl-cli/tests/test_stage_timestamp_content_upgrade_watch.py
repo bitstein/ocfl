@@ -285,6 +285,16 @@ class TestWatchLoopAdvancesOnBlock:
             ),
         )
         assert r.exit_code == 0, r.output
+        assert "Watch:" in r.output
+        assert "Object: obj:watch-ok" in r.output
+        assert "Waiting for Bitcoin blocks" in r.output
+        assert "Block:" in r.output
+        assert "Height:" in r.output
+        assert "Checking SimpleProof jobs" in r.output
+        assert "Phase: content-pending" in r.output
+        assert "Workflow:" in r.output
+        assert "Phase: content-pending -> content-upgraded" in r.output
+        assert "Next: stage timestamp inventory" in r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
 
 

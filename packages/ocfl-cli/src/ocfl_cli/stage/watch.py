@@ -12,7 +12,8 @@ from `ctx.obj`); tests inject fakes by passing the same dict to
 
 import contextlib
 import logging
-from typing import TYPE_CHECKING, cast
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast
 
 from ocfl_cli.errors import LockTimeoutError
 from ocfl_cli.stage import service
@@ -29,6 +30,8 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+type WatchProgress = Callable[[str, dict[str, Any]], None]
 
 
 def _get_zmq_subscriber(cfg: Config) -> HashBlockStream:
@@ -54,6 +57,7 @@ def _watch_loop(
     *,
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
+    progress: WatchProgress | None = None,
 ) -> int:
     """Drive ``timestamp content --upgrade --watch`` end-to-end. Returns exit code."""
     btc_cfg = cfg.bitcoin
@@ -96,6 +100,16 @@ def _watch_loop(
                                 state, btc, sp, staging_dir, min_confs
                             )
                             save_ots(staging_dir, state)
+                        before = load_ots(staging_dir)
+                        if progress is not None:
+                            progress(
+                                "block",
+                                {
+                                    "height": info.height,
+                                    "phase": before.phase.value,
+                                    "reverify": height_jumped or tip_changed_at_stable,
+                                },
+                            )
                         last_height = info.height
                         last_tip_hash = info.best_block_hash
                         service._upgrade_pass_locked(
@@ -110,6 +124,14 @@ def _watch_loop(
                         )
                         state = load_ots(staging_dir)
                         if state.phase is Phase.CONTENT_UPGRADED:
+                            if progress is not None:
+                                progress(
+                                    "advanced",
+                                    {
+                                        "previous_phase": before.phase.value,
+                                        "phase": state.phase.value,
+                                    },
+                                )
                             return 0
                 except LockTimeoutError as e:
                     logger.warning(
@@ -126,6 +148,7 @@ def _inventory_watch_loop(
     *,
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
+    progress: WatchProgress | None = None,
 ) -> int:
     """Drive ``timestamp inventory --upgrade --watch``. Returns exit code."""
     btc_cfg = cfg.bitcoin
@@ -165,6 +188,16 @@ def _inventory_watch_loop(
                                 state, btc, sp, staging_dir, min_confs
                             )
                             save_ots(staging_dir, state)
+                        before = load_ots(staging_dir)
+                        if progress is not None:
+                            progress(
+                                "block",
+                                {
+                                    "height": info.height,
+                                    "phase": before.phase.value,
+                                    "reverify": height_jumped or tip_changed_at_stable,
+                                },
+                            )
                         last_height = info.height
                         last_tip_hash = info.best_block_hash
                         service._inventory_upgrade_pass_locked(
@@ -175,6 +208,14 @@ def _inventory_watch_loop(
                         )
                         state = load_ots(staging_dir)
                         if state.phase is Phase.INVENTORY_UPGRADED:
+                            if progress is not None:
+                                progress(
+                                    "advanced",
+                                    {
+                                        "previous_phase": before.phase.value,
+                                        "phase": state.phase.value,
+                                    },
+                                )
                             return 0
                 except LockTimeoutError as e:
                     logger.warning(
