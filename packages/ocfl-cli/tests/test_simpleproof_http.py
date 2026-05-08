@@ -632,6 +632,35 @@ class TestDownloadResults:
 
         assert client.download_results(results_url, {digest}) == {digest: ots_bytes}
 
+    def test_decodes_results_list_with_simpleproof_field_names(self) -> None:
+        digest_bytes = _bytes_digest("file-list")
+        digest = digest_bytes.hex()
+        ots_bytes = build_attestation(digest_bytes, block_height=800_000)
+
+        results_url = "https://sp-results.test/job-list"
+        ots_url = "https://sp-blobs.test/list.ots"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if url == results_url:
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "confirmed": True,
+                            "hash": digest,
+                            "ots_download_url": ots_url,
+                        }
+                    ],
+                )
+            if url == ots_url:
+                return httpx.Response(200, content=ots_bytes)
+            return httpx.Response(404)
+
+        client = _make_client(handler)
+
+        assert client.download_results(results_url, {digest}) == {digest: ots_bytes}
+
     def test_commitment_digest_mismatch_raises_attestation_mismatch(self) -> None:
         # .ots bytes commit to digest X but the server claims they belong
         # to digest Y. SP is never trusted: HALT.

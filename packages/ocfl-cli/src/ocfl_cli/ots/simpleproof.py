@@ -108,6 +108,33 @@ def _data_or_body(body: dict[str, Any]) -> dict[str, Any]:
     return data if isinstance(data, dict) else body
 
 
+def _result_entries(resp: httpx.Response) -> list[Any]:
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        raise SimpleProofError("SimpleProof results response was not JSON") from exc
+    if isinstance(body, list):
+        return body
+    if not isinstance(body, dict):
+        raise SimpleProofError(
+            f"SimpleProof results response was {type(body).__name__}, "
+            "expected object or list"
+        )
+    payload = _data_or_body(body)
+    results = payload.get("results")
+    if not isinstance(results, list):
+        raise _missing_response_key("results", "results", payload)
+    return results
+
+
+def _entry_value(entry: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = entry.get(key)
+        if value is not None:
+            return str(value)
+    raise _missing_response_key("results", " or ".join(repr(k) for k in keys), entry)
+
+
 def _response_error_detail(resp: httpx.Response) -> str | None:
     try:
         body = resp.json()
@@ -287,26 +314,17 @@ class SimpleProofHttpClient:
             attempts=self._attempts,
         )
         out: dict[str, bytes] = {}
-        body = _json_object(resp, "results")
-        payload = _data_or_body(body)
-        results = payload.get("results")
-        if not isinstance(results, list):
-            raise _missing_response_key("results", "results", payload)
-        for entry in results:
+        for entry in _result_entries(resp):
             if not isinstance(entry, dict):
                 raise SimpleProofError(
                     "SimpleProof results response contained a non-object result"
                 )
-            if "digest" not in entry:
-                raise _missing_response_key("results", "digest", entry)
-            if "otsDownloadUrl" not in entry:
-                raise _missing_response_key("results", "otsDownloadUrl", entry)
-            claimed = str(entry["digest"])
+            claimed = _entry_value(entry, "digest", "hash")
             if claimed not in expected_digests:
                 raise AttestationMismatchError(
                     f"unexpected digest from SP: {claimed} (not in submission set)"
                 )
-            ots_url = str(entry["otsDownloadUrl"])
+            ots_url = _entry_value(entry, "otsDownloadUrl", "ots_download_url")
             ots_resp = retry(
                 lambda u=ots_url: self._request("GET", u),
                 sleep=self._sleep,
