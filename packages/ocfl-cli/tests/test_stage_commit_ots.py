@@ -185,6 +185,67 @@ class TestStageCommitOtsHappyPath:
         assert not sd.exists()
 
 
+class TestStageCommitOtsAfterMetadataInvalidation:
+    def test_commit_blocks_after_metadata_edit_invalidates_inventory_plan(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        sd, _da, _inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:commit-invalidated",
+            sp_fake,
+            btc_fake,
+        )
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "metadata",
+                "obj:commit-invalidated",
+                "--message",
+                "Updated metadata",
+            ),
+        )
+        assert r.exit_code == 0, r.output
+        assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
+        assert not plan_path(sd).exists()
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "commit",
+                "obj:commit-invalidated",
+            ),
+        )
+
+        assert r.exit_code == 3, r.output
+        out = (r.output or "").lower()
+        assert "stage timestamp inventory" in out, r.output
+        assert "stage timestamp inventory --upgrade" in out, r.output
+
+        store = StagingStore(staging)
+        root_path = str(empty_sha256_root.resolve())
+        assert store.exists(root_path, "obj:commit-invalidated")
+        sr = StorageRoot(LocalFS(empty_sha256_root))
+        assert not sr.get_object("obj:commit-invalidated").exists
+
+
 # =========================================================================== #
 # Layer-2: corrupted ots-cache → AttestationMismatchError + actionable hint
 # =========================================================================== #

@@ -69,6 +69,8 @@ from ocfl_lib.update_plan import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ocfl_cli._appctx import BtcRpcFactory, SpClientFactory
     from ocfl_cli.config import Config
     from ocfl_cli.ots.simpleproof import SimpleProofClient
@@ -229,8 +231,13 @@ def update_metadata(
     clear_message: bool,
     clear_name: bool,
     clear_address: bool,
+    before_save: Callable[[StagedMetadata, StagedMetadata], None] | None = None,
 ) -> StagedMetadata:
-    """Apply set/update/clear semantics to staged metadata and persist it."""
+    """Apply set/update/clear semantics to staged metadata and persist it.
+
+    ``before_save`` lets callers invalidate dependent state after the new
+    metadata is known but before metadata.json is rewritten.
+    """
     validate_metadata_update_options(
         message=message,
         name=name,
@@ -267,6 +274,8 @@ def update_metadata(
         message=next_message,
         user=_compact_user(next_name, next_address),
     )
+    if before_save is not None:
+        before_save(current, updated)
     store.save_metadata(root_path, object_id, updated)
     return updated
 
@@ -542,6 +551,46 @@ def _apply_rm_mv_regression(
             new_phase.value,
             cause,
         )
+
+
+def apply_metadata_ots_regression(staging_dir: Path) -> None:
+    """Invalidate stale inventory timestamp state after staged metadata changes.
+
+    Metadata affects the inventory bytes but not staged content bytes. Once an
+    inventory timestamp exists, regress only the inventory side of the workflow
+    so verified content proofs remain reusable.
+    """
+    state = load_ots(staging_dir)
+    if state.phase not in (Phase.INVENTORY_PENDING, Phase.INVENTORY_UPGRADED):
+        return
+
+    inventory_digest = (
+        state.inventory_proof.digest if state.inventory_proof is not None else None
+    )
+    inventory_job_id = (
+        state.inventory_proof.job_id if state.inventory_proof is not None else None
+    )
+    kept_jobs = tuple(
+        job
+        for job in state.verify_jobs
+        if (inventory_digest is None or inventory_digest not in job.digests)
+        and (inventory_job_id is None or job.job_id != inventory_job_id)
+    )
+    save_ots(
+        staging_dir,
+        replace(
+            state,
+            phase=Phase.CONTENT_UPGRADED,
+            verify_jobs=kept_jobs,
+            inventory_proof=None,
+        ),
+    )
+    plan_path(staging_dir).unlink(missing_ok=True)
+    logger.info(
+        "phase regression %s→%s (cause: staged metadata edit)",
+        state.phase.value,
+        Phase.CONTENT_UPGRADED.value,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1698,6 +1747,11 @@ def commit_ots(
                 )
 
             inv_digest = state.inventory_proof.digest
+            if not plan_path(staging_dir).is_file():
+                raise PhaseError(
+                    "inventory timestamp plan missing or stale; "
+                    "run `stage timestamp inventory`"
+                )
             plan = deserialize(plan_path(staging_dir).read_bytes())
 
             try:

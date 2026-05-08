@@ -410,6 +410,13 @@ def metadata(
             clear_address=clear_address,
         )
         with with_lock(resolved.staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+
+            def invalidate_ots_if_needed(
+                current: StagedMetadata, updated: StagedMetadata
+            ) -> None:
+                if has_ots(resolved.staging_dir) and updated != current:
+                    service.apply_metadata_ots_regression(resolved.staging_dir)
+
             service.update_metadata(
                 resolved.store,
                 resolved.root_path,
@@ -420,6 +427,7 @@ def metadata(
                 clear_message=clear_message,
                 clear_name=clear_name,
                 clear_address=clear_address,
+                before_save=invalidate_ots_if_needed,
             )
     except service.MetadataInputError as e:
         raise typer.BadParameter(str(e)) from None
@@ -847,8 +855,6 @@ def commit(
     ] = False,
 ) -> None:
     """Commit staged changes to the storage root."""
-    from ocfl_cli.stage.state import plan_path
-
     sr, fs = open_root(appctx.root(ctx))
     resolved = require_existing_staging(ctx, object_id)
     store = resolved.store
@@ -857,10 +863,9 @@ def commit(
 
     obj = sr.get_object(object_id)
 
-    # OTS commit path: phase=INVENTORY_UPGRADED + serialized plan on disk.
-    # Both conditions required (a partial state means the OTS workflow has
-    # not reached the deferred-completion point yet).
-    if has_ots(staging_dir) and plan_path(staging_dir).is_file():
+    # OTS commit path: ots.json makes this an OTS staging even when the
+    # deferred inventory plan is missing or stale.
+    if has_ots(staging_dir):
         try:
             service.commit_ots(
                 store=store,
@@ -874,8 +879,9 @@ def commit(
             exit_for_error(
                 e,
                 message=(
-                    f"{e}; run 'stage timestamp inventory --upgrade' to advance "
-                    f"to phase=inventory-upgraded"
+                    f"{e}; run 'stage timestamp inventory' and then "
+                    f"'stage timestamp inventory --upgrade' to refresh the "
+                    f"timestamped inventory plan"
                 ),
             )
         except AttestationMismatchError as e:
