@@ -5,6 +5,8 @@ import os
 
 import pytest
 
+from ocfl_cli.errors import StagingError
+from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
 from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import DigestAlgorithm, Spec
 from ocfl_lib.inventory import Inventory
@@ -96,6 +98,94 @@ class TestContentMapRoundTrip:
         assert loaded == content_map
 
 
+class TestMetadataRoundTrip:
+    def test_empty_metadata_on_create(self, store, sample_inventory):
+        store.create("/root", "obj:1", sample_inventory)
+
+        metadata = store.load_metadata("/root", "obj:1")
+
+        assert metadata == StagedMetadata()
+
+    def test_missing_metadata_file_loads_empty(self, store, sample_inventory):
+        store.create("/root", "obj:1", sample_inventory)
+        d = store.staging_path("/root", "obj:1")
+        (d / "metadata.json").unlink()
+
+        metadata = store.load_metadata("/root", "obj:1")
+
+        assert metadata == StagedMetadata()
+
+    def test_save_and_load(self, store, sample_inventory):
+        store.create("/root", "obj:1", sample_inventory)
+        metadata = StagedMetadata(
+            message="initial deposit",
+            user=StagedUser(name="Alice", address="mailto:alice@example.org"),
+        )
+
+        store.save_metadata("/root", "obj:1", metadata)
+
+        assert store.load_metadata("/root", "obj:1") == metadata
+
+    @pytest.mark.parametrize(
+        "metadata",
+        [
+            StagedMetadata(message=""),
+            StagedMetadata(message="   "),
+            StagedMetadata(user=StagedUser(name="")),
+            StagedMetadata(user=StagedUser(name="\t")),
+            StagedMetadata(user=StagedUser(address="")),
+            StagedMetadata(user=StagedUser(address="\n")),
+        ],
+    )
+    def test_save_rejects_empty_or_whitespace_values(
+        self, store, sample_inventory, metadata
+    ):
+        store.create("/root", "obj:1", sample_inventory)
+
+        with pytest.raises(StagingError, match="metadata"):
+            store.save_metadata("/root", "obj:1", metadata)
+
+    def test_load_rejects_empty_or_whitespace_values(self, store, sample_inventory):
+        store.create("/root", "obj:1", sample_inventory)
+        d = store.staging_path("/root", "obj:1")
+        (d / "metadata.json").write_text('{"message":" "}')
+
+        with pytest.raises(StagingError, match="message"):
+            store.load_metadata("/root", "obj:1")
+
+    @pytest.mark.parametrize(
+        ("raw", "match"),
+        [
+            ('{"message":"initial","created":"2024-01-01T00:00:00Z"}', "created"),
+            ('{"user":{"name":"Alice","email":"alice@example.org"}}', "email"),
+        ],
+    )
+    def test_load_rejects_unknown_fields(self, store, sample_inventory, raw, match):
+        store.create("/root", "obj:1", sample_inventory)
+        d = store.staging_path("/root", "obj:1")
+        (d / "metadata.json").write_text(raw)
+
+        with pytest.raises(StagingError, match=match):
+            store.load_metadata("/root", "obj:1")
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "[]",
+            '{"message":["initial"]}',
+            '{"user":"Alice"}',
+            '{"user":{"name":["Alice"]}}',
+        ],
+    )
+    def test_load_rejects_malformed_metadata_shape(self, store, sample_inventory, raw):
+        store.create("/root", "obj:1", sample_inventory)
+        d = store.staging_path("/root", "obj:1")
+        (d / "metadata.json").write_text(raw)
+
+        with pytest.raises(StagingError):
+            store.load_metadata("/root", "obj:1")
+
+
 class TestPurge:
     def test_purge_removes_staging(self, store, sample_inventory):
         store.create("/root", "obj:1", sample_inventory)
@@ -120,7 +210,7 @@ class TestAtomicContentMap:
 
         d = store.staging_path("/root", "obj:1")
         names = sorted(p.name for p in d.iterdir())
-        assert names == ["content.json", "inventory.json"]
+        assert names == ["content.json", "inventory.json", "metadata.json"]
 
     def test_save_content_map_is_atomic_under_crash(
         self, store, sample_inventory, monkeypatch

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 import msgspec
 
+from ocfl_cli.errors import StagingError
+from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
 from ocfl_lib.inventory import Inventory
 
 if TYPE_CHECKING:
@@ -20,6 +22,7 @@ class StagingStore:
     Each (root_path, object_id) pair gets a staging directory containing:
     - inventory.json: full staged inventory (all versions + new head)
     - content.json: digest → {path, size, mtime} for new content files
+    - metadata.json: mutable version metadata for the staged head
     """
 
     def __init__(self, root: Path) -> None:
@@ -39,6 +42,7 @@ class StagingStore:
         d.mkdir(parents=True, exist_ok=True)
         self._write_inventory(d, inventory)
         self._write_content_map(d, {})
+        self._write_metadata(d, StagedMetadata())
 
     def load_inventory(self, root_path: str, object_id: str) -> Inventory:
         d = self.staging_path(root_path, object_id)
@@ -60,6 +64,24 @@ class StagingStore:
         d = self.staging_path(root_path, object_id)
         self._write_content_map(d, content_map)
 
+    def load_metadata(self, root_path: str, object_id: str) -> StagedMetadata:
+        d = self.staging_path(root_path, object_id)
+        path = d / "metadata.json"
+        if not path.is_file():
+            return StagedMetadata()
+        try:
+            metadata = msgspec.json.decode(path.read_bytes(), type=StagedMetadata)
+        except (OSError, msgspec.DecodeError) as e:
+            raise StagingError(f"{path}: {e}") from None
+        _validate_metadata(metadata, path=path)
+        return metadata
+
+    def save_metadata(
+        self, root_path: str, object_id: str, metadata: StagedMetadata
+    ) -> None:
+        d = self.staging_path(root_path, object_id)
+        self._write_metadata(d, metadata)
+
     def purge(self, root_path: str, object_id: str) -> None:
         d = self.staging_path(root_path, object_id)
         if d.is_dir():
@@ -72,6 +94,29 @@ class StagingStore:
     def _write_content_map(self, d: Path, content_map: dict) -> None:
         data = json.dumps(content_map, sort_keys=True).encode()
         _atomic_write_bytes(d / "content.json", data)
+
+    def _write_metadata(self, d: Path, metadata: StagedMetadata) -> None:
+        path = d / "metadata.json"
+        _validate_metadata(metadata, path=path)
+        data = msgspec.json.encode(metadata)
+        _atomic_write_bytes(path, data)
+
+
+def _validate_metadata(metadata: StagedMetadata, *, path: Path) -> None:
+    _validate_metadata_value(metadata.message, field="message", path=path)
+    if metadata.user is None:
+        return
+    _validate_metadata_user(metadata.user, path=path)
+
+
+def _validate_metadata_user(user: StagedUser, *, path: Path) -> None:
+    _validate_metadata_value(user.name, field="user.name", path=path)
+    _validate_metadata_value(user.address, field="user.address", path=path)
+
+
+def _validate_metadata_value(value: str | None, *, field: str, path: Path) -> None:
+    if value is not None and not value.strip():
+        raise StagingError(f"{path}: staged metadata {field} cannot be empty")
 
 
 def _atomic_write_bytes(path: Path, data: bytes) -> None:

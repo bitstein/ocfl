@@ -1,6 +1,8 @@
-"""Status DTOs and enums surfaced by the stage workflow."""
+"""Schemas surfaced or persisted by the stage workflow."""
 
 from enum import StrEnum
+
+import msgspec
 
 
 class NextActionKind(StrEnum):
@@ -18,3 +20,21 @@ class NextActionKind(StrEnum):
     COMMIT = "commit"
     ADD_CONTENT = "add_content"
     NONE = "none"
+
+
+class StagedUser(
+    msgspec.Struct, frozen=True, forbid_unknown_fields=True, omit_defaults=True
+):
+    """Mutable-before-commit version user metadata persisted in metadata.json."""
+
+    name: str | None = None
+    address: str | None = None
+
+
+class StagedMetadata(
+    msgspec.Struct, frozen=True, forbid_unknown_fields=True, omit_defaults=True
+):
+    """Mutable-before-commit version metadata persisted in metadata.json."""
+
+    message: str | None = None
+    user: StagedUser | None = None
