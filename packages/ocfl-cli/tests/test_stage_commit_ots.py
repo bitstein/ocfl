@@ -33,6 +33,7 @@ from unittest.mock import patch
 
 import pytest
 from fakes import FakeSimpleProof
+from msgspec.structs import replace
 
 # Re-use the inventory-upgrade test harness verbatim instead of
 # duplicating its setup helpers — that file already documents them as
@@ -44,6 +45,7 @@ from test_stage_timestamp_inventory_upgrade import (
     _grow_chain_to,
     _inject_fake_btc,
     _inject_fake_sp,
+    _new_ots_staging,
     _ots_for,
     _register_attested,
     _seed_inv_completed_verify_job,
@@ -56,11 +58,14 @@ from typer.testing import CliRunner
 
 from ocfl_cli.main import app
 from ocfl_cli.stage.fsm import Phase
+from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
 from ocfl_cli.stage.state import (
+    VerifiedProof,
     has_ots,
     load_ots,
     ots_cache_path,
     plan_path,
+    save_ots,
 )
 from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
@@ -116,6 +121,80 @@ def _setup_at_inventory_upgraded(
     assert state.phase is Phase.INVENTORY_UPGRADED
     assert ots_cache_path(sd, inv_digest).read_bytes() == ots_bytes
     return sd, da, inv_digest, ots_bytes
+
+
+def _setup_missing_metadata_inventory_upgraded(
+    runner: CliRunner,
+    root: Path,
+    staging: Path,
+    object_id: str,
+    sp_fake: FakeSimpleProof,
+    btc_fake,
+) -> tuple[Path, bytes]:
+    """Build an upgraded inventory plan that is intentionally missing message."""
+    sd, _paths, digests = _new_ots_staging(
+        runner, root, staging, object_id, ("a.txt", b"alpha")
+    )
+    store = StagingStore(staging)
+    store.save_metadata(
+        str(root.resolve()),
+        object_id,
+        StagedMetadata(
+            user=StagedUser(name="Alice", address="mailto:alice@example.org")
+        ),
+    )
+    da = digests["a.txt"]
+
+    ots_src = staging.parent / f"{object_id.replace(':', '_')}.a.txt.ots"
+    ots_src.write_bytes(b"\x00fake-ots-bytes-opaque-to-this-command")
+    r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(ots_src)))
+    assert r.exit_code == 0, r.output
+
+    state = load_ots(sd)
+    state = replace(
+        state,
+        phase=Phase.CONTENT_UPGRADED,
+        pending_digests=(da,),
+        content_proofs={
+            da: VerifiedProof(
+                ots_path=f"ots-cache/{da}.ots",
+                verified=True,
+                block_height=DIGEST_BLOCK_HEIGHT,
+                confirmations_at_verify=MIN_CONFS,
+                verified_at="2026-04-23T16:30:00+00:00",
+            )
+        },
+    )
+    save_ots(sd, state)
+
+    r = runner.invoke(
+        app,
+        _stage_args(
+            root,
+            staging,
+            "timestamp",
+            "inventory",
+            object_id,
+            "--allow-missing-metadata",
+        ),
+    )
+    assert r.exit_code == 0, r.output
+
+    state = load_ots(sd)
+    assert state.inventory_proof is not None
+    inv_digest = state.inventory_proof.digest
+    ots_bytes = _ots_for(inv_digest)
+    _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
+    _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+    _register_attested(btc_fake.rpc, inv_digest)
+
+    r = runner.invoke(
+        app,
+        _stage_args(root, staging, "timestamp", "inventory", object_id, "--upgrade"),
+    )
+    assert r.exit_code == 0, r.output
+    assert load_ots(sd).phase is Phase.INVENTORY_UPGRADED
+    return sd, ots_bytes
 
 
 # An arbitrary 32-byte SHA-256-shaped hex digest, distinct from anything
@@ -246,12 +325,163 @@ class TestStageCommitOtsAfterMetadataInvalidation:
         assert not sr.get_object("obj:commit-invalidated").exists
 
 
+class TestStageCommitOtsMetadataGate:
+    def test_commit_blocks_when_timestamped_plan_is_missing_metadata(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        _setup_missing_metadata_inventory_upgraded(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:commit-missing-metadata",
+            sp_fake,
+            btc_fake,
+        )
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "commit",
+                "obj:commit-missing-metadata",
+            ),
+        )
+
+        assert r.exit_code == 1, r.output
+        assert "timestamped inventory plan missing metadata: message" in (
+            r.output.lower()
+        )
+
+    def test_commit_allows_missing_metadata_with_explicit_bypass(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        _sd, ots_bytes = _setup_missing_metadata_inventory_upgraded(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:commit-missing-metadata-allowed",
+            sp_fake,
+            btc_fake,
+        )
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "commit",
+                "obj:commit-missing-metadata-allowed",
+                "--allow-missing-metadata",
+            ),
+        )
+
+        assert r.exit_code == 0, r.output
+        sr = StorageRoot(LocalFS(empty_sha256_root))
+        obj = sr.get_object("obj:commit-missing-metadata-allowed")
+        assert obj.exists
+        inv = obj.inventory.inventory
+        version = inv.versions[inv.head]
+        assert version.message is None
+        assert version.user is not None
+        assert version.user.name == "Alice"
+
+        ext_path = (
+            empty_sha256_root
+            / "obj:commit-missing-metadata-allowed"
+            / "extensions"
+            / "NNNN-ots-timestamps"
+            / "inventory.json.v1.ots"
+        )
+        assert ext_path.read_bytes() == ots_bytes
+
+
 # =========================================================================== #
 # Layer-2: corrupted ots-cache → AttestationMismatchError + actionable hint
 # =========================================================================== #
 
 
 class TestStageCommitOtsCorruptedCache:
+    def test_commit_halts_when_plan_digest_does_not_match_verified_digest(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        sd, _da, inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:commit-plan-mismatch",
+            sp_fake,
+            btc_fake,
+        )
+        other_sd, _other_da, other_inv_digest, _other_ots_bytes = (
+            _setup_at_inventory_upgraded(
+                runner,
+                empty_sha256_root,
+                staging,
+                "obj:commit-plan-other",
+                sp_fake,
+                btc_fake,
+            )
+        )
+        assert other_inv_digest != inv_digest
+        plan_path(sd).write_bytes(plan_path(other_sd).read_bytes())
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "commit",
+                "obj:commit-plan-mismatch",
+                "--allow-missing-metadata",
+            ),
+        )
+
+        assert r.exit_code == 5, r.output
+        out = (r.output or "").lower()
+        assert "does not match verified inventory digest" in out, r.output
+        assert "stage timestamp inventory" in out, r.output
+        assert "stage timestamp inventory --upgrade" in out, r.output
+
+        store = StagingStore(staging)
+        root_path = str(empty_sha256_root.resolve())
+        assert store.exists(root_path, "obj:commit-plan-mismatch")
+        sr = StorageRoot(LocalFS(empty_sha256_root))
+        assert not sr.get_object("obj:commit-plan-mismatch").exists
+
     def test_commit_halts_with_re_run_hint_on_commitment_mismatch(
         self,
         runner: CliRunner,

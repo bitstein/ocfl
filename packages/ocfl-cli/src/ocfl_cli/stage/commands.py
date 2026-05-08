@@ -874,6 +874,7 @@ def commit(
                 root_path=root_path,
                 object_id=object_id,
                 staging_dir=staging_dir,
+                allow_missing_metadata=allow_missing_metadata,
             )
         except PhaseError as e:
             exit_for_error(

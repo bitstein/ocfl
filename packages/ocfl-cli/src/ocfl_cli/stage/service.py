@@ -56,7 +56,7 @@ from ocfl_cli.stage.state import (
     with_lock,
 )
 from ocfl_lib.errors import OtsParseError
-from ocfl_lib.inventory import UserInfo
+from ocfl_lib.inventory import UserInfo, VersionInfo
 from ocfl_lib.ots import parse as parse_ots
 from ocfl_lib.update_plan import (
     ContentSource,
@@ -712,11 +712,35 @@ def require_staged_metadata(
         )
 
 
+def require_timestamped_plan_metadata(
+    version: VersionInfo, *, allow_missing_metadata: bool
+) -> None:
+    """Enforce required metadata on the immutable timestamped inventory plan."""
+    if allow_missing_metadata:
+        return
+    missing = missing_metadata_fields(_staged_metadata_from_version(version))
+    if missing:
+        fields = ", ".join(missing)
+        raise MissingStagedMetadataError(
+            f"timestamped inventory plan missing metadata: {fields} "
+            "(rerun stage timestamp inventory after fixing staged metadata, "
+            "or use --allow-missing-metadata to bypass)"
+        )
+
+
 def _version_user_from_staged(metadata: StagedMetadata) -> UserInfo | None:
     user = metadata.user
     if user is None or user.name is None:
         return None
     return UserInfo(name=user.name, address=user.address)
+
+
+def _staged_metadata_from_version(version: VersionInfo) -> StagedMetadata:
+    user = version.user
+    return StagedMetadata(
+        message=version.message,
+        user=None if user is None else StagedUser(name=user.name, address=user.address),
+    )
 
 
 def status_ots_dict(
@@ -1723,6 +1747,7 @@ def commit_ots(
     root_path: str,
     object_id: str,
     staging_dir: Path,
+    allow_missing_metadata: bool,
 ) -> None:
     """Complete deferred extension_files from cache, prepare + execute plan.
 
@@ -1753,6 +1778,18 @@ def commit_ots(
                     "run `stage timestamp inventory`"
                 )
             plan = deserialize(plan_path(staging_dir).read_bytes())
+            if plan.new_inv.digest != inv_digest:
+                raise AttestationMismatchError(
+                    f"inventory timestamp plan digest {plan.new_inv.digest} "
+                    f"does not match verified inventory digest {inv_digest}; "
+                    "re-run `stage timestamp inventory` and "
+                    "`stage timestamp inventory --upgrade`"
+                )
+            version = plan.new_inv.inventory.versions[plan.new_inv.inventory.head]
+            require_timestamped_plan_metadata(
+                version,
+                allow_missing_metadata=allow_missing_metadata,
+            )
 
             try:
                 inv_ots = ots_cache_path(staging_dir, inv_digest).read_bytes()
