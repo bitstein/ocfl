@@ -23,6 +23,7 @@ from ocfl_cli.archive.config import validate_digest_name
 from ocfl_cli.errors import (
     AttestationMismatchError,
     ConfigError,
+    LockTimeoutError,
     PhaseError,
     ReorgDetectedError,
     SimpleProofError,
@@ -31,6 +32,7 @@ from ocfl_cli.errors import (
 from ocfl_cli.stage import service, watch
 from ocfl_cli.stage.fsm import Phase
 from ocfl_cli.stage.ingest import ingest_file
+from ocfl_cli.stage.schemas import StagedMetadata
 from ocfl_cli.stage.state import has_ots, load_ots, save_ots, with_lock
 from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import DigestAlgorithm
@@ -261,6 +263,18 @@ def stage_callback(
 def new(
     ctx: typer.Context,
     object_id: Annotated[str, typer.Argument(help="Object ID to stage.")],
+    message: Annotated[
+        str | None,
+        typer.Option("-m", "--message", help="Version message metadata."),
+    ] = None,
+    name: Annotated[
+        str | None,
+        typer.Option("--name", help="Version user name metadata."),
+    ] = None,
+    address: Annotated[
+        str | None,
+        typer.Option("--address", help="Version user address metadata."),
+    ] = None,
     digest: Annotated[
         DigestOption | None,
         typer.Option("--digest", help="Digest algorithm (new objects only)."),
@@ -277,6 +291,14 @@ def new(
     from ocfl_cli.stage.state import OtsState
     from ocfl_lib.inventory_builder import InventoryBuilder
 
+    try:
+        metadata = service.staged_metadata_from_options(
+            message=message,
+            name=name,
+            address=address,
+        )
+    except service.MetadataInputError as e:
+        raise typer.BadParameter(str(e)) from None
     cfg = appctx.config(ctx)
     sp_cfg: SimpleProofConfig | None = None
     if ots:
@@ -316,12 +338,72 @@ def new(
         )
 
     store.create(root_path, object_id, inv)
+    if metadata != StagedMetadata():
+        store.save_metadata(root_path, object_id, metadata)
 
     if sp_cfg is not None:
         save_ots(
             store.staging_path(root_path, object_id),
             OtsState(phase=Phase.DRAFTING, category_id=sp_cfg.proof_category_id),
         )
+
+
+@stage_app.command()
+def metadata(
+    ctx: typer.Context,
+    object_id: Annotated[str, typer.Argument(help="Object ID.")],
+    message: Annotated[
+        str | None,
+        typer.Option("-m", "--message", help="Set version message metadata."),
+    ] = None,
+    name: Annotated[
+        str | None,
+        typer.Option("--name", help="Set version user name metadata."),
+    ] = None,
+    address: Annotated[
+        str | None,
+        typer.Option("--address", help="Set version user address metadata."),
+    ] = None,
+    clear_message: Annotated[
+        bool,
+        typer.Option("--clear-message", help="Clear version message metadata."),
+    ] = False,
+    clear_name: Annotated[
+        bool,
+        typer.Option("--clear-name", help="Clear version user name metadata."),
+    ] = False,
+    clear_address: Annotated[
+        bool,
+        typer.Option("--clear-address", help="Clear version user address metadata."),
+    ] = False,
+) -> None:
+    """Edit staged version metadata."""
+    resolved = require_existing_staging(ctx, object_id, hint="run 'stage new' first")
+    try:
+        service.validate_metadata_update_options(
+            message=message,
+            name=name,
+            address=address,
+            clear_message=clear_message,
+            clear_name=clear_name,
+            clear_address=clear_address,
+        )
+        with with_lock(resolved.staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+            service.update_metadata(
+                resolved.store,
+                resolved.root_path,
+                object_id,
+                message=message,
+                name=name,
+                address=address,
+                clear_message=clear_message,
+                clear_name=clear_name,
+                clear_address=clear_address,
+            )
+    except service.MetadataInputError as e:
+        raise typer.BadParameter(str(e)) from None
+    except LockTimeoutError as e:
+        exit_for_error(e)
 
 
 @stage_app.command()

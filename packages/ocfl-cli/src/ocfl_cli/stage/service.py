@@ -39,7 +39,7 @@ from ocfl_cli.ots.bitcoin import (
 from ocfl_cli.stage import store as _store_mod
 from ocfl_cli.stage.fsm import Phase, check_transition
 from ocfl_cli.stage.ingest import ingest_file
-from ocfl_cli.stage.schemas import NextActionKind
+from ocfl_cli.stage.schemas import NextActionKind, StagedMetadata, StagedUser
 from ocfl_cli.stage.state import (
     InventoryProof,
     OtsState,
@@ -126,6 +126,10 @@ class UpgradeContentResult:
     orphan_count: int = 0
 
 
+class MetadataInputError(ValueError):
+    """Invalid staged metadata CLI input."""
+
+
 # ---------------------------------------------------------------------------
 # Small workflow utilities.
 # ---------------------------------------------------------------------------
@@ -153,6 +157,116 @@ def _unverified(state: OtsState, digests: tuple[str, ...]) -> list[str]:
     return [
         d for d in digests if not state.content_proofs.get(d, VerifiedProof()).verified
     ]
+
+
+def _validate_metadata_input(value: str | None, *, field: str) -> str | None:
+    if value is not None and not value.strip():
+        raise MetadataInputError(f"staged metadata {field} cannot be empty")
+    return value
+
+
+def _check_metadata_conflict(
+    *,
+    field: str,
+    value: str | None,
+    clear: bool,
+) -> None:
+    if value is not None and clear:
+        raise MetadataInputError(f"--{field} is incompatible with --clear-{field}")
+
+
+def _compact_user(name: str | None, address: str | None) -> StagedUser | None:
+    if name is None and address is None:
+        return None
+    return StagedUser(name=name, address=address)
+
+
+def staged_metadata_from_options(
+    *,
+    message: str | None,
+    name: str | None,
+    address: str | None,
+) -> StagedMetadata:
+    """Build staged metadata from initial CLI options."""
+    message = _validate_metadata_input(message, field="message")
+    name = _validate_metadata_input(name, field="user.name")
+    address = _validate_metadata_input(address, field="user.address")
+    return StagedMetadata(
+        message=message,
+        user=_compact_user(name, address),
+    )
+
+
+def validate_metadata_update_options(
+    *,
+    message: str | None,
+    name: str | None,
+    address: str | None,
+    clear_message: bool,
+    clear_name: bool,
+    clear_address: bool,
+) -> None:
+    """Validate staged metadata update options without reading staging state."""
+    _check_metadata_conflict(field="message", value=message, clear=clear_message)
+    _check_metadata_conflict(field="name", value=name, clear=clear_name)
+    _check_metadata_conflict(field="address", value=address, clear=clear_address)
+
+    _validate_metadata_input(message, field="message")
+    _validate_metadata_input(name, field="user.name")
+    _validate_metadata_input(address, field="user.address")
+
+
+def update_metadata(
+    store: StagingStore,
+    root_path: str,
+    object_id: str,
+    *,
+    message: str | None,
+    name: str | None,
+    address: str | None,
+    clear_message: bool,
+    clear_name: bool,
+    clear_address: bool,
+) -> StagedMetadata:
+    """Apply set/update/clear semantics to staged metadata and persist it."""
+    validate_metadata_update_options(
+        message=message,
+        name=name,
+        address=address,
+        clear_message=clear_message,
+        clear_name=clear_name,
+        clear_address=clear_address,
+    )
+
+    current = store.load_metadata(root_path, object_id)
+    current_name = current.user.name if current.user is not None else None
+    current_address = current.user.address if current.user is not None else None
+
+    next_message = current.message
+    if clear_message:
+        next_message = None
+    if message is not None:
+        next_message = message
+
+    next_name = current_name
+    if clear_name:
+        next_name = None
+    if name is not None:
+        next_name = name
+
+    next_address = current_address
+    if clear_address or (clear_name and address is None):
+        next_address = None
+    if address is not None:
+        next_address = address
+
+    updated = replace(
+        current,
+        message=next_message,
+        user=_compact_user(next_name, next_address),
+    )
+    store.save_metadata(root_path, object_id, updated)
+    return updated
 
 
 def compute_in_sync(info: BlockchainInfo) -> bool:
