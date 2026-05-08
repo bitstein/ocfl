@@ -665,6 +665,14 @@ def _render_status_section(title: str, *, leading_blank: bool = False) -> None:
     _style.echo(_style.key(f"{title}:"))
 
 
+def _render_metadata_status(
+    data: dict[str, str], *, leading_blank: bool = False
+) -> None:
+    _render_status_section("Metadata", leading_blank=leading_blank)
+    for field in ("message", "user.name", "user.address"):
+        typer.echo(f"  {field}: {data[field]}")
+
+
 def _plural(n: int, singular: str, plural: str | None = None) -> str:
     return singular if n == 1 else (plural or f"{singular}s")
 
@@ -722,6 +730,8 @@ def _render_status_ots(data: dict) -> None:
         _render_status_diff({"changes": data["changes"]})
     else:
         typer.echo("  no staged changes")
+
+    _render_metadata_status(data["metadata"], leading_blank=True)
 
     _render_status_section("Workflow", leading_blank=True)
     counts = data["counts"]
@@ -793,6 +803,9 @@ def status(
             output_json(data)
         else:
             _render_status_diff(data)
+            _render_metadata_status(
+                data["metadata"], leading_blank=bool(data["changes"])
+            )
 
 
 # ---------------------------------------------------------------------------

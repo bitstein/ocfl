@@ -616,6 +616,23 @@ def _build_bitcoin_section(
     }
 
 
+def metadata_status_dict(
+    store: StagingStore, root_path: str, object_id: str
+) -> dict[str, str]:
+    """Return present/missing state for required staged metadata fields."""
+    metadata = store.load_metadata(root_path, object_id)
+    user = metadata.user
+    return {
+        "message": "present" if metadata.message is not None else "missing",
+        "user.name": "present"
+        if user is not None and user.name is not None
+        else "missing",
+        "user.address": "present"
+        if user is not None and user.address is not None
+        else "missing",
+    }
+
+
 def status_ots_dict(
     cfg: Config | None,
     store: StagingStore,
@@ -635,12 +652,14 @@ def status_ots_dict(
     has_files = counts["total"] > 0
 
     kind, human = next_action_for(state, has_files)
+    diff = status_diff_dict(store, root_path, object_id)
 
     return {
         "schema_version": 1,
         "extension": "NNNN-ots-timestamps",
         "phase": state.phase.value,
-        "changes": status_diff_dict(store, root_path, object_id)["changes"],
+        "changes": diff["changes"],
+        "metadata": diff["metadata"],
         "counts": counts,
         "outstanding_jobs": _build_outstanding_jobs(state, _status_now()),
         "bitcoin": _build_bitcoin_section(cfg, btc_factory),
@@ -704,7 +723,11 @@ def status_diff_dict(
 
     changes.sort(key=lambda c: c["path"])
 
-    return {"extension": None, "changes": changes}
+    return {
+        "extension": None,
+        "changes": changes,
+        "metadata": metadata_status_dict(store, root_path, object_id),
+    }
 
 
 # ---------------------------------------------------------------------------

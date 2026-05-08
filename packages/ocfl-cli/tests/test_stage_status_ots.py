@@ -240,6 +240,96 @@ class TestStageStatusOts:
         assert data["phase"] == Phase.DRAFTING.value
         assert data["next_action_kind"] == "add_content"
         assert data["counts"]["total"] == 0
+        assert data["metadata"] == {
+            "message": "missing",
+            "user.name": "missing",
+            "user.address": "missing",
+        }
+
+    def test_status_ots_shows_staged_metadata_state(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "new",
+                "obj:s-metadata",
+                "--ots",
+                "--name",
+                "Alice",
+                "--address",
+                "mailto:alice@example.org",
+            ),
+        )
+        assert r.exit_code == 0, r.output
+
+        r = runner.invoke(
+            app, _stage_args(empty_sha256_root, staging, "status", "obj:s-metadata")
+        )
+
+        assert r.exit_code == 0, r.output
+        assert "Metadata:" in r.output
+        assert "message: missing" in r.output
+        assert "user.name: present" in r.output
+        assert "user.address: present" in r.output
+
+    def test_status_ots_json_shows_partial_staged_metadata_state(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "new",
+                "obj:s-metadata-json",
+                "--ots",
+                "--name",
+                "Alice",
+                "--address",
+                "mailto:alice@example.org",
+            ),
+        )
+        assert r.exit_code == 0, r.output
+
+        r = runner.invoke(
+            app,
+            _stage_args_json(
+                empty_sha256_root, staging, "status", "obj:s-metadata-json"
+            ),
+        )
+
+        assert r.exit_code == 0, r.output
+        data = json.loads(r.output)
+        assert data["metadata"] == {
+            "message": "missing",
+            "user.name": "present",
+            "user.address": "present",
+        }
 
     # ---- 2. drafting, with files → timestamp_content ----
     def test_status_drafting_with_files_next_action_timestamp_content(
@@ -791,9 +881,11 @@ class TestStageStatusOts:
         assert r.exit_code == 0, r.output
         out = r.output
         assert "Object:" in out
+        assert "Metadata:" in out
         assert "Workflow:" in out
         assert "Network:" in out
-        assert "a.txt\n\nWorkflow:" in out
+        assert "a.txt\n\nMetadata:" in out
+        assert "user.address: missing\n\nWorkflow:" in out
         assert "Next: stage timestamp content --upgrade" in out
         assert "Network:\n  Bitcoin:" in out
         assert "A a.txt" in out

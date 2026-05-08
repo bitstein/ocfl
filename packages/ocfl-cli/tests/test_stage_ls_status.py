@@ -133,9 +133,76 @@ class TestStageStatus:
         assert isinstance(data, dict)
         assert data["extension"] is None
         assert isinstance(data["changes"], list)
+        assert data["metadata"] == {
+            "message": "missing",
+            "user.name": "missing",
+            "user.address": "missing",
+        }
         for entry in data["changes"]:
             assert "path" in entry
             assert "action" in entry
+
+    def test_status_shows_staged_metadata_state(self, runner, storage_root, tmp_path):
+        staging = tmp_path / "staging"
+        result = _invoke(
+            runner,
+            storage_root,
+            staging,
+            "new",
+            "obj:metadata",
+            "-m",
+            "Initial deposit",
+            "--name",
+            "Alice",
+        )
+        assert result.exit_code == 0, result.output
+
+        result = _invoke(runner, storage_root, staging, "status", "obj:metadata")
+
+        assert result.exit_code == 0, result.output
+        assert "Metadata:" in result.output
+        assert "message: present" in result.output
+        assert "user.name: present" in result.output
+        assert "user.address: missing" in result.output
+
+    def test_status_json_shows_partial_staged_metadata_state(
+        self, runner, storage_root, tmp_path
+    ):
+        staging = tmp_path / "staging"
+        result = _invoke(
+            runner,
+            storage_root,
+            staging,
+            "new",
+            "obj:metadata-json",
+            "-m",
+            "Initial deposit",
+            "--name",
+            "Alice",
+        )
+        assert result.exit_code == 0, result.output
+
+        result = runner.invoke(
+            app,
+            [
+                "--root",
+                str(storage_root),
+                "--json",
+                "stage",
+                "--staging-root",
+                str(staging),
+                "status",
+                "obj:metadata-json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["metadata"] == {
+            "message": "present",
+            "user.name": "present",
+            "user.address": "missing",
+        }
 
     def test_status_no_staging_errors(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"
