@@ -4,6 +4,7 @@ import threading
 import time
 from unittest.mock import patch
 
+import filelock
 import pytest
 from typer.testing import CliRunner
 
@@ -27,6 +28,22 @@ def _invoke(runner, storage_root, staging, *args):
     )
 
 
+def _new_with_metadata(runner, storage_root, staging, object_id):
+    return _invoke(
+        runner,
+        storage_root,
+        staging,
+        "new",
+        object_id,
+        "-m",
+        "staged version",
+        "--name",
+        "Alice",
+        "--address",
+        "mailto:alice@example.org",
+    )
+
+
 class TestStageCommit:
     def test_full_workflow(self, runner, storage_root, tmp_path):
         """stage new → stage add → stage commit produces valid object."""
@@ -34,17 +51,9 @@ class TestStageCommit:
         src = tmp_path / "hello.txt"
         src.write_text("hello world")
 
-        _invoke(runner, storage_root, staging, "new", "obj:committed")
+        _new_with_metadata(runner, storage_root, staging, "obj:committed")
         _invoke(runner, storage_root, staging, "add", "obj:committed", str(src))
-        result = _invoke(
-            runner,
-            storage_root,
-            staging,
-            "commit",
-            "obj:committed",
-            "-m",
-            "first version",
-        )
+        result = _invoke(runner, storage_root, staging, "commit", "obj:committed")
         assert result.exit_code == 0, result.output
 
         # Verify object exists in storage root
@@ -53,6 +62,11 @@ class TestStageCommit:
         obj = sr.get_object("obj:committed")
         assert obj.exists
         assert obj.head.number == 1
+        vi = obj.version_info(obj.head)
+        assert vi.message == "staged version"
+        assert vi.user is not None
+        assert vi.user.name == "Alice"
+        assert vi.user.address == "mailto:alice@example.org"
 
         # Verify staging was purged
         store = StagingStore(staging)
@@ -65,17 +79,9 @@ class TestStageCommit:
         src = tmp_path / "extra.txt"
         src.write_text("extra content")
 
-        _invoke(runner, storage_root, staging, "new", "obj:test")
+        _new_with_metadata(runner, storage_root, staging, "obj:test")
         _invoke(runner, storage_root, staging, "add", "obj:test", str(src))
-        result = _invoke(
-            runner,
-            storage_root,
-            staging,
-            "commit",
-            "obj:test",
-            "-m",
-            "v3",
-        )
+        result = _invoke(runner, storage_root, staging, "commit", "obj:test")
         assert result.exit_code == 0, result.output
 
         fs = LocalFS(storage_root)
@@ -89,7 +95,7 @@ class TestStageCommit:
         src = tmp_path / "data.txt"
         src.write_text("original")
 
-        _invoke(runner, storage_root, staging, "new", "obj:stale")
+        _new_with_metadata(runner, storage_root, staging, "obj:stale")
         _invoke(runner, storage_root, staging, "add", "obj:stale", str(src))
 
         # Modify file after staging (change content but preserve path)
@@ -111,7 +117,7 @@ class TestStageCommit:
         src = tmp_path / "gone.txt"
         src.write_text("will be deleted")
 
-        _invoke(runner, storage_root, staging, "new", "obj:missing")
+        _new_with_metadata(runner, storage_root, staging, "obj:missing")
         _invoke(runner, storage_root, staging, "add", "obj:missing", str(src))
 
         src.unlink()
@@ -125,26 +131,14 @@ class TestStageCommit:
         assert store.exists(root_path, "obj:missing")
 
     def test_commit_with_user(self, runner, storage_root, tmp_path):
-        """Commit with --name and --address."""
+        """Commit uses staged user metadata."""
         staging = tmp_path / "staging"
         src = tmp_path / "file.txt"
         src.write_text("content")
 
-        _invoke(runner, storage_root, staging, "new", "obj:user")
+        _new_with_metadata(runner, storage_root, staging, "obj:user")
         _invoke(runner, storage_root, staging, "add", "obj:user", str(src))
-        result = _invoke(
-            runner,
-            storage_root,
-            staging,
-            "commit",
-            "obj:user",
-            "-m",
-            "with user",
-            "--name",
-            "Alice",
-            "--address",
-            "mailto:alice@example.org",
-        )
+        result = _invoke(runner, storage_root, staging, "commit", "obj:user")
         assert result.exit_code == 0, result.output
 
         fs = LocalFS(storage_root)
@@ -154,6 +148,111 @@ class TestStageCommit:
         assert vi.user is not None
         assert vi.user.name == "Alice"
         assert vi.user.address == "mailto:alice@example.org"
+
+    def test_commit_uses_metadata_command_updates(self, runner, storage_root, tmp_path):
+        staging = tmp_path / "staging"
+        src = tmp_path / "file.txt"
+        src.write_text("content")
+
+        _invoke(runner, storage_root, staging, "new", "obj:metadata-command")
+        _invoke(
+            runner,
+            storage_root,
+            staging,
+            "metadata",
+            "obj:metadata-command",
+            "-m",
+            "reviewed metadata",
+            "--name",
+            "Bob",
+            "--address",
+            "mailto:bob@example.org",
+        )
+        _invoke(runner, storage_root, staging, "add", "obj:metadata-command", str(src))
+
+        result = _invoke(
+            runner, storage_root, staging, "commit", "obj:metadata-command"
+        )
+
+        assert result.exit_code == 0, result.output
+        obj = StorageRoot(LocalFS(storage_root)).get_object("obj:metadata-command")
+        vi = obj.version_info(obj.head)
+        assert vi.message == "reviewed metadata"
+        assert vi.user is not None
+        assert vi.user.name == "Bob"
+        assert vi.user.address == "mailto:bob@example.org"
+
+    def test_missing_staged_metadata_blocks_commit(
+        self, runner, storage_root, tmp_path
+    ):
+        staging = tmp_path / "staging"
+        src = tmp_path / "file.txt"
+        src.write_text("content")
+
+        _invoke(runner, storage_root, staging, "new", "obj:missing-meta")
+        _invoke(runner, storage_root, staging, "add", "obj:missing-meta", str(src))
+
+        result = _invoke(runner, storage_root, staging, "commit", "obj:missing-meta")
+
+        assert result.exit_code == 1
+        assert "missing staged metadata" in result.output.lower()
+        assert "message" in result.output
+        assert "user.name" in result.output
+        assert "user.address" in result.output
+
+    def test_allow_missing_metadata_bypasses_metadata_gate(
+        self, runner, storage_root, tmp_path
+    ):
+        staging = tmp_path / "staging"
+        src = tmp_path / "file.txt"
+        src.write_text("content")
+
+        _invoke(runner, storage_root, staging, "new", "obj:allow-meta")
+        _invoke(runner, storage_root, staging, "add", "obj:allow-meta", str(src))
+
+        result = _invoke(
+            runner,
+            storage_root,
+            staging,
+            "commit",
+            "obj:allow-meta",
+            "--allow-missing-metadata",
+        )
+
+        assert result.exit_code == 0, result.output
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ("-m", "late metadata"),
+            ("--message", "late metadata"),
+            ("--name", "Alice"),
+            ("--address", "mailto:alice@example.org"),
+            ("--created", "2026-05-08T00:00:00Z"),
+        ],
+    )
+    def test_commit_rejects_removed_commit_time_metadata_options(
+        self, runner, storage_root, tmp_path, args
+    ):
+        staging = tmp_path / "staging"
+        assert (
+            _new_with_metadata(
+                runner, storage_root, staging, "obj:no-commit-metadata"
+            ).exit_code
+            == 0
+        )
+
+        result = _invoke(
+            runner,
+            storage_root,
+            staging,
+            "commit",
+            "obj:no-commit-metadata",
+            *args,
+        )
+
+        assert result.exit_code == 2
+        assert "no such option" in result.output.lower()
 
     def test_no_staging_errors(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"
@@ -168,7 +267,7 @@ class TestSignalHandling:
         src = tmp_path / "file.txt"
         src.write_text("content")
 
-        _invoke(runner, storage_root, staging, "new", "obj:interrupted")
+        _new_with_metadata(runner, storage_root, staging, "obj:interrupted")
         _invoke(runner, storage_root, staging, "add", "obj:interrupted", str(src))
 
         with patch(
@@ -185,7 +284,7 @@ class TestSignalHandling:
         src = tmp_path / "file.txt"
         src.write_text("content")
 
-        _invoke(runner, storage_root, staging, "new", "obj:retry")
+        _new_with_metadata(runner, storage_root, staging, "obj:retry")
         _invoke(runner, storage_root, staging, "add", "obj:retry", str(src))
 
         with patch(
@@ -205,7 +304,7 @@ class TestSignalHandling:
         src = tmp_path / "file.txt"
         src.write_text("content")
 
-        _invoke(runner, storage_root, staging, "new", "obj:clean")
+        _new_with_metadata(runner, storage_root, staging, "obj:clean")
         _invoke(runner, storage_root, staging, "add", "obj:clean", str(src))
 
         with patch(
@@ -224,7 +323,7 @@ class TestSignalHandling:
         src = tmp_path / "file.txt"
         src.write_text("content")
 
-        _invoke(runner, storage_root, staging, "new", "obj:retried")
+        _new_with_metadata(runner, storage_root, staging, "obj:retried")
         _invoke(runner, storage_root, staging, "add", "obj:retried", str(src))
 
         # First attempt: interrupted
@@ -234,9 +333,7 @@ class TestSignalHandling:
             _invoke(runner, storage_root, staging, "commit", "obj:retried")
 
         # Retry succeeds
-        result = _invoke(
-            runner, storage_root, staging, "commit", "obj:retried", "-m", "retry"
-        )
+        result = _invoke(runner, storage_root, staging, "commit", "obj:retried")
         assert result.exit_code == 0, result.output
 
         fs = LocalFS(storage_root)
@@ -254,7 +351,7 @@ class TestCrashRecovery:
         src = tmp_path / "file.txt"
         src.write_text("content")
 
-        _invoke(runner, storage_root, staging, "new", oid)
+        _new_with_metadata(runner, storage_root, staging, oid)
         _invoke(runner, storage_root, staging, "add", oid, str(src))
 
         with (
@@ -281,7 +378,7 @@ class TestCrashRecovery:
         sr = StorageRoot(fs)
         assert not sr.get_object(oid).exists
 
-        result = _invoke(runner, storage_root, staging, "commit", oid, "-m", "retry")
+        result = _invoke(runner, storage_root, staging, "commit", oid)
         assert result.exit_code == 0, result.output
 
         obj = sr.get_object(oid)
@@ -318,6 +415,12 @@ class TestCommitLocking:
             with guard:
                 current -= 1
 
+        store = StagingStore(tmp_path / "staging")
+        root_path = str(tmp_path / "root")
+        object_id = "obj:locked"
+        staging_dir = store.staging_path(root_path, object_id)
+        staging_dir.mkdir(parents=True)
+
         with (
             patch(
                 "ocfl_cli.stage.service.build_inventory_plan",
@@ -334,11 +437,10 @@ class TestCommitLocking:
                         "sr": object(),
                         "fs": object(),
                         "obj_dir": "obj",
-                        "root_path": str(tmp_path / "root"),
-                        "object_id": "obj:locked",
-                        "message": None,
-                        "user": None,
-                        "created": None,
+                        "root_path": root_path,
+                        "object_id": object_id,
+                        "staging_dir": staging_dir,
+                        "allow_missing_metadata": True,
                     },
                     daemon=True,
                 )
@@ -352,6 +454,62 @@ class TestCommitLocking:
         assert all(not thread.is_alive() for thread in threads)
         assert peak == 1
 
+    def test_bare_commit_holds_staging_lock_until_purge(
+        self, runner, storage_root, tmp_path, monkeypatch
+    ):
+        oid = "obj:locked-metadata"
+        staging = tmp_path / "staging"
+        src = tmp_path / "file.txt"
+        src.write_text("content")
+
+        _new_with_metadata(runner, storage_root, staging, oid)
+        _invoke(runner, storage_root, staging, "add", oid, str(src))
+
+        store = StagingStore(staging)
+        root_path = str(storage_root.resolve())
+        staging_dir = store.staging_path(root_path, oid)
+        original_purge = StagingStore.purge
+        observed_lock = False
+
+        def assert_locked_during_purge(self, root_path_arg, object_id_arg):
+            nonlocal observed_lock
+            sibling = filelock.FileLock(str(staging_dir / ".lock"))
+            with pytest.raises(filelock.Timeout):
+                sibling.acquire(timeout=0)
+            observed_lock = True
+            return original_purge(self, root_path_arg, object_id_arg)
+
+        monkeypatch.setattr(StagingStore, "purge", assert_locked_during_purge)
+
+        result = _invoke(runner, storage_root, staging, "commit", oid)
+
+        assert result.exit_code == 0, result.output
+        assert observed_lock
+        assert not staging_dir.exists()
+
+    def test_bare_commit_reports_staging_lock_timeout(
+        self, runner, storage_root, tmp_path, monkeypatch
+    ):
+        oid = "obj:lock-timeout"
+        staging = tmp_path / "staging"
+        src = tmp_path / "file.txt"
+        src.write_text("content")
+
+        _new_with_metadata(runner, storage_root, staging, oid)
+        _invoke(runner, storage_root, staging, "add", oid, str(src))
+
+        store = StagingStore(staging)
+        root_path = str(storage_root.resolve())
+        staging_dir = store.staging_path(root_path, oid)
+        monkeypatch.setattr(service, "_LOCK_TIMEOUT_SECONDS", 0.01)
+
+        with filelock.FileLock(str(staging_dir / ".lock")).acquire(timeout=1):
+            result = _invoke(runner, storage_root, staging, "commit", oid)
+
+        assert result.exit_code == 4
+        assert "lock" in result.output.lower()
+        assert store.exists(root_path, oid)
+
     def test_stale_head_preserves_staging_for_retry(
         self, runner, storage_root, tmp_path
     ):
@@ -361,7 +519,7 @@ class TestCommitLocking:
         src = tmp_path / "file.txt"
         src.write_text("content")
 
-        _invoke(runner, storage_root, staging, "new", oid)
+        _new_with_metadata(runner, storage_root, staging, oid)
         _invoke(runner, storage_root, staging, "add", oid, str(src))
 
         stale = StaleHeadError(

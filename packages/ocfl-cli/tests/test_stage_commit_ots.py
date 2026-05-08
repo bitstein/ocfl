@@ -157,9 +157,7 @@ class TestStageCommitOtsHappyPath:
 
         r = runner.invoke(
             app,
-            _stage_args(
-                empty_sha256_root, staging, "commit", "obj:commit-ok", "-m", "v1"
-            ),
+            _stage_args(empty_sha256_root, staging, "commit", "obj:commit-ok"),
         )
         assert r.exit_code == 0, r.output
 
@@ -226,8 +224,6 @@ class TestStageCommitOtsCorruptedCache:
                 staging,
                 "commit",
                 "obj:commit-corrupt",
-                "-m",
-                "v1",
             ),
         )
         assert r.exit_code == 5, r.output
@@ -277,8 +273,6 @@ class TestStageCommitOtsMissingCache:
                 staging,
                 "commit",
                 "obj:commit-missing",
-                "-m",
-                "v1",
             ),
         )
         assert r.exit_code == 5, r.output
@@ -330,8 +324,6 @@ class TestStageCommitOtsKeyboardInterrupt:
                     staging,
                     "commit",
                     "obj:commit-sigint",
-                    "-m",
-                    "v1",
                 ),
             )
 
@@ -395,8 +387,6 @@ class TestStageCommitOtsCrashRecovery:
                     staging,
                     "commit",
                     "obj:commit-crash",
-                    "-m",
-                    "v1",
                 ),
             )
         assert r1.exit_code == 1, r1.output
@@ -412,9 +402,7 @@ class TestStageCommitOtsCrashRecovery:
         # --- Round 2: real run converges ---
         r2 = runner.invoke(
             app,
-            _stage_args(
-                empty_sha256_root, staging, "commit", "obj:commit-crash", "-m", "v1"
-            ),
+            _stage_args(empty_sha256_root, staging, "commit", "obj:commit-crash"),
         )
         assert r2.exit_code == 0, r2.output
 
@@ -455,7 +443,21 @@ class TestStageCommitNonOtsRegression:
         src = tmp_path / "hello.txt"
         src.write_text("hello world")
 
-        runner.invoke(app, _stage_args(storage_root, staging, "new", "obj:committed"))
+        runner.invoke(
+            app,
+            _stage_args(
+                storage_root,
+                staging,
+                "new",
+                "obj:committed",
+                "-m",
+                "first version",
+                "--name",
+                "Alice",
+                "--address",
+                "mailto:alice@example.org",
+            ),
+        )
         runner.invoke(
             app,
             _stage_args(storage_root, staging, "add", "obj:committed", str(src)),
@@ -473,8 +475,6 @@ class TestStageCommitNonOtsRegression:
                 staging,
                 "commit",
                 "obj:committed",
-                "-m",
-                "first version",
             ),
         )
         assert result.exit_code == 0, result.output

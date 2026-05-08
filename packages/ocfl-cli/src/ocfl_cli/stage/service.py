@@ -55,6 +55,7 @@ from ocfl_cli.stage.state import (
     with_lock,
 )
 from ocfl_lib.errors import OtsParseError
+from ocfl_lib.inventory import UserInfo
 from ocfl_lib.ots import parse as parse_ots
 from ocfl_lib.update_plan import (
     ContentSource,
@@ -631,6 +632,41 @@ def metadata_status_dict(
         if user is not None and user.address is not None
         else "missing",
     }
+
+
+def missing_metadata_fields(metadata: StagedMetadata) -> list[str]:
+    """Return required staged metadata fields that are not present."""
+    user = metadata.user
+    missing: list[str] = []
+    if metadata.message is None:
+        missing.append("message")
+    if user is None or user.name is None:
+        missing.append("user.name")
+    if user is None or user.address is None:
+        missing.append("user.address")
+    return missing
+
+
+def require_staged_metadata(
+    metadata: StagedMetadata, *, allow_missing_metadata: bool
+) -> None:
+    """Enforce required staged metadata unless the caller explicitly bypasses."""
+    if allow_missing_metadata:
+        return
+    missing = missing_metadata_fields(metadata)
+    if missing:
+        fields = ", ".join(missing)
+        raise CommitFailedError(
+            f"missing staged metadata: {fields} "
+            "(use --allow-missing-metadata to bypass)"
+        )
+
+
+def _version_user_from_staged(metadata: StagedMetadata) -> UserInfo | None:
+    user = metadata.user
+    if user is None or user.name is None:
+        return None
+    return UserInfo(name=user.name, address=user.address)
 
 
 def status_ots_dict(
@@ -1583,20 +1619,23 @@ def commit_bare(
     obj_dir: str,
     root_path: str,
     object_id: str,
-    message: str | None,
-    user: object | None,
-    created: str | None,
+    staging_dir: Path,
+    allow_missing_metadata: bool,
 ) -> None:
     """`stage commit` (non-OTS path): build plan, prepare, execute, purge."""
-    with _object_commit_lock(root_path, object_id):
+    with (
+        _object_commit_lock(root_path, object_id),
+        with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS),
+    ):
+        metadata = store.load_metadata(root_path, object_id)
+        require_staged_metadata(metadata, allow_missing_metadata=allow_missing_metadata)
         plan, content_source = build_inventory_plan(
             store,
             sr,
             root_path,
             object_id,
-            message=message,
-            user=user,
-            created=created,
+            message=metadata.message,
+            user=_version_user_from_staged(metadata),
         )
         prepare_steps(plan, fs, obj_dir, content_source)
 

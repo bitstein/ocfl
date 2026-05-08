@@ -817,20 +817,16 @@ def status(
 def commit(
     ctx: typer.Context,
     object_id: Annotated[str, typer.Argument(help="Object ID.")],
-    message: Annotated[
-        str | None, typer.Option("-m", "--message", help="Version message.")
-    ] = None,
-    name: Annotated[str | None, typer.Option("--name", help="Creator name.")] = None,
-    address: Annotated[
-        str | None, typer.Option("--address", help="Creator address.")
-    ] = None,
-    created: Annotated[
-        str | None, typer.Option("--created", help="Created timestamp (ISO 8601).")
-    ] = None,
+    allow_missing_metadata: Annotated[
+        bool,
+        typer.Option(
+            "--allow-missing-metadata",
+            help="Commit even when staged version metadata is incomplete.",
+        ),
+    ] = False,
 ) -> None:
     """Commit staged changes to the storage root."""
     from ocfl_cli.stage.state import plan_path
-    from ocfl_lib.inventory import UserInfo
 
     sr, fs = open_root(appctx.root(ctx))
     resolved = require_existing_staging(ctx, object_id)
@@ -867,10 +863,6 @@ def commit(
             exit_for_error(e)
         return
 
-    user = None
-    if name:
-        user = UserInfo(name=name, address=address)
-
     try:
         service.commit_bare(
             store=store,
@@ -879,11 +871,14 @@ def commit(
             obj_dir=obj._path,
             root_path=root_path,
             object_id=object_id,
-            message=message,
-            user=user,
-            created=created,
+            staging_dir=staging_dir,
+            allow_missing_metadata=allow_missing_metadata,
         )
-    except (service.StagingFileMissingError, service.StagingFileChangedError) as e:
+    except (
+        service.StagingFileMissingError,
+        service.StagingFileChangedError,
+        LockTimeoutError,
+    ) as e:
         exit_for_error(e)
     except service.CommitFailedError as e:
         exit_for_error(e)
