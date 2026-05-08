@@ -625,9 +625,7 @@ def _render_content_upgrade_result(
     if result.previous_phase is result.phase:
         typer.echo(f"  Phase: {result.phase.value}")
     else:
-        typer.echo(
-            f"  Phase: {result.previous_phase.value} -> {result.phase.value}"
-        )
+        typer.echo(f"  Phase: {result.previous_phase.value} -> {result.phase.value}")
     next_action = (
         "stage timestamp inventory"
         if result.phase is Phase.CONTENT_UPGRADED

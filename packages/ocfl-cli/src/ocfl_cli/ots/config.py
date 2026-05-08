@@ -38,12 +38,7 @@ def _is_private_host(host: str) -> bool:
         ip = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
         return host.lower().endswith(_PRIVATE_HOST_SUFFIXES)
-    return (
-        ip.is_loopback
-        or ip.is_private
-        or ip.is_link_local
-        or ip in _TAILSCALE_CGNAT
-    )
+    return ip.is_loopback or ip.is_private or ip.is_link_local or ip in _TAILSCALE_CGNAT
 
 
 def _validate_http_url(value: str) -> str:

@@ -187,8 +187,11 @@ def _inventory_watch_loop(
                         if height_jumped or tip_changed_at_stable:
                             sp = sp_factory(cfg)
                             state = load_ots(staging_dir)
+                            category_id = service.apply_category_id(
+                                state, cfg.simpleproof.proof_category_id
+                            )
                             state = service._inventory_reverify_existing_proof(
-                                state, btc, sp, staging_dir, min_confs
+                                state, btc, sp, staging_dir, min_confs, category_id
                             )
                             save_ots(staging_dir, state)
                         before = load_ots(staging_dir)

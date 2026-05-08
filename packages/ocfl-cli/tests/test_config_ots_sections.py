@@ -256,8 +256,7 @@ class TestRpcAuth:
     ) -> None:
         env_file = _write(
             tmp_path / ".env",
-            "SIMPLEPROOF_ACCESS_TOKEN=dot-token\n"
-            "SIMPLEPROOF_API_KEY=dot-key\n",
+            "SIMPLEPROOF_ACCESS_TOKEN=dot-token\nSIMPLEPROOF_API_KEY=dot-key\n",
         )
         os.chmod(env_file, 0o600)
         monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
