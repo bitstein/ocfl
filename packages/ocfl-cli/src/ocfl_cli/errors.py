@@ -49,6 +49,10 @@ class LockTimeoutError(StagingError):
     """Could not acquire the staging lock within the allowed timeout."""
 
 
+class MissingStagedMetadataError(StagingError):
+    """Required staged version metadata is absent."""
+
+
 class CommitFailedError(StagingError):
     """Plan execution failed; staging was preserved for retry."""
 

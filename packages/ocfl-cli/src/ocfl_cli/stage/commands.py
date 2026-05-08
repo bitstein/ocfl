@@ -24,6 +24,7 @@ from ocfl_cli.errors import (
     AttestationMismatchError,
     ConfigError,
     LockTimeoutError,
+    MissingStagedMetadataError,
     PhaseError,
     ReorgDetectedError,
     SimpleProofError,
@@ -135,6 +136,26 @@ def validate_timestamp_flags(
                 raise typer.Exit(2)
     if watch and not upgrade:
         err(f"'{command} --watch' requires --upgrade")
+        raise typer.Exit(2)
+
+
+def validate_inventory_metadata_flag(
+    ctx: typer.Context,
+    *,
+    upgrade: bool,
+    watch: bool,
+    retry: bool,
+    allow_missing_metadata: bool,
+) -> None:
+    """Reject metadata-bypass flag in inventory modes where it has no effect."""
+    if not allow_missing_metadata:
+        return
+    if upgrade or watch or retry:
+        command = appctx.command_path(ctx)
+        err(
+            f"'{command} --allow-missing-metadata' is only valid when submitting "
+            "an inventory timestamp"
+        )
         raise typer.Exit(2)
 
 
@@ -859,6 +880,8 @@ def commit(
             )
         except AttestationMismatchError as e:
             exit_for_error(e)
+        except MissingStagedMetadataError as e:
+            exit_for_error(e)
         except service.CommitFailedError as e:
             exit_for_error(e)
         return
@@ -879,6 +902,8 @@ def commit(
         service.StagingFileChangedError,
         LockTimeoutError,
     ) as e:
+        exit_for_error(e)
+    except MissingStagedMetadataError as e:
         exit_for_error(e)
     except service.CommitFailedError as e:
         exit_for_error(e)
@@ -1052,6 +1077,13 @@ def timestamp_inventory(
         bool,
         typer.Option("--retry", help="Re-POST inventory digest at inventory-pending."),
     ] = False,
+    allow_missing_metadata: Annotated[
+        bool,
+        typer.Option(
+            "--allow-missing-metadata",
+            help="Timestamp inventory even when staged version metadata is incomplete.",
+        ),
+    ] = False,
 ) -> None:
     """Build inventory, submit its digest to SimpleProof, serialize plan."""
     preflight = require_timestamp_preflight(
@@ -1060,6 +1092,13 @@ def timestamp_inventory(
         upgrade=upgrade,
         watch=watch_flag,
         retry=retry,
+    )
+    validate_inventory_metadata_flag(
+        ctx,
+        upgrade=upgrade,
+        watch=watch_flag,
+        retry=retry,
+        allow_missing_metadata=allow_missing_metadata,
     )
     cfg = preflight.cfg
     resolved = preflight.resolved
@@ -1129,9 +1168,12 @@ def timestamp_inventory(
                 object_id,
                 resolved.staging_dir,
                 sp_factory=preflight.sp_factory,
+                allow_missing_metadata=allow_missing_metadata,
             )
         except PhaseError as e:
             exit_for_error(e, message=f"{e}; run 'stage timestamp content' first")
+        except MissingStagedMetadataError as e:
+            exit_for_error(e)
         except SimpleProofError as e:
             exit_for_error(e)
 

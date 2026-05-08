@@ -170,7 +170,22 @@ def _new_ots_staging(
     object_id: str,
     *files: tuple[str, bytes],
 ) -> tuple[Path, dict[str, str], dict[str, str]]:
-    r = runner.invoke(app, _stage_args(root, staging, "new", object_id, "--ots"))
+    r = runner.invoke(
+        app,
+        _stage_args(
+            root,
+            staging,
+            "new",
+            object_id,
+            "--ots",
+            "-m",
+            "Timestamped inventory",
+            "--name",
+            "Alice",
+            "--address",
+            "mailto:alice@example.org",
+        ),
+    )
     assert r.exit_code == 0, r.output
 
     paths: dict[str, str] = {}

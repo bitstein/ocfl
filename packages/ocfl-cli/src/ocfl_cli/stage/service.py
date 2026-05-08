@@ -25,6 +25,7 @@ from ocfl_cli.errors import (
     CommitFailedError,
     InventoryProofMissingError,
     LockTimeoutError,
+    MissingStagedMetadataError,
     PhaseError,
     StagingFileChangedError,
     StagingFileMissingError,
@@ -656,7 +657,7 @@ def require_staged_metadata(
     missing = missing_metadata_fields(metadata)
     if missing:
         fields = ", ".join(missing)
-        raise CommitFailedError(
+        raise MissingStagedMetadataError(
             f"missing staged metadata: {fields} "
             "(use --allow-missing-metadata to bypass)"
         )
@@ -1531,6 +1532,7 @@ def submit_inventory_locked(
     staging_dir: Path,
     *,
     sp_factory: SpClientFactory,
+    allow_missing_metadata: bool,
 ) -> None:
     """One `stage timestamp inventory` (default path) submit pass under the lock."""
     sp_cfg = cfg.simpleproof
@@ -1543,6 +1545,9 @@ def submit_inventory_locked(
     if state.phase is Phase.INVENTORY_UPGRADED:
         return
 
+    metadata = store.load_metadata(root_path, object_id)
+    require_staged_metadata(metadata, allow_missing_metadata=allow_missing_metadata)
+
     # On resubmit, preserve `created` from the prior plan so the new
     # inventory digest stays identical across retries.
     prior_created: str | None = None
@@ -1552,7 +1557,13 @@ def submit_inventory_locked(
         prior_created = prior_inv.versions[prior_inv.head].created
 
     plan, _cs = build_inventory_plan(
-        store, sr, root_path, object_id, created=prior_created
+        store,
+        sr,
+        root_path,
+        object_id,
+        message=metadata.message,
+        user=_version_user_from_staged(metadata),
+        created=prior_created,
     )
     inv_digest = plan.new_inv.digest
     head_version = plan.new_inv.inventory.head

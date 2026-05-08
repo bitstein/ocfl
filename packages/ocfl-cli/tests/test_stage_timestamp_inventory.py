@@ -36,6 +36,7 @@ from typer.testing import CliRunner
 
 from ocfl_cli.main import app
 from ocfl_cli.stage.fsm import Phase
+from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
 from ocfl_cli.stage.state import (
     VerifiedProof,
     load_ots,
@@ -119,7 +120,22 @@ def _new_ots_staging(
     object_id: str,
     *files: tuple[str, bytes],
 ) -> tuple[Path, dict[str, str], dict[str, str]]:
-    r = runner.invoke(app, _stage_args(root, staging, "new", object_id, "--ots"))
+    r = runner.invoke(
+        app,
+        _stage_args(
+            root,
+            staging,
+            "new",
+            object_id,
+            "--ots",
+            "-m",
+            "Timestamped inventory",
+            "--name",
+            "Alice",
+            "--address",
+            "mailto:alice@example.org",
+        ),
+    )
     assert r.exit_code == 0, r.output
 
     paths: dict[str, str] = {}
@@ -237,6 +253,198 @@ class TestInventoryBuild:
         assert state.inventory_proof.version == plan2.new_inv.inventory.head
         # job_id stays None here; verify-batches is the upgrade pass's job.
         assert state.inventory_proof.job_id is None
+
+    def test_inventory_build_uses_staged_metadata(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+
+        staging = tmp_path / "staging"
+        sd, _da, _ots_digest = _setup_content_upgraded(
+            runner, empty_sha256_root, staging, "obj:metadata"
+        )
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "inventory",
+                "obj:metadata",
+            ),
+        )
+        assert r.exit_code == 0, r.output
+
+        plan2 = deserialize(plan_path(sd).read_bytes())
+        vi = plan2.new_inv.inventory.versions[plan2.new_inv.inventory.head]
+        assert vi.message == "Timestamped inventory"
+        assert vi.user is not None
+        assert vi.user.name == "Alice"
+        assert vi.user.address == "mailto:alice@example.org"
+
+
+class TestMetadataGate:
+    def test_missing_staged_metadata_blocks_inventory_timestamp(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+
+        staging = tmp_path / "staging"
+        sd, _da, _ots_digest = _setup_content_upgraded(
+            runner, empty_sha256_root, staging, "obj:missing-metadata"
+        )
+        store = StagingStore(staging)
+        store.save_metadata(
+            str(empty_sha256_root.resolve()),
+            "obj:missing-metadata",
+            StagedMetadata(user=StagedUser(name="Alice")),
+        )
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "inventory",
+                "obj:missing-metadata",
+            ),
+        )
+
+        assert r.exit_code == 1
+        assert "missing staged metadata" in r.output.lower()
+        assert "message" in r.output
+        assert "user.address" in r.output
+        assert not plan_path(sd).exists()
+        assert not sp_fake._submissions
+
+    def test_missing_metadata_file_blocks_inventory_timestamp(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+
+        staging = tmp_path / "staging"
+        sd, _da, _ots_digest = _setup_content_upgraded(
+            runner, empty_sha256_root, staging, "obj:missing-metadata-file"
+        )
+        (sd / "metadata.json").unlink()
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "inventory",
+                "obj:missing-metadata-file",
+            ),
+        )
+
+        assert r.exit_code == 1
+        assert "missing staged metadata" in r.output.lower()
+        assert "message" in r.output
+        assert "user.name" in r.output
+        assert "user.address" in r.output
+        assert not plan_path(sd).exists()
+        assert not sp_fake._submissions
+
+    def test_allow_missing_metadata_bypasses_inventory_timestamp_gate(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+
+        staging = tmp_path / "staging"
+        sd, _da, _ots_digest = _setup_content_upgraded(
+            runner, empty_sha256_root, staging, "obj:allow-metadata"
+        )
+        store = StagingStore(staging)
+        store.save_metadata(
+            str(empty_sha256_root.resolve()),
+            "obj:allow-metadata",
+            StagedMetadata(),
+        )
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "inventory",
+                "obj:allow-metadata",
+                "--allow-missing-metadata",
+            ),
+        )
+
+        assert r.exit_code == 0, r.output
+        assert load_ots(sd).phase is Phase.INVENTORY_PENDING
+        assert plan_path(sd).is_file()
+
+    @pytest.mark.parametrize(
+        "mode_args",
+        [
+            ("--upgrade",),
+            ("--upgrade", "--watch"),
+            ("--retry",),
+        ],
+    )
+    def test_allow_missing_metadata_is_rejected_for_non_submit_modes(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mode_args: tuple[str, ...],
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+
+        staging = tmp_path / "staging"
+        _setup_content_upgraded(
+            runner, empty_sha256_root, staging, "obj:irrelevant-flag"
+        )
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "inventory",
+                "obj:irrelevant-flag",
+                "--allow-missing-metadata",
+                *mode_args,
+            ),
+        )
+
+        assert r.exit_code == 2
+        assert "only valid when submitting an inventory timestamp" in r.output
 
 
 # =========================================================================== #
