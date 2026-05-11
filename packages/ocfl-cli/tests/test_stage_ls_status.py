@@ -134,9 +134,9 @@ class TestStageStatus:
         assert data["extension"] is None
         assert isinstance(data["changes"], list)
         assert data["metadata"] == {
-            "message": "missing",
-            "user.name": "missing",
-            "user.address": "missing",
+            "message": None,
+            "user.name": None,
+            "user.address": None,
         }
         for entry in data["changes"]:
             assert "path" in entry
@@ -161,8 +161,8 @@ class TestStageStatus:
 
         assert result.exit_code == 0, result.output
         assert "Metadata:" in result.output
-        assert "message: present" in result.output
-        assert "user.name: present" in result.output
+        assert "message: Initial deposit" in result.output
+        assert "user.name: Alice" in result.output
         assert "user.address: missing" in result.output
 
     def test_status_json_shows_partial_staged_metadata_state(
@@ -199,9 +199,9 @@ class TestStageStatus:
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert data["metadata"] == {
-            "message": "present",
-            "user.name": "present",
-            "user.address": "missing",
+            "message": "Initial deposit",
+            "user.name": "Alice",
+            "user.address": None,
         }
 
     def test_status_no_staging_errors(self, runner, storage_root, tmp_path):

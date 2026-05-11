@@ -241,9 +241,9 @@ class TestStageStatusOts:
         assert data["next_action_kind"] == "add_content"
         assert data["counts"]["total"] == 0
         assert data["metadata"] == {
-            "message": "missing",
-            "user.name": "missing",
-            "user.address": "missing",
+            "message": None,
+            "user.name": None,
+            "user.address": None,
         }
 
     def test_status_ots_shows_staged_metadata_state(
@@ -283,8 +283,8 @@ class TestStageStatusOts:
         assert r.exit_code == 0, r.output
         assert "Metadata:" in r.output
         assert "message: missing" in r.output
-        assert "user.name: present" in r.output
-        assert "user.address: present" in r.output
+        assert "user.name: Alice" in r.output
+        assert "user.address: mailto:alice@example.org" in r.output
 
     def test_status_ots_json_shows_partial_staged_metadata_state(
         self,
@@ -326,9 +326,9 @@ class TestStageStatusOts:
         assert r.exit_code == 0, r.output
         data = json.loads(r.output)
         assert data["metadata"] == {
-            "message": "missing",
-            "user.name": "present",
-            "user.address": "present",
+            "message": None,
+            "user.name": "Alice",
+            "user.address": "mailto:alice@example.org",
         }
 
     # ---- 2. drafting, with files → timestamp_content ----

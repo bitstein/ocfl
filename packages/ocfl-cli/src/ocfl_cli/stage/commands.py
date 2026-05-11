@@ -695,11 +695,12 @@ def _render_status_section(title: str, *, leading_blank: bool = False) -> None:
 
 
 def _render_metadata_status(
-    data: dict[str, str], *, leading_blank: bool = False
+    data: dict[str, str | None], *, leading_blank: bool = False
 ) -> None:
     _render_status_section("Metadata", leading_blank=leading_blank)
     for field in ("message", "user.name", "user.address"):
-        typer.echo(f"  {field}: {data[field]}")
+        value = data[field] if data[field] is not None else "missing"
+        typer.echo(f"  {field}: {value}")
 
 
 def _plural(n: int, singular: str, plural: str | None = None) -> str:

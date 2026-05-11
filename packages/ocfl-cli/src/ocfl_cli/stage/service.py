@@ -669,18 +669,14 @@ def _build_bitcoin_section(
 
 def metadata_status_dict(
     store: StagingStore, root_path: str, object_id: str
-) -> dict[str, str]:
-    """Return present/missing state for required staged metadata fields."""
+) -> dict[str, str | None]:
+    """Return saved values for required staged metadata fields."""
     metadata = store.load_metadata(root_path, object_id)
     user = metadata.user
     return {
-        "message": "present" if metadata.message is not None else "missing",
-        "user.name": "present"
-        if user is not None and user.name is not None
-        else "missing",
-        "user.address": "present"
-        if user is not None and user.address is not None
-        else "missing",
+        "message": metadata.message,
+        "user.name": user.name if user is not None else None,
+        "user.address": user.address if user is not None else None,
     }
 
 
