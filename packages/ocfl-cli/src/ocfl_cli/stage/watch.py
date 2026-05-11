@@ -12,6 +12,7 @@ from `ctx.obj`); tests inject fakes by passing the same dict to
 
 import contextlib
 import logging
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
@@ -33,6 +34,8 @@ logger = logging.getLogger(__name__)
 
 type WatchProgress = Callable[[str, dict[str, Any]], None]
 
+_BLOCK_PROCESSING_DELAY_SECONDS = 60.0
+
 
 def _get_zmq_subscriber(cfg: Config) -> HashBlockStream:
     """Construct the production ``BitcoinZmqSubscriber`` from `cfg`.
@@ -45,6 +48,11 @@ def _get_zmq_subscriber(cfg: Config) -> HashBlockStream:
     if btc_cfg is None:
         raise RuntimeError("bitcoin config missing")
     return BitcoinZmqSubscriber(btc_cfg.zmq_endpoint)
+
+
+def _sleep_after_block() -> None:
+    """Give SimpleProof time to process newly mined blocks before polling."""
+    time.sleep(_BLOCK_PROCESSING_DELAY_SECONDS)
 
 
 def _watch_loop(
@@ -81,6 +89,7 @@ def _watch_loop(
                 block = zmq_sub.wait_for_block(timeout_ms=5000)
                 if block is None:
                     continue
+                _sleep_after_block()
                 try:
                     with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
                         info = btc.getblockchaininfo()
@@ -172,6 +181,7 @@ def _inventory_watch_loop(
                 block = zmq_sub.wait_for_block(timeout_ms=5000)
                 if block is None:
                     continue
+                _sleep_after_block()
                 try:
                     with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
                         info = btc.getblockchaininfo()

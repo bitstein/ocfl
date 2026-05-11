@@ -135,6 +135,13 @@ def _inject_fake_zmq(monkeypatch: pytest.MonkeyPatch, stream: HashBlockStream) -
     )
 
 
+@pytest.fixture(autouse=True)
+def no_block_processing_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ocfl_cli.stage import watch as stage_watch
+
+    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+
+
 # --------------------------------------------------------------------------- #
 # Storage-root + .ots/chain helpers (copied verbatim from upgrade tests).
 # --------------------------------------------------------------------------- #
@@ -238,6 +245,58 @@ def _seed_completed_verify_job(
 
 
 class TestWatchLoopAdvancesOnBlock:
+    def test_watch_sleeps_after_block_before_upgrade(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        stream = InMemoryHashBlockStream()
+        _inject_fake_zmq(monkeypatch, stream)
+
+        calls: list[str] = []
+        from ocfl_cli.stage import watch as stage_watch
+
+        monkeypatch.setattr(
+            stage_watch, "_sleep_after_block", lambda: calls.append("sleep")
+        )
+
+        staging = tmp_path / "staging"
+        sd, _paths, digests = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:watch-delay", ("a.txt", b"alpha")
+        )
+        d = digests["a.txt"]
+        _force_content_pending(sd, (d,))
+
+        ots_bytes = _ots_for(d)
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        _register_attested(btc_fake.rpc, d)
+        stream.push(bytes.fromhex(btc_fake.rpc.getblockchaininfo().best_block_hash))
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:watch-delay",
+                "--upgrade",
+                "--watch",
+            ),
+        )
+
+        assert r.exit_code == 0, r.output
+        assert calls == ["sleep"]
+
     def test_watch_loop_advances_on_block(
         self,
         runner: CliRunner,

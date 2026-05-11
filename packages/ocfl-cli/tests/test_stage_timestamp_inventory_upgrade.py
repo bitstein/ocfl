@@ -109,6 +109,13 @@ def _inject_fake_zmq(monkeypatch: pytest.MonkeyPatch, stream: HashBlockStream) -
     )
 
 
+@pytest.fixture(autouse=True)
+def no_block_processing_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ocfl_cli.stage import watch as stage_watch
+
+    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+
+
 # --------------------------------------------------------------------------- #
 # Storage-root + .ots/chain helpers (copied from content-upgrade tests).
 # --------------------------------------------------------------------------- #
@@ -679,6 +686,66 @@ class TestInventoryPhaseAdvance:
 
 
 class TestInventoryWatchLoop:
+    def test_watch_sleeps_after_block_before_upgrade(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        sd, _da, inv_digest = _setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-watch-delay"
+        )
+
+        ots_bytes = _ots_for(inv_digest)
+        _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        _register_attested(btc_fake.rpc, inv_digest)
+
+        class _OneBlockStream:
+            def __init__(self) -> None:
+                self._n = 0
+
+            def wait_for_block(self, timeout_ms: int) -> bytes | None:
+                self._n += 1
+                if self._n == 1:
+                    return bytes.fromhex(
+                        btc_fake.rpc.getblockchaininfo().best_block_hash
+                    )
+                raise KeyboardInterrupt("loop did not exit after phase advance")
+
+        _inject_fake_zmq(monkeypatch, _OneBlockStream())
+
+        calls: list[str] = []
+        from ocfl_cli.stage import watch as stage_watch
+
+        monkeypatch.setattr(
+            stage_watch, "_sleep_after_block", lambda: calls.append("sleep")
+        )
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "inventory",
+                "obj:inv-watch-delay",
+                "--upgrade",
+                "--watch",
+            ),
+        )
+
+        assert r.exit_code == 0, r.output
+        assert calls == ["sleep"]
+
     def test_watch_advances_on_block(
         self,
         runner: CliRunner,
