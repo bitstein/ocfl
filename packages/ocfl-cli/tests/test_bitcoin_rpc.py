@@ -1,14 +1,14 @@
-"""Layer-2 tests for ``BitcoinRPCClient`` against ``httpx.MockTransport``.
+"""Layer-2 tests for ``BitcoinRPCClient`` against ``httpx2.MockTransport``.
 
-The client must accept an injected ``httpx.Client`` so tests can swap in a
+The client must accept an injected ``httpx2.Client`` so tests can swap in a
 ``MockTransport``. Production callers build their own ``Client`` with
-``httpx.BasicAuth`` (rpc_user/password) and a timeout.
+``httpx2.BasicAuth`` (rpc_user/password) and a timeout.
 """
 
 import json
 from collections.abc import Callable
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from ocfl_cli.errors import BitcoinAuthError, BitcoinError, BitcoinRPCTransient

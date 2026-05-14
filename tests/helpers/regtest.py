@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2 as httpx
 
 
 def find_bitcoind() -> str | None:

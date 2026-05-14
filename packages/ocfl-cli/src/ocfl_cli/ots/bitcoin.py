@@ -1,7 +1,7 @@
 """Bitcoin RPC + ZMQ client and ``verify_attestation`` helper.
 
-The RPC client is a thin sync ``httpx`` wrapper. Authorization headers are
-scrubbed from any propagated ``httpx`` exception so credentials never leak
+The RPC client is a thin sync ``httpx2`` wrapper. Authorization headers are
+scrubbed from any propagated ``httpx2`` exception so credentials never leak
 through tracebacks or log handlers.
 """
 
@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
 
-import httpx
+import httpx2 as httpx
 import zmq
 
 from ocfl_cli.errors import (
@@ -39,7 +39,7 @@ _SENSITIVE_HEADERS: tuple[str, ...] = (
 
 
 def _scrub_exc_request(exc: BaseException) -> None:
-    # httpx stores the request on a private ``_request`` slot; the public
+    # httpx2 stores the request on a private ``_request`` slot; the public
     # ``request`` property raises RuntimeError when unset, so read directly.
     request = getattr(exc, "_request", None)
     if request is None:
@@ -105,7 +105,7 @@ class HashBlockStream(Protocol):
 class BitcoinRPCClient:
     """Sync JSON-RPC client for Bitcoin Core.
 
-    Callers inject a fully-configured ``httpx.Client`` (auth + timeout) so
+    Callers inject a fully-configured ``httpx2.Client`` (auth + timeout) so
     construction stays trivial and tests can swap in ``MockTransport``.
     """
 

@@ -15,7 +15,7 @@ from ocfl_cli._io import err
 from ocfl_lib import LocalFS, OcflError, StorageRoot, VNum
 
 if TYPE_CHECKING:
-    import httpx
+    import httpx2 as httpx
 
 logger = logging.getLogger(__name__)
 

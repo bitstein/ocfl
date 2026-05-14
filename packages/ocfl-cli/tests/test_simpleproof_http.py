@@ -1,4 +1,4 @@
-"""Layer-2 tests for ``SimpleProofHttpClient`` against ``httpx.MockTransport``.
+"""Layer-2 tests for ``SimpleProofHttpClient`` against ``httpx2.MockTransport``.
 
 Locks in the public API and wire shapes for step 6 (cli-sp-client).
 
@@ -15,7 +15,7 @@ API
             base_url: str,
             creds: SimpleProofCreds,
             *,
-            client: httpx.Client,
+            client: httpx2.Client,
             sleep: Callable[[float], None] = time.sleep,
             attempts: int = 3,
         ) -> None: ...
@@ -62,7 +62,7 @@ Parser-error mapping
 
 Auth-header scrubbing
 ---------------------
-    Before any ``httpx.HTTPStatusError`` propagates, the client replaces
+    Before any ``httpx2.HTTPStatusError`` propagates, the client replaces
     ``x-access-token`` and ``x-api-key`` values on ``exc.request.headers``
     with ``<redacted>``. Plaintext credentials must not be reachable
     through the raised exception's chain.
@@ -72,7 +72,7 @@ import hashlib
 import json
 from collections.abc import Callable
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from ocfl_cli.errors import (

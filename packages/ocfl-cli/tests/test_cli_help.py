@@ -39,14 +39,14 @@ def test_exit_code_help_is_generated_from_canonical_values() -> None:
         assert f"{int(doc.code)}  {doc.description}" in help_text
 
 
-def test_default_logging_suppresses_httpx_info() -> None:
+def test_default_logging_suppresses_httpx2_info() -> None:
     _configure_logging(json_mode=False, verbose=False, quiet=False)
 
     assert logging.getLogger().level == logging.WARNING
-    assert logging.getLogger("httpx").getEffectiveLevel() == logging.WARNING
+    assert logging.getLogger("httpx2").getEffectiveLevel() == logging.WARNING
 
 
-def test_verbose_logging_allows_httpx_info() -> None:
+def test_verbose_logging_allows_httpx2_info() -> None:
     _configure_logging(json_mode=False, verbose=True, quiet=False)
 
-    assert logging.getLogger("httpx").getEffectiveLevel() == logging.INFO
+    assert logging.getLogger("httpx2").getEffectiveLevel() == logging.INFO

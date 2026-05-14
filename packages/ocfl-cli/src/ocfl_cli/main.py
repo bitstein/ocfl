@@ -62,7 +62,7 @@ def _configure_logging(json_mode: bool, verbose: bool, quiet: bool) -> None:
         root.setLevel(logging.DEBUG)
     else:
         root.setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.INFO if verbose else logging.WARNING)
+    logging.getLogger("httpx2").setLevel(logging.INFO if verbose else logging.WARNING)
 
 
 app = typer.Typer(

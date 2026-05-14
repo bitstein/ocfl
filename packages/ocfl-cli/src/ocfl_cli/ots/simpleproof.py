@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
-import httpx
+import httpx2 as httpx
 
 from ocfl_cli.errors import (
     AttestationMismatchError,
@@ -169,7 +169,7 @@ def _retry_after_seconds(value: str) -> float | None:
 class SimpleProofHttpClient:
     """Real HTTP implementation.
 
-    Callers inject a fully-configured ``httpx.Client`` so tests can swap in
+    Callers inject a fully-configured ``httpx2.Client`` so tests can swap in
     a ``MockTransport`` and lifecycle stays caller-controlled. ``sleep`` is
     forwarded to ``ocfl_cli.ots._retry.retry`` so tests bypass wall-clock time.
     """
