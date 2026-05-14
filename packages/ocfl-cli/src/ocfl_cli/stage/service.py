@@ -37,6 +37,7 @@ from ocfl_cli.ots.bitcoin import (
     VerifiedAttestation,
     verify_attestation,
 )
+from ocfl_cli.ots.simpleproof import _SUBMIT_CHUNK_SIZE
 from ocfl_cli.stage import store as _store_mod
 from ocfl_cli.stage.fsm import Phase, check_transition
 from ocfl_cli.stage.ingest import ingest_file
@@ -85,7 +86,6 @@ logger = logging.getLogger(__name__)
 # Inventory head-state shape: digest -> logical paths.
 type StateMap = dict[str, list[str]]
 
-_SUBMIT_CHUNK_SIZE = 1000
 _LOCK_TIMEOUT_SECONDS = 30
 _OBJECT_LOCK_DIR = "ocfl-cli-object-locks"
 

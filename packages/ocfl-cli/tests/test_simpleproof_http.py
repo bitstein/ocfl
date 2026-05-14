@@ -83,6 +83,8 @@ from ocfl_cli.errors import (
     SimpleProofTransient,
 )
 from ocfl_cli.ots.simpleproof import (
+    _SUBMIT_CHUNK_SIZE,
+    _VERIFY_BATCH_CHUNK_SIZE,
     JobStatus,
     SimpleProofCreds,
     SimpleProofHttpClient,
@@ -101,6 +103,14 @@ API_KEY = "key-ABCDEF-VERY-SECRET-9999"
 CATEGORY = 641
 SUBMIT_PATH = "/api/proof/timestamp/hashes"
 VERIFY_PATH = "/api/v2/proofs/verify-batches"
+
+
+def test_simpleproof_chunk_sizes_are_shared_from_client_module() -> None:
+    from ocfl_cli.stage import service
+
+    assert _SUBMIT_CHUNK_SIZE == 1000
+    assert _VERIFY_BATCH_CHUNK_SIZE == 1000
+    assert service._SUBMIT_CHUNK_SIZE is _SUBMIT_CHUNK_SIZE
 
 
 def _digest(i: int) -> str:

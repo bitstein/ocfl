@@ -79,7 +79,8 @@ class SimpleProofClient(Protocol):
 _SUBMIT_PATH = "/api/proof/timestamp/hashes"
 _VERIFY_PATH = "/api/v2/proofs/verify-batches"
 _JOBS_PATH = "/api/v2/proofs/jobs"
-_CHUNK_SIZE = 1000
+_SUBMIT_CHUNK_SIZE = 1000
+_VERIFY_BATCH_CHUNK_SIZE = 1000
 
 
 def _json_object(resp: httpx.Response, context: str) -> dict[str, Any]:
@@ -225,7 +226,8 @@ class SimpleProofHttpClient:
         all_digests: list[str] = []
         all_record_ids: list[str] = []
         chunks = [
-            digests[i : i + _CHUNK_SIZE] for i in range(0, len(digests), _CHUNK_SIZE)
+            digests[i : i + _SUBMIT_CHUNK_SIZE]
+            for i in range(0, len(digests), _SUBMIT_CHUNK_SIZE)
         ]
         for chunk in chunks:
             try:
