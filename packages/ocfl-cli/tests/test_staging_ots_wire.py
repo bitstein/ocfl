@@ -7,7 +7,7 @@ import pytest
 from ocfl_cli.errors import StagingError
 from ocfl_cli.stage._wire import decode_ots_state, encode_ots_state
 from ocfl_cli.stage.fsm import Phase
-from ocfl_cli.stage.state import InventoryProof, OtsState, VerifiedProof
+from ocfl_cli.stage.state import InventoryProof, OtsState, Submission, VerifiedProof
 
 
 def _bare_hex(prefix: str) -> str:
@@ -46,6 +46,61 @@ def test_encode_flattens_inventory_proof() -> None:
         "verified_at": "2026-04-23T17:02:08+00:00",
     }
     assert "proof" not in raw["inventory_proof"]
+
+
+def test_encode_omits_absent_batch_fields() -> None:
+    digest = _bare_hex("a")
+    state = OtsState(
+        phase=Phase.CONTENT_PENDING,
+        category_id=641,
+        submissions=(
+            Submission(
+                submitted_at="2026-04-23T16:30:00+00:00",
+                digests=(digest,),
+                status="submitted",
+            ),
+        ),
+        inventory_proof=InventoryProof(version="v3", digest=digest),
+    )
+
+    raw = encode_ots_state(state)
+
+    assert "batch_id" not in raw["submissions"][0]
+    assert "record_ids" not in raw["submissions"][0]
+    assert "batch_id" not in raw["inventory_proof"]
+    assert "record_id" not in raw["inventory_proof"]
+
+
+def test_batch_fields_round_trip_when_present() -> None:
+    digest = _bare_hex("b")
+    state = OtsState(
+        phase=Phase.CONTENT_PENDING,
+        category_id=641,
+        submissions=(
+            Submission(
+                submitted_at="2026-04-23T16:30:00+00:00",
+                digests=(digest,),
+                status="submitted",
+                batch_id="batch-1",
+                record_ids=("record-1",),
+            ),
+        ),
+        inventory_proof=InventoryProof(
+            version="v3",
+            digest=digest,
+            batch_id="batch-1",
+            record_id="record-2",
+        ),
+    )
+
+    raw = encode_ots_state(state)
+    decoded = decode_ots_state(raw)
+
+    assert raw["submissions"][0]["batch_id"] == "batch-1"
+    assert raw["submissions"][0]["record_ids"] == ("record-1",)
+    assert raw["inventory_proof"]["batch_id"] == "batch-1"
+    assert raw["inventory_proof"]["record_id"] == "record-2"
+    assert decoded == state
 
 
 def test_decode_nests_inventory_proof() -> None:

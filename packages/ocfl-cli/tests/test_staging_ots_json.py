@@ -382,6 +382,55 @@ class TestSchemaMigration:
         assert state.schema_version == 1
         assert state.phase is Phase.DRAFTING
 
+    def test_v1_submission_and_inventory_batch_fields_default_absent(
+        self, tmp_path: Path
+    ):
+        digest = _bare_hex("a")
+        (tmp_path / "ots.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "phase": "inventory-pending",
+                    "category_id": 641,
+                    "pending_digests": [digest],
+                    "submissions": [
+                        {
+                            "submitted_at": "2026-04-23T16:30:00+00:00",
+                            "digests": [digest],
+                            "status": "submitted",
+                            "job_id": "job-1",
+                            "attempts": 1,
+                        }
+                    ],
+                    "verify_jobs": [],
+                    "content_proofs": {},
+                    "inventory_proof": {
+                        "version": "v3",
+                        "digest": digest,
+                        "job_id": "job-inv-1",
+                        "verified": False,
+                    },
+                }
+            )
+        )
+
+        state = load_ots(tmp_path)
+
+        assert state.schema_version == 1
+        assert state.submissions[0].batch_id is None
+        assert state.submissions[0].record_ids is None
+        assert state.inventory_proof is not None
+        assert state.inventory_proof.batch_id is None
+        assert state.inventory_proof.record_id is None
+
+        save_ots(tmp_path, state)
+        raw = json.loads((tmp_path / "ots.json").read_bytes())
+        assert "batch_id" not in raw["submissions"][0]
+        assert "record_ids" not in raw["submissions"][0]
+        assert "batch_id" not in raw["inventory_proof"]
+        assert "record_id" not in raw["inventory_proof"]
+        assert load_ots(tmp_path) == state
+
     def test_newer_version_rejected(self, tmp_path: Path):
         (tmp_path / "ots.json").write_text(
             json.dumps(

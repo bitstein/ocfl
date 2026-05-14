@@ -21,6 +21,7 @@ def encode_ots_state(state: OtsState) -> dict[str, Any]:
     """Encode an in-memory OTS state into the current ots.json wire shape."""
     raw = msgspec.to_builtins(state)
     _flatten_inventory_proof(raw)
+    _omit_absent_batch_fields(raw)
     return raw
 
 
@@ -60,3 +61,22 @@ def _nest_inventory_proof(raw: dict[str, Any]) -> None:
         if key in inv:
             proof[key] = inv.pop(key)
     inv["proof"] = proof
+
+
+def _omit_absent_batch_fields(raw: dict[str, Any]) -> None:
+    submissions = raw.get("submissions")
+    if isinstance(submissions, list | tuple):
+        for submission in submissions:
+            if isinstance(submission, dict):
+                _pop_none(submission, "batch_id")
+                _pop_none(submission, "record_ids")
+
+    inv = raw.get("inventory_proof")
+    if isinstance(inv, dict):
+        _pop_none(inv, "batch_id")
+        _pop_none(inv, "record_id")
+
+
+def _pop_none(raw: dict[str, Any], key: str) -> None:
+    if raw.get(key) is None:
+        raw.pop(key, None)

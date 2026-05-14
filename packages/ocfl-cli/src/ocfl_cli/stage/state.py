@@ -51,6 +51,8 @@ class Submission(msgspec.Struct, frozen=True):
     status: str  # "submitting" | "submitted" | "failed"
     job_id: str | None = None
     attempts: int = 0
+    batch_id: str | None = None
+    record_ids: tuple[str | None, ...] | None = None
 
 
 class VerifyJob(msgspec.Struct, frozen=True):
@@ -70,6 +72,8 @@ class InventoryProof(msgspec.Struct, frozen=True):
     digest: str
     proof: VerifiedProof = msgspec.field(default_factory=VerifiedProof)
     job_id: str | None = None
+    batch_id: str | None = None
+    record_id: str | None = None
 
 
 class OtsState(msgspec.Struct, frozen=True):
