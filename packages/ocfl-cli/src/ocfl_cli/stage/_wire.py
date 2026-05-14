@@ -7,6 +7,7 @@ one serialization file to update.
 """
 
 import copy
+import logging
 from typing import TYPE_CHECKING, Any
 
 import msgspec
@@ -17,24 +18,36 @@ if TYPE_CHECKING:
     from ocfl_cli.stage.state import OtsState
 
 
+logger = logging.getLogger(__name__)
+
+
 def encode_ots_state(state: OtsState) -> dict[str, Any]:
     """Encode an in-memory OTS state into the current ots.json wire shape."""
     raw = msgspec.to_builtins(state)
     _flatten_inventory_proof(raw)
+    _omit_absent_proof_fields(raw)
     _omit_absent_batch_fields(raw)
     return raw
 
 
 def decode_ots_state(raw: dict[str, Any]) -> OtsState:
     """Decode a current-schema ots.json dict. No I/O, no migrations."""
-    from ocfl_cli.stage.state import OtsState
+    from ocfl_cli.stage.state import VERIFY_JOB_STATUSES, OtsState
 
     raw = copy.deepcopy(raw)
     _nest_inventory_proof(raw)
     try:
-        return msgspec.convert(raw, OtsState)
+        state = msgspec.convert(raw, OtsState)
     except msgspec.ValidationError as e:
         raise StagingError(f"ots.json: invalid OTS state: {e}") from None
+    for job in state.verify_jobs:
+        if job.status not in VERIFY_JOB_STATUSES:
+            logger.warning(
+                "unknown verify job status %r for job %s; treating as in-progress",
+                job.status,
+                job.job_id,
+            )
+    return state
 
 
 def _flatten_inventory_proof(raw: dict[str, Any]) -> None:
@@ -55,12 +68,25 @@ def _nest_inventory_proof(raw: dict[str, Any]) -> None:
         "ots_path",
         "verified",
         "block_height",
+        "block_hash",
         "confirmations_at_verify",
         "verified_at",
     ):
         if key in inv:
             proof[key] = inv.pop(key)
     inv["proof"] = proof
+
+
+def _omit_absent_proof_fields(raw: dict[str, Any]) -> None:
+    proofs = raw.get("content_proofs")
+    if isinstance(proofs, dict):
+        for proof in proofs.values():
+            if isinstance(proof, dict):
+                _pop_none(proof, "block_hash")
+
+    inv = raw.get("inventory_proof")
+    if isinstance(inv, dict):
+        _pop_none(inv, "block_hash")
 
 
 def _omit_absent_batch_fields(raw: dict[str, Any]) -> None:

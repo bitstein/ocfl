@@ -354,6 +354,7 @@ class TestInventoryUpgradeHappyPath:
         proof = state.inventory_proof.proof
         assert proof.verified is True
         assert proof.block_height == DIGEST_BLOCK_HEIGHT
+        assert proof.block_hash == btc_fake.rpc.getblockhash(DIGEST_BLOCK_HEIGHT)
         assert proof.confirmations_at_verify is not None
         assert proof.confirmations_at_verify >= MIN_CONFS
         assert proof.verified_at is not None

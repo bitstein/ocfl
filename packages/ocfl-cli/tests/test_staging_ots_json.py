@@ -13,12 +13,15 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from ocfl_cli.errors import StagingError
+from ocfl_cli.ots.simpleproof import JobStatus, SimpleProofClient
 from ocfl_cli.stage import state as st_mod
 from ocfl_cli.stage.fsm import Phase
+from ocfl_cli.stage.service import _poll_outstanding_jobs
 from ocfl_cli.stage.state import (
     InventoryProof,
     OtsState,
@@ -79,6 +82,7 @@ def populated_state() -> OtsState:
                 ots_path=f"ots-cache/{d1}.ots",
                 verified=True,
                 block_height=923451,
+                block_hash="00" * 32,
                 confirmations_at_verify=3,
                 verified_at="2026-04-23T16:45:12+00:00",
             ),
@@ -129,6 +133,7 @@ class TestRoundTrip:
             ots_path=f"ots-cache/{inv_d}.ots",
             verified=True,
             block_height=923500,
+            block_hash="11" * 32,
             confirmations_at_verify=3,
             verified_at="2026-04-23T17:02:08+00:00",
         )
@@ -154,6 +159,7 @@ class TestRoundTrip:
         assert loaded.inventory_proof.digest == inv_d
         assert loaded.inventory_proof.proof.verified is True
         assert loaded.inventory_proof.proof.block_height == 923500
+        assert loaded.inventory_proof.proof.block_hash == "11" * 32
         raw = json.loads((tmp_path / "ots.json").read_bytes())
         assert raw["inventory_proof"] == {
             "version": "v3",
@@ -162,6 +168,7 @@ class TestRoundTrip:
             "ots_path": f"ots-cache/{inv_d}.ots",
             "verified": True,
             "block_height": 923500,
+            "block_hash": "11" * 32,
             "confirmations_at_verify": 3,
             "verified_at": "2026-04-23T17:02:08+00:00",
         }
@@ -207,6 +214,85 @@ class TestTypedDecoding:
         assert state.content_proofs[digest].verified is True
         assert state.inventory_proof is not None
         assert state.inventory_proof.digest == digest
+
+    def test_load_warns_on_unknown_verify_job_status(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ):
+        digest = _bare_hex("a")
+        (tmp_path / "ots.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "phase": "content-pending",
+                    "category_id": 641,
+                    "pending_digests": [digest],
+                    "submissions": [],
+                    "verify_jobs": [
+                        {
+                            "job_id": "job-new-status",
+                            "digests": [digest],
+                            "status": "QUEUED",
+                        }
+                    ],
+                    "content_proofs": {},
+                    "inventory_proof": None,
+                }
+            )
+        )
+
+        with caplog.at_level(logging.WARNING):
+            state = load_ots(tmp_path)
+
+        assert state.verify_jobs[0].status == "QUEUED"
+        assert any(
+            "unknown verify job status" in rec.getMessage()
+            and "job-new-status" in rec.getMessage()
+            and "QUEUED" in rec.getMessage()
+            for rec in caplog.records
+        )
+
+    def test_expired_verify_job_status_is_canonical(self, tmp_path: Path):
+        digest = _bare_hex("a")
+        state = OtsState(
+            schema_version=1,
+            phase=Phase.CONTENT_PENDING,
+            category_id=641,
+            pending_digests=(digest,),
+            verify_jobs=(
+                VerifyJob(job_id="job-expired", digests=(digest,), status="EXPIRED"),
+            ),
+        )
+
+        save_ots(tmp_path, state)
+        loaded = load_ots(tmp_path)
+
+        assert loaded.verify_jobs == state.verify_jobs
+
+    def test_unknown_verify_job_status_polls_as_in_progress(self):
+        digest = _bare_hex("a")
+        state = OtsState(
+            phase=Phase.CONTENT_PENDING,
+            category_id=641,
+            pending_digests=(digest,),
+            verify_jobs=(
+                VerifyJob(job_id="job-new-status", digests=(digest,), status="QUEUED"),
+            ),
+        )
+
+        class Poller:
+            def __init__(self) -> None:
+                self.job_ids: list[str] = []
+
+            def poll_job(self, job_id: str) -> JobStatus:
+                self.job_ids.append(job_id)
+                return JobStatus(job_id=job_id, status="IN_PROGRESS")
+
+        poller = Poller()
+
+        polled = _poll_outstanding_jobs(state, cast(SimpleProofClient, poller))
+
+        assert poller.job_ids == ["job-new-status"]
+        assert polled.verify_jobs[0].status == "IN_PROGRESS"
 
     def test_rejects_string_submission_digests(self, tmp_path: Path):
         (tmp_path / "ots.json").write_text(

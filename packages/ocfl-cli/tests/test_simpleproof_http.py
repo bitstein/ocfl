@@ -567,6 +567,19 @@ class TestPollJob:
 
         assert status.status == "FAILED"
 
+    def test_decodes_expired_job(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={"jobId": "job-expired", "status": "EXPIRED", "resultsUrl": None},
+            )
+
+        client = _make_client(handler)
+
+        status = client.poll_job("job-expired")
+
+        assert status.status == "EXPIRED"
+
 
 # ---------------------------------------------------------------------------
 # download_results

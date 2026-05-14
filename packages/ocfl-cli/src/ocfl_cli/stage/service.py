@@ -153,7 +153,20 @@ def _non_ots_digests(state: StateMap) -> set[str]:
 
 def _covered_digests(state: OtsState) -> set[str]:
     """Digests already covered by a non-FAILED verify_job."""
-    return {d for j in state.verify_jobs if j.status != "FAILED" for d in j.digests}
+    return {
+        d
+        for j in state.verify_jobs
+        if not _is_failed_verify_job(j.status)
+        for d in j.digests
+    }
+
+
+def _is_failed_verify_job(status: str) -> bool:
+    return status == "FAILED"
+
+
+def _is_terminal_verify_job(status: str) -> bool:
+    return status in {"COMPLETED", "FAILED"}
 
 
 def _unverified(state: OtsState, digests: tuple[str, ...]) -> list[str]:
@@ -354,7 +367,7 @@ def next_action_for(state: OtsState, has_files: bool) -> tuple[NextActionKind, s
             verified = {d for d, p in state.content_proofs.items() if p.verified}
             still_pending = set(state.pending_digests) - verified
             failed_covers = any(
-                j.status == "FAILED" and (set(j.digests) & still_pending)
+                _is_failed_verify_job(j.status) and (set(j.digests) & still_pending)
                 for j in state.verify_jobs
             )
             kind = (
@@ -370,7 +383,7 @@ def next_action_for(state: OtsState, has_files: bool) -> tuple[NextActionKind, s
                 NextActionKind.RETRY_INVENTORY
                 if ip is not None
                 and any(
-                    j.status == "FAILED" and ip.digest in j.digests
+                    _is_failed_verify_job(j.status) and ip.digest in j.digests
                     for j in state.verify_jobs
                 )
                 else NextActionKind.UPGRADE_INVENTORY
@@ -615,7 +628,7 @@ def _build_outstanding_jobs(
     sub_by_id = {s.job_id: s for s in state.submissions if s.job_id is not None}
     outstanding: list[_OutstandingJobJson] = []
     for j in state.verify_jobs:
-        if j.status in ("COMPLETED", "FAILED"):
+        if _is_terminal_verify_job(j.status):
             continue
         sub = sub_by_id.get(j.job_id)
         submitted_at = sub.submitted_at if sub is not None else ""
@@ -639,7 +652,9 @@ def _build_counts(state: OtsState, non_ots: set[str]) -> dict[str, int]:
     non_failed_set: set[str] = set()
     failed_set: set[str] = set()
     for j in state.verify_jobs:
-        (failed_set if j.status == "FAILED" else non_failed_set).update(j.digests)
+        (failed_set if _is_failed_verify_job(j.status) else non_failed_set).update(
+            j.digests
+        )
     return {
         "total": total,
         "submitted": len(non_failed_set),
@@ -884,6 +899,7 @@ def _reverify_existing_proofs(
                     ots_path=proof.ots_path,
                     verified=True,
                     block_height=h,
+                    block_hash=result.block_hash,
                     confirmations_at_verify=c,
                     verified_at=proof.verified_at,
                 )
@@ -937,7 +953,7 @@ def _poll_outstanding_jobs(state: OtsState, sp: SimpleProofClient) -> OtsState:
     """Refresh `status` for every non-terminal verify_job."""
     polled = tuple(
         j
-        if j.status in ("COMPLETED", "FAILED")
+        if _is_terminal_verify_job(j.status)
         else replace(j, status=sp.poll_job(j.job_id).status)
         for j in state.verify_jobs
     )
@@ -1022,6 +1038,7 @@ def _verify_and_ingest_digest(
             ots_path=ots_path_rel,
             verified=True,
             block_height=result.block_height,
+            block_hash=result.block_hash,
             confirmations_at_verify=result.confirmations,
             verified_at=now_utc_iso(),
         ),
@@ -1429,6 +1446,7 @@ def _inventory_reverify_existing_proof(
                 ots_path=proof.ots_path,
                 verified=True,
                 block_height=h,
+                block_hash=result.block_hash,
                 confirmations_at_verify=c,
                 verified_at=proof.verified_at,
             )
@@ -1478,6 +1496,7 @@ def _verify_inventory_digest(
                 ots_path=ots_path_rel,
                 verified=True,
                 block_height=h,
+                block_hash=result.block_hash,
                 confirmations_at_verify=c,
                 verified_at=now_utc_iso(),
             )
@@ -1555,7 +1574,8 @@ def _inventory_upgrade_pass_locked(
     if inv_proof is not None and not inv_proof.proof.verified:
         inv_digest = inv_proof.digest
         has_job = any(
-            inv_digest in j.digests and j.status != "FAILED" for j in state.verify_jobs
+            inv_digest in j.digests and not _is_failed_verify_job(j.status)
+            for j in state.verify_jobs
         )
         if not has_job:
             new_job = VerifyJob(

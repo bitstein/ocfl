@@ -33,12 +33,14 @@ _OTS_STATE_VERSION = 1
 
 class VerifiedProof(msgspec.Struct, frozen=True):
     """Shared sub-shape: present in every `content_proofs` entry and in
-    `inventory_proof`. Adding a field requires a schema bump on both.
+    `inventory_proof`. Optional additions must preserve both wire shapes;
+    breaking changes require a schema bump.
     """
 
     ots_path: str | None = None
     verified: bool = False
     block_height: int | None = None
+    block_hash: str | None = None
     confirmations_at_verify: int | None = None
     verified_at: str | None = None
 
@@ -60,7 +62,10 @@ class VerifyJob(msgspec.Struct, frozen=True):
 
     job_id: str
     digests: tuple[str, ...]
-    status: str  # "IN_PROGRESS" | "COMPLETED" | "FAILED"
+    status: str  # "IN_PROGRESS" | "COMPLETED" | "FAILED" | "EXPIRED"
+
+
+VERIFY_JOB_STATUSES = frozenset({"IN_PROGRESS", "COMPLETED", "FAILED", "EXPIRED"})
 
 
 class InventoryProof(msgspec.Struct, frozen=True):
