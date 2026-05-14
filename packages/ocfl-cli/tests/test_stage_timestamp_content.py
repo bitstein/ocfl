@@ -33,10 +33,15 @@ from pathlib import Path
 import pytest
 from fakes import FakeSimpleProof
 from msgspec.structs import replace
+from pydantic import SecretStr
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
+from ocfl_cli._common import open_root
+from ocfl_cli.config import Config
 from ocfl_cli.main import app
+from ocfl_cli.ots.config import SimpleProofConfig
+from ocfl_cli.stage import service
 from ocfl_cli.stage.fsm import Phase
 from ocfl_cli.stage.state import (
     Submission,
@@ -419,6 +424,79 @@ class TestChunkingBoundary:
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
         assert set(state.pending_digests) == set(digests)
+
+
+# --------------------------------------------------------------------------- #
+# Service primitives for batch-size-1 content submission
+# --------------------------------------------------------------------------- #
+
+
+class TestContentSubmissionPrimitives:
+    def test_prepare_persists_intent_before_submit_posts(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        staging = tmp_path / "staging"
+
+        r = runner.invoke(
+            app,
+            _stage_args(empty_sha256_root, staging, "new", "obj:primitive", "--ots"),
+        )
+        assert r.exit_code == 0, r.output
+        f = tmp_path / "primitive.txt"
+        f.write_text("primitive")
+        r = runner.invoke(
+            app,
+            _stage_args(empty_sha256_root, staging, "add", "obj:primitive", str(f)),
+        )
+        assert r.exit_code == 0, r.output
+
+        cfg = Config(
+            simpleproof=SimpleProofConfig(
+                base_url="https://stage.example",
+                proof_category_id=641,
+                access_token=SecretStr("tok"),
+                api_key=SecretStr("key"),
+            )
+        )
+        store = StagingStore(staging)
+        sr, _fs = open_root(str(empty_sha256_root))
+        sd = _staging_dir(empty_sha256_root, staging, "obj:primitive")
+
+        prepared = service.prepare_content_submission_locked(
+            cfg,
+            store,
+            sr,
+            str(empty_sha256_root.resolve()),
+            "obj:primitive",
+            sd,
+        )
+
+        assert prepared.digests == (hashlib.sha256(b"primitive").hexdigest(),)
+        assert sp_fake._submissions == []
+        state = load_ots(sd)
+        assert state.phase is Phase.DRAFTING
+        assert state.pending_digests == prepared.digests
+        assert len(state.submissions) == 1
+        assert state.submissions[0].status == "submitting"
+
+        result = service.submit_prepared_content_locked(
+            cfg,
+            sd,
+            prepared,
+            sp_factory=lambda cfg: sp_fake,
+        )
+
+        assert result.submitted_count == 1
+        assert len(sp_fake._submissions) == 1
+        state = load_ots(sd)
+        assert state.phase is Phase.CONTENT_PENDING
+        assert state.submissions[0].status == "submitted"
 
 
 # --------------------------------------------------------------------------- #

@@ -123,6 +123,16 @@ class SubmitContentResult:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedContentSubmission:
+    digests: tuple[str, ...]
+    category_id: int
+    previous_phase: Phase
+    target_phase: Phase
+    submission: Submission | None = None
+    noop_advanced: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class UpgradeContentResult:
     previous_phase: Phase
     phase: Phase
@@ -1144,19 +1154,25 @@ def _upgrade_pass_locked(
     sp = sp_factory(cfg)
     btc = btc_factory(cfg)
 
-    state = _reverify_existing_proofs(
-        state, btc, sp, staging_dir, min_confs, category_id
+    state = prepare_content_upgrade_locked(
+        state,
+        staging_dir,
+        sp=sp,
+        btc=btc,
+        category_id=category_id,
+        min_confirmations=min_confs,
     )
-    save_ots(staging_dir, state)
+    state = poll_content_verifications_locked(state, staging_dir, sp=sp)
 
-    state = _submit_new_verify_batches(state, sp, category_id)
-    save_ots(staging_dir, state)
-
-    state = _poll_outstanding_jobs(state, sp)
-    save_ots(staging_dir, state)
-
-    state = _process_completed_jobs(
-        state, sp, btc, store, root_path, object_id, staging_dir, min_confs
+    state = ingest_content_verifications_locked(
+        state,
+        store,
+        root_path,
+        object_id,
+        staging_dir,
+        sp=sp,
+        btc=btc,
+        min_confirmations=min_confs,
     )
 
     ready, unverified_pending, orphans = _phase_advance_ready(
@@ -1185,6 +1201,55 @@ def _upgrade_pass_locked(
     )
 
 
+def prepare_content_upgrade_locked(
+    state: OtsState,
+    staging_dir: Path,
+    *,
+    sp: SimpleProofClient,
+    btc: BitcoinRPC,
+    category_id: int,
+    min_confirmations: int,
+) -> OtsState:
+    """Reverify cached proofs and submit missing verify jobs for content."""
+    state = _reverify_existing_proofs(
+        state, btc, sp, staging_dir, min_confirmations, category_id
+    )
+    save_ots(staging_dir, state)
+
+    state = _submit_new_verify_batches(state, sp, category_id)
+    save_ots(staging_dir, state)
+    return state
+
+
+def poll_content_verifications_locked(
+    state: OtsState,
+    staging_dir: Path,
+    *,
+    sp: SimpleProofClient,
+) -> OtsState:
+    """Poll outstanding content verify jobs and persist refreshed statuses."""
+    state = _poll_outstanding_jobs(state, sp)
+    save_ots(staging_dir, state)
+    return state
+
+
+def ingest_content_verifications_locked(
+    state: OtsState,
+    store: StagingStore,
+    root_path: str,
+    object_id: str,
+    staging_dir: Path,
+    *,
+    sp: SimpleProofClient,
+    btc: BitcoinRPC,
+    min_confirmations: int,
+) -> OtsState:
+    """Download completed content verify results and ingest verified proofs."""
+    return _process_completed_jobs(
+        state, sp, btc, store, root_path, object_id, staging_dir, min_confirmations
+    )
+
+
 def _upgrade_pass(
     cfg: Config,
     store: StagingStore,
@@ -1210,20 +1275,15 @@ def _upgrade_pass(
         )
 
 
-def submit_content_locked(
+def prepare_content_submission_locked(
     cfg: Config,
     store: StagingStore,
     sr,
     root_path: str,
     object_id: str,
     staging_dir: Path,
-    *,
-    sp_factory: SpClientFactory,
-) -> SubmitContentResult:
-    """One `stage timestamp content` (default path) submit pass under the lock.
-
-    Returns a summary for command rendering.
-    """
+) -> PreparedContentSubmission:
+    """Prepare a durable content submission intent under the staging lock."""
     sp_cfg = cfg.simpleproof
     if sp_cfg is None:
         raise RuntimeError("simpleproof config missing")
@@ -1253,19 +1313,21 @@ def submit_content_locked(
         if not state.pending_digests and non_ots <= carry:
             save_ots(staging_dir, replace(state, phase=Phase.CONTENT_UPGRADED))
             _log_phase(state.phase, Phase.CONTENT_UPGRADED)
-            return SubmitContentResult(
-                submitted_count=0,
+            return PreparedContentSubmission(
+                digests=(),
+                category_id=category_id,
                 previous_phase=state.phase,
-                phase=Phase.CONTENT_UPGRADED,
+                target_phase=Phase.CONTENT_UPGRADED,
                 noop_advanced=True,
             )
         if target_phase is not state.phase:
             save_ots(staging_dir, replace(state, phase=target_phase))
             _log_phase(state.phase, target_phase)
-        return SubmitContentResult(
-            submitted_count=0,
+        return PreparedContentSubmission(
+            digests=(),
+            category_id=category_id,
             previous_phase=state.phase,
-            phase=target_phase,
+            target_phase=target_phase,
         )
 
     ordered = tuple(sorted(submission_set))
@@ -1287,29 +1349,81 @@ def submit_content_locked(
             pending_digests=merged_pending,
         ),
     )
+    return PreparedContentSubmission(
+        digests=ordered,
+        category_id=category_id,
+        previous_phase=state.phase,
+        target_phase=target_phase,
+        submission=intent,
+    )
+
+
+def submit_prepared_content_locked(
+    cfg: Config,
+    staging_dir: Path,
+    prepared: PreparedContentSubmission,
+    *,
+    sp_factory: SpClientFactory,
+) -> SubmitContentResult:
+    """POST prepared content digests and finalize their durable submission."""
+    if not prepared.digests:
+        return SubmitContentResult(
+            submitted_count=0,
+            previous_phase=prepared.previous_phase,
+            phase=prepared.target_phase,
+            noop_advanced=prepared.noop_advanced,
+        )
+    if prepared.submission is None:
+        raise RuntimeError("prepared content submission missing durable intent")
 
     sp = sp_factory(cfg)
-    for i in range(0, len(ordered), _SUBMIT_CHUNK_SIZE):
-        sp.submit_hashes(list(ordered[i : i + _SUBMIT_CHUNK_SIZE]), category_id)
+    for i in range(0, len(prepared.digests), _SUBMIT_CHUNK_SIZE):
+        sp.submit_hashes(
+            list(prepared.digests[i : i + _SUBMIT_CHUNK_SIZE]),
+            prepared.category_id,
+        )
 
+    state = load_ots(staging_dir)
+    kept = tuple(s for s in state.submissions if s.status != "submitting")
+    submitted = replace(prepared.submission, status="submitted")
     save_ots(
         staging_dir,
         replace(
             state,
-            category_id=category_id,
-            submissions=(*kept, replace(intent, status="submitted")),
-            pending_digests=merged_pending,
-            phase=target_phase,
+            category_id=prepared.category_id,
+            submissions=(*kept, submitted),
+            phase=prepared.target_phase,
         ),
     )
 
-    logger.info("submitted %d digests for %s", len(ordered), object_id)
-    _log_phase(state.phase, target_phase)
+    _log_phase(prepared.previous_phase, prepared.target_phase)
     return SubmitContentResult(
-        submitted_count=len(ordered),
-        previous_phase=state.phase,
-        phase=target_phase,
+        submitted_count=len(prepared.digests),
+        previous_phase=prepared.previous_phase,
+        phase=prepared.target_phase,
     )
+
+
+def submit_content_locked(
+    cfg: Config,
+    store: StagingStore,
+    sr,
+    root_path: str,
+    object_id: str,
+    staging_dir: Path,
+    *,
+    sp_factory: SpClientFactory,
+) -> SubmitContentResult:
+    """One `stage timestamp content` submit pass as a batch of size 1."""
+    prepared = prepare_content_submission_locked(
+        cfg, store, sr, root_path, object_id, staging_dir
+    )
+    result = submit_prepared_content_locked(
+        cfg, staging_dir, prepared, sp_factory=sp_factory
+    )
+    if result.submitted_count:
+        logger.info("submitted %d digests for %s", result.submitted_count, object_id)
+    return result
 
 
 class NoFailedSubmissionsError(Exception):
