@@ -6,6 +6,7 @@ through tracebacks or log handlers.
 """
 
 import contextlib
+import time
 from base64 import b64encode
 from dataclasses import dataclass
 from enum import StrEnum
@@ -21,9 +22,12 @@ from ocfl_cli.errors import (
     BitcoinRPCTransient,
     ReorgDetectedError,
 )
+from ocfl_cli.ots._retry import retry
 from ocfl_lib.ots import parse as parse_ots
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ocfl_cli.config import Config
 
 _REDACTED = "<redacted>"
@@ -105,14 +109,23 @@ class BitcoinRPCClient:
     construction stays trivial and tests can swap in ``MockTransport``.
     """
 
-    def __init__(self, rpc_url: str, *, client: httpx.Client) -> None:
+    def __init__(
+        self,
+        rpc_url: str,
+        *,
+        client: httpx.Client,
+        sleep: Callable[[float], None] = time.sleep,
+        attempts: int = 3,
+    ) -> None:
         self._rpc_url = rpc_url
         self._client = client
+        self._sleep = sleep
+        self._attempts = attempts
 
     def close(self) -> None:
         self._client.close()
 
-    def _call(self, method: str, params: list[Any]) -> Any:
+    def _call_once(self, method: str, params: list[Any]) -> Any:
         payload = {
             "jsonrpc": "1.0",
             "id": 0,
@@ -130,6 +143,8 @@ class BitcoinRPCClient:
                     raise BitcoinAuthError(
                         f"Bitcoin RPC auth failed: HTTP {status}"
                     ) from exc
+                case 429:
+                    raise BitcoinRPCTransient(f"Bitcoin RPC HTTP {status}") from exc
                 case _ if 500 <= status < 600:
                     raise BitcoinRPCTransient(f"Bitcoin RPC HTTP {status}") from exc
                 case _:
@@ -141,9 +156,19 @@ class BitcoinRPCClient:
             ) from exc
 
         body = response.json()
-        if body.get("error") is not None:
-            raise BitcoinError(f"Bitcoin RPC error: {body['error']}")
+        error = body.get("error")
+        if error is not None:
+            if isinstance(error, dict) and error.get("code") == -28:
+                raise BitcoinRPCTransient(f"Bitcoin RPC loading: {error}") from None
+            raise BitcoinError(f"Bitcoin RPC error: {error}")
         return body["result"]
+
+    def _call(self, method: str, params: list[Any]) -> Any:
+        return retry(
+            lambda: self._call_once(method, params),
+            sleep=self._sleep,
+            attempts=self._attempts,
+        )
 
     def getblockchaininfo(self) -> BlockchainInfo:
         result = self._call("getblockchaininfo", [])

@@ -2,12 +2,11 @@
 
 Non-`Transient` exceptions propagate on first raise (fail fast). For
 `Transient` exceptions, the helper sleeps between attempts using
-`backoff[i]` multiplied by uniform jitter in [0.75, 1.25]; a per-instance
-`retry_after` overrides the sleep with that exact value (no jitter).
+`min(60, 2 * 2**i)`; a per-instance `retry_after` overrides the sleep
+with that exact value.
 """
 
 import logging
-import random
 import time
 from typing import TYPE_CHECKING
 
@@ -23,7 +22,7 @@ def retry[T](
     fn: Callable[[], T],
     *,
     attempts: int = 3,
-    backoff: tuple[float, ...] = (1.0, 2.0),
+    backoff: tuple[float, ...] | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> T:
     if attempts < 1:
@@ -38,7 +37,8 @@ def retry[T](
             if retry_after is not None:
                 delay = retry_after
             else:
-                delay = backoff[i] * random.uniform(0.75, 1.25)
+                base = backoff[i] if backoff is not None else min(60.0, 2.0 * 2**i)
+                delay = base
             logger.warning(
                 "retrying after transient error: %s (sleep=%.3fs, attempt=%d/%d)",
                 exc,

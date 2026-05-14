@@ -21,12 +21,6 @@ def _make_sleep() -> tuple[list[float], Callable[[float], None]]:
     return calls, calls.append
 
 
-def _within_jitter(actual: float, expected: float, pct: float = 0.25) -> bool:
-    lo = expected * (1.0 - pct)
-    hi = expected * (1.0 + pct)
-    return lo <= actual <= hi
-
-
 class TestSuccessPath:
     def test_success_first_attempt_no_sleep(self):
         sleeps, sleep = _make_sleep()
@@ -59,15 +53,13 @@ class TestRetryOnTransient:
         result = retry(
             fn,
             attempts=3,
-            backoff=(1.0, 2.0),
+            backoff=(2.0, 4.0),
             sleep=sleep,
         )
 
         assert result == 42
         assert calls == 3
-        assert len(sleeps) == 2
-        assert _within_jitter(sleeps[0], 1.0)
-        assert _within_jitter(sleeps[1], 2.0)
+        assert sleeps == [2.0, 4.0]
 
     def test_retries_exhausted_reraises_last(self):
         sleeps, sleep = _make_sleep()
@@ -79,7 +71,7 @@ class TestRetryOnTransient:
             raise _FakeTransient(f"fail-{calls}")
 
         with pytest.raises(_FakeTransient, match="fail-3"):
-            retry(fn, attempts=3, backoff=(1.0, 2.0), sleep=sleep)
+            retry(fn, attempts=3, backoff=(2.0, 4.0), sleep=sleep)
 
         assert calls == 3
         assert len(sleeps) == 2
@@ -96,7 +88,7 @@ class TestFailFast:
             raise _FatalError("nope")
 
         with pytest.raises(_FatalError, match="nope"):
-            retry(fn, attempts=3, backoff=(1.0, 2.0), sleep=sleep)
+            retry(fn, attempts=3, backoff=(2.0, 4.0), sleep=sleep)
 
         assert calls == 1
         assert sleeps == []
@@ -116,7 +108,7 @@ class TestRetryAfterOverride:
                 raise exc
             return "ok"
 
-        result = retry(fn, attempts=3, backoff=(1.0, 2.0), sleep=sleep)
+        result = retry(fn, attempts=3, backoff=(2.0, 4.0), sleep=sleep)
 
         assert result == "ok"
         assert calls == 2
@@ -137,13 +129,11 @@ class TestRetryAfterOverride:
                 raise exc
             return "done"
 
-        result = retry(fn, attempts=3, backoff=(1.0, 2.0), sleep=sleep)
+        result = retry(fn, attempts=3, backoff=(2.0, 4.0), sleep=sleep)
 
         assert result == "done"
         assert calls == 3
-        assert len(sleeps) == 2
-        assert _within_jitter(sleeps[0], 1.0)
-        assert sleeps[1] == 9.0
+        assert sleeps == [2.0, 9.0]
 
 
 class TestAttemptsOne:
@@ -156,7 +146,7 @@ class TestAttemptsOne:
             calls += 1
             return "single"
 
-        result = retry(fn, attempts=1, backoff=(1.0, 2.0), sleep=sleep)
+        result = retry(fn, attempts=1, backoff=(2.0, 4.0), sleep=sleep)
 
         assert result == "single"
         assert calls == 1
@@ -172,32 +162,23 @@ class TestAttemptsOne:
             raise _FakeTransient("once")
 
         with pytest.raises(_FakeTransient):
-            retry(fn, attempts=1, backoff=(1.0, 2.0), sleep=sleep)
+            retry(fn, attempts=1, backoff=(2.0, 4.0), sleep=sleep)
 
         assert calls == 1
         assert sleeps == []
 
 
-class TestJitterBounds:
-    def test_jitter_stays_within_band_across_runs(self):
-        samples_slot0: list[float] = []
-        samples_slot1: list[float] = []
+class TestBackoffSchedule:
+    def test_default_backoff_is_exponential_and_capped(self):
+        sleeps, sleep = _make_sleep()
+        calls = 0
 
-        for _ in range(50):
-            sleeps, sleep = _make_sleep()
-            calls = 0
+        def fn() -> int:
+            nonlocal calls
+            calls += 1
+            raise _FakeTransient("x")
 
-            def fn() -> int:
-                nonlocal calls
-                calls += 1
-                if calls < 3:
-                    raise _FakeTransient("x")
-                return 1
+        with pytest.raises(_FakeTransient):
+            retry(fn, attempts=8, sleep=sleep)
 
-            retry(fn, attempts=3, backoff=(1.0, 2.0), sleep=sleep)
-            assert len(sleeps) == 2
-            samples_slot0.append(sleeps[0])
-            samples_slot1.append(sleeps[1])
-
-        assert all(0.75 <= s <= 1.25 for s in samples_slot0)
-        assert all(1.50 <= s <= 2.50 for s in samples_slot1)
+        assert sleeps == [2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0]

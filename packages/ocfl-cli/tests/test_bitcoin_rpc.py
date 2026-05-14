@@ -11,7 +11,7 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from ocfl_cli.errors import BitcoinAuthError, BitcoinRPCTransient
+from ocfl_cli.errors import BitcoinAuthError, BitcoinError, BitcoinRPCTransient
 from ocfl_cli.ots.bitcoin import BitcoinRPCClient, BlockchainInfo, BlockHeader
 
 
@@ -23,10 +23,22 @@ def _make_client(
     handler: Callable[[httpx.Request], httpx.Response],
     *,
     auth: httpx.Auth | None = None,
+    sleep: Callable[[float], None] | None = None,
+    attempts: int = 3,
 ) -> BitcoinRPCClient:
     transport = httpx.MockTransport(handler)
     http = httpx.Client(transport=transport, auth=auth)
-    return BitcoinRPCClient("http://node:8332/", client=http)
+    return BitcoinRPCClient(
+        "http://node:8332/",
+        client=http,
+        sleep=sleep if sleep is not None else (lambda _s: None),
+        attempts=attempts,
+    )
+
+
+def _make_sleep() -> tuple[list[float], Callable[[float], None]]:
+    calls: list[float] = []
+    return calls, calls.append
 
 
 def test_bitcoin_rpc_client_closes_injected_http_client() -> None:
@@ -176,6 +188,52 @@ class TestErrorMapping:
         with pytest.raises(BitcoinRPCTransient):
             rpc.getblockchaininfo()
 
+    def test_429_retries_with_backoff_then_succeeds(self) -> None:
+        calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                return httpx.Response(429, content=b"too many requests")
+            return httpx.Response(
+                200,
+                content=_rpc_ok(
+                    {
+                        "blocks": 800_000,
+                        "bestblockhash": "0000abcd",
+                        "initialblockdownload": False,
+                        "verificationprogress": 1.0,
+                    }
+                ),
+            )
+
+        sleeps, sleep = _make_sleep()
+        rpc = _make_client(handler, sleep=sleep)
+
+        info = rpc.getblockchaininfo()
+
+        assert info.height == 800_000
+        assert calls == 3
+        assert sleeps == [2.0, 4.0]
+
+    def test_429_exhausts_retry_budget(self) -> None:
+        calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(429, content=b"too many requests")
+
+        sleeps, sleep = _make_sleep()
+        rpc = _make_client(handler, sleep=sleep)
+
+        with pytest.raises(BitcoinRPCTransient):
+            rpc.getblockchaininfo()
+
+        assert calls == 3
+        assert sleeps == [2.0, 4.0]
+
     def test_timeout_raises_bitcoin_rpc_transient(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ReadTimeout("read timeout", request=request)
@@ -193,6 +251,69 @@ class TestErrorMapping:
 
         with pytest.raises(BitcoinRPCTransient):
             rpc.getblockchaininfo()
+
+    def test_rpc_loading_error_retries_with_backoff(self) -> None:
+        calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                return httpx.Response(
+                    200,
+                    json={
+                        "result": None,
+                        "error": {"code": -28, "message": "Loading block index"},
+                        "id": 1,
+                    },
+                )
+            return httpx.Response(
+                200,
+                content=_rpc_ok(
+                    {
+                        "blocks": 800_000,
+                        "bestblockhash": "0000abcd",
+                        "initialblockdownload": False,
+                        "verificationprogress": 1.0,
+                    }
+                ),
+            )
+
+        sleeps, sleep = _make_sleep()
+        rpc = _make_client(
+            handler,
+            sleep=sleep,
+        )
+
+        info = rpc.getblockchaininfo()
+
+        assert info.height == 800_000
+        assert calls == 3
+        assert sleeps == [2.0, 4.0]
+
+    def test_rpc_non_loading_error_does_not_retry(self) -> None:
+        calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(
+                200,
+                json={
+                    "result": None,
+                    "error": {"code": -8, "message": "Block height out of range"},
+                    "id": 1,
+                },
+            )
+
+        sleeps, sleep = _make_sleep()
+        rpc = _make_client(handler, sleep=sleep)
+
+        with pytest.raises(BitcoinError):
+            rpc.getblockhash(-1)
+
+        assert calls == 1
+        assert sleeps == []
 
 
 class TestAuthHeaderScrubbing:

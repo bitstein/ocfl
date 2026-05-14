@@ -370,6 +370,26 @@ class TestSubmitHashesErrors:
         assert isinstance(result, SubmitResult)
         assert len(result.record_ids) == 2
 
+    def test_backoff_for_transient_submit_retry(self) -> None:
+        n = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal n
+            n += 1
+            if n < 4:
+                return httpx.Response(429, content=b"slow")
+            payload = json.loads(request.content)
+            return _ok_submit(payload["hashes"])
+
+        sleeps, sleep = _make_sleep()
+        client = _make_client(handler, sleep=sleep, attempts=4)
+
+        result = client.submit_hashes(_digests(2), CATEGORY)
+
+        assert result.record_ids == tuple(_digests(2))
+        assert n == 4
+        assert sleeps == [2.0, 4.0, 8.0]
+
     def test_429_retry_after_populates_attribute_and_sleep(self) -> None:
         n = 0
 
@@ -386,8 +406,31 @@ class TestSubmitHashesErrors:
 
         assert info.value.retry_after == 5.0
         assert n == 3
-        # 2 retries → 2 sleeps; both honor Retry-After (no jitter, exact 5.0)
+        # 2 retries -> 2 sleeps; both honor Retry-After.
         assert sleeps == [5.0, 5.0]
+
+    def test_429_malformed_retry_after_uses_backoff(self) -> None:
+        n = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal n
+            n += 1
+            if n == 1:
+                return httpx.Response(
+                    429,
+                    headers={"Retry-After": "not-a-delay"},
+                    content=b"slow",
+                )
+            payload = json.loads(request.content)
+            return _ok_submit(payload["hashes"])
+
+        sleeps, sleep = _make_sleep()
+        client = _make_client(handler, sleep=sleep)
+
+        client.submit_hashes(_digests(2), CATEGORY)
+
+        assert n == 2
+        assert sleeps == [2.0]
 
     def test_timeout_raises_transient(self) -> None:
         n = 0

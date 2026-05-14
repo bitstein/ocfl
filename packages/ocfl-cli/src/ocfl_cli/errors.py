@@ -71,7 +71,7 @@ class Transient:
     `retry_after` is a class-level default; per-instance overrides are set
     at raise time (e.g., `exc.retry_after = float(resp.headers["Retry-After"])`).
     When set, the retry helper sleeps exactly that many seconds with no
-    jitter, ignoring the configured backoff for that attempt.
+    configured backoff for that attempt.
     """
 
     retry_after: float | None = None

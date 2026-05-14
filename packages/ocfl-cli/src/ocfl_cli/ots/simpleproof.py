@@ -2,6 +2,7 @@
 
 import time
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
@@ -151,6 +152,20 @@ def _response_error_detail(resp: httpx.Response) -> str | None:
     return None
 
 
+def _retry_after_seconds(value: str) -> float | None:
+    try:
+        delay = float(value)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+        except TypeError, ValueError:
+            return None
+        if retry_at.tzinfo is None:
+            return None
+        return max(0.0, retry_at.timestamp() - time.time())
+    return max(0.0, delay)
+
+
 class SimpleProofHttpClient:
     """Real HTTP implementation.
 
@@ -207,7 +222,7 @@ class SimpleProofHttpClient:
                     f"SimpleProof rate-limited: HTTP {status}"
                 )
                 if (retry_after := exc.response.headers.get("Retry-After")) is not None:
-                    transient.retry_after = float(retry_after)
+                    transient.retry_after = _retry_after_seconds(retry_after)
                 raise transient from exc
             if 500 <= status < 600:
                 raise SimpleProofTransient(f"SimpleProof HTTP {status}") from exc
