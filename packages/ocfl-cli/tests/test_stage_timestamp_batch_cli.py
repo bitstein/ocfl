@@ -2558,6 +2558,79 @@ def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
     assert batch.verify_jobs[0].status == "IN_PROGRESS"
 
 
+def test_batch_watch_polls_during_quiet_periods(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    btc = FakeBitcoinRPC()
+    _inject_fake_sp(runner, sp_fake)
+    _inject_fake_btc(runner, btc)
+    from ocfl_cli.stage import watch as stage_watch
+
+    subscribers = 0
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:batch-watch-quiet",
+        ("a.txt", b"alpha"),
+    )
+
+    class _QuietCompletingStream:
+        timeouts = 0
+
+        def wait_for_block(self, timeout_ms: int) -> bytes | None:
+            assert timeout_ms == 5000
+            self.timeouts += 1
+            if self.timeouts == 1:
+                batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+                batch = batch_state.load_batch(staging, batch_id)
+                digest = batch.objects[0].digests[0]
+                sp_fake.advance_to_completed(
+                    batch.verify_jobs[0].job_id, {digest: _ots_for(digest)}
+                )
+                _grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+                _register_attested(btc, digest)
+            if self.timeouts > 3:
+                raise KeyboardInterrupt
+            return None
+
+    def subscriber_factory(*args, **kwargs):
+        nonlocal subscribers
+        subscribers += 1
+        return _QuietCompletingStream()
+
+    monkeypatch.setattr(
+        stage_watch, "_get_zmq_subscriber", subscriber_factory, raising=True
+    )
+
+    result = _invoke_json(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:batch-watch-quiet",
+        "--watch",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert subscribers == 1
+    events = [json.loads(line) for line in result.output.splitlines()]
+    assert events[-1]["event"] == "summary"
+    assert events[-1]["counts"]["upgraded"] == 1
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.objects[0].status == "upgraded"
+
+
 def test_batch_watch_empty_submitted_subset_exits_without_subscriber(
     runner: CliRunner,
     empty_sha256_root: Path,

@@ -3169,6 +3169,34 @@ def _drive_batch_watch(
 
     stream = None
     exit_code = 1
+
+    def run_watch_upgrade_pass(
+        batch: batch_state.BatchFile, *, reload_batch: bool = False
+    ) -> tuple[batch_state.BatchFile, bool]:
+        nonlocal exit_code
+        if reload_batch:
+            batch = batch_state.load_batch(staging_root, batch.batch_id)
+        before_upgrade = batch
+        batch = _run_batch_upgrade_pass(
+            target=target,
+            cfg=cfg,
+            store=store,
+            sr=sr,
+            staging_root=staging_root,
+            batch=batch,
+            sp_factory=appctx.sp_client_factory(ctx),
+            btc_factory=appctx.btc_rpc_factory(ctx),
+        )
+        _emit_batch_object_changes(
+            ctx, staging_root=staging_root, before=before_upgrade, after=batch
+        )
+        if _batch_has_submitted_subset(batch):
+            return batch, False
+        exit_code = 0 if _batch_watch_successful(batch) else 1
+        if exit_code:
+            raise typer.Exit(exit_code)
+        return batch, True
+
     try:
         with batch_state.with_driver_lease(
             staging_root,
@@ -3220,24 +3248,8 @@ def _drive_batch_watch(
             _emit_batch_object_changes(
                 ctx, staging_root=staging_root, before=before_submit, after=batch
             )
-            before_upgrade = batch
-            batch = _run_batch_upgrade_pass(
-                target=target,
-                cfg=cfg,
-                store=store,
-                sr=sr,
-                staging_root=staging_root,
-                batch=batch,
-                sp_factory=appctx.sp_client_factory(ctx),
-                btc_factory=appctx.btc_rpc_factory(ctx),
-            )
-            _emit_batch_object_changes(
-                ctx, staging_root=staging_root, before=before_upgrade, after=batch
-            )
-            if not _batch_has_submitted_subset(batch):
-                exit_code = 0 if _batch_watch_successful(batch) else 1
-                if exit_code:
-                    raise typer.Exit(exit_code)
+            batch, done = run_watch_upgrade_pass(batch)
+            if done:
                 return
 
             btc = appctx.btc_rpc_factory(ctx)(cfg)
@@ -3254,6 +3266,9 @@ def _drive_batch_watch(
                 while True:
                     block = zmq_sub.wait_for_block(timeout_ms=5000)
                     if block is None:
+                        batch, done = run_watch_upgrade_pass(batch, reload_batch=True)
+                        if done:
+                            return
                         continue
                     watch._sleep_after_block()
                     info = btc.getblockchaininfo()
@@ -3285,27 +3300,8 @@ def _drive_batch_watch(
                             before=before_reverify,
                             after=batch,
                         )
-                    before_upgrade = batch
-                    batch = _run_batch_upgrade_pass(
-                        target=target,
-                        cfg=cfg,
-                        store=store,
-                        sr=sr,
-                        staging_root=staging_root,
-                        batch=batch,
-                        sp_factory=appctx.sp_client_factory(ctx),
-                        btc_factory=appctx.btc_rpc_factory(ctx),
-                    )
-                    _emit_batch_object_changes(
-                        ctx,
-                        staging_root=staging_root,
-                        before=before_upgrade,
-                        after=batch,
-                    )
-                    if not _batch_has_submitted_subset(batch):
-                        exit_code = 0 if _batch_watch_successful(batch) else 1
-                        if exit_code:
-                            raise typer.Exit(exit_code)
+                    batch, done = run_watch_upgrade_pass(batch)
+                    if done:
                         return
     except KeyboardInterrupt:
         exit_code = 130
