@@ -14,6 +14,7 @@ from typing import cast
 import pytest
 
 from ocfl_cli.errors import LockTimeoutError, StagingError
+from ocfl_cli.stage import batch as batch_state
 from ocfl_cli.stage import store as store_mod
 from ocfl_cli.stage.batch import (
     BatchFile,
@@ -361,6 +362,21 @@ def test_driver_lease_persists_spec_json_shape(tmp_path: Path):
     assert raw["cli_version"]
 
 
+def test_driver_lease_handle_rejects_accidental_attributes(tmp_path: Path):
+    batch_id = new_batch_id()
+
+    with (
+        with_driver_lease(
+            tmp_path,
+            batch_id,
+            command=("stage", "timestamp", "batch", "--upgrade"),
+            heartbeat_interval=None,
+        ) as lease,
+        pytest.raises(AttributeError),
+    ):
+        object.__setattr__(lease, "accidental", True)
+
+
 def test_driver_lease_steals_dead_local_pid(tmp_path: Path):
     batch_id = new_batch_id()
     old_started = datetime.now(UTC) - timedelta(minutes=1)
@@ -572,6 +588,31 @@ def test_driver_lease_restores_signal_handlers(tmp_path: Path):
         signal.signal(signal.SIGTERM, old_handler)
 
 
+def test_driver_lease_signal_registration_is_slotted(tmp_path: Path):
+    batch_id = new_batch_id()
+
+    def previous_handler(signum, frame):
+        raise RuntimeError("not called")
+
+    old_handler = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, previous_handler)
+    try:
+        with with_driver_lease(
+            tmp_path,
+            batch_id,
+            command=("signal-driver",),
+            heartbeat_interval=None,
+        ) as lease:
+            registration = lease._signal_registration
+            assert registration is not None
+            assert not hasattr(registration, "__dict__")
+
+            with pytest.raises(AttributeError):
+                object.__setattr__(registration, "accidental", True)
+    finally:
+        signal.signal(signal.SIGTERM, old_handler)
+
+
 def test_driver_lease_signal_handler_releases_lease(tmp_path: Path):
     batch_id = new_batch_id()
     old_handler = signal.getsignal(signal.SIGTERM)
@@ -609,3 +650,43 @@ def test_driver_lease_background_heartbeat_refreshes(tmp_path: Path):
 
         assert refreshed != original
         assert handle.command == ("watch",)
+
+
+def test_cli_version_is_cached(monkeypatch: pytest.MonkeyPatch):
+    calls = 0
+
+    def fake_version(distribution: str) -> str:
+        nonlocal calls
+        calls += 1
+        assert distribution == "ocfl-cli"
+        return "1.2.3"
+
+    batch_state._cli_version.cache_clear()
+    monkeypatch.setattr(batch_state, "version", fake_version)
+    try:
+        assert batch_state._cli_version() == "1.2.3"
+        assert batch_state._cli_version() == "1.2.3"
+    finally:
+        batch_state._cli_version.cache_clear()
+
+    assert calls == 1
+
+
+def test_cli_version_cache_preserves_unknown(monkeypatch: pytest.MonkeyPatch):
+    calls = 0
+
+    def missing_version(distribution: str) -> str:
+        nonlocal calls
+        calls += 1
+        assert distribution == "ocfl-cli"
+        raise batch_state.PackageNotFoundError(distribution)
+
+    batch_state._cli_version.cache_clear()
+    monkeypatch.setattr(batch_state, "version", missing_version)
+    try:
+        assert batch_state._cli_version() == "unknown"
+        assert batch_state._cli_version() == "unknown"
+    finally:
+        batch_state._cli_version.cache_clear()
+
+    assert calls == 1

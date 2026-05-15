@@ -11,6 +11,7 @@ from collections.abc import Callable
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import cache
 from importlib.metadata import PackageNotFoundError, version
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -103,6 +104,15 @@ class DriverLease(
 
 class DriverLeaseHandle:
     """Owned driver lease with explicit refresh and release operations."""
+
+    __slots__ = (
+        "_heartbeat_thread",
+        "_lease",
+        "_released",
+        "_signal_registration",
+        "_staging_root",
+        "_stop",
+    )
 
     def __init__(
         self,
@@ -212,7 +222,7 @@ SignalHandler = Callable[[int, FrameType | None], None]
 SignalAction = int | SignalHandler
 
 
-@dataclass
+@dataclass(slots=True)
 class _SignalRegistration:
     handle: DriverLeaseHandle
     previous: dict[signal.Signals, SignalAction]
@@ -531,6 +541,7 @@ def _format_command(command: tuple[str, ...]) -> str:
     return " ".join(command)
 
 
+@cache
 def _cli_version() -> str:
     try:
         return version("ocfl-cli")
