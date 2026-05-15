@@ -53,7 +53,6 @@ from ocfl_cli.stage.state import (
     VerifiedProof,
     has_ots,
     load_ots,
-    now_utc_iso,
     ots_cache_path,
     plan_path,
     save_ots,
@@ -1425,7 +1424,9 @@ def _replace_batch_object(
         existing for existing in batch.objects if existing.object_id != row.object_id
     ]
     rows.append(row)
-    return msgspec.structs.replace(batch, objects=tuple(rows), updated_at=now_utc_iso())
+    return msgspec.structs.replace(
+        batch, objects=tuple(rows), updated_at=batch_state.now_utc_iso_z()
+    )
 
 
 def _object_has_other_batch(
@@ -1579,7 +1580,9 @@ def _ensure_submit_chunks(batch: batch_state.BatchFile) -> batch_state.BatchFile
         )
         for i in range(0, len(digests), service._SUBMIT_CHUNK_SIZE)
     )
-    return msgspec.structs.replace(batch, submissions=chunks, updated_at=now_utc_iso())
+    return msgspec.structs.replace(
+        batch, submissions=chunks, updated_at=batch_state.now_utc_iso_z()
+    )
 
 
 def _row_by_object(batch: batch_state.BatchFile) -> dict[str, batch_state.BatchObject]:
@@ -1729,14 +1732,14 @@ def _submit_batch(
                 chunk,
                 status="submitted",
                 record_ids=result.record_ids,
-                submitted_at=now_utc_iso(),
+                submitted_at=batch_state.now_utc_iso_z(),
                 attempts=chunk.attempts + 1,
             )
             batch = msgspec.structs.replace(
                 batch,
                 objects=tuple(rows.values()),
                 submissions=tuple(submissions),
-                updated_at=now_utc_iso(),
+                updated_at=batch_state.now_utc_iso_z(),
             )
             with batch_state.with_batch_lock(staging_root, batch.batch_id):
                 batch_state.save_batch(staging_root, batch)
@@ -1858,7 +1861,7 @@ def _append_retry_chunk(
         digests=digests,
         status=status,
         record_ids=record_ids,
-        submitted_at=now_utc_iso() if status == "submitted" else None,
+        submitted_at=batch_state.now_utc_iso_z() if status == "submitted" else None,
         attempts=attempts,
         last_error=last_error,
     )
@@ -1944,7 +1947,7 @@ def _save_retry_pre_post(
         batch,
         objects=tuple(rows.values()),
         submissions=tuple(submissions),
-        updated_at=now_utc_iso(),
+        updated_at=batch_state.now_utc_iso_z(),
     )
     with batch_state.with_batch_lock(staging_root, batch.batch_id):
         batch_state.save_batch(staging_root, batch)
@@ -2015,7 +2018,7 @@ def _retry_batch_submissions(
                     source,
                     status="submitted",
                     record_ids=tuple(record_id for _digest, record_id in repaired),
-                    submitted_at=now_utc_iso(),
+                    submitted_at=batch_state.now_utc_iso_z(),
                 )
                 submissions[source_index] = repair_chunk
             else:
@@ -2109,7 +2112,7 @@ def _retry_batch_submissions(
             retry_chunk,
             status="submitted",
             record_ids=result.record_ids,
-            submitted_at=now_utc_iso(),
+            submitted_at=batch_state.now_utc_iso_z(),
         )
         submissions[retry_index] = retry_chunk
         for object_id in object_ids:
@@ -2175,7 +2178,7 @@ def _merge_recovered_object_intents(
     if len(merged) == len(batch.objects):
         return batch
     return msgspec.structs.replace(
-        batch, objects=tuple(merged), updated_at=now_utc_iso()
+        batch, objects=tuple(merged), updated_at=batch_state.now_utc_iso_z()
     )
 
 
@@ -2219,7 +2222,7 @@ def _save_batch_submit_progress(
         batch,
         objects=tuple(rows.values()),
         submissions=tuple(submissions),
-        updated_at=now_utc_iso(),
+        updated_at=batch_state.now_utc_iso_z(),
     )
     with batch_state.with_batch_lock(staging_root, batch.batch_id):
         batch_state.save_batch(staging_root, batch)
@@ -2363,7 +2366,7 @@ def _batch_unverified_submitted_digests(
 def _save_batch_upgrade(
     staging_root: Path, batch: batch_state.BatchFile
 ) -> batch_state.BatchFile:
-    batch = msgspec.structs.replace(batch, updated_at=now_utc_iso())
+    batch = msgspec.structs.replace(batch, updated_at=batch_state.now_utc_iso_z())
     with batch_state.with_batch_lock(staging_root, batch.batch_id):
         batch_state.save_batch(staging_root, batch)
     return batch
@@ -2394,7 +2397,7 @@ def _submit_batch_verify_jobs(
                 job_id=f"failed-{len(jobs) + 1}",
                 digests=chunk,
                 status="FAILED",
-                submitted_at=now_utc_iso(),
+                submitted_at=batch_state.now_utc_iso_z(),
                 attempts=1,
                 last_error=str(e),
             )
@@ -2414,7 +2417,7 @@ def _submit_batch_verify_jobs(
                 job_id=job_id,
                 digests=chunk,
                 status="IN_PROGRESS",
-                submitted_at=now_utc_iso(),
+                submitted_at=batch_state.now_utc_iso_z(),
                 attempts=1,
             )
         )
@@ -2441,7 +2444,7 @@ def _poll_batch_verify_jobs(
                 msgspec.structs.replace(
                     job,
                     status="FAILED",
-                    completed_at=now_utc_iso(),
+                    completed_at=batch_state.now_utc_iso_z(),
                     last_error=str(e),
                 )
             )
@@ -2459,7 +2462,7 @@ def _poll_batch_verify_jobs(
                 msgspec.structs.replace(
                     job,
                     status="FAILED",
-                    completed_at=now_utc_iso(),
+                    completed_at=batch_state.now_utc_iso_z(),
                     last_error=str(e),
                 )
             )
@@ -2482,7 +2485,9 @@ def _poll_batch_verify_jobs(
             status=status,
             results_url=poll.results_url or job.results_url,
             completed_at=(
-                now_utc_iso() if status in {"COMPLETED", "FAILED", "EXPIRED"} else None
+                batch_state.now_utc_iso_z()
+                if status in {"COMPLETED", "FAILED", "EXPIRED"}
+                else None
             ),
             last_error=(
                 "verify_job_failed"
@@ -3150,7 +3155,7 @@ def _drive_batch_watch(
         raise typer.Exit(2)
 
     if batch_id is None:
-        now = now_utc_iso()
+        now = batch_state.now_utc_iso_z()
         batch = batch_state.BatchFile(
             batch_id=batch_state.new_batch_id(),
             target=target,
@@ -3388,7 +3393,7 @@ def _drive_batch_submit(
         raise typer.Exit(2)
 
     if batch_id is None:
-        now = now_utc_iso()
+        now = batch_state.now_utc_iso_z()
         batch = batch_state.BatchFile(
             batch_id=batch_state.new_batch_id(),
             target=target,

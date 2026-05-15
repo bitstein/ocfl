@@ -64,6 +64,11 @@ zmq_endpoint = "tcp://127.0.0.1:28332"
 """
 
 
+def _assert_z_timestamp(value: str) -> None:
+    assert value.endswith("Z")
+    assert "+00:00" not in value
+
+
 class MismatchedRecordIdsFake(FakeSimpleProof):
     def submit_hashes(self, digests: list[str], category_id: int) -> SubmitResult:
         super().submit_hashes(digests, category_id)
@@ -364,6 +369,9 @@ def test_batch_content_new_batch_submits_one_union_call(
     assert [row.status for row in batch.objects] == ["submitted", "submitted"]
     assert len(batch.submissions) == 1
     assert batch.submissions[0].record_ids == sp_fake._submissions[0].record_ids
+    assert batch.submissions[0].submitted_at is not None
+    _assert_z_timestamp(batch.submissions[0].submitted_at)
+    _assert_z_timestamp(batch.updated_at)
 
     store = StagingStore(staging)
     for object_id, expected_count in (("obj:one", 2), ("obj:two", 1)):
@@ -415,6 +423,11 @@ def test_batch_content_new_batch_json_emits_batch_id_before_submit(
     assert data["target"] == "content"
     assert data["category_id"] == 641
     assert data["batch_id"]
+    _assert_z_timestamp(data["created_at"])
+
+    batch = batch_state.load_batch(staging, data["batch_id"])
+    _assert_z_timestamp(batch.created_at)
+    _assert_z_timestamp(batch.updated_at)
 
 
 def test_batch_content_new_batch_json_is_ndjson_driving_output(
@@ -2455,6 +2468,7 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
     batch = batch_state.load_batch(staging, batch_id)
     assert len(batch.verify_jobs) == 1
     assert batch.verify_jobs[0].digests == (digest,)
+    _assert_z_timestamp(batch.verify_jobs[0].submitted_at)
     assert batch.objects[0].status == "submitted"
 
     ots_bytes = _ots_for(digest)
@@ -2484,6 +2498,8 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
     assert events[-1]["counts"]["upgraded"] == 1
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.objects[0].status == "upgraded"
+    assert batch.verify_jobs[0].completed_at is not None
+    _assert_z_timestamp(batch.verify_jobs[0].completed_at)
     state = load_ots(
         StagingStore(staging).staging_path(
             str(empty_sha256_root.resolve()), "obj:batch-upgrade"

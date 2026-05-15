@@ -538,6 +538,11 @@ def _cli_version() -> str:
         return "unknown"
 
 
+def now_utc_iso_z() -> str:
+    """UTC timestamp for batch files at seconds precision with a Z suffix."""
+    return _format_datetime(datetime.now(UTC))
+
+
 def _format_datetime(value: datetime) -> str:
     return value.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
