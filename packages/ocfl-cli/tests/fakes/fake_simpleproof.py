@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 
-from ocfl_cli.ots.simpleproof import JobStatus, SubmitResult
+from ocfl_cli.ots.simpleproof import JobStatus, SimpleProofDownloadResult, SubmitResult
 
 
 @dataclass
@@ -60,8 +60,12 @@ class FakeSimpleProof:
 
     def download_results(
         self, results_url: str, expected_digests: set[str]
-    ) -> dict[str, bytes]:
-        return dict(self._results.get(results_url, {}))
+    ) -> SimpleProofDownloadResult:
+        proofs = dict(self._results.get(results_url, {}))
+        return SimpleProofDownloadResult(
+            proofs=proofs,
+            missing_digests=frozenset(expected_digests - set(proofs)),
+        )
 
     def advance_to_completed(
         self, job_id: str, results: dict[str, bytes] | None = None

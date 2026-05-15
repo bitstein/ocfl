@@ -21,7 +21,11 @@ from ocfl_cli.errors import (
     SimpleProofTransient,
 )
 from ocfl_cli.main import app
-from ocfl_cli.ots.simpleproof import JobStatus, SubmitResult
+from ocfl_cli.ots.simpleproof import (
+    JobStatus,
+    SimpleProofDownloadResult,
+    SubmitResult,
+)
 from ocfl_cli.stage import batch as batch_state
 from ocfl_cli.stage import commands as stage_commands
 from ocfl_cli.stage import service
@@ -126,7 +130,7 @@ class ExpiredPollFake(FakeSimpleProof):
 class MismatchDownloadFake(FakeSimpleProof):
     def download_results(
         self, results_url: str, expected_digests: set[str]
-    ) -> dict[str, bytes]:
+    ) -> SimpleProofDownloadResult:
         raise AttestationMismatchError("unexpected digest from SP")
 
 

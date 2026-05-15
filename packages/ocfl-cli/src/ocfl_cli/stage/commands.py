@@ -41,7 +41,7 @@ from ocfl_cli.ots.bitcoin import (
     VerifiedAttestation,
     verify_attestation,
 )
-from ocfl_cli.ots.simpleproof import _VERIFY_BATCH_CHUNK_SIZE
+from ocfl_cli.ots.simpleproof import _VERIFY_BATCH_CHUNK_SIZE, SimpleProofDownloadResult
 from ocfl_cli.stage import batch as batch_state
 from ocfl_cli.stage import service, watch
 from ocfl_cli.stage.fsm import Phase
@@ -2802,7 +2802,7 @@ def _ingest_batch_content_downloads(
     sr,
     batch: batch_state.BatchFile,
     row: batch_state.BatchObject,
-    downloads: dict[str, bytes],
+    downloads: SimpleProofDownloadResult,
     btc,
     min_confirmations: int,
 ) -> tuple[batch_state.BatchObject, bool]:
@@ -2850,7 +2850,7 @@ def _ingest_batch_inventory_downloads(
     sr,
     batch: batch_state.BatchFile,
     row: batch_state.BatchObject,
-    downloads: dict[str, bytes],
+    downloads: SimpleProofDownloadResult,
     btc,
     min_confirmations: int,
 ) -> tuple[batch_state.BatchObject, bool]:
@@ -3006,7 +3006,7 @@ def _ingest_batch_verify_jobs(
             }
             changed = True
             continue
-        missing = set(job.digests) - set(downloads)
+        missing = downloads.missing_digests
         for row in list(rows.values()):
             if row.status != "submitted" or not set(row.digests).intersection(
                 downloads

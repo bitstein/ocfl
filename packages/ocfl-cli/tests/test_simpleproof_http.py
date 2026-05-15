@@ -87,6 +87,7 @@ from ocfl_cli.ots.simpleproof import (
     _VERIFY_BATCH_CHUNK_SIZE,
     JobStatus,
     SimpleProofCreds,
+    SimpleProofDownloadResult,
     SimpleProofHttpClient,
     SubmitResult,
 )
@@ -664,9 +665,44 @@ class TestDownloadResults:
 
         out = client.download_results(results_url, {digest_a, digest_b})
 
+        assert isinstance(out, SimpleProofDownloadResult)
         assert set(out) == {digest_a, digest_b}
         assert out[digest_a] == ots_a
         assert out[digest_b] == ots_b
+        assert out.proofs == {digest_a: ots_a, digest_b: ots_b}
+        assert out.missing_digests == frozenset()
+
+    def test_missing_expected_digest_is_explicit(self) -> None:
+        digest_a_bytes = _bytes_digest("file-a")
+        digest_b_bytes = _bytes_digest("file-b")
+        digest_a = digest_a_bytes.hex()
+        digest_b = digest_b_bytes.hex()
+        ots_a = build_attestation(digest_a_bytes, block_height=800_000)
+
+        results_url = "https://sp-results.test/job-partial"
+        ots_url_a = "https://sp-blobs.test/a.ots"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if url == results_url:
+                return httpx.Response(
+                    200,
+                    json={
+                        "results": [
+                            {"digest": digest_a, "otsDownloadUrl": ots_url_a},
+                        ],
+                    },
+                )
+            if url == ots_url_a:
+                return httpx.Response(200, content=ots_a)
+            return httpx.Response(404)
+
+        client = _make_client(handler)
+
+        out = client.download_results(results_url, {digest_a, digest_b})
+
+        assert out.proofs == {digest_a: ots_a}
+        assert out.missing_digests == frozenset({digest_b})
 
     def test_decodes_results_data_envelope(self) -> None:
         digest_bytes = _bytes_digest("file-envelope")
@@ -696,7 +732,9 @@ class TestDownloadResults:
 
         client = _make_client(handler)
 
-        assert client.download_results(results_url, {digest}) == {digest: ots_bytes}
+        assert client.download_results(results_url, {digest}).proofs == {
+            digest: ots_bytes
+        }
 
     def test_decodes_results_list_with_simpleproof_field_names(self) -> None:
         digest_bytes = _bytes_digest("file-list")
@@ -725,7 +763,9 @@ class TestDownloadResults:
 
         client = _make_client(handler)
 
-        assert client.download_results(results_url, {digest}) == {digest: ots_bytes}
+        assert client.download_results(results_url, {digest}).proofs == {
+            digest: ots_bytes
+        }
 
     def test_commitment_digest_mismatch_raises_attestation_mismatch(self) -> None:
         # .ots bytes commit to digest X but the server claims they belong

@@ -1,8 +1,10 @@
 """SimpleProof API client protocol and HTTP implementation."""
 
 import time
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx2 as httpx
@@ -53,6 +55,24 @@ class JobStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class SimpleProofDownloadResult(Mapping[str, bytes]):
+    proofs: Mapping[str, bytes]
+    missing_digests: frozenset[str]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "proofs", MappingProxyType(dict(self.proofs)))
+
+    def __getitem__(self, digest: str) -> bytes:
+        return self.proofs[digest]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.proofs)
+
+    def __len__(self) -> int:
+        return len(self.proofs)
+
+
+@dataclass(frozen=True, slots=True)
 class SimpleProofCreds:
     """Credentials for the two SimpleProof auth schemes.
 
@@ -74,7 +94,7 @@ class SimpleProofClient(Protocol):
 
     def download_results(
         self, results_url: str, expected_digests: set[str]
-    ) -> dict[str, bytes]: ...
+    ) -> SimpleProofDownloadResult: ...
 
 
 _SUBMIT_PATH = "/api/proof/timestamp/hashes"
@@ -324,7 +344,7 @@ class SimpleProofHttpClient:
 
     def download_results(
         self, results_url: str, expected_digests: set[str]
-    ) -> dict[str, bytes]:
+    ) -> SimpleProofDownloadResult:
         resp = retry(
             lambda: self._request("GET", results_url),
             sleep=self._sleep,
@@ -360,7 +380,10 @@ class SimpleProofHttpClient:
                     f"commitment digest mismatch: claimed={claimed} parsed={parsed_hex}"
                 )
             out[claimed] = ots_bytes
-        return out
+        return SimpleProofDownloadResult(
+            proofs=out,
+            missing_digests=frozenset(expected_digests - set(out)),
+        )
 
 
 def default_sp_factory(cfg: Config) -> SimpleProofClient:
