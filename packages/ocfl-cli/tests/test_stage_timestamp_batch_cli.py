@@ -78,6 +78,17 @@ def test_batch_output_helpers_have_typed_contracts() -> None:
     assert is_typeddict(get_args(status_contract["verify_jobs"])[0])
 
 
+def test_fixed_batch_reasons_are_canonicalized_through_helper() -> None:
+    assert set(stage_commands._FIXED_BATCH_REASONS) == set(
+        get_args(stage_commands.FixedBatchReason.__value__)
+    )
+    assert "sp_partial_results" in stage_commands._FIXED_BATCH_REASONS
+    assert [
+        stage_commands._fixed_batch_reason(reason)
+        for reason in stage_commands._FIXED_BATCH_REASONS
+    ] == list(stage_commands._FIXED_BATCH_REASONS)
+
+
 def _assert_z_timestamp(value: str) -> None:
     assert value.endswith("Z")
     assert "+00:00" not in value

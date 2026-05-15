@@ -965,6 +965,69 @@ timestamp_app.add_typer(batch_app)
 _BATCH_STATUSES = ("prepared", "submitted", "upgraded", "failed", "skipped")
 _BATCH_MISSING_NEXT = "Operate per-object via stage timestamp content/inventory"
 
+type FixedBatchReason = Literal[
+    "attestation_mismatch",
+    "batch_file_missing",
+    "committed",
+    "content_not_upgraded",
+    "lock_contended",
+    "missing_metadata",
+    "missing_record_ids",
+    "no_new_digests",
+    "noop",
+    "regressed",
+    "reorg_deeper_than_min_conf",
+    "results_expired",
+    "sp_partial_results",
+    "submit_pending",
+    "transient_rpc_error",
+    "transient_sp_error",
+    "verify_job_failed",
+]
+type PrefixedBatchReason = Literal["category_mismatch", "in_batch"]
+
+_FIXED_BATCH_REASONS: tuple[FixedBatchReason, ...] = (
+    "attestation_mismatch",
+    "batch_file_missing",
+    "committed",
+    "content_not_upgraded",
+    "lock_contended",
+    "missing_metadata",
+    "missing_record_ids",
+    "no_new_digests",
+    "noop",
+    "regressed",
+    "reorg_deeper_than_min_conf",
+    "results_expired",
+    "sp_partial_results",
+    "submit_pending",
+    "transient_rpc_error",
+    "transient_sp_error",
+    "verify_job_failed",
+)
+
+
+def _fixed_batch_reason(reason: FixedBatchReason) -> FixedBatchReason:
+    return reason
+
+
+def _in_batch_reason(batch_id: str) -> str:
+    return f"in_batch={batch_id}"
+
+
+def _category_mismatch_reason(category_id: int) -> str:
+    return f"category_mismatch={category_id}"
+
+
+def _split_prefixed_batch_reason(reason: str) -> tuple[PrefixedBatchReason, str] | None:
+    match reason.split("=", maxsplit=1):
+        case ["in_batch", batch_id]:
+            return "in_batch", batch_id
+        case ["category_mismatch", category_id]:
+            return "category_mismatch", category_id
+        case _:
+            return None
+
 
 class BatchCountsOutput(TypedDict):
     prepared: int
@@ -1159,7 +1222,7 @@ def _load_batch_or_usage(
             output_json(
                 {
                     "batch_id": batch_id,
-                    "reason": "batch_file_missing",
+                    "reason": _fixed_batch_reason("batch_file_missing"),
                     "next": _BATCH_MISSING_NEXT,
                 }
             )
@@ -1175,44 +1238,43 @@ def _load_batch_or_usage(
 def _reason_next(reason: str | None, *, batch: batch_state.BatchFile) -> str | None:
     if reason is None:
         return None
-    if reason == "regressed":
-        return "stage status OBJECT; reset or restart timestamp flow"
-    if reason == "missing_record_ids":
-        return f"stage timestamp batch {batch.target} --batch {batch.batch_id} --retry"
-    if reason == "lock_contended":
-        return f"Re-run --batch {batch.batch_id} after the other process exits"
-    if reason.startswith("in_batch="):
-        return f"stage timestamp batch status {reason.removeprefix('in_batch=')}"
-    if reason.startswith("category_mismatch="):
-        return (
-            "Start a separate batch for that category or reset/recreate the "
-            "staging session"
-        )
-    if reason in {"committed", "no_new_digests", "noop"}:
-        return "None"
-    if reason == "content_not_upgraded":
-        return "Upgrade content first"
-    if reason == "missing_metadata":
-        return "Add staged metadata or rerun with --allow-missing-metadata"
-    if reason == "sp_partial_results":
-        return "Re-run --upgrade later"
-    if reason in {
-        "results_expired",
-        "verify_job_failed",
-        "transient_rpc_error",
-    }:
-        return "Re-run --upgrade"
-    if reason == "transient_sp_error":
-        return f"stage timestamp batch {batch.target} --batch {batch.batch_id} --retry"
-    if reason == "reorg_deeper_than_min_conf":
-        return "Retry after node catches up or investigate chain state"
-    if reason == "attestation_mismatch":
-        return "Operator inspection required"
-    if reason == "batch_file_missing":
-        return _BATCH_MISSING_NEXT
-    if reason == "submit_pending":
-        return f"stage timestamp batch {batch.target} --batch {batch.batch_id} --retry"
-    return "Inspect batch status"
+    match _split_prefixed_batch_reason(reason):
+        case ("in_batch", batch_id):
+            return f"stage timestamp batch status {batch_id}"
+        case ("category_mismatch", _category_id):
+            return (
+                "Start a separate batch for that category or reset/recreate the "
+                "staging session"
+            )
+        case None:
+            pass
+    match reason:
+        case "regressed":
+            return "stage status OBJECT; reset or restart timestamp flow"
+        case "missing_record_ids" | "transient_sp_error" | "submit_pending":
+            return (
+                f"stage timestamp batch {batch.target} --batch {batch.batch_id} --retry"
+            )
+        case "lock_contended":
+            return f"Re-run --batch {batch.batch_id} after the other process exits"
+        case "committed" | "no_new_digests" | "noop":
+            return "None"
+        case "content_not_upgraded":
+            return "Upgrade content first"
+        case "missing_metadata":
+            return "Add staged metadata or rerun with --allow-missing-metadata"
+        case "sp_partial_results":
+            return "Re-run --upgrade later"
+        case "results_expired" | "verify_job_failed" | "transient_rpc_error":
+            return "Re-run --upgrade"
+        case "reorg_deeper_than_min_conf":
+            return "Retry after node catches up or investigate chain state"
+        case "attestation_mismatch":
+            return "Operator inspection required"
+        case "batch_file_missing":
+            return _BATCH_MISSING_NEXT
+        case _:
+            return "Inspect batch status"
 
 
 def _object_staging_dir(staging_root: Path, *, root_path: str, object_id: str) -> Path:
@@ -1636,7 +1698,9 @@ def _prepare_batch_object(
     staging_dir = store.staging_path(root_path, object_id)
     if not store.exists(root_path, object_id) or not has_ots(staging_dir):
         return batch_state.BatchObject(
-            object_id=object_id, status="skipped", skipped_reason="committed"
+            object_id=object_id,
+            status="skipped",
+            skipped_reason=_fixed_batch_reason("committed"),
         )
     try:
         with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
@@ -1645,7 +1709,7 @@ def _prepare_batch_object(
                 return batch_state.BatchObject(
                     object_id=object_id,
                     status="skipped",
-                    skipped_reason=f"category_mismatch={state.category_id}",
+                    skipped_reason=_category_mismatch_reason(state.category_id),
                 )
             if (
                 other := _object_has_other_batch(state, batch.batch_id, target)
@@ -1653,7 +1717,7 @@ def _prepare_batch_object(
                 return batch_state.BatchObject(
                     object_id=object_id,
                     status="skipped",
-                    skipped_reason=f"in_batch={other}",
+                    skipped_reason=_in_batch_reason(other),
                 )
             if target == "content":
                 prepared = service.prepare_content_submission_locked(
@@ -1664,7 +1728,9 @@ def _prepare_batch_object(
                         object_id=object_id,
                         status="skipped",
                         skipped_reason=(
-                            "noop" if prepared.noop_advanced else "no_new_digests"
+                            _fixed_batch_reason("noop")
+                            if prepared.noop_advanced
+                            else _fixed_batch_reason("no_new_digests")
                         ),
                     )
                 state = load_ots(staging_dir)
@@ -1693,12 +1759,16 @@ def _prepare_batch_object(
             )
             if prepared.digest is None:
                 return batch_state.BatchObject(
-                    object_id=object_id, status="skipped", skipped_reason="noop"
+                    object_id=object_id,
+                    status="skipped",
+                    skipped_reason=_fixed_batch_reason("noop"),
                 )
             state = load_ots(staging_dir)
             if state.inventory_proof is None:
                 return batch_state.BatchObject(
-                    object_id=object_id, status="failed", last_error="regressed"
+                    object_id=object_id,
+                    status="failed",
+                    last_error=_fixed_batch_reason("regressed"),
                 )
             save_ots(
                 staging_dir,
@@ -1718,14 +1788,22 @@ def _prepare_batch_object(
             )
     except LockTimeoutError:
         return batch_state.BatchObject(
-            object_id=object_id, status="skipped", skipped_reason="lock_contended"
+            object_id=object_id,
+            status="skipped",
+            skipped_reason=_fixed_batch_reason("lock_contended"),
         )
     except MissingStagedMetadataError:
         return batch_state.BatchObject(
-            object_id=object_id, status="skipped", skipped_reason="missing_metadata"
+            object_id=object_id,
+            status="skipped",
+            skipped_reason=_fixed_batch_reason("missing_metadata"),
         )
     except PhaseError:
-        reason = "content_not_upgraded" if target == "inventory" else "no_new_digests"
+        reason = (
+            _fixed_batch_reason("content_not_upgraded")
+            if target == "inventory"
+            else _fixed_batch_reason("no_new_digests")
+        )
         return batch_state.BatchObject(
             object_id=object_id, status="skipped", skipped_reason=reason
         )
@@ -1874,7 +1952,8 @@ def _submit_batch(
                 )
                 for object_id in object_ids:
                     rows[object_id] = msgspec.structs.replace(
-                        rows[object_id], last_error="transient_sp_error"
+                        rows[object_id],
+                        last_error=_fixed_batch_reason("transient_sp_error"),
                     )
                 return _save_batch_submit_progress(
                     staging_root, batch, rows, submissions
@@ -1884,12 +1963,13 @@ def _submit_batch(
                     chunk,
                     status="failed",
                     attempts=chunk.attempts + 1,
-                    last_error="missing_record_ids",
+                    last_error=_fixed_batch_reason("missing_record_ids"),
                 )
                 submissions[index] = failed
                 for object_id in object_ids:
                     rows[object_id] = msgspec.structs.replace(
-                        rows[object_id], last_error="missing_record_ids"
+                        rows[object_id],
+                        last_error=_fixed_batch_reason("missing_record_ids"),
                     )
                 continue
             ids_by_digest = dict(zip(chunk.digests, result.record_ids, strict=True))
@@ -2257,18 +2337,20 @@ def _retry_batch_submissions(
             )
             for object_id in object_ids:
                 rows[object_id] = msgspec.structs.replace(
-                    rows[object_id], last_error="transient_sp_error"
+                    rows[object_id],
+                    last_error=_fixed_batch_reason("transient_sp_error"),
                 )
             return _save_batch_submit_progress(staging_root, batch, rows, submissions)
         if len(result.record_ids) != len(retry_chunk.digests):
             submissions[retry_index] = msgspec.structs.replace(
                 retry_chunk,
                 status="failed",
-                last_error="missing_record_ids",
+                last_error=_fixed_batch_reason("missing_record_ids"),
             )
             for object_id in object_ids:
                 rows[object_id] = msgspec.structs.replace(
-                    rows[object_id], last_error="missing_record_ids"
+                    rows[object_id],
+                    last_error=_fixed_batch_reason("missing_record_ids"),
                 )
             continue
         retry_ids = dict(zip(retry_chunk.digests, result.record_ids, strict=True))
@@ -2414,7 +2496,9 @@ def _revalidate_submit_chunk(
             state = load_ots(staging_dir)
             if state.category_id != batch.category_id:
                 rows[object_id] = msgspec.structs.replace(
-                    rows[object_id], status="failed", last_error="regressed"
+                    rows[object_id],
+                    status="failed",
+                    last_error=_fixed_batch_reason("regressed"),
                 )
                 valid_digests.difference_update(rows[object_id].digests)
                 continue
@@ -2428,7 +2512,9 @@ def _revalidate_submit_chunk(
                 )
             if row_digests is None:
                 rows[object_id] = msgspec.structs.replace(
-                    rows[object_id], status="failed", last_error="regressed"
+                    rows[object_id],
+                    status="failed",
+                    last_error=_fixed_batch_reason("regressed"),
                 )
                 valid_digests.difference_update(rows[object_id].digests)
                 continue
@@ -2498,7 +2584,10 @@ def _covered_verify_digests(batch: batch_state.BatchFile) -> set[str]:
         digest
         for job in batch.verify_jobs
         if job.status == "IN_PROGRESS"
-        or (job.status == "COMPLETED" and job.last_error != "sp_partial_results")
+        or (
+            job.status == "COMPLETED"
+            and job.last_error != _fixed_batch_reason("sp_partial_results")
+        )
         for digest in job.digests
     }
 
@@ -2569,7 +2658,9 @@ def _submit_batch_verify_jobs(
             )
             jobs.append(failed)
             rows = tuple(
-                msgspec.structs.replace(row, last_error="transient_sp_error")
+                msgspec.structs.replace(
+                    row, last_error=_fixed_batch_reason("transient_sp_error")
+                )
                 if row.status == "submitted" and set(row.digests).intersection(chunk)
                 else row
                 for row in batch.objects
@@ -2616,7 +2707,9 @@ def _poll_batch_verify_jobs(
             )
             affected = set(job.digests)
             rows = [
-                msgspec.structs.replace(row, last_error="transient_sp_error")
+                msgspec.structs.replace(
+                    row, last_error=_fixed_batch_reason("transient_sp_error")
+                )
                 if row.status == "submitted" and affected.intersection(row.digests)
                 else row
                 for row in rows
@@ -2634,7 +2727,9 @@ def _poll_batch_verify_jobs(
             )
             affected = set(job.digests)
             rows = [
-                msgspec.structs.replace(row, last_error="verify_job_failed")
+                msgspec.structs.replace(
+                    row, last_error=_fixed_batch_reason("verify_job_failed")
+                )
                 if row.status == "submitted" and affected.intersection(row.digests)
                 else row
                 for row in rows
@@ -2656,9 +2751,9 @@ def _poll_batch_verify_jobs(
                 else None
             ),
             last_error=(
-                "verify_job_failed"
+                _fixed_batch_reason("verify_job_failed")
                 if status == "FAILED"
-                else "results_expired"
+                else _fixed_batch_reason("results_expired")
                 if status == "EXPIRED"
                 else job.last_error
             ),
@@ -2668,7 +2763,9 @@ def _poll_batch_verify_jobs(
         if status == "FAILED":
             affected = set(job.digests)
             rows = [
-                msgspec.structs.replace(row, last_error="verify_job_failed")
+                msgspec.structs.replace(
+                    row, last_error=_fixed_batch_reason("verify_job_failed")
+                )
                 if row.status == "submitted" and affected.intersection(row.digests)
                 else row
                 for row in rows
@@ -2676,7 +2773,9 @@ def _poll_batch_verify_jobs(
         if status == "EXPIRED":
             affected = set(job.digests)
             rows = [
-                msgspec.structs.replace(row, last_error="results_expired")
+                msgspec.structs.replace(
+                    row, last_error=_fixed_batch_reason("results_expired")
+                )
                 if row.status == "submitted" and affected.intersection(row.digests)
                 else row
                 for row in rows
@@ -2761,7 +2860,9 @@ def _ingest_batch_inventory_downloads(
         proof = state.inventory_proof
         if proof is None or proof.batch_id != batch.batch_id:
             return (
-                msgspec.structs.replace(row, status="failed", last_error="regressed"),
+                msgspec.structs.replace(
+                    row, status="failed", last_error=_fixed_batch_reason("regressed")
+                ),
                 True,
             )
         if not _inventory_plan_matches_submission(
@@ -2773,7 +2874,9 @@ def _ingest_batch_inventory_downloads(
             state=state,
         ):
             return (
-                msgspec.structs.replace(row, status="failed", last_error="regressed"),
+                msgspec.structs.replace(
+                    row, status="failed", last_error=_fixed_batch_reason("regressed")
+                ),
                 True,
             )
         ots_bytes = downloads.get(proof.digest)
@@ -2855,7 +2958,9 @@ def _ingest_batch_verify_jobs(
             affected = set(job.digests)
             rows = {
                 object_id: (
-                    msgspec.structs.replace(row, last_error="results_expired")
+                    msgspec.structs.replace(
+                        row, last_error=_fixed_batch_reason("results_expired")
+                    )
                     if row.status == "submitted" and affected.intersection(row.digests)
                     else row
                 )
@@ -2870,7 +2975,9 @@ def _ingest_batch_verify_jobs(
             affected = set(job.digests)
             rows = {
                 object_id: (
-                    msgspec.structs.replace(row, last_error="transient_sp_error")
+                    msgspec.structs.replace(
+                        row, last_error=_fixed_batch_reason("transient_sp_error")
+                    )
                     if row.status == "submitted" and affected.intersection(row.digests)
                     else row
                 )
@@ -2880,13 +2987,17 @@ def _ingest_batch_verify_jobs(
             continue
         except AttestationMismatchError:
             jobs[index] = msgspec.structs.replace(
-                job, status="COMPLETED", last_error="attestation_mismatch"
+                job,
+                status="COMPLETED",
+                last_error=_fixed_batch_reason("attestation_mismatch"),
             )
             affected = set(job.digests)
             rows = {
                 object_id: (
                     msgspec.structs.replace(
-                        row, status="failed", last_error="attestation_mismatch"
+                        row,
+                        status="failed",
+                        last_error=_fixed_batch_reason("attestation_mismatch"),
                     )
                     if row.status == "submitted" and affected.intersection(row.digests)
                     else row
@@ -2924,27 +3035,35 @@ def _ingest_batch_verify_jobs(
                     )
             except AttestationMismatchError:
                 new_row = msgspec.structs.replace(
-                    row, status="failed", last_error="attestation_mismatch"
+                    row,
+                    status="failed",
+                    last_error=_fixed_batch_reason("attestation_mismatch"),
                 )
                 row_changed = True
             except ReorgDetectedError:
                 new_row = msgspec.structs.replace(
-                    row, status="failed", last_error="reorg_deeper_than_min_conf"
+                    row,
+                    status="failed",
+                    last_error=_fixed_batch_reason("reorg_deeper_than_min_conf"),
                 )
                 row_changed = True
             except BitcoinError:
-                new_row = msgspec.structs.replace(row, last_error="transient_rpc_error")
+                new_row = msgspec.structs.replace(
+                    row, last_error=_fixed_batch_reason("transient_rpc_error")
+                )
                 row_changed = True
             if row_changed:
                 rows[row.object_id] = new_row
                 changed = True
         if missing:
             jobs[index] = msgspec.structs.replace(
-                jobs[index], last_error="sp_partial_results"
+                jobs[index], last_error=_fixed_batch_reason("sp_partial_results")
             )
             rows = {
                 object_id: (
-                    msgspec.structs.replace(row, last_error="sp_partial_results")
+                    msgspec.structs.replace(
+                        row, last_error=_fixed_batch_reason("sp_partial_results")
+                    )
                     if row.status == "submitted" and missing.intersection(row.digests)
                     else row
                 )
@@ -3273,7 +3392,9 @@ def _reverify_batch_watch_rows(
             if row_reorg:
                 state = _reset_batch_row_phase(target, state)
                 row = msgspec.structs.replace(
-                    row, status="failed", last_error="reorg_deeper_than_min_conf"
+                    row,
+                    status="failed",
+                    last_error=_fixed_batch_reason("reorg_deeper_than_min_conf"),
                 )
                 changed_rows = True
             if row_reset:
