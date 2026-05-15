@@ -1,13 +1,25 @@
 """CLI tests for local-only batch timestamping commands."""
 
+import hashlib
 import json
+import multiprocessing
+import queue
+import time
 from pathlib import Path
 from typing import cast
 
 import pytest
+from fakes import FakeSimpleProof
+from msgspec.structs import replace
+from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
+from ocfl_cli.errors import SimpleProofTransient
 from ocfl_cli.main import app
+from ocfl_cli.ots.simpleproof import SubmitResult
+from ocfl_cli.stage import batch as batch_state
+from ocfl_cli.stage import commands as stage_commands
+from ocfl_cli.stage import service
 from ocfl_cli.stage.batch import (
     BatchFile,
     BatchObject,
@@ -24,9 +36,53 @@ from ocfl_cli.stage.state import (
     Submission,
     VerifiedProof,
     VerifyJob,
+    load_ots,
     save_ots,
 )
 from ocfl_cli.stage.store import StagingStore
+from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
+
+_SP_OK = """\
+[simpleproof]
+base_url = "https://stage.example"
+proof_category_id = 641
+"""
+
+_BTC_OK = """\
+[bitcoin]
+rpc_url = "http://127.0.0.1:8332"
+zmq_endpoint = "tcp://127.0.0.1:28332"
+"""
+
+
+class MismatchedRecordIdsFake(FakeSimpleProof):
+    def submit_hashes(self, digests: list[str], category_id: int) -> SubmitResult:
+        super().submit_hashes(digests, category_id)
+        return SubmitResult(digests=tuple(digests), record_ids=tuple())
+
+
+class TransientSubmitFake(FakeSimpleProof):
+    calls: int = 0
+
+    def submit_hashes(self, digests: list[str], category_id: int) -> SubmitResult:
+        self.calls += 1
+        raise SimpleProofTransient("SimpleProof HTTP 503")
+
+
+class BlockingSubmitFake(FakeSimpleProof):
+    def __init__(self, marker: Path, release: Path) -> None:
+        super().__init__()
+        self.marker = marker
+        self.release = release
+
+    def submit_hashes(self, digests: list[str], category_id: int) -> SubmitResult:
+        self.marker.write_text("ready")
+        deadline = time.monotonic() + 10
+        while not self.release.exists():
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"timed out waiting for {self.release}")
+            time.sleep(0.01)
+        return super().submit_hashes(digests, category_id)
 
 
 def _invoke(runner: CliRunner, storage_root: Path, staging: Path, *args: str):
@@ -51,6 +107,120 @@ def _invoke_json(runner: CliRunner, storage_root: Path, staging: Path, *args: st
     )
 
 
+def _write_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    cfg = tmp_path / "ocfl-config" / "config.toml"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(_SP_OK + _BTC_OK)
+    monkeypatch.setenv("OCFL_CONFIG", str(cfg))
+    return cfg
+
+
+def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
+    runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
+
+
+def _stage_args(root: Path, staging: Path, *args: str) -> list[str]:
+    return ["--root", str(root), "stage", "--staging-root", str(staging), *args]
+
+
+def _run_batch_command_process(
+    root: str,
+    staging: str,
+    args: tuple[str, ...],
+    marker: str | None,
+    release: str | None,
+    out: multiprocessing.Queue,
+) -> None:
+    runner = CliRunner()
+    obj = {}
+    if marker is not None and release is not None:
+        obj["sp_client_factory"] = lambda cfg: BlockingSubmitFake(
+            Path(marker), Path(release)
+        )
+    else:
+        obj["sp_client_factory"] = lambda cfg: FakeSimpleProof()
+    result = runner.invoke(app, _stage_args(Path(root), Path(staging), *args), obj=obj)
+    diagnostic = result.output
+    if result.exception is not None:
+        diagnostic = f"{diagnostic}{result.exception!r}"
+    out.put((result.exit_code, diagnostic))
+
+
+def _start_batch_process(
+    root: Path,
+    staging: Path,
+    args: tuple[str, ...],
+    *,
+    marker: Path | None = None,
+    release: Path | None = None,
+):
+    ctx = multiprocessing.get_context("spawn")
+    out = ctx.Queue()
+    process = ctx.Process(
+        target=_run_batch_command_process,
+        args=(
+            str(root),
+            str(staging),
+            args,
+            str(marker) if marker is not None else None,
+            str(release) if release is not None else None,
+            out,
+        ),
+    )
+    process.start()
+    return process, out
+
+
+def _wait_for_path(path: Path, *, timeout: float = 10) -> None:
+    deadline = time.monotonic() + timeout
+    while not path.exists():
+        if time.monotonic() > deadline:
+            raise AssertionError(f"timed out waiting for {path}")
+        time.sleep(0.01)
+
+
+def _process_result(
+    process: multiprocessing.Process, out: multiprocessing.Queue
+) -> tuple[int, str]:
+    process.join(timeout=10)
+    if process.is_alive():
+        process.terminate()
+        process.join(timeout=5)
+        raise AssertionError("child process did not exit")
+    try:
+        return out.get_nowait()
+    except queue.Empty as e:
+        raise AssertionError("child process produced no result") from e
+
+
+@pytest.fixture
+def empty_sha256_root(tmp_path: Path) -> Path:
+    location = tmp_path / "root"
+    location.mkdir()
+    fs = LocalFS(location)
+    layout = get_layout("0002-flat-direct-storage-layout")
+    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
+    return location
+
+
+def _new_ots_with_files(
+    runner: CliRunner,
+    root: Path,
+    staging: Path,
+    object_id: str,
+    *files: tuple[str, bytes],
+) -> None:
+    result = runner.invoke(app, _stage_args(root, staging, "new", object_id, "--ots"))
+    assert result.exit_code == 0, result.output
+    for name, content in files:
+        src = staging.parent / f"{object_id.replace(':', '_')}-{name}"
+        src.write_bytes(content)
+        result = runner.invoke(
+            app, _stage_args(root, staging, "add", object_id, str(src))
+        )
+        assert result.exit_code == 0, result.output
+
+
 def _ots_staging(
     staging_root: Path,
     root_path: str,
@@ -62,6 +232,874 @@ def _ots_staging(
     staging_dir.mkdir(parents=True)
     save_ots(staging_dir, state)
     return staging_dir
+
+
+def test_batch_content_new_batch_submits_one_union_call(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:one",
+        ("a.txt", b"alpha"),
+        ("b.txt", b"bravo"),
+    )
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:two",
+        ("c.txt", b"charlie"),
+    )
+
+    result = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "content",
+            "--object",
+            "obj:one",
+            "--object",
+            "obj:two",
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "batch created:" in result.output
+    assert len(sp_fake._submissions) == 1
+    assert len(sp_fake._submissions[0].digests) == 3
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.target == "content"
+    assert batch.category_id == 641
+    assert [row.status for row in batch.objects] == ["submitted", "submitted"]
+    assert len(batch.submissions) == 1
+    assert batch.submissions[0].record_ids == sp_fake._submissions[0].record_ids
+
+    store = StagingStore(staging)
+    for object_id, expected_count in (("obj:one", 2), ("obj:two", 1)):
+        state = load_ots(
+            store.staging_path(str(empty_sha256_root.resolve()), object_id)
+        )
+        assert state.phase is Phase.CONTENT_PENDING
+        assert len(state.submissions) == 1
+        sub = state.submissions[0]
+        assert sub.batch_id == batch_id
+        assert sub.status == "submitted"
+        assert sub.record_ids is not None
+        assert len([rid for rid in sub.record_ids if rid is not None]) == expected_count
+
+
+def test_batch_content_new_batch_json_emits_batch_id_before_submit(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(runner, empty_sha256_root, staging, "obj:json", ("a.txt", b"a"))
+
+    result = runner.invoke(
+        app,
+        [
+            "--root",
+            str(empty_sha256_root),
+            "--json",
+            "stage",
+            "--staging-root",
+            str(staging),
+            "timestamp",
+            "batch",
+            "content",
+            "--object",
+            "obj:json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["event"] == "batch_created"
+    assert data["target"] == "content"
+    assert data["category_id"] == 641
+    assert data["batch_id"]
+
+
+def test_batch_content_bare_batch_mirrors_persisted_chunk_without_repost(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner, empty_sha256_root, staging, "obj:resume", ("a.txt", b"a")
+    )
+
+    create = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "content",
+            "--object",
+            "obj:resume",
+        ),
+    )
+    assert create.exit_code == 0, create.output
+    assert len(sp_fake._submissions) == 1
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+
+    store = StagingStore(staging)
+    staging_dir = store.staging_path(str(empty_sha256_root.resolve()), "obj:resume")
+    state = load_ots(staging_dir)
+    save_ots(
+        staging_dir,
+        replace(
+            state,
+            phase=Phase.DRAFTING,
+            submissions=(
+                replace(state.submissions[0], status="submitting", record_ids=None),
+            ),
+        ),
+    )
+
+    resume = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "content",
+            "--batch",
+            batch_id,
+        ),
+    )
+
+    assert resume.exit_code == 0, resume.output
+    assert len(sp_fake._submissions) == 1
+    resumed_state = load_ots(staging_dir)
+    assert resumed_state.submissions[0].status == "submitted"
+    assert resumed_state.submissions[0].record_ids == sp_fake._submissions[0].record_ids
+
+
+def test_batch_inventory_new_batch_submits_and_mirrors_record_id(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(runner, empty_sha256_root, staging, "obj:inv", ("a.txt", b"a"))
+
+    store = StagingStore(staging)
+    staging_dir = store.staging_path(str(empty_sha256_root.resolve()), "obj:inv")
+    state = load_ots(staging_dir)
+    digest = hashlib.sha256(b"a").hexdigest()
+    save_ots(
+        staging_dir,
+        replace(
+            state,
+            phase=Phase.CONTENT_UPGRADED,
+            content_proofs={digest: VerifiedProof(verified=True)},
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "inventory",
+            "--object",
+            "obj:inv",
+            "--allow-missing-metadata",
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(sp_fake._submissions) == 1
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.target == "inventory"
+    assert batch.objects[0].status == "submitted"
+    assert batch.submissions[0].record_ids == ("rec-1",)
+    updated = load_ots(staging_dir)
+    assert updated.phase is Phase.INVENTORY_PENDING
+    assert updated.inventory_proof is not None
+    assert updated.inventory_proof.batch_id == batch_id
+    assert updated.inventory_proof.record_id == "rec-1"
+
+
+def test_batch_inventory_same_object_skips_until_content_upgraded(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner, empty_sha256_root, staging, "obj:overlap", ("a.txt", b"a")
+    )
+    content = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "content",
+            "--object",
+            "obj:overlap",
+        ),
+    )
+    assert content.exit_code == 0, content.output
+
+    inventory = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "inventory",
+            "--object",
+            "obj:overlap",
+            "--allow-missing-metadata",
+        ),
+    )
+
+    assert inventory.exit_code == 0, inventory.output
+    batches = [
+        batch_state.load_batch(staging, p.stem)
+        for p in (staging / "batches").glob("*.json")
+    ]
+    inventory_batch = next(batch for batch in batches if batch.target == "inventory")
+    assert inventory_batch.objects[0].status == "skipped"
+    assert inventory_batch.objects[0].skipped_reason == "content_not_upgraded"
+
+
+def test_batch_inventory_after_content_upgraded_ignores_content_batch_owner(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner, empty_sha256_root, staging, "obj:after-content", ("a.txt", b"a")
+    )
+    content = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "content",
+            "--object",
+            "obj:after-content",
+        ),
+    )
+    assert content.exit_code == 0, content.output
+    store = StagingStore(staging)
+    staging_dir = store.staging_path(
+        str(empty_sha256_root.resolve()), "obj:after-content"
+    )
+    state = load_ots(staging_dir)
+    digest = hashlib.sha256(b"a").hexdigest()
+    save_ots(
+        staging_dir,
+        replace(
+            state,
+            phase=Phase.CONTENT_UPGRADED,
+            content_proofs={digest: VerifiedProof(verified=True)},
+        ),
+    )
+
+    inventory = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "inventory",
+            "--object",
+            "obj:after-content",
+            "--allow-missing-metadata",
+        ),
+    )
+
+    assert inventory.exit_code == 0, inventory.output
+    batches = [
+        batch_state.load_batch(staging, p.stem)
+        for p in (staging / "batches").glob("*.json")
+    ]
+    inventory_batch = next(batch for batch in batches if batch.target == "inventory")
+    assert inventory_batch.objects[0].status == "submitted"
+    updated = load_ots(staging_dir)
+    assert updated.inventory_proof is not None
+    assert updated.inventory_proof.batch_id == inventory_batch.batch_id
+    assert updated.inventory_proof.record_id is not None
+
+
+def test_batch_content_shape_mismatch_fails_chunk_closed(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = MismatchedRecordIdsFake()
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:mismatch",
+        ("a.txt", b"a"),
+        ("b.txt", b"b"),
+    )
+
+    result = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "content",
+            "--object",
+            "obj:mismatch",
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.submissions[0].status == "failed"
+    assert batch.submissions[0].last_error == "missing_record_ids"
+    assert batch.objects[0].status == "prepared"
+    assert batch.objects[0].last_error == "missing_record_ids"
+    state = load_ots(
+        StagingStore(staging).staging_path(
+            str(empty_sha256_root.resolve()), "obj:mismatch"
+        )
+    )
+    assert state.submissions[0].status == "submitting"
+    assert state.submissions[0].record_ids == (None, None)
+
+
+def test_batch_content_bare_batch_does_not_repost_failed_chunk(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = MismatchedRecordIdsFake()
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner, empty_sha256_root, staging, "obj:failed", ("a.txt", b"a")
+    )
+    create = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "content",
+            "--object",
+            "obj:failed",
+        ),
+    )
+    assert create.exit_code == 0, create.output
+    assert len(fake._submissions) == 1
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+
+    resume = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "content",
+            "--batch",
+            batch_id,
+        ),
+    )
+
+    assert resume.exit_code == 0, resume.output
+    assert len(fake._submissions) == 1
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.submissions[0].status == "failed"
+    assert batch.objects[0].last_error == "missing_record_ids"
+
+
+def test_batch_content_new_batch_acquires_lease_before_file_is_visible(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner, empty_sha256_root, staging, "obj:lease", ("a.txt", b"a")
+    )
+    original = batch_state.acquire_driver_lease
+    observed_clean = []
+
+    def checked_acquire(*args, **kwargs):
+        observed_clean.append(not list((staging / "batches").glob("*.json")))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(batch_state, "acquire_driver_lease", checked_acquire)
+
+    result = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "content",
+            "--object",
+            "obj:lease",
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert observed_clean == [True]
+
+
+def test_batch_content_competing_batch_driver_refuses_live_lease(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner, empty_sha256_root, staging, "obj:driver", ("a.txt", b"a")
+    )
+    marker = tmp_path / "driver-ready"
+    release = tmp_path / "driver-release"
+    first, first_out = _start_batch_process(
+        empty_sha256_root,
+        staging,
+        ("timestamp", "batch", "content", "--object", "obj:driver"),
+        marker=marker,
+        release=release,
+    )
+    _wait_for_path(marker)
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+
+    second, second_out = _start_batch_process(
+        empty_sha256_root,
+        staging,
+        ("timestamp", "batch", "content", "--batch", batch_id),
+    )
+    second_code, second_output = _process_result(second, second_out)
+    release.write_text("go")
+    first_code, first_output = _process_result(first, first_out)
+
+    assert first_code == 0, first_output
+    assert second_code == 1
+    assert "driver lease is held" in second_output
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.submissions[0].status == "submitted"
+
+
+def test_batch_content_competing_same_object_batch_skips_in_batch(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(runner, empty_sha256_root, staging, "obj:same", ("a.txt", b"a"))
+    marker = tmp_path / "same-ready"
+    release = tmp_path / "same-release"
+    first, first_out = _start_batch_process(
+        empty_sha256_root,
+        staging,
+        ("timestamp", "batch", "content", "--object", "obj:same"),
+        marker=marker,
+        release=release,
+    )
+    _wait_for_path(marker)
+
+    second, second_out = _start_batch_process(
+        empty_sha256_root,
+        staging,
+        ("timestamp", "batch", "content", "--object", "obj:same"),
+    )
+    second_code, second_output = _process_result(second, second_out)
+    release.write_text("go")
+    first_code, first_output = _process_result(first, first_out)
+
+    assert first_code == 0, first_output
+    assert second_code == 0, second_output
+    batches = [
+        batch_state.load_batch(staging, p.stem)
+        for p in (staging / "batches").glob("*.json")
+    ]
+    skipped = [
+        batch
+        for batch in batches
+        if batch.objects and batch.objects[0].status == "skipped"
+    ]
+    assert len(skipped) == 1
+    assert skipped[0].objects[0].skipped_reason is not None
+    assert skipped[0].objects[0].skipped_reason.startswith("in_batch=")
+
+
+def test_batch_content_competing_cross_object_batches_both_submit(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner, empty_sha256_root, staging, "obj:left", ("left.txt", b"left")
+    )
+    _new_ots_with_files(
+        runner, empty_sha256_root, staging, "obj:right", ("right.txt", b"right")
+    )
+    left_marker = tmp_path / "left-ready"
+    left_release = tmp_path / "left-release"
+    right_marker = tmp_path / "right-ready"
+    right_release = tmp_path / "right-release"
+    left, left_out = _start_batch_process(
+        empty_sha256_root,
+        staging,
+        ("timestamp", "batch", "content", "--object", "obj:left"),
+        marker=left_marker,
+        release=left_release,
+    )
+    right, right_out = _start_batch_process(
+        empty_sha256_root,
+        staging,
+        ("timestamp", "batch", "content", "--object", "obj:right"),
+        marker=right_marker,
+        release=right_release,
+    )
+    _wait_for_path(left_marker)
+    _wait_for_path(right_marker)
+    left_release.write_text("go")
+    right_release.write_text("go")
+    left_code, left_output = _process_result(left, left_out)
+    right_code, right_output = _process_result(right, right_out)
+
+    assert left_code == 0, left_output
+    assert right_code == 0, right_output
+    batches = [
+        batch_state.load_batch(staging, p.stem)
+        for p in (staging / "batches").glob("*.json")
+    ]
+    assert sorted(row.object_id for batch in batches for row in batch.objects) == [
+        "obj:left",
+        "obj:right",
+    ]
+    assert all(row.status == "submitted" for batch in batches for row in batch.objects)
+
+
+def test_batch_content_recovers_object_intent_without_batch_row(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner, empty_sha256_root, staging, "obj:orphan", ("a.txt", b"a")
+    )
+    batch_id = new_batch_id()
+    digest = hashlib.sha256(b"a").hexdigest()
+    store = StagingStore(staging)
+    staging_dir = store.staging_path(str(empty_sha256_root.resolve()), "obj:orphan")
+    state = load_ots(staging_dir)
+    save_ots(
+        staging_dir,
+        replace(
+            state,
+            pending_digests=(digest,),
+            submissions=(
+                Submission(
+                    submitted_at="2026-05-12T10:00:00Z",
+                    digests=(digest,),
+                    status="submitting",
+                    batch_id=batch_id,
+                    record_ids=(None,),
+                ),
+            ),
+        ),
+    )
+    save_batch(
+        staging,
+        BatchFile(
+            batch_id=batch_id,
+            target="content",
+            root_path=str(empty_sha256_root.resolve()),
+            category_id=641,
+            created_at="2026-05-12T10:00:00Z",
+            updated_at="2026-05-12T10:00:00Z",
+        ),
+    )
+    batch_lock_depth = 0
+    events: list[str] = []
+    original_batch_lock = batch_state.with_batch_lock
+    original_object_lock = stage_commands.with_lock
+
+    def recording_batch_lock(*args, **kwargs):
+        manager = original_batch_lock(*args, **kwargs)
+
+        class _RecordingBatchLock:
+            def __enter__(self):
+                nonlocal batch_lock_depth
+                batch_lock_depth += 1
+                events.append("batch-enter")
+                return manager.__enter__()
+
+            def __exit__(self, exc_type, exc, tb):
+                nonlocal batch_lock_depth
+                try:
+                    return manager.__exit__(exc_type, exc, tb)
+                finally:
+                    events.append("batch-exit")
+                    batch_lock_depth -= 1
+
+        return _RecordingBatchLock()
+
+    def recording_object_lock(*args, **kwargs):
+        events.append(f"object-enter-while-batch={batch_lock_depth}")
+        return original_object_lock(*args, **kwargs)
+
+    monkeypatch.setattr(batch_state, "with_batch_lock", recording_batch_lock)
+    monkeypatch.setattr(stage_commands, "with_lock", recording_object_lock)
+
+    result = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "content",
+            "--batch",
+            batch_id,
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "object-enter-while-batch=0" in events
+    assert "object-enter-while-batch=1" not in events
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.objects[0].object_id == "obj:orphan"
+    assert batch.objects[0].status == "submitted"
+    assert len(sp_fake._submissions) == 1
+    updated = load_ots(staging_dir)
+    assert updated.submissions[0].record_ids == ("rec-1",)
+
+
+def test_batch_content_resume_empty_after_revalidation_skips_post(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner, empty_sha256_root, staging, "obj:empty", ("a.txt", b"a")
+    )
+    create = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "content",
+            "--object",
+            "obj:empty",
+        ),
+    )
+    assert create.exit_code == 0, create.output
+    assert len(sp_fake._submissions) == 1
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    batch_state.save_batch(
+        staging,
+        replace(
+            batch,
+            objects=(replace(batch.objects[0], status="prepared"),),
+            submissions=(
+                replace(batch.submissions[0], status="pending", record_ids=None),
+            ),
+        ),
+    )
+
+    resume = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "content",
+            "--batch",
+            batch_id,
+        ),
+    )
+
+    assert resume.exit_code == 0, resume.output
+    assert len(sp_fake._submissions) == 1
+    resumed = batch_state.load_batch(staging, batch_id)
+    assert resumed.submissions[0].status == "submitted"
+    assert resumed.submissions[0].digests == ()
+    assert resumed.submissions[0].record_ids == ()
+
+
+def test_batch_content_chunked_multi_chunk_object_completes(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    monkeypatch.setattr(service, "_SUBMIT_CHUNK_SIZE", 2)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:chunked",
+        ("a.txt", b"a"),
+        ("b.txt", b"b"),
+        ("c.txt", b"c"),
+        ("d.txt", b"d"),
+        ("e.txt", b"e"),
+    )
+
+    result = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "content",
+            "--object",
+            "obj:chunked",
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert [len(call.digests) for call in sp_fake._submissions] == [2, 2, 1]
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    assert [len(chunk.digests) for chunk in batch.submissions] == [2, 2, 1]
+    assert all(chunk.status == "submitted" for chunk in batch.submissions)
+    state = load_ots(
+        StagingStore(staging).staging_path(
+            str(empty_sha256_root.resolve()), "obj:chunked"
+        )
+    )
+    assert state.phase is Phase.CONTENT_PENDING
+    assert state.submissions[0].status == "submitted"
+    assert state.submissions[0].record_ids is not None
+    assert len(state.submissions[0].record_ids) == 5
+
+
+def test_batch_content_transient_submit_failure_is_persisted(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = TransientSubmitFake()
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:transient",
+        ("a.txt", b"a"),
+    )
+
+    result = runner.invoke(
+        app,
+        _stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "batch",
+            "content",
+            "--object",
+            "obj:transient",
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake.calls == 1
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.submissions[0].status == "failed"
+    assert batch.submissions[0].last_error == "SimpleProof HTTP 503"
+    assert batch.objects[0].status == "prepared"
+    assert batch.objects[0].last_error == "transient_sp_error"
 
 
 def _status_json_and_human(

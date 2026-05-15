@@ -38,14 +38,18 @@ from ocfl_cli.stage.ingest import ingest_file
 from ocfl_cli.stage.schemas import StagedMetadata
 from ocfl_cli.stage.state import (
     OtsState,
+    Submission,
     VerifiedProof,
     has_ots,
     load_ots,
+    now_utc_iso,
+    plan_path,
     save_ots,
     with_lock,
 )
 from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import DigestAlgorithm
+from ocfl_lib.update_plan import serialize
 
 if TYPE_CHECKING:
     from ocfl_cli._appctx import BtcRpcFactory, SpClientFactory
@@ -1304,6 +1308,736 @@ def _batch_status_dict(
         "submissions": [msgspec.to_builtins(row) for row in batch.submissions],
         "verify_jobs": [msgspec.to_builtins(row) for row in batch.verify_jobs],
     }
+
+
+def _read_objects_file(path: Path) -> list[str]:
+    object_ids: list[str] = []
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            object_ids.append(stripped)
+    return object_ids
+
+
+def _replace_batch_object(
+    batch: batch_state.BatchFile, row: batch_state.BatchObject
+) -> batch_state.BatchFile:
+    rows = [
+        existing for existing in batch.objects if existing.object_id != row.object_id
+    ]
+    rows.append(row)
+    return msgspec.structs.replace(batch, objects=tuple(rows), updated_at=now_utc_iso())
+
+
+def _object_has_other_batch(
+    state: OtsState, batch_id: str, target: batch_state.BatchTarget
+) -> str | None:
+    if target == "inventory":
+        proof = state.inventory_proof
+        if (
+            proof is not None
+            and proof.batch_id is not None
+            and proof.batch_id != batch_id
+            and proof.record_id is None
+        ):
+            return proof.batch_id
+        return None
+    for submission in state.submissions:
+        if (
+            submission.status in {"submitting", "submitted"}
+            and submission.batch_id is not None
+            and submission.batch_id != batch_id
+        ):
+            return submission.batch_id
+    return None
+
+
+def _batch_command_tuple(target: str, batch_id: str) -> tuple[str, ...]:
+    return ("stage", "timestamp", "batch", target, "--batch", batch_id)
+
+
+def _prepare_batch_object(
+    *,
+    target: batch_state.BatchTarget,
+    cfg,
+    store: StagingStore,
+    sr,
+    root_path: str,
+    staging_root: Path,
+    batch: batch_state.BatchFile,
+    object_id: str,
+    allow_missing_metadata: bool,
+) -> batch_state.BatchObject:
+    staging_dir = store.staging_path(root_path, object_id)
+    if not store.exists(root_path, object_id) or not has_ots(staging_dir):
+        return batch_state.BatchObject(
+            object_id=object_id, status="skipped", skipped_reason="committed"
+        )
+    try:
+        with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+            state = load_ots(staging_dir)
+            if state.category_id != batch.category_id:
+                return batch_state.BatchObject(
+                    object_id=object_id,
+                    status="skipped",
+                    skipped_reason=f"category_mismatch={state.category_id}",
+                )
+            if (
+                other := _object_has_other_batch(state, batch.batch_id, target)
+            ) is not None:
+                return batch_state.BatchObject(
+                    object_id=object_id,
+                    status="skipped",
+                    skipped_reason=f"in_batch={other}",
+                )
+            if target == "content":
+                prepared = service.prepare_content_submission_locked(
+                    cfg, store, sr, root_path, object_id, staging_dir
+                )
+                if not prepared.digests:
+                    return batch_state.BatchObject(
+                        object_id=object_id,
+                        status="skipped",
+                        skipped_reason=(
+                            "noop" if prepared.noop_advanced else "no_new_digests"
+                        ),
+                    )
+                state = load_ots(staging_dir)
+                submissions = list(state.submissions)
+                submissions[-1] = msgspec.structs.replace(
+                    submissions[-1],
+                    batch_id=batch.batch_id,
+                    record_ids=tuple(None for _ in prepared.digests),
+                )
+                save_ots(
+                    staging_dir,
+                    msgspec.structs.replace(state, submissions=tuple(submissions)),
+                )
+                return batch_state.BatchObject(
+                    object_id=object_id, status="prepared", digests=prepared.digests
+                )
+
+            prepared = service.prepare_inventory_submission_locked(
+                cfg,
+                store,
+                sr,
+                root_path,
+                object_id,
+                staging_dir,
+                allow_missing_metadata=allow_missing_metadata,
+            )
+            if prepared.digest is None:
+                return batch_state.BatchObject(
+                    object_id=object_id, status="skipped", skipped_reason="noop"
+                )
+            state = load_ots(staging_dir)
+            if state.inventory_proof is None:
+                return batch_state.BatchObject(
+                    object_id=object_id, status="failed", last_error="regressed"
+                )
+            save_ots(
+                staging_dir,
+                msgspec.structs.replace(
+                    state,
+                    inventory_proof=msgspec.structs.replace(
+                        state.inventory_proof,
+                        batch_id=batch.batch_id,
+                        record_id=None,
+                    ),
+                ),
+            )
+            if prepared.plan is not None:
+                plan_path(staging_dir).write_bytes(serialize(prepared.plan))
+            return batch_state.BatchObject(
+                object_id=object_id, status="prepared", digests=(prepared.digest,)
+            )
+    except LockTimeoutError:
+        return batch_state.BatchObject(
+            object_id=object_id, status="skipped", skipped_reason="lock_contended"
+        )
+    except MissingStagedMetadataError:
+        return batch_state.BatchObject(
+            object_id=object_id, status="skipped", skipped_reason="missing_metadata"
+        )
+    except PhaseError:
+        reason = "content_not_upgraded" if target == "inventory" else "no_new_digests"
+        return batch_state.BatchObject(
+            object_id=object_id, status="skipped", skipped_reason=reason
+        )
+
+
+def _ensure_submit_chunks(batch: batch_state.BatchFile) -> batch_state.BatchFile:
+    if batch.submissions:
+        return batch
+    digests = sorted(
+        {d for row in batch.objects if row.status == "prepared" for d in row.digests}
+    )
+    chunks = tuple(
+        batch_state.BatchSubmission(
+            chunk_index=i // service._SUBMIT_CHUNK_SIZE,
+            digests=tuple(digests[i : i + service._SUBMIT_CHUNK_SIZE]),
+            status="pending",
+        )
+        for i in range(0, len(digests), service._SUBMIT_CHUNK_SIZE)
+    )
+    return msgspec.structs.replace(batch, submissions=chunks, updated_at=now_utc_iso())
+
+
+def _row_by_object(batch: batch_state.BatchFile) -> dict[str, batch_state.BatchObject]:
+    return {row.object_id: row for row in batch.objects}
+
+
+def _chunk_object_ids(
+    batch: batch_state.BatchFile, chunk: batch_state.BatchSubmission
+) -> list[str]:
+    chunk_digests = set(chunk.digests)
+    return [
+        row.object_id
+        for row in batch.objects
+        if row.status in {"prepared", "submitted"}
+        and chunk_digests.intersection(row.digests)
+    ]
+
+
+def _mirror_chunk_to_object(
+    *,
+    target: batch_state.BatchTarget,
+    store: StagingStore,
+    root_path: str,
+    staging_root: Path,
+    batch: batch_state.BatchFile,
+    object_id: str,
+    ids_by_digest: dict[str, str],
+) -> bool:
+    staging_dir = store.staging_path(root_path, object_id)
+    with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+        state = load_ots(staging_dir)
+        if target == "content":
+            changed: list[Submission] = []
+            completed = False
+            for submission in state.submissions:
+                if submission.batch_id != batch.batch_id:
+                    changed.append(submission)
+                    continue
+                record_ids = list(
+                    submission.record_ids
+                    if submission.record_ids is not None
+                    else tuple(None for _ in submission.digests)
+                )
+                for i, digest in enumerate(submission.digests):
+                    if digest in ids_by_digest:
+                        record_ids[i] = ids_by_digest[digest]
+                completed = all(record_id is not None for record_id in record_ids)
+                changed.append(
+                    msgspec.structs.replace(
+                        submission,
+                        record_ids=tuple(record_ids),
+                        status="submitted" if completed else "submitting",
+                    )
+                )
+            phase = Phase.CONTENT_PENDING if completed else state.phase
+            save_ots(
+                staging_dir,
+                msgspec.structs.replace(state, submissions=tuple(changed), phase=phase),
+            )
+            return completed
+
+        proof = state.inventory_proof
+        if proof is None or proof.batch_id != batch.batch_id:
+            return False
+        record_id = ids_by_digest.get(proof.digest)
+        if record_id is None:
+            return proof.record_id is not None
+        save_ots(
+            staging_dir,
+            msgspec.structs.replace(
+                state,
+                inventory_proof=msgspec.structs.replace(proof, record_id=record_id),
+            ),
+        )
+        return True
+
+
+def _submit_batch(
+    *,
+    target: batch_state.BatchTarget,
+    cfg,
+    store: StagingStore,
+    staging_root: Path,
+    batch: batch_state.BatchFile,
+    sp_factory,
+) -> batch_state.BatchFile:
+    batch = _ensure_submit_chunks(batch)
+    with batch_state.with_batch_lock(staging_root, batch.batch_id):
+        batch_state.save_batch(staging_root, batch)
+    sp = sp_factory(cfg)
+    rows = _row_by_object(batch)
+    submissions = list(batch.submissions)
+    for index, chunk in enumerate(submissions):
+        if chunk.status == "failed":
+            continue
+        if chunk.status == "submitted" and chunk.record_ids is not None:
+            ids_by_digest = dict(zip(chunk.digests, chunk.record_ids, strict=True))
+        else:
+            chunk, rows, object_ids = _revalidate_submit_chunk(
+                target=target,
+                store=store,
+                batch=batch,
+                chunk=chunk,
+                rows=rows,
+            )
+            if not object_ids:
+                submissions[index] = msgspec.structs.replace(
+                    chunk,
+                    status="submitted",
+                    record_ids=(),
+                )
+                batch = _save_batch_submit_progress(
+                    staging_root, batch, rows, submissions
+                )
+                continue
+            try:
+                result = sp.submit_hashes(list(chunk.digests), batch.category_id)
+            except SimpleProofError as e:
+                submissions[index] = msgspec.structs.replace(
+                    chunk,
+                    status="failed",
+                    attempts=chunk.attempts + 1,
+                    last_error=str(e),
+                )
+                for object_id in object_ids:
+                    rows[object_id] = msgspec.structs.replace(
+                        rows[object_id], last_error="transient_sp_error"
+                    )
+                return _save_batch_submit_progress(
+                    staging_root, batch, rows, submissions
+                )
+            if len(result.record_ids) != len(chunk.digests):
+                failed = msgspec.structs.replace(
+                    chunk,
+                    status="failed",
+                    attempts=chunk.attempts + 1,
+                    last_error="missing_record_ids",
+                )
+                submissions[index] = failed
+                for object_id in object_ids:
+                    rows[object_id] = msgspec.structs.replace(
+                        rows[object_id], last_error="missing_record_ids"
+                    )
+                continue
+            ids_by_digest = dict(zip(chunk.digests, result.record_ids, strict=True))
+            submissions[index] = msgspec.structs.replace(
+                chunk,
+                status="submitted",
+                record_ids=result.record_ids,
+                submitted_at=now_utc_iso(),
+                attempts=chunk.attempts + 1,
+            )
+            batch = msgspec.structs.replace(
+                batch,
+                objects=tuple(rows.values()),
+                submissions=tuple(submissions),
+                updated_at=now_utc_iso(),
+            )
+            with batch_state.with_batch_lock(staging_root, batch.batch_id):
+                batch_state.save_batch(staging_root, batch)
+
+        for object_id in _chunk_object_ids(batch, chunk):
+            if _mirror_chunk_to_object(
+                target=target,
+                store=store,
+                root_path=batch.root_path,
+                staging_root=staging_root,
+                batch=batch,
+                object_id=object_id,
+                ids_by_digest=ids_by_digest,
+            ):
+                rows[object_id] = msgspec.structs.replace(
+                    rows[object_id], status="submitted", last_error=None
+                )
+    return _save_batch_submit_progress(staging_root, batch, rows, submissions)
+
+
+def _collect_recoverable_object_intents(
+    store: StagingStore, batch: batch_state.BatchFile
+) -> tuple[batch_state.BatchObject, ...]:
+    known = {row.object_id for row in batch.objects}
+    recovered: list[batch_state.BatchObject] = []
+    for staging_dir in sorted(store._root.iterdir()):
+        if not staging_dir.is_dir() or not has_ots(staging_dir):
+            continue
+        inventory_path = staging_dir / "inventory.json"
+        if not inventory_path.is_file():
+            continue
+        try:
+            raw_inventory = msgspec.json.decode(inventory_path.read_bytes())
+        except OSError, msgspec.DecodeError:
+            continue
+        if not isinstance(raw_inventory, dict):
+            continue
+        object_id = raw_inventory.get("id")
+        if not isinstance(object_id, str) or object_id in known:
+            continue
+        if store.staging_path(batch.root_path, object_id) != staging_dir:
+            continue
+        with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+            state = load_ots(staging_dir)
+            row = _recover_content_intent(batch, object_id, state)
+            if batch.target == "inventory":
+                row = _recover_inventory_intent(batch, object_id, state)
+        if row is not None:
+            recovered.append(row)
+            known.add(object_id)
+    return tuple(recovered)
+
+
+def _merge_recovered_object_intents(
+    batch: batch_state.BatchFile, recovered: tuple[batch_state.BatchObject, ...]
+) -> batch_state.BatchFile:
+    if not recovered:
+        return batch
+    known = {row.object_id for row in batch.objects}
+    merged = list(batch.objects)
+    for row in recovered:
+        if row.object_id not in known:
+            merged.append(row)
+            known.add(row.object_id)
+    if len(merged) == len(batch.objects):
+        return batch
+    return msgspec.structs.replace(
+        batch, objects=tuple(merged), updated_at=now_utc_iso()
+    )
+
+
+def _recover_content_intent(
+    batch: batch_state.BatchFile, object_id: str, state: OtsState
+) -> batch_state.BatchObject | None:
+    for submission in state.submissions:
+        if submission.batch_id != batch.batch_id:
+            continue
+        submitted = submission.record_ids is not None and all(
+            record_id is not None for record_id in submission.record_ids
+        )
+        return batch_state.BatchObject(
+            object_id=object_id,
+            status="submitted" if submitted else "prepared",
+            digests=submission.digests,
+        )
+    return None
+
+
+def _recover_inventory_intent(
+    batch: batch_state.BatchFile, object_id: str, state: OtsState
+) -> batch_state.BatchObject | None:
+    proof = state.inventory_proof
+    if proof is None or proof.batch_id != batch.batch_id:
+        return None
+    return batch_state.BatchObject(
+        object_id=object_id,
+        status="submitted" if proof.record_id is not None else "prepared",
+        digests=(proof.digest,),
+    )
+
+
+def _save_batch_submit_progress(
+    staging_root: Path,
+    batch: batch_state.BatchFile,
+    rows: dict[str, batch_state.BatchObject],
+    submissions: list[batch_state.BatchSubmission],
+) -> batch_state.BatchFile:
+    batch = msgspec.structs.replace(
+        batch,
+        objects=tuple(rows.values()),
+        submissions=tuple(submissions),
+        updated_at=now_utc_iso(),
+    )
+    with batch_state.with_batch_lock(staging_root, batch.batch_id):
+        batch_state.save_batch(staging_root, batch)
+    return batch
+
+
+def _revalidate_submit_chunk(
+    *,
+    target: batch_state.BatchTarget,
+    store: StagingStore,
+    batch: batch_state.BatchFile,
+    chunk: batch_state.BatchSubmission,
+    rows: dict[str, batch_state.BatchObject],
+) -> tuple[
+    batch_state.BatchSubmission,
+    dict[str, batch_state.BatchObject],
+    list[str],
+]:
+    valid_digests = set(chunk.digests)
+    valid_object_ids: list[str] = []
+    for object_id in _chunk_object_ids(batch, chunk):
+        staging_dir = store.staging_path(batch.root_path, object_id)
+        with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+            state = load_ots(staging_dir)
+            if state.category_id != batch.category_id:
+                rows[object_id] = msgspec.structs.replace(
+                    rows[object_id], status="failed", last_error="regressed"
+                )
+                valid_digests.difference_update(rows[object_id].digests)
+                continue
+            if target == "content":
+                row_digests = _revalidate_content_submission(
+                    state, batch.batch_id, rows[object_id]
+                )
+            else:
+                row_digests = _revalidate_inventory_submission(
+                    state, batch.batch_id, rows[object_id]
+                )
+            if row_digests is None:
+                rows[object_id] = msgspec.structs.replace(
+                    rows[object_id], status="failed", last_error="regressed"
+                )
+                valid_digests.difference_update(rows[object_id].digests)
+                continue
+            chunk_row_digests = set(rows[object_id].digests).intersection(chunk.digests)
+            already_recorded = chunk_row_digests - row_digests
+            valid_digests.difference_update(already_recorded)
+            if chunk_row_digests.intersection(valid_digests):
+                valid_object_ids.append(object_id)
+    filtered = tuple(digest for digest in chunk.digests if digest in valid_digests)
+    if filtered != chunk.digests:
+        chunk = msgspec.structs.replace(chunk, digests=filtered)
+    return chunk, rows, valid_object_ids
+
+
+def _revalidate_content_submission(
+    state: OtsState, batch_id: str, row: batch_state.BatchObject
+) -> set[str] | None:
+    for submission in state.submissions:
+        if submission.batch_id != batch_id:
+            continue
+        if not set(row.digests).issubset(set(submission.digests)):
+            return None
+        record_ids = (
+            submission.record_ids
+            if submission.record_ids is not None
+            else tuple(None for _ in submission.digests)
+        )
+        return {
+            digest
+            for digest, record_id in zip(submission.digests, record_ids, strict=True)
+            if digest in row.digests and record_id is None
+        }
+    return None
+
+
+def _revalidate_inventory_submission(
+    state: OtsState, batch_id: str, row: batch_state.BatchObject
+) -> set[str] | None:
+    proof = state.inventory_proof
+    if proof is None or proof.batch_id != batch_id or proof.digest not in row.digests:
+        return None
+    if proof.record_id is not None:
+        return set()
+    return {proof.digest}
+
+
+def _emit_batch_created(ctx: typer.Context, batch: batch_state.BatchFile) -> None:
+    data = {
+        "event": "batch_created",
+        "batch_id": batch.batch_id,
+        "target": batch.target,
+        "category_id": batch.category_id,
+        "root_path": batch.root_path,
+        "created_at": batch.created_at,
+    }
+    if appctx.json_mode(ctx):
+        output_json(data)
+    else:
+        typer.echo(
+            f"batch created: {batch.batch_id} target={batch.target} "
+            f"category={batch.category_id}"
+        )
+
+
+def _emit_batch_resumed(ctx: typer.Context, batch: batch_state.BatchFile) -> None:
+    if appctx.json_mode(ctx):
+        output_json(
+            {
+                "event": "batch_resumed",
+                "batch_id": batch.batch_id,
+                "target": batch.target,
+                "category_id": batch.category_id,
+                "root_path": batch.root_path,
+            }
+        )
+    else:
+        typer.echo(f"batch resumed: {batch.batch_id} target={batch.target}")
+
+
+def _drive_batch_submit(
+    ctx: typer.Context,
+    *,
+    target: batch_state.BatchTarget,
+    object_ids: tuple[str, ...],
+    objects_file: Path | None,
+    batch_id: str | None,
+    category: int | None,
+    allow_missing_metadata: bool,
+) -> None:
+    cfg = require_config(ctx)
+    require_simpleproof(ctx, cfg)
+    sp_cfg = cfg.simpleproof
+    if sp_cfg is None:
+        raise RuntimeError("simpleproof config missing")
+    store = _stage_store(ctx)
+    staging_root = store._root
+    root_path = _resolve_root_path(ctx)
+    sr, _fs = open_root(appctx.root(ctx))
+
+    selected = list(object_ids)
+    if objects_file is not None:
+        selected.extend(_read_objects_file(objects_file))
+    if batch_id is not None and (selected or category is not None):
+        err(
+            "--batch is mutually exclusive with --object, --objects-file, "
+            "and --category"
+        )
+        raise typer.Exit(2)
+    if batch_id is None and not selected:
+        err("new batch requires --object or --objects-file")
+        raise typer.Exit(2)
+
+    if batch_id is None:
+        now = now_utc_iso()
+        batch = batch_state.BatchFile(
+            batch_id=batch_state.new_batch_id(),
+            target=target,
+            root_path=root_path,
+            category_id=category if category is not None else sp_cfg.proof_category_id,
+            created_at=now,
+            updated_at=now,
+        )
+        created = True
+    else:
+        batch = _load_batch_or_usage(ctx, staging_root, batch_id)
+        if batch.target != target:
+            err(f"batch {batch.batch_id} target is {batch.target!r}, not {target!r}")
+            raise typer.Exit(2)
+        created = False
+
+    with batch_state.with_driver_lease(
+        staging_root,
+        batch.batch_id,
+        command=_batch_command_tuple(target, batch.batch_id),
+    ):
+        if created:
+            with batch_state.with_batch_lock(staging_root, batch.batch_id):
+                batch_state.save_batch(staging_root, batch)
+            _emit_batch_created(ctx, batch)
+            for object_id in dict.fromkeys(selected):
+                row = _prepare_batch_object(
+                    target=target,
+                    cfg=cfg,
+                    store=store,
+                    sr=sr,
+                    root_path=root_path,
+                    staging_root=staging_root,
+                    batch=batch,
+                    object_id=object_id,
+                    allow_missing_metadata=allow_missing_metadata,
+                )
+                batch = _replace_batch_object(batch, row)
+                with batch_state.with_batch_lock(staging_root, batch.batch_id):
+                    batch_state.save_batch(staging_root, batch)
+        else:
+            _emit_batch_resumed(ctx, batch)
+        recovered = _collect_recoverable_object_intents(store, batch)
+        with batch_state.with_batch_lock(staging_root, batch.batch_id):
+            batch = batch_state.load_batch(staging_root, batch.batch_id)
+            batch = _merge_recovered_object_intents(batch, recovered)
+            batch_state.save_batch(staging_root, batch)
+        batch = _submit_batch(
+            target=target,
+            cfg=cfg,
+            store=store,
+            staging_root=staging_root,
+            batch=batch,
+            sp_factory=appctx.sp_client_factory(ctx),
+        )
+    if not appctx.json_mode(ctx):
+        counts = _batch_counts(batch)
+        typer.echo(
+            f"batch submitted: {batch.batch_id} prepared={counts['prepared']} "
+            f"submitted={counts['submitted']} skipped={counts['skipped']} "
+            f"failed={counts['failed']}"
+        )
+
+
+@batch_app.command("content")
+def timestamp_batch_content(
+    ctx: typer.Context,
+    object_ids: Annotated[
+        list[str] | None,
+        typer.Option("--object", help="Object ID to include in a new batch."),
+    ] = None,
+    objects_file: Annotated[
+        Path | None,
+        typer.Option("--objects-file", help="File containing object IDs."),
+    ] = None,
+    batch_id: Annotated[
+        str | None,
+        typer.Option("--batch", help="Resume an existing batch."),
+    ] = None,
+    category: Annotated[
+        int | None,
+        typer.Option("--category", help="SimpleProof category for a new batch."),
+    ] = None,
+) -> None:
+    """Create or resume a content timestamping batch."""
+    _drive_batch_submit(
+        ctx,
+        target="content",
+        object_ids=tuple(object_ids or ()),
+        objects_file=objects_file,
+        batch_id=batch_id,
+        category=category,
+        allow_missing_metadata=False,
+    )
+
+
+@batch_app.command("inventory")
+def timestamp_batch_inventory(
+    ctx: typer.Context,
+    object_ids: Annotated[
+        list[str] | None,
+        typer.Option("--object", help="Object ID to include in a new batch."),
+    ] = None,
+    objects_file: Annotated[
+        Path | None,
+        typer.Option("--objects-file", help="File containing object IDs."),
+    ] = None,
+    batch_id: Annotated[
+        str | None,
+        typer.Option("--batch", help="Resume an existing batch."),
+    ] = None,
+    category: Annotated[
+        int | None,
+        typer.Option("--category", help="SimpleProof category for a new batch."),
+    ] = None,
+    allow_missing_metadata: Annotated[
+        bool,
+        typer.Option(
+            "--allow-missing-metadata",
+            help="Timestamp inventory even when staged metadata is incomplete.",
+        ),
+    ] = False,
+) -> None:
+    """Create or resume an inventory timestamping batch."""
+    _drive_batch_submit(
+        ctx,
+        target="inventory",
+        object_ids=tuple(object_ids or ()),
+        objects_file=objects_file,
+        batch_id=batch_id,
+        category=category,
+        allow_missing_metadata=allow_missing_metadata,
+    )
 
 
 @batch_app.command("ls")
