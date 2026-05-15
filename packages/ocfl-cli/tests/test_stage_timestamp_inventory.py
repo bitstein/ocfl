@@ -31,10 +31,15 @@ from pathlib import Path
 import pytest
 from fakes import FakeSimpleProof
 from msgspec.structs import replace
+from pydantic import SecretStr
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
+from ocfl_cli._common import open_root
+from ocfl_cli.config import Config
 from ocfl_cli.main import app
+from ocfl_cli.ots.config import SimpleProofConfig
+from ocfl_cli.stage import service
 from ocfl_cli.stage.fsm import Phase
 from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
 from ocfl_cli.stage.state import (
@@ -288,6 +293,109 @@ class TestInventoryBuild:
         assert vi.user is not None
         assert vi.user.name == "Alice"
         assert vi.user.address == "mailto:alice@example.org"
+
+
+# --------------------------------------------------------------------------- #
+# Service primitives for batch-size-1 inventory submission
+# --------------------------------------------------------------------------- #
+
+
+class TestInventorySubmissionPrimitives:
+    def test_prepare_persists_intent_before_submit_posts(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        staging = tmp_path / "staging"
+        sd, _da, _ots_digest = _setup_content_upgraded(
+            runner, empty_sha256_root, staging, "obj:inv-primitive"
+        )
+        cfg = Config(
+            simpleproof=SimpleProofConfig(
+                base_url="https://stage.example",
+                proof_category_id=641,
+                access_token=SecretStr("tok"),
+                api_key=SecretStr("key"),
+            )
+        )
+        store = StagingStore(staging)
+        sr, _fs = open_root(str(empty_sha256_root))
+
+        prepared = service.prepare_inventory_submission_locked(
+            cfg,
+            store,
+            sr,
+            str(empty_sha256_root.resolve()),
+            "obj:inv-primitive",
+            sd,
+            allow_missing_metadata=False,
+        )
+
+        state = load_ots(sd)
+        assert state.phase is Phase.INVENTORY_PENDING
+        assert state.inventory_proof is not None
+        assert state.inventory_proof.digest == prepared.digest
+        assert not sp_fake._submissions
+        assert not plan_path(sd).exists()
+
+        result = service.submit_prepared_inventory_locked(
+            cfg,
+            sd,
+            prepared,
+            sp_factory=lambda cfg: sp_fake,
+        )
+
+        assert result.submitted_count == 1
+        assert len(sp_fake._submissions) == 1
+        assert sp_fake._submissions[0].digests == (prepared.digest,)
+        assert plan_path(sd).is_file()
+
+    def test_prepare_inventory_upgraded_is_noop(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        staging = tmp_path / "staging"
+        sd, _da, _ots_digest = _setup_content_upgraded(
+            runner, empty_sha256_root, staging, "obj:inv-primitive-noop"
+        )
+        save_ots(sd, replace(load_ots(sd), phase=Phase.INVENTORY_UPGRADED))
+        cfg = Config(
+            simpleproof=SimpleProofConfig(
+                base_url="https://stage.example",
+                proof_category_id=641,
+                access_token=SecretStr("tok"),
+                api_key=SecretStr("key"),
+            )
+        )
+        store = StagingStore(staging)
+        sr, _fs = open_root(str(empty_sha256_root))
+
+        prepared = service.prepare_inventory_submission_locked(
+            cfg,
+            store,
+            sr,
+            str(empty_sha256_root.resolve()),
+            "obj:inv-primitive-noop",
+            sd,
+            allow_missing_metadata=False,
+        )
+        result = service.submit_prepared_inventory_locked(
+            cfg, sd, prepared, sp_factory=lambda cfg: sp_fake
+        )
+
+        assert prepared.digest is None
+        assert result.submitted_count == 0
+        assert load_ots(sd).phase is Phase.INVENTORY_UPGRADED
+        assert not sp_fake._submissions
 
 
 class TestMetadataGate:

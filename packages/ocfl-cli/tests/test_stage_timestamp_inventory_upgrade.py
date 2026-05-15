@@ -33,11 +33,15 @@ import filelock
 import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof
 from msgspec.structs import replace
+from pydantic import SecretStr
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
+from ocfl_cli.config import BitcoinConfig, Config
 from ocfl_cli.main import app
 from ocfl_cli.ots.bitcoin import HashBlockStream
+from ocfl_cli.ots.config import SimpleProofConfig
+from ocfl_cli.stage import service
 from ocfl_cli.stage.fsm import Phase
 from ocfl_cli.stage.state import (
     VerifiedProof,
@@ -293,6 +297,80 @@ def _seed_inv_completed_verify_job(
     )
     save_ots(sd, state)
     return job_id
+
+
+# =========================================================================== #
+# Service primitives for batch-size-1 inventory upgrade
+# =========================================================================== #
+
+
+class TestInventoryUpgradePrimitives:
+    def test_prepare_poll_ingest_inventory_verification(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+
+        staging = tmp_path / "staging"
+        sd, _da, inv_digest = _setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-upgrade-primitive"
+        )
+        cfg = Config(
+            simpleproof=SimpleProofConfig(
+                base_url="https://stage.example",
+                proof_category_id=641,
+                access_token=SecretStr("tok"),
+                api_key=SecretStr("key"),
+            ),
+            bitcoin=BitcoinConfig(
+                rpc_url="http://127.0.0.1:8332",
+                zmq_endpoint="tcp://127.0.0.1:28332",
+                rpc_user="u",
+                rpc_password=SecretStr("p"),
+                confirmations=MIN_CONFS,
+            ),
+        )
+        assert cfg.simpleproof is not None
+        assert cfg.bitcoin is not None
+
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS)
+        _register_attested(btc_fake.rpc, inv_digest)
+
+        state = service.prepare_inventory_upgrade_locked(
+            load_ots(sd),
+            sd,
+            sp=sp_fake,
+            btc=btc_fake.rpc,
+            category_id=cfg.simpleproof.proof_category_id,
+            min_confirmations=cfg.bitcoin.confirmations,
+        )
+        assert len(state.verify_jobs) == 1
+        job_id = state.verify_jobs[0].job_id
+        assert load_ots(sd).verify_jobs[0].job_id == job_id
+
+        sp_fake.advance_to_completed(job_id, {inv_digest: _ots_for(inv_digest)})
+        state = service.poll_inventory_verifications_locked(state, sd, sp=sp_fake)
+        assert state.verify_jobs[0].status == "COMPLETED"
+        assert load_ots(sd).verify_jobs[0].status == "COMPLETED"
+
+        state = service.ingest_inventory_verifications_locked(
+            state,
+            sd,
+            sp=sp_fake,
+            btc=btc_fake.rpc,
+            min_confirmations=cfg.bitcoin.confirmations,
+        )
+
+        assert state.phase is Phase.INVENTORY_UPGRADED
+        assert state.inventory_proof is not None
+        assert state.inventory_proof.proof.verified
+        assert ots_cache_path(sd, inv_digest).is_file()
 
 
 # =========================================================================== #

@@ -140,6 +140,28 @@ class UpgradeContentResult:
     orphan_count: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class SubmitInventoryResult:
+    submitted_count: int
+    previous_phase: Phase
+    phase: Phase
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedInventorySubmission:
+    digest: str | None
+    category_id: int
+    previous_phase: Phase
+    target_phase: Phase
+    plan: UpdatePlan | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UpgradeInventoryResult:
+    previous_phase: Phase
+    phase: Phase
+
+
 class MetadataInputError(ValueError):
     """Invalid staged metadata CLI input."""
 
@@ -1655,32 +1677,18 @@ def _process_completed_inventory_job(
     return state
 
 
-def _inventory_upgrade_pass_locked(
-    cfg: Config,
+def prepare_inventory_upgrade_locked(
+    state: OtsState,
     staging_dir: Path,
     *,
-    sp_factory: SpClientFactory,
-    btc_factory: BtcRpcFactory,
-) -> None:
-    """One inventory `--upgrade` pass. Caller MUST hold the staging lock."""
-    btc_cfg = cfg.bitcoin
-    if btc_cfg is None or cfg.simpleproof is None:
-        raise RuntimeError("config missing required sections")
-    min_confs = btc_cfg.confirmations
-
-    state = load_ots(staging_dir)
-    prev_phase = state.phase
-    check_transition(state.phase, "timestamp inventory --upgrade")
-    category_id = apply_category_id(state, cfg.simpleproof.proof_category_id)
-
-    if state.inventory_proof is None:
-        raise PhaseError(f"inventory_proof missing in phase {state.phase.value!r}")
-
-    sp = sp_factory(cfg)
-    btc = btc_factory(cfg)
-
+    sp: SimpleProofClient,
+    btc: BitcoinRPC,
+    category_id: int,
+    min_confirmations: int,
+) -> OtsState:
+    """Reverify cached inventory proof and submit a missing verify job."""
     state = _inventory_reverify_existing_proof(
-        state, btc, sp, staging_dir, min_confs, category_id
+        state, btc, sp, staging_dir, min_confirmations, category_id
     )
     save_ots(staging_dir, state)
 
@@ -1699,17 +1707,82 @@ def _inventory_upgrade_pass_locked(
             )
             state = replace(state, verify_jobs=(*state.verify_jobs, new_job))
             save_ots(staging_dir, state)
+    return state
 
+
+def poll_inventory_verifications_locked(
+    state: OtsState,
+    staging_dir: Path,
+    *,
+    sp: SimpleProofClient,
+) -> OtsState:
+    """Poll outstanding inventory verify jobs and persist refreshed statuses."""
     state = _poll_outstanding_jobs(state, sp)
     save_ots(staging_dir, state)
+    return state
 
-    state = _process_completed_inventory_job(state, sp, btc, staging_dir, min_confs)
+
+def ingest_inventory_verifications_locked(
+    state: OtsState,
+    staging_dir: Path,
+    *,
+    sp: SimpleProofClient,
+    btc: BitcoinRPC,
+    min_confirmations: int,
+) -> OtsState:
+    """Download completed inventory verify results and persist proof state."""
+    return _process_completed_inventory_job(
+        state, sp, btc, staging_dir, min_confirmations
+    )
+
+
+def _inventory_upgrade_pass_locked(
+    cfg: Config,
+    staging_dir: Path,
+    *,
+    sp_factory: SpClientFactory,
+    btc_factory: BtcRpcFactory,
+) -> UpgradeInventoryResult:
+    """One inventory `--upgrade` pass. Caller MUST hold the staging lock."""
+    btc_cfg = cfg.bitcoin
+    if btc_cfg is None or cfg.simpleproof is None:
+        raise RuntimeError("config missing required sections")
+    min_confs = btc_cfg.confirmations
+
+    state = load_ots(staging_dir)
+    prev_phase = state.phase
+    check_transition(state.phase, "timestamp inventory --upgrade")
+    category_id = apply_category_id(state, cfg.simpleproof.proof_category_id)
+
+    if state.inventory_proof is None:
+        raise PhaseError(f"inventory_proof missing in phase {state.phase.value!r}")
+
+    sp = sp_factory(cfg)
+    btc = btc_factory(cfg)
+
+    state = prepare_inventory_upgrade_locked(
+        state,
+        staging_dir,
+        sp=sp,
+        btc=btc,
+        category_id=category_id,
+        min_confirmations=min_confs,
+    )
+    state = poll_inventory_verifications_locked(state, staging_dir, sp=sp)
+    state = ingest_inventory_verifications_locked(
+        state,
+        staging_dir,
+        sp=sp,
+        btc=btc,
+        min_confirmations=min_confs,
+    )
 
     if (
         state.phase is Phase.INVENTORY_UPGRADED
         and prev_phase is not Phase.INVENTORY_UPGRADED
     ):
         _log_phase(prev_phase, Phase.INVENTORY_UPGRADED)
+    return UpgradeInventoryResult(previous_phase=prev_phase, phase=state.phase)
 
 
 def _inventory_upgrade_pass(
@@ -1718,15 +1791,15 @@ def _inventory_upgrade_pass(
     *,
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
-) -> None:
+) -> UpgradeInventoryResult:
     """Drive `stage timestamp inventory --upgrade` end-to-end under the lock."""
     with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
-        _inventory_upgrade_pass_locked(
+        return _inventory_upgrade_pass_locked(
             cfg, staging_dir, sp_factory=sp_factory, btc_factory=btc_factory
         )
 
 
-def submit_inventory_locked(
+def prepare_inventory_submission_locked(
     cfg: Config,
     store: StagingStore,
     sr,
@@ -1734,10 +1807,9 @@ def submit_inventory_locked(
     object_id: str,
     staging_dir: Path,
     *,
-    sp_factory: SpClientFactory,
     allow_missing_metadata: bool,
-) -> None:
-    """One `stage timestamp inventory` (default path) submit pass under the lock."""
+) -> PreparedInventorySubmission:
+    """Build inventory and persist its timestamp intent under the staging lock."""
     sp_cfg = cfg.simpleproof
     if sp_cfg is None:
         raise RuntimeError("simpleproof config missing")
@@ -1746,7 +1818,12 @@ def submit_inventory_locked(
     category_id = apply_category_id(state, sp_cfg.proof_category_id)
 
     if state.phase is Phase.INVENTORY_UPGRADED:
-        return
+        return PreparedInventorySubmission(
+            digest=None,
+            category_id=category_id,
+            previous_phase=state.phase,
+            target_phase=state.phase,
+        )
 
     metadata = store.load_metadata(root_path, object_id)
     require_staged_metadata(metadata, allow_missing_metadata=allow_missing_metadata)
@@ -1789,13 +1866,72 @@ def submit_inventory_locked(
         ),
     )
 
+    return PreparedInventorySubmission(
+        digest=inv_digest,
+        category_id=category_id,
+        previous_phase=prev_phase,
+        target_phase=target_phase,
+        plan=plan,
+    )
+
+
+def submit_prepared_inventory_locked(
+    cfg: Config,
+    staging_dir: Path,
+    prepared: PreparedInventorySubmission,
+    *,
+    sp_factory: SpClientFactory,
+) -> SubmitInventoryResult:
+    """POST a prepared inventory digest and serialize its update plan."""
+    if prepared.digest is None:
+        return SubmitInventoryResult(
+            submitted_count=0,
+            previous_phase=prepared.previous_phase,
+            phase=prepared.target_phase,
+        )
+    if prepared.plan is None:
+        raise RuntimeError("prepared inventory submission missing serialized plan")
+
     sp = sp_factory(cfg)
-    sp.submit_hashes([inv_digest], category_id)
+    sp.submit_hashes([prepared.digest], prepared.category_id)
 
-    plan_path(staging_dir).write_bytes(serialize(plan))
+    plan_path(staging_dir).write_bytes(serialize(prepared.plan))
 
-    _log_phase(prev_phase, target_phase)
-    logger.info("submitted inventory digest %s for %s", inv_digest, object_id)
+    _log_phase(prepared.previous_phase, prepared.target_phase)
+    return SubmitInventoryResult(
+        submitted_count=1,
+        previous_phase=prepared.previous_phase,
+        phase=prepared.target_phase,
+    )
+
+
+def submit_inventory_locked(
+    cfg: Config,
+    store: StagingStore,
+    sr,
+    root_path: str,
+    object_id: str,
+    staging_dir: Path,
+    *,
+    sp_factory: SpClientFactory,
+    allow_missing_metadata: bool,
+) -> SubmitInventoryResult:
+    """One `stage timestamp inventory` submit pass as a batch of size 1."""
+    prepared = prepare_inventory_submission_locked(
+        cfg,
+        store,
+        sr,
+        root_path,
+        object_id,
+        staging_dir,
+        allow_missing_metadata=allow_missing_metadata,
+    )
+    result = submit_prepared_inventory_locked(
+        cfg, staging_dir, prepared, sp_factory=sp_factory
+    )
+    if prepared.digest is not None and result.submitted_count:
+        logger.info("submitted inventory digest %s for %s", prepared.digest, object_id)
+    return result
 
 
 def retry_inventory_locked(
