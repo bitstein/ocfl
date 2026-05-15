@@ -2332,7 +2332,8 @@ def _covered_verify_digests(batch: batch_state.BatchFile) -> set[str]:
     return {
         digest
         for job in batch.verify_jobs
-        if job.status in {"IN_PROGRESS", "COMPLETED"}
+        if job.status == "IN_PROGRESS"
+        or (job.status == "COMPLETED" and job.last_error != "sp_partial_results")
         for digest in job.digests
     }
 
@@ -2729,6 +2730,7 @@ def _ingest_batch_verify_jobs(
             }
             changed = True
             continue
+        missing = set(job.digests) - set(downloads)
         for row in list(rows.values()):
             if row.status != "submitted" or not set(row.digests).intersection(
                 downloads
@@ -2771,6 +2773,19 @@ def _ingest_batch_verify_jobs(
             if row_changed:
                 rows[row.object_id] = new_row
                 changed = True
+        if missing:
+            jobs[index] = msgspec.structs.replace(
+                jobs[index], last_error="sp_partial_results"
+            )
+            rows = {
+                object_id: (
+                    msgspec.structs.replace(row, last_error="sp_partial_results")
+                    if row.status == "submitted" and missing.intersection(row.digests)
+                    else row
+                )
+                for object_id, row in rows.items()
+            }
+            changed = True
     if not changed:
         return batch
     return _save_batch_upgrade(

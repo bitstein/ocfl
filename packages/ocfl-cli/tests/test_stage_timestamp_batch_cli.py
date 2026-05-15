@@ -2518,6 +2518,129 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
     )
 
 
+def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    btc = FakeBitcoinRPC()
+    _inject_fake_sp(runner, sp_fake)
+    _inject_fake_btc(runner, btc)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:batch-partial-results",
+        ("a.txt", b"alpha"),
+        ("b.txt", b"bravo"),
+    )
+    submitted = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:batch-partial-results",
+    )
+    assert submitted.exit_code == 0, submitted.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+
+    first = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+    assert first.exit_code == 0, first.output
+    batch = batch_state.load_batch(staging, batch_id)
+    assert len(batch.verify_jobs) == 1
+    assert len(batch.verify_jobs[0].digests) == 2
+    returned_digest, missing_digest = batch.verify_jobs[0].digests
+
+    sp_fake.advance_to_completed(
+        batch.verify_jobs[0].job_id, {returned_digest: _ots_for(returned_digest)}
+    )
+    _grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+    _register_attested(btc, returned_digest)
+
+    partial = _invoke_json(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+    assert partial.exit_code == 0, partial.output
+    events = [json.loads(line) for line in partial.output.splitlines()]
+    assert events[1]["event"] == "object_submitted"
+    assert events[1]["last_error"] == "sp_partial_results"
+    assert events[1]["next"] == "Re-run --upgrade later"
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.objects[0].status == "submitted"
+    assert batch.objects[0].last_error == "sp_partial_results"
+    state = load_ots(
+        StagingStore(staging).staging_path(
+            str(empty_sha256_root.resolve()), "obj:batch-partial-results"
+        )
+    )
+    assert state.content_proofs[returned_digest].verified is True
+    missing_proof = state.content_proofs.get(missing_digest)
+    assert missing_proof is None or missing_proof.verified is False
+
+    retry = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+    assert retry.exit_code == 0, retry.output
+    batch = batch_state.load_batch(staging, batch_id)
+    assert [job.digests for job in batch.verify_jobs] == [
+        (returned_digest, missing_digest),
+        (missing_digest,),
+    ]
+
+    sp_fake.advance_to_completed(
+        batch.verify_jobs[1].job_id, {missing_digest: _ots_for(missing_digest)}
+    )
+    _register_attested(btc, missing_digest)
+    completed = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+    assert completed.exit_code == 0, completed.output
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.objects[0].status == "upgraded"
+    assert batch.objects[0].last_error is None
+
+
 def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
     runner: CliRunner,
     empty_sha256_root: Path,
