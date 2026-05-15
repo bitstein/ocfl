@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, cast
+from typing import TYPE_CHECKING, Annotated, Literal, NotRequired, TypedDict, cast
 
 import msgspec
 import typer
@@ -966,20 +966,150 @@ _BATCH_STATUSES = ("prepared", "submitted", "upgraded", "failed", "skipped")
 _BATCH_MISSING_NEXT = "Operate per-object via stage timestamp content/inventory"
 
 
-def _batch_counts(batch: batch_state.BatchFile) -> dict[str, int]:
-    counts = dict.fromkeys(_BATCH_STATUSES, 0)
+class BatchCountsOutput(TypedDict):
+    prepared: int
+    submitted: int
+    upgraded: int
+    failed: int
+    skipped: int
+    total: int
+
+
+class BatchVerboseDigestOutput(TypedDict):
+    digest: str
+    submitted: bool
+    verified: bool
+    record_id: str | None
+    submit_status: batch_state.BatchSubmissionStatus | None
+    verify_status: batch_state.BatchVerifyJobStatus | None
+
+
+class BatchStatusObjectOutput(TypedDict):
+    object_id: str
+    phase: str | None
+    batch_status: batch_state.BatchObjectStatus
+    digests_total: int
+    digests_verified: int
+    digests_submitted: int
+    last_error: str | None
+    skipped_reason: str | None
+    next: str
+    batch_id: str
+    digests: NotRequired[list[BatchVerboseDigestOutput]]
+
+
+class BatchSubmissionOutput(TypedDict):
+    chunk_index: int
+    digests: list[str]
+    status: batch_state.BatchSubmissionStatus
+    record_ids: list[str] | None
+    submitted_at: str | None
+    attempts: int
+    last_error: str | None
+
+
+class BatchVerifyJobOutput(TypedDict):
+    job_id: str
+    digests: list[str]
+    status: batch_state.BatchVerifyJobStatus
+    submitted_at: str
+    results_url: str | None
+    results_url_expires_at: str | None
+    attempts: int
+    completed_at: str | None
+    last_error: str | None
+
+
+class BatchStatusOutput(TypedDict):
+    batch_id: str
+    target: batch_state.BatchTarget
+    root_path: str
+    category_id: int
+    created_at: str
+    updated_at: str
+    counts: BatchCountsOutput
+    objects: list[BatchStatusObjectOutput]
+    submissions: list[BatchSubmissionOutput]
+    verify_jobs: list[BatchVerifyJobOutput]
+
+
+type BatchObjectEventName = Literal[
+    "object_prepared",
+    "object_submitted",
+    "object_upgraded",
+    "object_skipped",
+    "object_failed",
+]
+
+
+class BatchObjectEventOutput(TypedDict):
+    event: BatchObjectEventName
+    batch_id: str
+    target: batch_state.BatchTarget
+    object_id: str
+    status: batch_state.BatchObjectStatus
+    digests_total: int
+    digests_submitted: int
+    digests_verified: int
+    last_error: str | None
+    skipped_reason: str | None
+    next: str
+
+
+class BatchSummaryEventOutput(TypedDict):
+    event: Literal["summary"]
+    batch_id: str
+    target: batch_state.BatchTarget
+    category_id: int
+    root_path: str
+    counts: BatchCountsOutput
+
+
+class BatchCreatedEventOutput(TypedDict):
+    event: Literal["batch_created"]
+    batch_id: str
+    target: batch_state.BatchTarget
+    category_id: int
+    root_path: str
+    created_at: str
+
+
+class BatchResumedEventOutput(TypedDict):
+    event: Literal["batch_resumed"]
+    batch_id: str
+    target: batch_state.BatchTarget
+    category_id: int
+    root_path: str
+
+
+type BatchEventOutput = (
+    BatchObjectEventOutput
+    | BatchSummaryEventOutput
+    | BatchCreatedEventOutput
+    | BatchResumedEventOutput
+)
+
+
+def _batch_counts(batch: batch_state.BatchFile) -> BatchCountsOutput:
+    counts: BatchCountsOutput = {
+        "prepared": 0,
+        "submitted": 0,
+        "upgraded": 0,
+        "failed": 0,
+        "skipped": 0,
+        "total": len(batch.objects),
+    }
     for row in batch.objects:
         counts[row.status] += 1
-    counts["total"] = len(batch.objects)
     return counts
 
 
-def _emit_batch_event(ctx: typer.Context, data: dict) -> None:
+def _emit_batch_event(ctx: typer.Context, data: BatchEventOutput) -> None:
     if appctx.json_mode(ctx):
         typer.echo(json.dumps(data, separators=(",", ":")))
 
 
-def _event_for_row(row: batch_state.BatchObject) -> str:
+def _event_for_row(row: batch_state.BatchObject) -> BatchObjectEventName:
     if row.status == "prepared":
         return "object_prepared"
     if row.status == "submitted":
@@ -1187,10 +1317,42 @@ def _batch_record_ids_by_digest(
     return record_ids
 
 
+def _batch_submission_row(
+    row: batch_state.BatchSubmission,
+) -> BatchSubmissionOutput:
+    return {
+        "chunk_index": row.chunk_index,
+        "digests": list(row.digests),
+        "status": row.status,
+        "record_ids": list(row.record_ids) if row.record_ids is not None else None,
+        "submitted_at": row.submitted_at,
+        "attempts": row.attempts,
+        "last_error": row.last_error,
+    }
+
+
+def _batch_verify_job_row(
+    row: batch_state.BatchVerifyJob,
+) -> BatchVerifyJobOutput:
+    return {
+        "job_id": row.job_id,
+        "digests": list(row.digests),
+        "status": row.status,
+        "submitted_at": row.submitted_at,
+        "results_url": row.results_url,
+        "results_url_expires_at": row.results_url_expires_at,
+        "attempts": row.attempts,
+        "completed_at": row.completed_at,
+        "last_error": row.last_error,
+    }
+
+
 def _submit_status_by_digest(
     batch: batch_state.BatchFile, row: batch_state.BatchObject
-) -> dict[str, str | None]:
-    statuses: dict[str, str | None] = dict.fromkeys(row.digests)
+) -> dict[str, batch_state.BatchSubmissionStatus | None]:
+    statuses: dict[str, batch_state.BatchSubmissionStatus | None] = dict.fromkeys(
+        row.digests
+    )
     wanted = set(row.digests)
     for chunk in batch.submissions:
         for digest in chunk.digests:
@@ -1201,8 +1363,10 @@ def _submit_status_by_digest(
 
 def _verify_status_by_digest(
     batch: batch_state.BatchFile, row: batch_state.BatchObject
-) -> dict[str, str | None]:
-    statuses: dict[str, str | None] = dict.fromkeys(row.digests)
+) -> dict[str, batch_state.BatchVerifyJobStatus | None]:
+    statuses: dict[str, batch_state.BatchVerifyJobStatus | None] = dict.fromkeys(
+        row.digests
+    )
     wanted = set(row.digests)
     for job in batch.verify_jobs:
         for digest in job.digests:
@@ -1234,7 +1398,7 @@ def _verbose_digest_rows(
     batch: batch_state.BatchFile,
     row: batch_state.BatchObject,
     state: OtsState | None,
-) -> list[dict]:
+) -> list[BatchVerboseDigestOutput]:
     object_ids = _object_record_ids_by_digest(batch, row, state)
     batch_ids = _batch_record_ids_by_digest(batch, row)
     submit_statuses = _submit_status_by_digest(batch, row)
@@ -1249,17 +1413,20 @@ def _verbose_digest_rows(
             }
         elif state.inventory_proof is not None and state.inventory_proof.proof.verified:
             verified = {state.inventory_proof.digest}
-    return [
-        {
-            "digest": digest,
-            "submitted": (object_ids.get(digest) or batch_ids.get(digest)) is not None,
-            "verified": digest in verified,
-            "record_id": object_ids.get(digest) or batch_ids.get(digest),
-            "submit_status": submit_statuses[digest],
-            "verify_status": verify_statuses[digest],
-        }
-        for digest in row.digests
-    ]
+    rows: list[BatchVerboseDigestOutput] = []
+    for digest in row.digests:
+        rows.append(
+            {
+                "digest": digest,
+                "submitted": (object_ids.get(digest) or batch_ids.get(digest))
+                is not None,
+                "verified": digest in verified,
+                "record_id": object_ids.get(digest) or batch_ids.get(digest),
+                "submit_status": submit_statuses[digest],
+                "verify_status": verify_statuses[digest],
+            }
+        )
+    return rows
 
 
 def _verify_job_covers(
@@ -1300,8 +1467,8 @@ def _next_for_row(
 
 def _batch_status_dict(
     staging_root: Path, batch: batch_state.BatchFile, *, verbose: bool = False
-) -> dict:
-    objects = []
+) -> BatchStatusOutput:
+    objects: list[BatchStatusObjectOutput] = []
     for row in batch.objects:
         state = _load_object_ots(staging_root, batch, row.object_id)
         phase = state.phase.name if state is not None else None
@@ -1310,7 +1477,7 @@ def _batch_status_dict(
             _submitted_count_from_object(batch, row, state) if state is not None else 0
         )
         digests_submitted = max(batch_submitted, object_submitted)
-        object_data = {
+        object_data: BatchStatusObjectOutput = {
             "object_id": row.object_id,
             "phase": phase,
             "batch_status": row.status,
@@ -1334,14 +1501,14 @@ def _batch_status_dict(
         "updated_at": batch.updated_at,
         "counts": _batch_counts(batch),
         "objects": objects,
-        "submissions": [msgspec.to_builtins(row) for row in batch.submissions],
-        "verify_jobs": [msgspec.to_builtins(row) for row in batch.verify_jobs],
+        "submissions": [_batch_submission_row(row) for row in batch.submissions],
+        "verify_jobs": [_batch_verify_job_row(row) for row in batch.verify_jobs],
     }
 
 
 def _batch_object_event(
     staging_root: Path, batch: batch_state.BatchFile, row: batch_state.BatchObject
-) -> dict:
+) -> BatchObjectEventOutput:
     state = _load_object_ots(staging_root, batch, row.object_id)
     batch_submitted = _submitted_count_from_batch(row, batch)
     object_submitted = (
@@ -1395,17 +1562,15 @@ def _emit_batch_object_changes(
 
 
 def _emit_batch_summary(ctx: typer.Context, batch: batch_state.BatchFile) -> None:
-    _emit_batch_event(
-        ctx,
-        {
-            "event": "summary",
-            "batch_id": batch.batch_id,
-            "target": batch.target,
-            "category_id": batch.category_id,
-            "root_path": batch.root_path,
-            "counts": _batch_counts(batch),
-        },
-    )
+    event: BatchSummaryEventOutput = {
+        "event": "summary",
+        "batch_id": batch.batch_id,
+        "target": batch.target,
+        "category_id": batch.category_id,
+        "root_path": batch.root_path,
+        "counts": _batch_counts(batch),
+    }
+    _emit_batch_event(ctx, event)
 
 
 def _read_objects_file(path: Path) -> list[str]:
@@ -3341,7 +3506,7 @@ def _drive_batch_watch(
 
 
 def _emit_batch_created(ctx: typer.Context, batch: batch_state.BatchFile) -> None:
-    data = {
+    data: BatchCreatedEventOutput = {
         "event": "batch_created",
         "batch_id": batch.batch_id,
         "target": batch.target,
@@ -3360,15 +3525,16 @@ def _emit_batch_created(ctx: typer.Context, batch: batch_state.BatchFile) -> Non
 
 def _emit_batch_resumed(ctx: typer.Context, batch: batch_state.BatchFile) -> None:
     if appctx.json_mode(ctx):
+        data: BatchResumedEventOutput = {
+            "event": "batch_resumed",
+            "batch_id": batch.batch_id,
+            "target": batch.target,
+            "category_id": batch.category_id,
+            "root_path": batch.root_path,
+        }
         _emit_batch_event(
             ctx,
-            {
-                "event": "batch_resumed",
-                "batch_id": batch.batch_id,
-                "target": batch.target,
-                "category_id": batch.category_id,
-                "root_path": batch.root_path,
-            },
+            data,
         )
     else:
         typer.echo(f"batch resumed: {batch.batch_id} target={batch.target}")

@@ -6,7 +6,7 @@ import multiprocessing
 import queue
 import time
 from pathlib import Path
-from typing import cast
+from typing import cast, get_args, get_origin, get_type_hints, is_typeddict
 
 import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof, InMemoryHashBlockStream
@@ -62,6 +62,20 @@ _BTC_OK = """\
 rpc_url = "http://127.0.0.1:8332"
 zmq_endpoint = "tcp://127.0.0.1:28332"
 """
+
+
+def test_batch_output_helpers_have_typed_contracts() -> None:
+    status_hints = get_type_hints(stage_commands._batch_status_dict)
+    object_event_hints = get_type_hints(stage_commands._batch_object_event)
+    digest_rows_hints = get_type_hints(stage_commands._verbose_digest_rows)
+    status_contract = get_type_hints(status_hints["return"])
+
+    assert is_typeddict(status_hints["return"])
+    assert is_typeddict(object_event_hints["return"])
+    assert get_origin(digest_rows_hints["return"]) is list
+    assert is_typeddict(get_args(digest_rows_hints["return"])[0])
+    assert is_typeddict(get_args(status_contract["submissions"])[0])
+    assert is_typeddict(get_args(status_contract["verify_jobs"])[0])
 
 
 def _assert_z_timestamp(value: str) -> None:
