@@ -85,11 +85,14 @@ from ocfl_cli.errors import (
 from ocfl_cli.ots.simpleproof import (
     _SUBMIT_CHUNK_SIZE,
     _VERIFY_BATCH_CHUNK_SIZE,
+    CalendarAttestation,
     JobStatus,
+    ResultsEntry,
     SimpleProofCreds,
     SimpleProofDownloadResult,
     SimpleProofHttpClient,
     SubmitResult,
+    VerifyBatchAck,
 )
 from ocfl_lib.errors import OtsParseError
 from tests.helpers.ots import build_attestation
@@ -479,9 +482,13 @@ class TestVerifyBatch:
         client = _make_client(handler)
         digests = _digests(5)
 
-        job_id = client.verify_batch(digests, CATEGORY)
+        ack = client.verify_batch(digests, CATEGORY)
 
-        assert job_id == "job-abc-123"
+        assert ack == VerifyBatchAck(
+            job_id="job-abc-123",
+            submitted_hashes=None,
+            total_documents_found=None,
+        )
         assert len(captured) == 1
         req = captured[0]
         assert req.method == "POST"
@@ -501,7 +508,28 @@ class TestVerifyBatch:
 
         client = _make_client(handler)
 
-        assert client.verify_batch(_digests(1), CATEGORY) == "job-nested-123"
+        assert client.verify_batch(_digests(1), CATEGORY).job_id == "job-nested-123"
+
+    def test_decodes_verify_batch_ack_counts(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                202,
+                json={
+                    "data": {
+                        "jobId": "job-counts",
+                        "submittedHashes": 10,
+                        "totalDocumentsFound": 7,
+                    }
+                },
+            )
+
+        client = _make_client(handler)
+
+        assert client.verify_batch(_digests(10), CATEGORY) == VerifyBatchAck(
+            job_id="job-counts",
+            submitted_hashes=10,
+            total_documents_found=7,
+        )
 
     def test_400_includes_response_message(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -541,6 +569,10 @@ class TestPollJob:
                     "jobId": "job-xyz",
                     "status": "COMPLETED",
                     "resultsUrl": "https://sp-results.test/job-xyz",
+                    "totalHashes": 250,
+                    "verifiedHashes": 187,
+                    "createdAt": "2026-05-15T12:00:00Z",
+                    "updatedAt": "2026-05-15T12:03:00Z",
                 },
             )
 
@@ -552,6 +584,10 @@ class TestPollJob:
         assert status.job_id == "job-xyz"
         assert status.status == "COMPLETED"
         assert status.results_url == "https://sp-results.test/job-xyz"
+        assert status.total_hashes == 250
+        assert status.verified_hashes == 187
+        assert status.created_at == "2026-05-15T12:00:00Z"
+        assert status.updated_at == "2026-05-15T12:03:00Z"
         assert len(captured) == 1
         req = captured[0]
         assert req.method == "GET"
@@ -631,6 +667,50 @@ class TestPollJob:
 
 
 class TestDownloadResults:
+    def test_fetch_results_entries_parses_confirmation_detail(self) -> None:
+        digest = _bytes_digest("file-a").hex()
+        results_url = "https://sp-results.test/job-progress"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "digest": digest,
+                            "confirmed": True,
+                            "otsDownloadUrl": "https://sp-blobs.test/a.ots",
+                            "confirmation_detail": [
+                                {
+                                    "calendar": "bob.btc.calendar.opentimestamps.org",
+                                    "blockHeight": 920150,
+                                    "transaction": "txid",
+                                    "merkleRoot": "root",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            )
+
+        client = _make_client(handler)
+
+        assert client.fetch_results_entries(results_url) == (
+            ResultsEntry(
+                digest=digest,
+                confirmed=True,
+                attestations=(
+                    CalendarAttestation(
+                        calendar="bob.btc.calendar.opentimestamps.org",
+                        block_height=920150,
+                        transaction="txid",
+                        merkle_root="root",
+                    ),
+                ),
+                ots_download_url="https://sp-blobs.test/a.ots",
+            ),
+        )
+
     def test_happy_path_returns_dict_keyed_by_digest(self) -> None:
         digest_a_bytes = _bytes_digest("file-a")
         digest_b_bytes = _bytes_digest("file-b")

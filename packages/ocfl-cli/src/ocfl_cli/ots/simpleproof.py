@@ -52,6 +52,33 @@ class JobStatus:
     job_id: str
     status: str
     results_url: str | None = None
+    total_hashes: int | None = None
+    verified_hashes: int | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CalendarAttestation:
+    calendar: str
+    block_height: int
+    transaction: str
+    merkle_root: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResultsEntry:
+    digest: str
+    confirmed: bool
+    attestations: tuple[CalendarAttestation, ...]
+    ots_download_url: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifyBatchAck:
+    job_id: str
+    submitted_hashes: int | None = None
+    total_documents_found: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,9 +115,11 @@ class SimpleProofCreds:
 class SimpleProofClient(Protocol):
     def submit_hashes(self, digests: list[str], category_id: int) -> SubmitResult: ...
 
-    def verify_batch(self, digests: list[str], category_id: int) -> str: ...
+    def verify_batch(self, digests: list[str], category_id: int) -> VerifyBatchAck: ...
 
     def poll_job(self, job_id: str) -> JobStatus: ...
+
+    def fetch_results_entries(self, results_url: str) -> tuple[ResultsEntry, ...]: ...
 
     def download_results(
         self, results_url: str, expected_digests: set[str]
@@ -155,6 +184,22 @@ def _entry_value(entry: dict[str, Any], *keys: str) -> str:
         if value is not None:
             return str(value)
     raise _missing_response_key("results", " or ".join(repr(k) for k in keys), entry)
+
+
+def _optional_int(payload: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        value = payload.get(key)
+        if value is not None:
+            return int(value)
+    return None
+
+
+def _optional_str(payload: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = payload.get(key)
+        if value is not None:
+            return str(value)
+    return None
 
 
 def _response_error_detail(resp: httpx.Response) -> str | None:
@@ -301,7 +346,7 @@ class SimpleProofHttpClient:
             raise _missing_response_key("submit", "files", body)
         return [str(file_hash) for file_hash in files]
 
-    def verify_batch(self, digests: list[str], category_id: int) -> str:
+    def verify_batch(self, digests: list[str], category_id: int) -> VerifyBatchAck:
         resp = retry(
             lambda: self._request(
                 "POST",
@@ -316,7 +361,15 @@ class SimpleProofHttpClient:
         payload = _data_or_body(body)
         for key in ("jobId", "job_id", "id"):
             if key in payload:
-                return str(payload[key])
+                return VerifyBatchAck(
+                    job_id=str(payload[key]),
+                    submitted_hashes=_optional_int(
+                        payload, "submittedHashes", "submitted_hashes"
+                    ),
+                    total_documents_found=_optional_int(
+                        payload, "totalDocumentsFound", "total_documents_found"
+                    ),
+                )
         raise _missing_response_key("verify-batch", "jobId", payload)
 
     def poll_job(self, job_id: str) -> JobStatus:
@@ -340,30 +393,74 @@ class SimpleProofHttpClient:
             job_id=str(payload["jobId"]),
             status=str(payload["status"]),
             results_url=str(results_url) if results_url is not None else None,
+            total_hashes=_optional_int(payload, "totalHashes", "total_hashes"),
+            verified_hashes=_optional_int(payload, "verifiedHashes", "verified_hashes"),
+            created_at=_optional_str(payload, "createdAt", "created_at"),
+            updated_at=_optional_str(payload, "updatedAt", "updated_at"),
         )
 
-    def download_results(
-        self, results_url: str, expected_digests: set[str]
-    ) -> SimpleProofDownloadResult:
+    def fetch_results_entries(self, results_url: str) -> tuple[ResultsEntry, ...]:
         resp = retry(
             lambda: self._request("GET", results_url),
             sleep=self._sleep,
             attempts=self._attempts,
         )
-        out: dict[str, bytes] = {}
+        entries: list[ResultsEntry] = []
         for entry in _result_entries(resp):
             if not isinstance(entry, dict):
                 raise SimpleProofError(
                     "SimpleProof results response contained a non-object result"
                 )
-            claimed = _entry_value(entry, "digest", "hash")
+            detail = entry.get(
+                "confirmation_detail", entry.get("confirmationDetail", ())
+            )
+            if detail is None:
+                detail = ()
+            if not isinstance(detail, list | tuple):
+                raise SimpleProofError(
+                    "SimpleProof results response contained non-list "
+                    "confirmation_detail"
+                )
+            attestations: list[CalendarAttestation] = []
+            for item in detail:
+                if not isinstance(item, dict):
+                    raise SimpleProofError(
+                        "SimpleProof confirmation_detail contained a non-object item"
+                    )
+                attestations.append(
+                    CalendarAttestation(
+                        calendar=_entry_value(item, "calendar"),
+                        block_height=int(
+                            _entry_value(item, "blockHeight", "block_height")
+                        ),
+                        transaction=_entry_value(item, "transaction"),
+                        merkle_root=_entry_value(item, "merkleRoot", "merkle_root"),
+                    )
+                )
+            entries.append(
+                ResultsEntry(
+                    digest=_entry_value(entry, "digest", "hash"),
+                    confirmed=bool(entry.get("confirmed", False)),
+                    attestations=tuple(attestations),
+                    ots_download_url=_entry_value(
+                        entry, "otsDownloadUrl", "ots_download_url"
+                    ),
+                )
+            )
+        return tuple(entries)
+
+    def download_results(
+        self, results_url: str, expected_digests: set[str]
+    ) -> SimpleProofDownloadResult:
+        out: dict[str, bytes] = {}
+        for entry in self.fetch_results_entries(results_url):
+            claimed = entry.digest
             if claimed not in expected_digests:
                 raise AttestationMismatchError(
                     f"unexpected digest from SP: {claimed} (not in submission set)"
                 )
-            ots_url = _entry_value(entry, "otsDownloadUrl", "ots_download_url")
             ots_resp = retry(
-                lambda u=ots_url: self._request("GET", u),
+                lambda u=entry.ots_download_url: self._request("GET", u),
                 sleep=self._sleep,
                 attempts=self._attempts,
             )

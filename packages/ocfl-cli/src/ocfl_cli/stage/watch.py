@@ -75,6 +75,7 @@ def _watch_loop(
     btc = btc_factory(cfg)
     last_height: int | None = None
     last_tip_hash: str | None = None
+    prior_jobs: tuple[service.JobProgress, ...] = ()
     stream = _get_zmq_subscriber(cfg)
     # Real BitcoinZmqSubscriber is a context manager (closes the socket on
     # exit); test fakes implement only `wait_for_block`. nullcontext bridges
@@ -113,15 +114,6 @@ def _watch_loop(
                             )
                             save_ots(staging_dir, state)
                         before = load_ots(staging_dir)
-                        if progress is not None:
-                            progress(
-                                "block",
-                                {
-                                    "height": info.height,
-                                    "phase": before.phase.value,
-                                    "reverify": height_jumped or tip_changed_at_stable,
-                                },
-                            )
                         last_height = info.height
                         last_tip_hash = info.best_block_hash
                         service._upgrade_pass_locked(
@@ -135,6 +127,19 @@ def _watch_loop(
                             btc_factory=btc_factory,
                         )
                         state = load_ots(staging_dir)
+                        jobs = service.compute_job_progress(state)
+                        if progress is not None:
+                            progress(
+                                "block",
+                                {
+                                    "height": info.height,
+                                    "phase": before.phase.value,
+                                    "reverify": height_jumped or tip_changed_at_stable,
+                                    "jobs": jobs,
+                                    "prior_jobs": prior_jobs,
+                                },
+                            )
+                        prior_jobs = jobs
                         if state.phase is Phase.CONTENT_UPGRADED:
                             if progress is not None:
                                 progress(
@@ -170,6 +175,7 @@ def _inventory_watch_loop(
     btc = btc_factory(cfg)
     last_height: int | None = None
     last_tip_hash: str | None = None
+    prior_jobs: tuple[service.JobProgress, ...] = ()
     stream = _get_zmq_subscriber(cfg)
     stream_cm = cast(
         "contextlib.AbstractContextManager[HashBlockStream]",
@@ -205,15 +211,6 @@ def _inventory_watch_loop(
                             )
                             save_ots(staging_dir, state)
                         before = load_ots(staging_dir)
-                        if progress is not None:
-                            progress(
-                                "block",
-                                {
-                                    "height": info.height,
-                                    "phase": before.phase.value,
-                                    "reverify": height_jumped or tip_changed_at_stable,
-                                },
-                            )
                         last_height = info.height
                         last_tip_hash = info.best_block_hash
                         service._inventory_upgrade_pass_locked(
@@ -223,6 +220,19 @@ def _inventory_watch_loop(
                             btc_factory=btc_factory,
                         )
                         state = load_ots(staging_dir)
+                        jobs = service.compute_job_progress(state)
+                        if progress is not None:
+                            progress(
+                                "block",
+                                {
+                                    "height": info.height,
+                                    "phase": before.phase.value,
+                                    "reverify": height_jumped or tip_changed_at_stable,
+                                    "jobs": jobs,
+                                    "prior_jobs": prior_jobs,
+                                },
+                            )
+                        prior_jobs = jobs
                         if state.phase is Phase.INVENTORY_UPGRADED:
                             if progress is not None:
                                 progress(

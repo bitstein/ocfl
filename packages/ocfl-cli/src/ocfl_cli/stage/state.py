@@ -1,6 +1,6 @@
 """OTS workspace state for staged OCFL versions.
 
-`<staging>/ots.json` schema (v1) plus persistence, locking, and
+`<staging>/ots.json` schema plus persistence, locking, and
 schema-migration helpers.
 """
 
@@ -57,15 +57,35 @@ class Submission(msgspec.Struct, frozen=True):
     record_ids: tuple[str | None, ...] | None = None
 
 
+class CalendarAttestation(msgspec.Struct, frozen=True):
+    calendar: str
+    block_height: int
+    transaction: str
+    merkle_root: str
+
+
 class VerifyJob(msgspec.Struct, frozen=True):
     """An outstanding `verify-batches` job awaiting download/verify."""
 
     job_id: str
     digests: tuple[str, ...]
     status: str  # "IN_PROGRESS" | "COMPLETED" | "FAILED" | "EXPIRED"
+    total_hashes: int | None = None
+    verified_hashes: int | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    results_url: str | None = None
+    last_snapshot_updated_at: str | None = None
+    submitted_hashes: int | None = None
+    total_documents_found: int | None = None
+    attestation_snapshots: dict[str, tuple[CalendarAttestation, ...]] = msgspec.field(
+        default_factory=dict
+    )
 
 
-VERIFY_JOB_STATUSES = frozenset({"IN_PROGRESS", "COMPLETED", "FAILED", "EXPIRED"})
+VERIFY_JOB_STATUSES = frozenset(
+    {"IN_PROGRESS", "PROCESSING", "COMPLETED", "FAILED", "EXPIRED"}
+)
 
 
 class InventoryProof(msgspec.Struct, frozen=True):
@@ -82,7 +102,7 @@ class InventoryProof(msgspec.Struct, frozen=True):
 
 
 class OtsState(msgspec.Struct, frozen=True):
-    """In-memory representation of `<staging>/ots.json` (schema v1).
+    """In-memory representation of `<staging>/ots.json`.
 
     Frozen so callers must rebuild via `msgspec.structs.replace` to advance
     phase or append submissions.
@@ -92,7 +112,7 @@ class OtsState(msgspec.Struct, frozen=True):
 
     phase: Phase
     category_id: int
-    schema_version: int = 1
+    schema_version: int = _OTS_STATE_VERSION
     pending_digests: tuple[str, ...] = ()
     submissions: tuple[Submission, ...] = ()
     verify_jobs: tuple[VerifyJob, ...] = ()

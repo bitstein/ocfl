@@ -43,6 +43,7 @@ from ocfl_cli.stage.fsm import Phase, check_transition
 from ocfl_cli.stage.ingest import ingest_file
 from ocfl_cli.stage.schemas import NextActionKind, StagedMetadata, StagedUser
 from ocfl_cli.stage.state import (
+    CalendarAttestation,
     InventoryProof,
     OtsState,
     Submission,
@@ -74,7 +75,13 @@ if TYPE_CHECKING:
 
     from ocfl_cli._appctx import BtcRpcFactory, SpClientFactory
     from ocfl_cli.config import Config
-    from ocfl_cli.ots.simpleproof import SimpleProofClient
+    from ocfl_cli.ots.simpleproof import (
+        CalendarAttestation as WireCalendarAttestation,
+    )
+    from ocfl_cli.ots.simpleproof import (
+        SimpleProofClient,
+        VerifyBatchAck,
+    )
     from ocfl_cli.stage.store import StagingStore
     from ocfl_lib import DigestAlgorithm
     from ocfl_lib.fs.protocols import FS, WriteFS
@@ -133,11 +140,26 @@ class PreparedContentSubmission:
 
 
 @dataclass(frozen=True, slots=True)
+class JobProgress:
+    job_id: str
+    status: str
+    total_hashes: int | None
+    verified_hashes: int | None
+    age_seconds: int | None
+    anchored_digests: int
+    pending_digests: int
+    calendar_counts: tuple[tuple[str, int], ...]
+    submitted_hashes: int | None = None
+    total_documents_found: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class UpgradeContentResult:
     previous_phase: Phase
     phase: Phase
     unverified_pending_count: int = 0
     orphan_count: int = 0
+    jobs: tuple[JobProgress, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +182,7 @@ class PreparedInventorySubmission:
 class UpgradeInventoryResult:
     previous_phase: Phase
     phase: Phase
+    job: JobProgress | None = None
 
 
 class MetadataInputError(ValueError):
@@ -199,6 +222,19 @@ def _is_failed_verify_job(status: str) -> bool:
 
 def _is_terminal_verify_job(status: str) -> bool:
     return status in {"COMPLETED", "FAILED"}
+
+
+def _verify_job_from_ack(
+    ack: VerifyBatchAck,
+    digests: tuple[str, ...],
+) -> VerifyJob:
+    return VerifyJob(
+        job_id=ack.job_id,
+        digests=digests,
+        status="IN_PROGRESS",
+        submitted_hashes=ack.submitted_hashes,
+        total_documents_found=ack.total_documents_found,
+    )
 
 
 def _unverified(state: OtsState, digests: tuple[str, ...]) -> list[str]:
@@ -944,10 +980,9 @@ def _reverify_existing_proofs(
 
     affected = set(needs_resubmit)
     kept_jobs = tuple(j for j in state.verify_jobs if affected.isdisjoint(j.digests))
-    new_job = VerifyJob(
-        job_id=sp.verify_batch(list(needs_resubmit), category_id),
-        digests=tuple(needs_resubmit),
-        status="IN_PROGRESS",
+    new_job = _verify_job_from_ack(
+        sp.verify_batch(list(needs_resubmit), category_id),
+        tuple(needs_resubmit),
     )
     return replace(
         state,
@@ -969,10 +1004,9 @@ def _submit_new_verify_batches(
         if not uncovered:
             continue
         new_jobs.append(
-            VerifyJob(
-                job_id=sp.verify_batch(list(uncovered), category_id),
-                digests=uncovered,
-                status="IN_PROGRESS",
+            _verify_job_from_ack(
+                sp.verify_batch(list(uncovered), category_id),
+                uncovered,
             )
         )
         covered.update(uncovered)
@@ -983,13 +1017,134 @@ def _submit_new_verify_batches(
 
 def _poll_outstanding_jobs(state: OtsState, sp: SimpleProofClient) -> OtsState:
     """Refresh `status` for every non-terminal verify_job."""
-    polled = tuple(
-        j
-        if _is_terminal_verify_job(j.status)
-        else replace(j, status=sp.poll_job(j.job_id).status)
-        for j in state.verify_jobs
-    )
+    jobs: list[VerifyJob] = []
+    for job in state.verify_jobs:
+        if _is_terminal_verify_job(job.status):
+            jobs.append(job)
+            continue
+        poll = sp.poll_job(job.job_id)
+        jobs.append(
+            replace(
+                job,
+                status=poll.status,
+                total_hashes=poll.total_hashes,
+                verified_hashes=poll.verified_hashes,
+                created_at=poll.created_at,
+                updated_at=poll.updated_at,
+                results_url=poll.results_url,
+            )
+        )
+    polled = tuple(jobs)
     return replace(state, verify_jobs=polled)
+
+
+def _state_attestations(
+    attestations: tuple[WireCalendarAttestation, ...],
+) -> tuple[CalendarAttestation, ...]:
+    return tuple(
+        CalendarAttestation(
+            calendar=a.calendar,
+            block_height=a.block_height,
+            transaction=a.transaction,
+            merkle_root=a.merkle_root,
+        )
+        for a in attestations
+    )
+
+
+def _should_fetch_snapshot(job: VerifyJob) -> bool:
+    return job.results_url is not None and (
+        job.last_snapshot_updated_at is None
+        or job.updated_at is None
+        or job.updated_at != job.last_snapshot_updated_at
+    )
+
+
+def _snapshot_results(
+    state: OtsState, staging_dir: Path, sp: SimpleProofClient
+) -> OtsState:
+    jobs = list(state.verify_jobs)
+    changed = False
+    for i, job in enumerate(jobs):
+        if not _should_fetch_snapshot(job) or job.results_url is None:
+            continue
+        submitted = set(job.digests)
+        snapshots = dict(job.attestation_snapshots)
+        for entry in sp.fetch_results_entries(job.results_url):
+            if entry.digest not in submitted:
+                raise AttestationMismatchError(
+                    f"unexpected digest from SP: {entry.digest} "
+                    f"(not in job {job.job_id} submission set)"
+                )
+            if not entry.confirmed or not entry.attestations:
+                continue
+            snapshots[entry.digest] = _state_attestations(entry.attestations)
+        jobs[i] = replace(
+            job,
+            attestation_snapshots=snapshots,
+            last_snapshot_updated_at=job.updated_at,
+        )
+        changed = True
+    if not changed:
+        return state
+    state = replace(state, verify_jobs=tuple(jobs))
+    save_ots(staging_dir, state)
+    return state
+
+
+def _parse_iso_seconds(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        created = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    return max(0, int((datetime.now(UTC) - created).total_seconds()))
+
+
+def compute_job_progress(state: OtsState) -> tuple[JobProgress, ...]:
+    progress: list[JobProgress] = []
+    for job in state.verify_jobs:
+        calendar_counts: dict[str, int] = {}
+        for attestations in job.attestation_snapshots.values():
+            for attestation in attestations:
+                calendar_counts[attestation.calendar] = (
+                    calendar_counts.get(attestation.calendar, 0) + 1
+                )
+        progress.append(
+            JobProgress(
+                job_id=job.job_id,
+                status=job.status,
+                total_hashes=job.total_hashes,
+                verified_hashes=job.verified_hashes,
+                age_seconds=_parse_iso_seconds(job.created_at),
+                anchored_digests=len(job.attestation_snapshots),
+                pending_digests=max(
+                    0, len(job.digests) - len(job.attestation_snapshots)
+                ),
+                calendar_counts=tuple(
+                    sorted(
+                        calendar_counts.items(), key=lambda item: (-item[1], item[0])
+                    )
+                ),
+                submitted_hashes=job.submitted_hashes,
+                total_documents_found=job.total_documents_found,
+            )
+        )
+    return tuple(progress)
+
+
+def compute_inventory_job_progress(state: OtsState) -> JobProgress | None:
+    inv = state.inventory_proof
+    if inv is None:
+        return None
+    progress = {job.job_id: job for job in compute_job_progress(state)}
+    for job in state.verify_jobs:
+        if inv.digest in job.digests:
+            return progress.get(job.job_id)
+    return None
 
 
 def _record_proof(state: OtsState, digest: str, proof: VerifiedProof) -> OtsState:
@@ -1185,6 +1340,7 @@ def _upgrade_pass_locked(
         min_confirmations=min_confs,
     )
     state = poll_content_verifications_locked(state, staging_dir, sp=sp)
+    state = snapshot_content_results_locked(state, staging_dir, sp=sp)
 
     state = ingest_content_verifications_locked(
         state,
@@ -1204,7 +1360,11 @@ def _upgrade_pass_locked(
         state = replace(state, phase=Phase.CONTENT_UPGRADED)
         save_ots(staging_dir, state)
         _log_phase(prev_phase, Phase.CONTENT_UPGRADED)
-        return UpgradeContentResult(previous_phase=prev_phase, phase=state.phase)
+        return UpgradeContentResult(
+            previous_phase=prev_phase,
+            phase=state.phase,
+            jobs=compute_job_progress(state),
+        )
     if unverified_pending:
         logger.debug(
             "phase advance held: %d pending digest(s) not yet verified",
@@ -1220,6 +1380,7 @@ def _upgrade_pass_locked(
         phase=state.phase,
         unverified_pending_count=len(unverified_pending),
         orphan_count=len(orphans),
+        jobs=compute_job_progress(state),
     )
 
 
@@ -1253,6 +1414,16 @@ def poll_content_verifications_locked(
     state = _poll_outstanding_jobs(state, sp)
     save_ots(staging_dir, state)
     return state
+
+
+def snapshot_content_results_locked(
+    state: OtsState,
+    staging_dir: Path,
+    *,
+    sp: SimpleProofClient,
+) -> OtsState:
+    """Fetch mid-flight content result snapshots and persist per-job attestations."""
+    return _snapshot_results(state, staging_dir, sp)
 
 
 def ingest_content_verifications_locked(
@@ -1533,10 +1704,9 @@ def _reset_inv_proof_and_resubmit(
     new_proof = VerifiedProof(ots_path=ots_path, verified=False)
     new_inv = replace(state.inventory_proof, proof=new_proof)
     kept_jobs = tuple(j for j in state.verify_jobs if inv_digest not in j.digests)
-    new_job = VerifyJob(
-        job_id=sp.verify_batch([inv_digest], category_id),
-        digests=(inv_digest,),
-        status="IN_PROGRESS",
+    new_job = _verify_job_from_ack(
+        sp.verify_batch([inv_digest], category_id),
+        (inv_digest,),
     )
     return replace(state, inventory_proof=new_inv, verify_jobs=(*kept_jobs, new_job))
 
@@ -1700,10 +1870,9 @@ def prepare_inventory_upgrade_locked(
             for j in state.verify_jobs
         )
         if not has_job:
-            new_job = VerifyJob(
-                job_id=sp.verify_batch([inv_digest], category_id),
-                digests=(inv_digest,),
-                status="IN_PROGRESS",
+            new_job = _verify_job_from_ack(
+                sp.verify_batch([inv_digest], category_id),
+                (inv_digest,),
             )
             state = replace(state, verify_jobs=(*state.verify_jobs, new_job))
             save_ots(staging_dir, state)
@@ -1720,6 +1889,16 @@ def poll_inventory_verifications_locked(
     state = _poll_outstanding_jobs(state, sp)
     save_ots(staging_dir, state)
     return state
+
+
+def snapshot_inventory_results_locked(
+    state: OtsState,
+    staging_dir: Path,
+    *,
+    sp: SimpleProofClient,
+) -> OtsState:
+    """Fetch mid-flight inventory result snapshots and persist per-job attestations."""
+    return _snapshot_results(state, staging_dir, sp)
 
 
 def ingest_inventory_verifications_locked(
@@ -1769,6 +1948,7 @@ def _inventory_upgrade_pass_locked(
         min_confirmations=min_confs,
     )
     state = poll_inventory_verifications_locked(state, staging_dir, sp=sp)
+    state = snapshot_inventory_results_locked(state, staging_dir, sp=sp)
     state = ingest_inventory_verifications_locked(
         state,
         staging_dir,
@@ -1782,7 +1962,11 @@ def _inventory_upgrade_pass_locked(
         and prev_phase is not Phase.INVENTORY_UPGRADED
     ):
         _log_phase(prev_phase, Phase.INVENTORY_UPGRADED)
-    return UpgradeInventoryResult(previous_phase=prev_phase, phase=state.phase)
+    return UpgradeInventoryResult(
+        previous_phase=prev_phase,
+        phase=state.phase,
+        job=compute_inventory_job_progress(state),
+    )
 
 
 def _inventory_upgrade_pass(

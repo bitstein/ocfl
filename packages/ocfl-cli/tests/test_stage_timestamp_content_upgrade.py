@@ -43,10 +43,16 @@ from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
+from ocfl_cli.errors import AttestationMismatchError
 from ocfl_cli.main import app
+from ocfl_cli.ots.simpleproof import CalendarAttestation as WireCalendarAttestation
+from ocfl_cli.stage import commands as stage_commands
+from ocfl_cli.stage import service
 from ocfl_cli.stage.fsm import Phase
 from ocfl_cli.stage.state import (
+    CalendarAttestation,
     Submission,
+    VerifiedProof,
     VerifyJob,
     load_ots,
     ots_cache_path,
@@ -225,7 +231,7 @@ def _seed_completed_verify_job(
     The upgrade pass should detect the existing verify_job (no second
     POST), poll, see COMPLETED, then download + verify.
     """
-    job_id = sp_fake.verify_batch(list(digests))
+    job_id = sp_fake.verify_batch(list(digests)).job_id
     sp_fake.advance_to_completed(job_id, ots_results)
     state = load_ots(sd)
     state = replace(
@@ -237,6 +243,472 @@ def _seed_completed_verify_job(
     )
     save_ots(sd, state)
     return job_id
+
+
+def _seed_processing_verify_job(
+    sp_fake: FakeSimpleProof,
+    sd: Path,
+    digests: tuple[str, ...],
+    results: dict[str, tuple[WireCalendarAttestation, ...]],
+    *,
+    updated_at: str | None = "2026-05-15T12:03:00Z",
+) -> str:
+    job_id = sp_fake.verify_batch(list(digests)).job_id
+    sp_fake.advance_to_processing(job_id, results, updated_at=updated_at)
+    state = load_ots(sd)
+    state = replace(
+        state,
+        verify_jobs=(
+            *state.verify_jobs,
+            VerifyJob(job_id=job_id, digests=digests, status="IN_PROGRESS"),
+        ),
+    )
+    save_ots(sd, state)
+    return job_id
+
+
+class TestProgressRendering:
+    def test_one_shot_content_result_renders_jobs_and_warning(self, capsys):
+        result = service.UpgradeContentResult(
+            previous_phase=Phase.CONTENT_PENDING,
+            phase=Phase.CONTENT_PENDING,
+            unverified_pending_count=63,
+            jobs=(
+                service.JobProgress(
+                    job_id="ab12cd34-full",
+                    status="PROCESSING",
+                    total_hashes=250,
+                    verified_hashes=187,
+                    age_seconds=7200,
+                    anchored_digests=187,
+                    pending_digests=63,
+                    calendar_counts=(
+                        ("bob.btc.calendar.opentimestamps.org", 187),
+                        ("alice.btc.calendar.opentimestamps.org", 184),
+                    ),
+                    submitted_hashes=250,
+                    total_documents_found=249,
+                ),
+            ),
+        )
+
+        stage_commands._render_content_upgrade_result("obj:render", result)
+
+        out = capsys.readouterr().out
+        assert "Content:" in out
+        assert "  Object: obj:render" in out
+        assert "  Warning: SP recognized 249 of 250 submitted hashes" in out
+        assert "  Jobs:" in out
+        assert "    job ab12cd34 PROCESSING — 187/250 verified (75%), age 2h ago" in out
+        assert "      anchored: 187 digests" in out
+        assert "        bob.btc.calendar.opentimestamps.org: 187" in out
+        assert "        alice.btc.calendar.opentimestamps.org: 184" in out
+        assert "      pending: 63 digests" in out
+        assert "  Waiting on 63 pending digests" in out
+        assert "  Next: stage timestamp content --upgrade --watch" in out
+
+    def test_watch_progress_renders_deltas_and_no_change(self, capsys):
+        prior = (
+            service.JobProgress(
+                job_id="ab12cd34-full",
+                status="PROCESSING",
+                total_hashes=250,
+                verified_hashes=187,
+                age_seconds=None,
+                anchored_digests=187,
+                pending_digests=63,
+                calendar_counts=(("bob.btc.calendar.opentimestamps.org", 187),),
+            ),
+            service.JobProgress(
+                job_id="ef56gh78-full",
+                status="PROCESSING",
+                total_hashes=250,
+                verified_hashes=100,
+                age_seconds=None,
+                anchored_digests=100,
+                pending_digests=150,
+                calendar_counts=(("bob.btc.calendar.opentimestamps.org", 100),),
+            ),
+        )
+        current = (
+            service.JobProgress(
+                job_id="ab12cd34-full",
+                status="PROCESSING",
+                total_hashes=250,
+                verified_hashes=200,
+                age_seconds=None,
+                anchored_digests=193,
+                pending_digests=57,
+                calendar_counts=(("bob.btc.calendar.opentimestamps.org", 193),),
+            ),
+            service.JobProgress(
+                job_id="ef56gh78-full",
+                status="PROCESSING",
+                total_hashes=250,
+                verified_hashes=100,
+                age_seconds=None,
+                anchored_digests=100,
+                pending_digests=150,
+                calendar_counts=(("bob.btc.calendar.opentimestamps.org", 100),),
+            ),
+        )
+
+        stage_commands._render_watch_progress(
+            "block",
+            {
+                "height": 920150,
+                "phase": "content-pending",
+                "reverify": False,
+                "jobs": current,
+                "prior_jobs": prior,
+            },
+            next_action="stage timestamp inventory",
+        )
+
+        out = capsys.readouterr().out
+        assert "Block:" in out
+        assert "  Height: 920150" in out
+        assert (
+            "    job ab12cd34 PROCESSING — 200/250 verified (+13 since last block)"
+            in out
+        )
+        assert "      anchored: +6 digests" in out
+        assert "        bob.btc.calendar.opentimestamps.org: 193 (+6)" in out
+        assert "    job ef56gh78 PROCESSING — 100/250 verified (no change)" in out
+        assert "      anchored: 100 digests" in out
+        assert "      pending: 150 digests" in out
+
+    def test_watch_start_renders_submit_mismatch_warning_once(self, capsys):
+        stage_commands._render_watch_start(
+            "obj:watch",
+            (
+                service.JobProgress(
+                    job_id="job-warning",
+                    status="PROCESSING",
+                    total_hashes=10,
+                    verified_hashes=0,
+                    age_seconds=None,
+                    anchored_digests=0,
+                    pending_digests=10,
+                    calendar_counts=(),
+                    submitted_hashes=10,
+                    total_documents_found=8,
+                ),
+            ),
+        )
+
+        out = capsys.readouterr().out
+        assert "Watch:" in out
+        assert "  Object: obj:watch" in out
+        assert "  Warning: SP recognized 8 of 10 submitted hashes" in out
+        assert out.count("Warning: SP recognized") == 1
+
+
+class TestMidflightProgressSnapshots:
+    def test_snapshot_persists_attestations_on_verify_job_only(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sp_fake: FakeSimpleProof,
+    ):
+        _write_config(tmp_path, monkeypatch)
+        staging = tmp_path / "staging"
+        sd, _paths, digests_by_name = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:progress", ("a.txt", b"a")
+        )
+        digest = digests_by_name["a.txt"]
+        _force_content_pending(sd, (digest,))
+        _seed_processing_verify_job(
+            sp_fake,
+            sd,
+            (digest,),
+            {
+                digest: (
+                    WireCalendarAttestation(
+                        calendar="bob.btc.calendar.opentimestamps.org",
+                        block_height=920150,
+                        transaction="txid",
+                        merkle_root="root",
+                    ),
+                )
+            },
+        )
+
+        state = service.poll_content_verifications_locked(load_ots(sd), sd, sp=sp_fake)
+        state = service.snapshot_content_results_locked(state, sd, sp=sp_fake)
+
+        job = state.verify_jobs[0]
+        assert digest in job.attestation_snapshots
+        assert state.content_proofs == {}
+        progress = service.compute_job_progress(state)
+        assert progress[0].anchored_digests == 1
+        assert progress[0].pending_digests == 0
+        assert progress[0].calendar_counts == (
+            ("bob.btc.calendar.opentimestamps.org", 1),
+        )
+
+    def test_snapshot_rejects_foreign_digest(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sp_fake: FakeSimpleProof,
+    ):
+        _write_config(tmp_path, monkeypatch)
+        staging = tmp_path / "staging"
+        sd, _paths, digests_by_name = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:foreign", ("a.txt", b"a")
+        )
+        digest = digests_by_name["a.txt"]
+        foreign = hashlib.sha256(b"foreign").hexdigest()
+        _force_content_pending(sd, (digest,))
+        _seed_processing_verify_job(
+            sp_fake,
+            sd,
+            (digest,),
+            {foreign: ()},
+        )
+        state = service.poll_content_verifications_locked(load_ots(sd), sd, sp=sp_fake)
+
+        with pytest.raises(AttestationMismatchError, match="unexpected digest from SP"):
+            service.snapshot_content_results_locked(state, sd, sp=sp_fake)
+
+    def test_unconfirmed_result_does_not_count_as_anchored(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sp_fake: FakeSimpleProof,
+    ):
+        _write_config(tmp_path, monkeypatch)
+        staging = tmp_path / "staging"
+        sd, _paths, digests_by_name = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:unconfirmed", ("a.txt", b"a")
+        )
+        digest = digests_by_name["a.txt"]
+        _force_content_pending(sd, (digest,))
+        _seed_processing_verify_job(sp_fake, sd, (digest,), {digest: ()})
+        state = service.poll_content_verifications_locked(load_ots(sd), sd, sp=sp_fake)
+
+        state = service.snapshot_content_results_locked(state, sd, sp=sp_fake)
+
+        assert state.verify_jobs[0].attestation_snapshots == {}
+        progress = service.compute_job_progress(state)
+        assert progress[0].anchored_digests == 0
+        assert progress[0].pending_digests == 1
+
+    def test_updated_at_none_refetches_snapshot_each_pass(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sp_fake: FakeSimpleProof,
+    ):
+        _write_config(tmp_path, monkeypatch)
+        staging = tmp_path / "staging"
+        sd, _paths, digests_by_name = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:refetch", ("a.txt", b"a")
+        )
+        digest = digests_by_name["a.txt"]
+        _force_content_pending(sd, (digest,))
+        _seed_processing_verify_job(
+            sp_fake,
+            sd,
+            (digest,),
+            {
+                digest: (
+                    WireCalendarAttestation(
+                        calendar="bob.btc.calendar.opentimestamps.org",
+                        block_height=920150,
+                        transaction="txid",
+                        merkle_root="root",
+                    ),
+                )
+            },
+            updated_at=None,
+        )
+        calls = 0
+        original = sp_fake.fetch_results_entries
+
+        def counted_fetch(results_url: str):
+            nonlocal calls
+            calls += 1
+            return original(results_url)
+
+        monkeypatch.setattr(sp_fake, "fetch_results_entries", counted_fetch)
+        state = service.poll_content_verifications_locked(load_ots(sd), sd, sp=sp_fake)
+
+        state = service.snapshot_content_results_locked(state, sd, sp=sp_fake)
+        state = service.snapshot_content_results_locked(state, sd, sp=sp_fake)
+
+        assert calls == 2
+
+    def test_snapshot_rebuilds_attestation_dict_identity(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sp_fake: FakeSimpleProof,
+    ):
+        _write_config(tmp_path, monkeypatch)
+        staging = tmp_path / "staging"
+        sd, _paths, digests_by_name = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:identity", ("a.txt", b"a")
+        )
+        digest = digests_by_name["a.txt"]
+        _force_content_pending(sd, (digest,))
+        _seed_processing_verify_job(
+            sp_fake,
+            sd,
+            (digest,),
+            {
+                digest: (
+                    WireCalendarAttestation(
+                        calendar="bob.btc.calendar.opentimestamps.org",
+                        block_height=920150,
+                        transaction="txid",
+                        merkle_root="root",
+                    ),
+                )
+            },
+        )
+        state = service.poll_content_verifications_locked(load_ots(sd), sd, sp=sp_fake)
+        before = state.verify_jobs[0].attestation_snapshots
+
+        state = service.snapshot_content_results_locked(state, sd, sp=sp_fake)
+
+        after = state.verify_jobs[0].attestation_snapshots
+        assert after is not before
+        assert digest in after
+
+    def test_resubmitted_job_starts_with_empty_snapshots(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+    ):
+        _write_config(tmp_path, monkeypatch)
+        staging = tmp_path / "staging"
+        sd, _paths, digests_by_name = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:resubmit", ("a.txt", b"a")
+        )
+        digest = digests_by_name["a.txt"]
+        cache_file = ots_cache_path(sd, digest)
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_bytes(_ots_for(digest))
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        btc_fake.rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, "00" * 32)
+        state = load_ots(sd)
+        state = replace(
+            state,
+            phase=Phase.CONTENT_PENDING,
+            pending_digests=(digest,),
+            verify_jobs=(
+                VerifyJob(
+                    job_id="old-job",
+                    digests=(digest,),
+                    status="COMPLETED",
+                    attestation_snapshots={
+                        digest: (
+                            CalendarAttestation(
+                                calendar="bob.btc.calendar.opentimestamps.org",
+                                block_height=920150,
+                                transaction="txid",
+                                merkle_root="root",
+                            ),
+                        )
+                    },
+                ),
+            ),
+            content_proofs={
+                digest: VerifiedProof(
+                    ots_path=f"ots-cache/{digest}.ots",
+                    verified=True,
+                )
+            },
+        )
+
+        state = service._reverify_existing_proofs(
+            state,
+            btc_fake.rpc,
+            sp_fake,
+            sd,
+            MIN_CONFS,
+            category_id=641,
+        )
+
+        assert len(state.verify_jobs) == 1
+        assert state.verify_jobs[0].job_id != "old-job"
+        assert state.verify_jobs[0].attestation_snapshots == {}
+
+    def test_verified_ingest_preserves_attestation_snapshots(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+    ):
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_btc(runner, btc_fake.rpc)
+        staging = tmp_path / "staging"
+        sd, _paths, digests_by_name = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:preserve", ("a.txt", b"a")
+        )
+        digest = digests_by_name["a.txt"]
+        _force_content_pending(sd, (digest,))
+        ots_bytes = _ots_for(digest)
+        job_id = sp_fake.verify_batch([digest]).job_id
+        sp_fake.advance_to_completed(job_id, {digest: ots_bytes})
+        snapshot: dict[str, tuple[CalendarAttestation, ...]] = {
+            digest: (
+                CalendarAttestation(
+                    calendar="bob.btc.calendar.opentimestamps.org",
+                    block_height=920150,
+                    transaction="txid",
+                    merkle_root="root",
+                ),
+            )
+        }
+        state = replace(
+            load_ots(sd),
+            verify_jobs=(
+                VerifyJob(
+                    job_id=job_id,
+                    digests=(digest,),
+                    status="COMPLETED",
+                    results_url=f"results://{job_id}",
+                    attestation_snapshots=snapshot,
+                ),
+            ),
+        )
+        save_ots(sd, state)
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        _register_attested(btc_fake.rpc, digest)
+
+        state = service.ingest_content_verifications_locked(
+            state,
+            StagingStore(staging),
+            str(empty_sha256_root.resolve()),
+            "obj:preserve",
+            sd,
+            sp=sp_fake,
+            btc=btc_fake.rpc,
+            min_confirmations=MIN_CONFS,
+        )
+
+        assert state.content_proofs[digest].verified is True
+        assert state.verify_jobs[0].attestation_snapshots == snapshot
 
 
 # =========================================================================== #
@@ -1313,7 +1785,7 @@ class TestRegtestEndToEnd:
         # for the affected digest. Pre-seed a fresh COMPLETED job so the
         # call resolves; for this assertion we need only that the proof
         # gets reset to verified=False (not that it re-converges).
-        sp_fake.advance_to_completed(sp_fake.verify_batch([d]), {d: ots_bytes})
+        sp_fake.advance_to_completed(sp_fake.verify_batch([d]).job_id, {d: ots_bytes})
 
         r = runner.invoke(
             app,

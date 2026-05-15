@@ -225,7 +225,7 @@ def _seed_completed_verify_job(
     digests: tuple[str, ...],
     ots_results: dict[str, bytes],
 ) -> str:
-    job_id = sp_fake.verify_batch(list(digests))
+    job_id = sp_fake.verify_batch(list(digests)).job_id
     sp_fake.advance_to_completed(job_id, ots_results)
     state = load_ots(sd)
     state = replace(

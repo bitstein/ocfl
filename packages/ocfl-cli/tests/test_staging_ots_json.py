@@ -544,7 +544,7 @@ class TestSchemaMigration:
             new.setdefault("verify_jobs", [])
             return new
 
-        # Pretend current is v1 (it is); register a v0->v1 step.
+        # Register a v0->v1 step; the built-in v1->v2 step finishes the walk.
         monkeypatch.setitem(st_mod._MIGRATIONS, 0, v0_to_v1)
 
         (tmp_path / "ots.json").write_text(

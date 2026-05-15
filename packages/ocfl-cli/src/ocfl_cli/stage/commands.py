@@ -732,10 +732,100 @@ def _plural(n: int, singular: str, plural: str | None = None) -> str:
     return singular if n == 1 else (plural or f"{singular}s")
 
 
-def _render_watch_start(object_id: str) -> None:
+def _render_watch_start(
+    object_id: str, jobs: tuple[service.JobProgress, ...] = ()
+) -> None:
     _render_status_section("Watch")
     typer.echo(f"  Object: {object_id}")
+    _render_sp_submit_warning(jobs)
     typer.echo("  Waiting for Bitcoin blocks")
+
+
+def _short_job_id(job_id: str) -> str:
+    return job_id[:8]
+
+
+def _job_by_id(
+    jobs: tuple[service.JobProgress, ...],
+) -> dict[str, service.JobProgress]:
+    return {job.job_id: job for job in jobs}
+
+
+def _render_calendar_counts(
+    counts: tuple[tuple[str, int], ...],
+    *,
+    prior: tuple[tuple[str, int], ...] | None = None,
+) -> None:
+    prior_counts = dict(prior or ())
+    for calendar, count in counts:
+        delta = count - prior_counts.get(calendar, 0)
+        suffix = f" (+{delta})" if prior is not None and delta > 0 else ""
+        typer.echo(f"        {calendar}: {count}{suffix}")
+
+
+def _render_jobs(
+    jobs: tuple[service.JobProgress, ...],
+    *,
+    prior: tuple[service.JobProgress, ...] | None = None,
+) -> None:
+    if not jobs:
+        return
+    typer.echo("  Jobs:")
+    prior_jobs = _job_by_id(prior or ())
+    for job in jobs:
+        prior_job = prior_jobs.get(job.job_id)
+        if job.total_hashes and job.verified_hashes is not None:
+            summary = f"{job.verified_hashes}/{job.total_hashes} verified"
+            if prior is not None:
+                prior_verified = prior_job.verified_hashes if prior_job else None
+                delta = (
+                    job.verified_hashes - prior_verified
+                    if prior_verified is not None
+                    else 0
+                )
+                summary += f" (+{delta} since last block)" if delta else " (no change)"
+            elif job.total_hashes:
+                pct = round((job.verified_hashes / job.total_hashes) * 100)
+                summary += f" ({pct}%)"
+        else:
+            summary = job.status
+        age = (
+            f", age {service.humanize_age(job.age_seconds)}"
+            if job.age_seconds is not None and prior is None
+            else ""
+        )
+        typer.echo(f"    job {_short_job_id(job.job_id)} {job.status} — {summary}{age}")
+        prior_anchored = prior_job.anchored_digests if prior_job is not None else 0
+        if prior is not None:
+            delta = job.anchored_digests - prior_anchored
+            anchored = (
+                f"+{delta} digests" if delta > 0 else f"{job.anchored_digests} digests"
+            )
+        else:
+            anchored = f"{job.anchored_digests} digests"
+        typer.echo(f"      anchored: {anchored}")
+        prior_counts = None
+        if prior is not None and prior_job is not None:
+            prior_counts = prior_job.calendar_counts
+        _render_calendar_counts(
+            job.calendar_counts,
+            prior=prior_counts,
+        )
+        typer.echo(f"      pending: {job.pending_digests} digests")
+
+
+def _render_sp_submit_warning(jobs: tuple[service.JobProgress, ...]) -> None:
+    for job in jobs:
+        if (
+            job.submitted_hashes is not None
+            and job.total_documents_found is not None
+            and job.total_documents_found < job.submitted_hashes
+        ):
+            typer.echo(
+                f"  Warning: SP recognized {job.total_documents_found} of "
+                f"{job.submitted_hashes} submitted hashes"
+            )
+            return
 
 
 def _render_watch_progress(kind: str, data: dict, *, next_action: str) -> None:
@@ -744,6 +834,7 @@ def _render_watch_progress(kind: str, data: dict, *, next_action: str) -> None:
         typer.echo(f"  Height: {data['height']}")
         typer.echo("  Checking SimpleProof jobs")
         typer.echo(f"  Phase: {data['phase']}")
+        _render_jobs(data.get("jobs", ()), prior=data.get("prior_jobs", ()))
         if data.get("reverify"):
             typer.echo("  Rechecking cached proofs after chain movement")
         return
@@ -759,6 +850,8 @@ def _render_content_upgrade_result(
     _render_status_section("Content")
     typer.echo(f"  Object: {object_id}")
     typer.echo("  Checked SimpleProof jobs")
+    _render_sp_submit_warning(result.jobs)
+    _render_jobs(result.jobs)
     if result.unverified_pending_count:
         count = result.unverified_pending_count
         typer.echo(f"  Waiting on {count} pending {_plural(count, 'digest')}")
@@ -2646,7 +2739,7 @@ def _submit_batch_verify_jobs(
     for i in range(0, len(digests), _VERIFY_BATCH_CHUNK_SIZE):
         chunk = tuple(digests[i : i + _VERIFY_BATCH_CHUNK_SIZE])
         try:
-            job_id = sp.verify_batch(list(chunk), batch.category_id)
+            job_id = sp.verify_batch(list(chunk), batch.category_id).job_id
         except SimpleProofTransient as e:
             failed = batch_state.BatchVerifyJob(
                 job_id=f"failed-{len(jobs) + 1}",
@@ -4054,7 +4147,10 @@ def timestamp_content(
     sr, _fs = open_root(appctx.root(ctx))
 
     if watch_flag:
-        _render_watch_start(object_id)
+        _render_watch_start(
+            object_id,
+            service.compute_job_progress(load_ots(resolved.staging_dir)),
+        )
         try:
             exit_code = watch._watch_loop(
                 cfg,
@@ -4201,7 +4297,10 @@ def timestamp_inventory(
     sr, _fs = open_root(appctx.root(ctx))
 
     if watch_flag:
-        _render_watch_start(object_id)
+        _render_watch_start(
+            object_id,
+            service.compute_job_progress(load_ots(resolved.staging_dir)),
+        )
         try:
             exit_code = watch._inventory_watch_loop(
                 cfg,

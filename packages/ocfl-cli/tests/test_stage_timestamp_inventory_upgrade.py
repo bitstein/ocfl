@@ -281,7 +281,7 @@ def _seed_inv_completed_verify_job(
     The upgrade pass should detect the existing job, poll, see
     COMPLETED, then download + verify.
     """
-    job_id = sp_fake.verify_batch([inv_digest])
+    job_id = sp_fake.verify_batch([inv_digest]).job_id
     sp_fake.advance_to_completed(job_id, {inv_digest: ots_bytes})
 
     state = load_ots(sd)
@@ -305,6 +305,42 @@ def _seed_inv_completed_verify_job(
 
 
 class TestInventoryUpgradePrimitives:
+    def test_snapshot_inventory_progress_ignores_unconfirmed_result(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        staging = tmp_path / "staging"
+        sd, _content_digest, inv_digest = _setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-progress"
+        )
+        job_id = sp_fake.verify_batch([inv_digest]).job_id
+        sp_fake.advance_to_processing(job_id, {inv_digest: ()})
+        state = load_ots(sd)
+        assert state.inventory_proof is not None
+        state = replace(
+            state,
+            inventory_proof=replace(state.inventory_proof, job_id=job_id),
+            verify_jobs=(
+                *state.verify_jobs,
+                VerifyJob(job_id=job_id, digests=(inv_digest,), status="IN_PROGRESS"),
+            ),
+        )
+        save_ots(sd, state)
+        state = service.poll_inventory_verifications_locked(state, sd, sp=sp_fake)
+
+        state = service.snapshot_inventory_results_locked(state, sd, sp=sp_fake)
+
+        progress = service.compute_inventory_job_progress(state)
+        assert progress is not None
+        assert progress.anchored_digests == 0
+        assert progress.pending_digests == 1
+
     def test_prepare_poll_ingest_inventory_verification(
         self,
         runner: CliRunner,
