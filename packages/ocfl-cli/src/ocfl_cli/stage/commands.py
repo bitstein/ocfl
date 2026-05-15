@@ -4,11 +4,12 @@ Thin glue: parse options, resolve context, call into ``service`` /
 ``watch``, render results. Business logic lives in those modules.
 """
 
+import contextlib
 import logging
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, cast
 
 import msgspec
 import typer
@@ -34,6 +35,11 @@ from ocfl_cli.errors import (
     SimpleProofTransient,
     StagingError,
 )
+from ocfl_cli.ots.bitcoin import (
+    PendingVerification,
+    VerifiedAttestation,
+    verify_attestation,
+)
 from ocfl_cli.ots.simpleproof import _VERIFY_BATCH_CHUNK_SIZE
 from ocfl_cli.stage import batch as batch_state
 from ocfl_cli.stage import service, watch
@@ -47,6 +53,7 @@ from ocfl_cli.stage.state import (
     has_ots,
     load_ots,
     now_utc_iso,
+    ots_cache_path,
     plan_path,
     save_ots,
     with_lock,
@@ -58,6 +65,7 @@ from ocfl_lib.update_plan import deserialize, serialize
 if TYPE_CHECKING:
     from ocfl_cli._appctx import BtcRpcFactory, SpClientFactory
     from ocfl_cli.config import Config, SimpleProofConfig
+    from ocfl_cli.ots.bitcoin import HashBlockStream
 
 
 logger = logging.getLogger(__name__)
@@ -2735,27 +2743,7 @@ def _drive_batch_upgrade(
         command=(*_batch_command_tuple(target, batch.batch_id), "--upgrade"),
     ):
         _emit_batch_resumed(ctx, batch)
-        batch = _submit_batch_verify_jobs(
-            target=target,
-            cfg=cfg,
-            store=store,
-            staging_root=staging_root,
-            batch=batch,
-            sp_factory=appctx.sp_client_factory(ctx),
-        )
-        batch = _reconcile_upgraded_batch_rows(
-            target=target,
-            store=store,
-            staging_root=staging_root,
-            batch=batch,
-        )
-        batch = _poll_batch_verify_jobs(
-            cfg=cfg,
-            staging_root=staging_root,
-            batch=batch,
-            sp_factory=appctx.sp_client_factory(ctx),
-        )
-        batch = _ingest_batch_verify_jobs(
+        batch = _run_batch_upgrade_pass(
             target=target,
             cfg=cfg,
             store=store,
@@ -2765,18 +2753,447 @@ def _drive_batch_upgrade(
             sp_factory=appctx.sp_client_factory(ctx),
             btc_factory=appctx.btc_rpc_factory(ctx),
         )
-        batch = _reconcile_upgraded_batch_rows(
-            target=target,
-            store=store,
-            staging_root=staging_root,
-            batch=batch,
-        )
     if not appctx.json_mode(ctx):
         counts = _batch_counts(batch)
         typer.echo(
             f"batch upgraded: {batch.batch_id} submitted={counts['submitted']} "
             f"upgraded={counts['upgraded']} failed={counts['failed']}"
         )
+
+
+def _run_batch_upgrade_pass(
+    *,
+    target: batch_state.BatchTarget,
+    cfg,
+    store: StagingStore,
+    sr,
+    staging_root: Path,
+    batch: batch_state.BatchFile,
+    sp_factory,
+    btc_factory,
+) -> batch_state.BatchFile:
+    batch = _submit_batch_verify_jobs(
+        target=target,
+        cfg=cfg,
+        store=store,
+        staging_root=staging_root,
+        batch=batch,
+        sp_factory=sp_factory,
+    )
+    batch = _reconcile_upgraded_batch_rows(
+        target=target,
+        store=store,
+        staging_root=staging_root,
+        batch=batch,
+    )
+    batch = _poll_batch_verify_jobs(
+        cfg=cfg,
+        staging_root=staging_root,
+        batch=batch,
+        sp_factory=sp_factory,
+    )
+    batch = _ingest_batch_verify_jobs(
+        target=target,
+        cfg=cfg,
+        store=store,
+        sr=sr,
+        staging_root=staging_root,
+        batch=batch,
+        sp_factory=sp_factory,
+        btc_factory=btc_factory,
+    )
+    return _reconcile_upgraded_batch_rows(
+        target=target,
+        store=store,
+        staging_root=staging_root,
+        batch=batch,
+    )
+
+
+def _batch_has_submitted_subset(batch: batch_state.BatchFile) -> bool:
+    return any(row.status == "submitted" for row in batch.objects)
+
+
+def _batch_watch_complete(batch: batch_state.BatchFile) -> bool:
+    return bool(batch.objects) and all(
+        row.status in {"upgraded", "failed", "skipped"} for row in batch.objects
+    )
+
+
+def _batch_watch_successful(batch: batch_state.BatchFile) -> bool:
+    return _batch_watch_complete(batch) and any(
+        row.status == "upgraded" for row in batch.objects
+    )
+
+
+def _reverify_batch_content_row(
+    *,
+    btc,
+    staging_dir: Path,
+    state: OtsState,
+    row: batch_state.BatchObject,
+    min_confirmations: int,
+) -> tuple[OtsState, set[str], set[str]]:
+    proofs = dict(state.content_proofs)
+    reset: set[str] = set()
+    reorg: set[str] = set()
+    for digest in row.digests:
+        proof = proofs.get(digest)
+        if proof is None or not proof.verified:
+            continue
+        cache = ots_cache_path(staging_dir, digest)
+        if not cache.is_file():
+            continue
+        try:
+            result = verify_attestation(
+                rpc=btc,
+                ots_bytes=cache.read_bytes(),
+                expected_digest=bytes.fromhex(digest),
+                min_confirmations=min_confirmations,
+            )
+        except AttestationMismatchError:
+            proofs[digest] = VerifiedProof(ots_path=proof.ots_path, verified=False)
+            reset.add(digest)
+            continue
+        except ReorgDetectedError:
+            proofs[digest] = VerifiedProof(ots_path=proof.ots_path, verified=False)
+            reorg.add(digest)
+            continue
+        match result:
+            case VerifiedAttestation(block_height=h, confirmations=c):
+                proofs[digest] = VerifiedProof(
+                    ots_path=proof.ots_path,
+                    verified=True,
+                    block_height=h,
+                    block_hash=result.block_hash,
+                    confirmations_at_verify=c,
+                    verified_at=proof.verified_at,
+                )
+            case PendingVerification():
+                proofs[digest] = VerifiedProof(ots_path=proof.ots_path, verified=False)
+                reset.add(digest)
+    if proofs == state.content_proofs:
+        return state, reset, reorg
+    return msgspec.structs.replace(state, content_proofs=proofs), reset, reorg
+
+
+def _reverify_batch_inventory_row(
+    *,
+    btc,
+    staging_dir: Path,
+    state: OtsState,
+    row: batch_state.BatchObject,
+    min_confirmations: int,
+) -> tuple[OtsState, set[str], set[str]]:
+    inv = state.inventory_proof
+    if inv is None or inv.digest not in row.digests or not inv.proof.verified:
+        return state, set(), set()
+    cache = ots_cache_path(staging_dir, inv.digest)
+    if not cache.is_file():
+        return state, set(), set()
+    try:
+        result = verify_attestation(
+            rpc=btc,
+            ots_bytes=cache.read_bytes(),
+            expected_digest=bytes.fromhex(inv.digest),
+            min_confirmations=min_confirmations,
+        )
+    except AttestationMismatchError:
+        proof = VerifiedProof(ots_path=inv.proof.ots_path, verified=False)
+        return (
+            msgspec.structs.replace(
+                state, inventory_proof=msgspec.structs.replace(inv, proof=proof)
+            ),
+            {inv.digest},
+            set(),
+        )
+    except ReorgDetectedError:
+        proof = VerifiedProof(ots_path=inv.proof.ots_path, verified=False)
+        return (
+            msgspec.structs.replace(
+                state, inventory_proof=msgspec.structs.replace(inv, proof=proof)
+            ),
+            set(),
+            {inv.digest},
+        )
+    match result:
+        case VerifiedAttestation(block_height=h, confirmations=c):
+            proof = VerifiedProof(
+                ots_path=inv.proof.ots_path,
+                verified=True,
+                block_height=h,
+                block_hash=result.block_hash,
+                confirmations_at_verify=c,
+                verified_at=inv.proof.verified_at,
+            )
+            return (
+                msgspec.structs.replace(
+                    state, inventory_proof=msgspec.structs.replace(inv, proof=proof)
+                ),
+                set(),
+                set(),
+            )
+        case PendingVerification():
+            proof = VerifiedProof(ots_path=inv.proof.ots_path, verified=False)
+            return (
+                msgspec.structs.replace(
+                    state, inventory_proof=msgspec.structs.replace(inv, proof=proof)
+                ),
+                {inv.digest},
+                set(),
+            )
+
+
+def _reset_batch_row_phase(
+    target: batch_state.BatchTarget, state: OtsState
+) -> OtsState:
+    phase = Phase.CONTENT_PENDING if target == "content" else Phase.INVENTORY_PENDING
+    return msgspec.structs.replace(state, phase=phase)
+
+
+def _reverify_batch_watch_rows(
+    *,
+    target: batch_state.BatchTarget,
+    cfg,
+    store: StagingStore,
+    staging_root: Path,
+    batch: batch_state.BatchFile,
+    btc,
+) -> batch_state.BatchFile:
+    if cfg.bitcoin is None:
+        raise RuntimeError("bitcoin config missing")
+    reset: set[str] = set()
+    rows: list[batch_state.BatchObject] = []
+    changed_rows = False
+    for row in batch.objects:
+        if row.status not in {"submitted", "upgraded"}:
+            rows.append(row)
+            continue
+        staging_dir = store.staging_path(batch.root_path, row.object_id)
+        with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+            state = load_ots(staging_dir)
+            if target == "content":
+                state, row_reset, row_reorg = _reverify_batch_content_row(
+                    btc=btc,
+                    staging_dir=staging_dir,
+                    state=state,
+                    row=row,
+                    min_confirmations=cfg.bitcoin.confirmations,
+                )
+            else:
+                state, row_reset, row_reorg = _reverify_batch_inventory_row(
+                    btc=btc,
+                    staging_dir=staging_dir,
+                    state=state,
+                    row=row,
+                    min_confirmations=cfg.bitcoin.confirmations,
+                )
+            if row_reorg:
+                state = _reset_batch_row_phase(target, state)
+                row = msgspec.structs.replace(
+                    row, status="failed", last_error="reorg_deeper_than_min_conf"
+                )
+                changed_rows = True
+            if row_reset:
+                reset.update(row_reset)
+                state = _reset_batch_row_phase(target, state)
+                if row.status == "upgraded":
+                    row = msgspec.structs.replace(
+                        row, status="submitted", last_error=None
+                    )
+                    changed_rows = True
+            save_ots(staging_dir, state)
+        rows.append(row)
+    if not reset:
+        if not changed_rows:
+            return batch
+        return _save_batch_upgrade(
+            staging_root, msgspec.structs.replace(batch, objects=tuple(rows))
+        )
+    kept_jobs = tuple(job for job in batch.verify_jobs if reset.isdisjoint(job.digests))
+    return _save_batch_upgrade(
+        staging_root,
+        msgspec.structs.replace(batch, objects=tuple(rows), verify_jobs=kept_jobs),
+    )
+
+
+def _drive_batch_watch(
+    ctx: typer.Context,
+    *,
+    target: batch_state.BatchTarget,
+    object_ids: tuple[str, ...],
+    objects_file: Path | None,
+    batch_id: str | None,
+    category: int | None,
+    allow_missing_metadata: bool,
+) -> None:
+    cfg = require_config(ctx)
+    require_simpleproof(ctx, cfg)
+    require_bitcoin(ctx, cfg)
+    sp_cfg = cfg.simpleproof
+    if sp_cfg is None:
+        raise RuntimeError("simpleproof config missing")
+    if cfg.bitcoin is None:
+        raise RuntimeError("bitcoin config missing")
+    store = _stage_store(ctx)
+    staging_root = store._root
+    root_path = _resolve_root_path(ctx)
+    sr, _fs = open_root(appctx.root(ctx))
+    selected = list(object_ids)
+    if objects_file is not None:
+        selected.extend(_read_objects_file(objects_file))
+    if batch_id is not None and (selected or category is not None):
+        err(
+            "--batch is mutually exclusive with --object, --objects-file, "
+            "and --category"
+        )
+        raise typer.Exit(2)
+    if batch_id is None and not selected:
+        err("new batch requires --object or --objects-file")
+        raise typer.Exit(2)
+
+    if batch_id is None:
+        now = now_utc_iso()
+        batch = batch_state.BatchFile(
+            batch_id=batch_state.new_batch_id(),
+            target=target,
+            root_path=root_path,
+            category_id=category if category is not None else sp_cfg.proof_category_id,
+            created_at=now,
+            updated_at=now,
+        )
+        created = True
+    else:
+        batch = _load_batch_or_usage(ctx, staging_root, batch_id)
+        if batch.target != target:
+            err(f"batch {batch.batch_id} target is {batch.target!r}, not {target!r}")
+            raise typer.Exit(2)
+        created = False
+
+    stream = None
+    exit_code = 1
+    try:
+        with batch_state.with_driver_lease(
+            staging_root,
+            batch.batch_id,
+            command=(*_batch_command_tuple(target, batch.batch_id), "--watch"),
+        ):
+            if created:
+                with batch_state.with_batch_lock(staging_root, batch.batch_id):
+                    batch_state.save_batch(staging_root, batch)
+                _emit_batch_created(ctx, batch)
+                for object_id in dict.fromkeys(selected):
+                    row = _prepare_batch_object(
+                        target=target,
+                        cfg=cfg,
+                        store=store,
+                        sr=sr,
+                        root_path=root_path,
+                        staging_root=staging_root,
+                        batch=batch,
+                        object_id=object_id,
+                        allow_missing_metadata=allow_missing_metadata,
+                    )
+                    batch = _replace_batch_object(batch, row)
+                    with batch_state.with_batch_lock(staging_root, batch.batch_id):
+                        batch_state.save_batch(staging_root, batch)
+            else:
+                _emit_batch_resumed(ctx, batch)
+            recovered = _collect_recoverable_object_intents(store, batch)
+            with batch_state.with_batch_lock(staging_root, batch.batch_id):
+                batch = batch_state.load_batch(staging_root, batch.batch_id)
+                batch = _merge_recovered_object_intents(batch, recovered)
+                batch_state.save_batch(staging_root, batch)
+            batch = _submit_batch(
+                target=target,
+                cfg=cfg,
+                store=store,
+                staging_root=staging_root,
+                batch=batch,
+                sp_factory=appctx.sp_client_factory(ctx),
+            )
+            batch = _run_batch_upgrade_pass(
+                target=target,
+                cfg=cfg,
+                store=store,
+                sr=sr,
+                staging_root=staging_root,
+                batch=batch,
+                sp_factory=appctx.sp_client_factory(ctx),
+                btc_factory=appctx.btc_rpc_factory(ctx),
+            )
+            if not _batch_has_submitted_subset(batch):
+                exit_code = 0 if _batch_watch_successful(batch) else 1
+                if exit_code:
+                    raise typer.Exit(exit_code)
+                return
+
+            btc = appctx.btc_rpc_factory(ctx)(cfg)
+            stream = watch._get_zmq_subscriber(cfg)
+            stream_cm = cast(
+                "contextlib.AbstractContextManager[HashBlockStream]",
+                stream
+                if hasattr(stream, "__enter__")
+                else contextlib.nullcontext(stream),
+            )
+            last_height: int | None = None
+            last_tip_hash: str | None = None
+            with stream_cm as zmq_sub:
+                while True:
+                    block = zmq_sub.wait_for_block(timeout_ms=5000)
+                    if block is None:
+                        continue
+                    watch._sleep_after_block()
+                    info = btc.getblockchaininfo()
+                    _height_jumped = (
+                        last_height is not None and info.height - last_height > 1
+                    )
+                    _tip_changed_at_stable = (
+                        last_height is not None
+                        and info.height == last_height
+                        and last_tip_hash is not None
+                        and last_tip_hash != info.best_block_hash
+                    )
+                    last_height = info.height
+                    last_tip_hash = info.best_block_hash
+                    batch = batch_state.load_batch(staging_root, batch.batch_id)
+                    if _height_jumped or _tip_changed_at_stable:
+                        batch = _reverify_batch_watch_rows(
+                            target=target,
+                            cfg=cfg,
+                            store=store,
+                            staging_root=staging_root,
+                            batch=batch,
+                            btc=btc,
+                        )
+                    batch = _run_batch_upgrade_pass(
+                        target=target,
+                        cfg=cfg,
+                        store=store,
+                        sr=sr,
+                        staging_root=staging_root,
+                        batch=batch,
+                        sp_factory=appctx.sp_client_factory(ctx),
+                        btc_factory=appctx.btc_rpc_factory(ctx),
+                    )
+                    if not _batch_has_submitted_subset(batch):
+                        exit_code = 0 if _batch_watch_successful(batch) else 1
+                        if exit_code:
+                            raise typer.Exit(exit_code)
+                        return
+    except KeyboardInterrupt:
+        exit_code = 130
+    except (BitcoinError, ReorgDetectedError) as e:
+        exit_for_error(e, message=f"halt: {e}")
+    finally:
+        if not appctx.json_mode(ctx) and batch_id is not None:
+            counts = _batch_counts(batch)
+            typer.echo(
+                f"batch watched: {batch.batch_id} submitted={counts['submitted']} "
+                f"upgraded={counts['upgraded']} failed={counts['failed']}"
+            )
+    if exit_code:
+        raise typer.Exit(exit_code)
 
 
 def _emit_batch_created(ctx: typer.Context, batch: batch_state.BatchFile) -> None:
@@ -2938,16 +3355,37 @@ def timestamp_batch_content(
         bool,
         typer.Option("--retry", help="Repair and resubmit failed batch chunks."),
     ] = False,
+    watch_flag: Annotated[
+        bool,
+        typer.Option(
+            "--watch",
+            help="ZMQ-driven loop; runs a batch upgrade pass per Bitcoin block.",
+        ),
+    ] = False,
 ) -> None:
     """Create or resume a content timestamping batch."""
-    if retry and upgrade:
-        err("--retry is mutually exclusive with --upgrade")
+    if retry and (upgrade or watch_flag):
+        err("--retry is mutually exclusive with --upgrade and --watch")
+        raise typer.Exit(2)
+    if upgrade and watch_flag:
+        err("--upgrade is mutually exclusive with --watch")
         raise typer.Exit(2)
     if retry:
         if object_ids or objects_file is not None or category is not None:
             err("--retry is only supported with --batch")
             raise typer.Exit(2)
         _drive_batch_retry(ctx, target="content", batch_id=batch_id)
+        return
+    if watch_flag:
+        _drive_batch_watch(
+            ctx,
+            target="content",
+            object_ids=tuple(object_ids or ()),
+            objects_file=objects_file,
+            batch_id=batch_id,
+            category=category,
+            allow_missing_metadata=False,
+        )
         return
     if upgrade:
         if object_ids or objects_file is not None or category is not None:
@@ -3000,10 +3438,20 @@ def timestamp_batch_inventory(
         bool,
         typer.Option("--retry", help="Repair and resubmit failed batch chunks."),
     ] = False,
+    watch_flag: Annotated[
+        bool,
+        typer.Option(
+            "--watch",
+            help="ZMQ-driven loop; runs a batch upgrade pass per Bitcoin block.",
+        ),
+    ] = False,
 ) -> None:
     """Create or resume an inventory timestamping batch."""
-    if retry and upgrade:
-        err("--retry is mutually exclusive with --upgrade")
+    if retry and (upgrade or watch_flag):
+        err("--retry is mutually exclusive with --upgrade and --watch")
+        raise typer.Exit(2)
+    if upgrade and watch_flag:
+        err("--upgrade is mutually exclusive with --watch")
         raise typer.Exit(2)
     if retry:
         if (
@@ -3015,6 +3463,17 @@ def timestamp_batch_inventory(
             err("--retry is only supported with --batch")
             raise typer.Exit(2)
         _drive_batch_retry(ctx, target="inventory", batch_id=batch_id)
+        return
+    if watch_flag:
+        _drive_batch_watch(
+            ctx,
+            target="inventory",
+            object_ids=tuple(object_ids or ()),
+            objects_file=objects_file,
+            batch_id=batch_id,
+            category=category,
+            allow_missing_metadata=allow_missing_metadata,
+        )
         return
     if upgrade:
         if object_ids or objects_file is not None or category is not None:

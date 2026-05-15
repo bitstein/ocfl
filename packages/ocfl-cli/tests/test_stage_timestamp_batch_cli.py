@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from fakes import FakeBitcoinRPC, FakeSimpleProof
+from fakes import FakeBitcoinRPC, FakeSimpleProof, InMemoryHashBlockStream
 from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 from ocfl_cli.errors import (
     AttestationMismatchError,
     BitcoinRPCTransient,
+    ReorgDetectedError,
     SimpleProofTransient,
 )
 from ocfl_cli.main import app
@@ -104,6 +105,16 @@ class TransientBitcoinRPC(FakeBitcoinRPC):
         raise BitcoinRPCTransient("Bitcoin RPC timeout")
 
 
+class SecondSubmitTransientFake(FakeSimpleProof):
+    calls: int = 0
+
+    def submit_hashes(self, digests: list[str], category_id: int) -> SubmitResult:
+        self.calls += 1
+        if self.calls == 2:
+            raise SimpleProofTransient("SimpleProof HTTP 503")
+        return super().submit_hashes(digests, category_id)
+
+
 class BlockingSubmitFake(FakeSimpleProof):
     def __init__(self, marker: Path, release: Path) -> None:
         super().__init__()
@@ -156,6 +167,14 @@ def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
 
 def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
     runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
+
+
+def _inject_fake_zmq(monkeypatch: pytest.MonkeyPatch, stream) -> None:
+    from ocfl_cli.stage import watch as stage_watch
+
+    monkeypatch.setattr(
+        stage_watch, "_get_zmq_subscriber", lambda *a, **kw: stream, raising=True
+    )
 
 
 def _stage_args(root: Path, staging: Path, *args: str) -> list[str]:
@@ -2427,6 +2446,891 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
         ).read_bytes()
         == ots_bytes
     )
+
+
+def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    _inject_fake_btc(runner, FakeBitcoinRPC())
+    from ocfl_cli.stage import watch as stage_watch
+
+    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    subscribers = 0
+
+    class _InterruptingStream:
+        def wait_for_block(self, timeout_ms: int) -> bytes | None:
+            raise KeyboardInterrupt
+
+    def subscriber_factory(*args, **kwargs):
+        nonlocal subscribers
+        subscribers += 1
+        return _InterruptingStream()
+
+    monkeypatch.setattr(
+        stage_watch, "_get_zmq_subscriber", subscriber_factory, raising=True
+    )
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:batch-watch",
+        ("a.txt", b"alpha"),
+    )
+
+    result = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:batch-watch",
+        "--watch",
+    )
+
+    assert result.exit_code == 130, result.output
+    assert subscribers == 1
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    assert len(batch.verify_jobs) == 1
+    assert batch.verify_jobs[0].status == "IN_PROGRESS"
+
+
+def test_batch_watch_empty_submitted_subset_exits_without_subscriber(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, TransientSubmitFake())
+    _inject_fake_btc(runner, FakeBitcoinRPC())
+    from ocfl_cli.stage import watch as stage_watch
+
+    monkeypatch.setattr(
+        stage_watch,
+        "_get_zmq_subscriber",
+        lambda *a, **kw: pytest.fail("watch subscribed with no submitted rows"),
+        raising=True,
+    )
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:batch-watch-empty",
+        ("a.txt", b"alpha"),
+    )
+
+    result = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:batch-watch-empty",
+        "--watch",
+    )
+
+    assert result.exit_code == 1, result.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.objects[0].status == "prepared"
+    assert batch.objects[0].last_error == "transient_sp_error"
+    assert batch.verify_jobs == ()
+
+
+def test_batch_watch_all_skipped_exits_without_subscriber(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    _inject_fake_btc(runner, FakeBitcoinRPC())
+    from ocfl_cli.stage import watch as stage_watch
+
+    monkeypatch.setattr(
+        stage_watch,
+        "_get_zmq_subscriber",
+        lambda *a, **kw: pytest.fail("watch subscribed with only skipped rows"),
+        raising=True,
+    )
+    staging = tmp_path / "staging"
+
+    result = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:not-staged",
+        "--watch",
+    )
+
+    assert result.exit_code == 1, result.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.objects[0].status == "skipped"
+
+
+def test_batch_watch_enters_upgrade_for_submitted_subset_after_submit_failure(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    sp = SecondSubmitTransientFake()
+    _inject_fake_sp(runner, sp)
+    _inject_fake_btc(runner, FakeBitcoinRPC())
+    from ocfl_cli.stage import service as stage_service
+    from ocfl_cli.stage import watch as stage_watch
+
+    monkeypatch.setattr(stage_service, "_SUBMIT_CHUNK_SIZE", 1, raising=True)
+    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+
+    class _InterruptingStream:
+        def wait_for_block(self, timeout_ms: int) -> bytes | None:
+            raise KeyboardInterrupt
+
+    _inject_fake_zmq(monkeypatch, _InterruptingStream())
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:watch-partial-a",
+        ("a.txt", b"alpha"),
+    )
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:watch-partial-b",
+        ("b.txt", b"bravo"),
+    )
+
+    result = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:watch-partial-a",
+        "--object",
+        "obj:watch-partial-b",
+        "--watch",
+    )
+
+    assert result.exit_code == 130, result.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    assert sorted(row.status for row in batch.objects) == ["prepared", "submitted"]
+    assert any(row.last_error == "transient_sp_error" for row in batch.objects)
+    assert len(batch.verify_jobs) == 1
+    assert len(sp._jobs) == 1
+
+
+def test_batch_watch_revalidates_cached_proofs_on_height_jump(
+    runner: CliRunner,
+    storage_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    btc = FakeBitcoinRPC()
+    _inject_fake_sp(runner, sp_fake)
+    _inject_fake_btc(runner, btc)
+    from ocfl_cli.stage import commands as stage_commands
+    from ocfl_cli.stage import watch as stage_watch
+
+    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    calls: list[str] = []
+
+    def mismatch_once(*args, **kwargs):
+        calls.append(kwargs["expected_digest"].hex())
+        raise AttestationMismatchError("stale proof")
+
+    monkeypatch.setattr(
+        stage_commands, "verify_attestation", mismatch_once, raising=True
+    )
+    root_path = str(storage_root)
+    staging = tmp_path / "staging"
+    batch_id = new_batch_id()
+    verified_digest = "a" * 64
+    unverified_digest = "b" * 64
+    staging_dir = _ots_staging(
+        staging,
+        root_path,
+        "obj:watch-reverify",
+        OtsState(
+            phase=Phase.CONTENT_PENDING,
+            category_id=641,
+            submissions=(
+                Submission(
+                    submitted_at="2026-05-12T10:00:00Z",
+                    digests=(verified_digest, unverified_digest),
+                    status="submitted",
+                    batch_id=batch_id,
+                    record_ids=("rec-a", "rec-b"),
+                ),
+            ),
+            content_proofs={
+                verified_digest: VerifiedProof(
+                    ots_path=f"ots-cache/{verified_digest}.ots",
+                    verified=True,
+                )
+            },
+        ),
+    )
+    ots_cache_path(staging_dir, verified_digest).parent.mkdir(parents=True)
+    ots_cache_path(staging_dir, verified_digest).write_bytes(b"cached-ots")
+    save_batch(
+        staging,
+        BatchFile(
+            batch_id=batch_id,
+            target="content",
+            root_path=root_path,
+            category_id=641,
+            created_at="2026-05-12T10:00:00Z",
+            updated_at="2026-05-12T10:00:00Z",
+            objects=(
+                BatchObject(
+                    object_id="obj:watch-reverify",
+                    status="submitted",
+                    digests=(verified_digest, unverified_digest),
+                ),
+            ),
+        ),
+    )
+
+    class _JumpStream:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def wait_for_block(self, timeout_ms: int) -> bytes | None:
+            self.calls += 1
+            if self.calls == 1:
+                return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
+            if self.calls == 2:
+                btc.extend(5)
+                return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
+            raise KeyboardInterrupt
+
+    _inject_fake_zmq(monkeypatch, _JumpStream())
+
+    result = _invoke(
+        runner,
+        storage_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--watch",
+    )
+
+    assert result.exit_code == 130, result.output
+    assert calls == [verified_digest]
+    batch = batch_state.load_batch(staging, batch_id)
+    assert len(sp_fake._jobs) == 2
+    assert any(job.digests == (verified_digest,) for job in batch.verify_jobs)
+    state = load_ots(staging_dir)
+    assert state.content_proofs[verified_digest].verified is False
+
+
+def test_batch_watch_revalidates_mixed_upgraded_content_row(
+    runner: CliRunner,
+    storage_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    btc = FakeBitcoinRPC()
+    _inject_fake_sp(runner, sp_fake)
+    _inject_fake_btc(runner, btc)
+    from ocfl_cli.stage import commands as stage_commands
+    from ocfl_cli.stage import watch as stage_watch
+
+    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    calls: list[str] = []
+
+    def mismatch_once(*args, **kwargs):
+        calls.append(kwargs["expected_digest"].hex())
+        raise AttestationMismatchError("stale proof")
+
+    monkeypatch.setattr(
+        stage_commands, "verify_attestation", mismatch_once, raising=True
+    )
+    root_path = str(storage_root)
+    staging = tmp_path / "staging"
+    batch_id = new_batch_id()
+    upgraded_digest = "c" * 64
+    waiting_digest = "d" * 64
+    upgraded_dir = _ots_staging(
+        staging,
+        root_path,
+        "obj:watch-upgraded",
+        OtsState(
+            phase=Phase.CONTENT_UPGRADED,
+            category_id=641,
+            submissions=(
+                Submission(
+                    submitted_at="2026-05-12T10:00:00Z",
+                    digests=(upgraded_digest,),
+                    status="submitted",
+                    batch_id=batch_id,
+                    record_ids=("rec-upgraded",),
+                ),
+            ),
+            content_proofs={
+                upgraded_digest: VerifiedProof(
+                    ots_path=f"ots-cache/{upgraded_digest}.ots",
+                    verified=True,
+                )
+            },
+        ),
+    )
+    waiting_dir = _ots_staging(
+        staging,
+        root_path,
+        "obj:watch-waiting",
+        OtsState(
+            phase=Phase.CONTENT_PENDING,
+            category_id=641,
+            submissions=(
+                Submission(
+                    submitted_at="2026-05-12T10:00:00Z",
+                    digests=(waiting_digest,),
+                    status="submitted",
+                    batch_id=batch_id,
+                    record_ids=("rec-waiting",),
+                ),
+            ),
+        ),
+    )
+    ots_cache_path(upgraded_dir, upgraded_digest).parent.mkdir(parents=True)
+    ots_cache_path(upgraded_dir, upgraded_digest).write_bytes(b"cached-ots")
+    save_batch(
+        staging,
+        BatchFile(
+            batch_id=batch_id,
+            target="content",
+            root_path=root_path,
+            category_id=641,
+            created_at="2026-05-12T10:00:00Z",
+            updated_at="2026-05-12T10:00:00Z",
+            objects=(
+                BatchObject(
+                    object_id="obj:watch-upgraded",
+                    status="upgraded",
+                    digests=(upgraded_digest,),
+                ),
+                BatchObject(
+                    object_id="obj:watch-waiting",
+                    status="submitted",
+                    digests=(waiting_digest,),
+                ),
+            ),
+        ),
+    )
+
+    class _JumpStream:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def wait_for_block(self, timeout_ms: int) -> bytes | None:
+            self.calls += 1
+            if self.calls == 1:
+                return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
+            if self.calls == 2:
+                btc.extend(5)
+                return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
+            raise KeyboardInterrupt
+
+    _inject_fake_zmq(monkeypatch, _JumpStream())
+
+    result = _invoke(
+        runner,
+        storage_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--watch",
+    )
+
+    assert result.exit_code == 130, result.output
+    assert calls == [upgraded_digest]
+    batch = batch_state.load_batch(staging, batch_id)
+    rows = {row.object_id: row for row in batch.objects}
+    assert rows["obj:watch-upgraded"].status == "submitted"
+    assert rows["obj:watch-waiting"].status == "submitted"
+    assert any(job.digests == (waiting_digest,) for job in batch.verify_jobs)
+    assert any(job.digests == (upgraded_digest,) for job in batch.verify_jobs)
+    upgraded_state = load_ots(upgraded_dir)
+    assert upgraded_state.phase is Phase.CONTENT_PENDING
+    assert upgraded_state.content_proofs[upgraded_digest].verified is False
+    assert load_ots(waiting_dir).phase is Phase.CONTENT_PENDING
+
+
+def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
+    runner: CliRunner,
+    storage_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    btc = FakeBitcoinRPC()
+    _inject_fake_sp(runner, sp_fake)
+    _inject_fake_btc(runner, btc)
+    from ocfl_cli.stage import commands as stage_commands
+    from ocfl_cli.stage import watch as stage_watch
+
+    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    calls: list[str] = []
+
+    def mismatch_once(*args, **kwargs):
+        calls.append(kwargs["expected_digest"].hex())
+        raise AttestationMismatchError("stale inventory proof")
+
+    monkeypatch.setattr(
+        stage_commands, "verify_attestation", mismatch_once, raising=True
+    )
+    root_path = str(storage_root)
+    staging = tmp_path / "staging"
+    batch_id = new_batch_id()
+    upgraded_digest = "e" * 64
+    waiting_digest = "f" * 64
+    upgraded_dir = _ots_staging(
+        staging,
+        root_path,
+        "obj:inventory-upgraded",
+        OtsState(
+            phase=Phase.INVENTORY_UPGRADED,
+            category_id=641,
+            inventory_proof=InventoryProof(
+                version="v1",
+                digest=upgraded_digest,
+                proof=VerifiedProof(
+                    ots_path=f"ots-cache/{upgraded_digest}.ots",
+                    verified=True,
+                ),
+                batch_id=batch_id,
+                record_id="rec-upgraded",
+            ),
+        ),
+    )
+    waiting_dir = _ots_staging(
+        staging,
+        root_path,
+        "obj:inventory-waiting",
+        OtsState(
+            phase=Phase.INVENTORY_PENDING,
+            category_id=641,
+            inventory_proof=InventoryProof(
+                version="v1",
+                digest=waiting_digest,
+                proof=VerifiedProof(verified=False),
+                batch_id=batch_id,
+                record_id="rec-waiting",
+            ),
+        ),
+    )
+    ots_cache_path(upgraded_dir, upgraded_digest).parent.mkdir(parents=True)
+    ots_cache_path(upgraded_dir, upgraded_digest).write_bytes(b"cached-ots")
+    save_batch(
+        staging,
+        BatchFile(
+            batch_id=batch_id,
+            target="inventory",
+            root_path=root_path,
+            category_id=641,
+            created_at="2026-05-12T10:00:00Z",
+            updated_at="2026-05-12T10:00:00Z",
+            objects=(
+                BatchObject(
+                    object_id="obj:inventory-upgraded",
+                    status="upgraded",
+                    digests=(upgraded_digest,),
+                ),
+                BatchObject(
+                    object_id="obj:inventory-waiting",
+                    status="submitted",
+                    digests=(waiting_digest,),
+                ),
+            ),
+        ),
+    )
+
+    class _JumpStream:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def wait_for_block(self, timeout_ms: int) -> bytes | None:
+            self.calls += 1
+            if self.calls == 1:
+                return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
+            if self.calls == 2:
+                btc.extend(5)
+                return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
+            raise KeyboardInterrupt
+
+    _inject_fake_zmq(monkeypatch, _JumpStream())
+
+    result = _invoke(
+        runner,
+        storage_root,
+        staging,
+        "timestamp",
+        "batch",
+        "inventory",
+        "--batch",
+        batch_id,
+        "--watch",
+    )
+
+    assert result.exit_code == 130, result.output
+    assert calls == [upgraded_digest]
+    batch = batch_state.load_batch(staging, batch_id)
+    rows = {row.object_id: row for row in batch.objects}
+    assert rows["obj:inventory-upgraded"].status == "submitted"
+    assert rows["obj:inventory-waiting"].status == "submitted"
+    assert any(job.digests == (waiting_digest,) for job in batch.verify_jobs)
+    assert any(job.digests == (upgraded_digest,) for job in batch.verify_jobs)
+    upgraded_state = load_ots(upgraded_dir)
+    assert upgraded_state.phase is Phase.INVENTORY_PENDING
+    assert upgraded_state.inventory_proof is not None
+    assert upgraded_state.inventory_proof.proof.verified is False
+    assert load_ots(waiting_dir).phase is Phase.INVENTORY_PENDING
+
+
+def test_batch_watch_content_reorg_revalidation_is_object_scoped(
+    runner: CliRunner,
+    storage_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    btc = FakeBitcoinRPC()
+    _inject_fake_sp(runner, sp_fake)
+    _inject_fake_btc(runner, btc)
+    from ocfl_cli.stage import commands as stage_commands
+    from ocfl_cli.stage import watch as stage_watch
+
+    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+
+    def deep_reorg(*args, **kwargs):
+        raise ReorgDetectedError("reorg deeper than confirmation depth")
+
+    monkeypatch.setattr(stage_commands, "verify_attestation", deep_reorg, raising=True)
+    root_path = str(storage_root)
+    staging = tmp_path / "staging"
+    batch_id = new_batch_id()
+    failed_digest = "1" * 64
+    waiting_digest = "2" * 64
+    failed_dir = _ots_staging(
+        staging,
+        root_path,
+        "obj:content-reorg",
+        OtsState(
+            phase=Phase.CONTENT_UPGRADED,
+            category_id=641,
+            submissions=(
+                Submission(
+                    submitted_at="2026-05-12T10:00:00Z",
+                    digests=(failed_digest,),
+                    status="submitted",
+                    batch_id=batch_id,
+                    record_ids=("rec-failed",),
+                ),
+            ),
+            content_proofs={
+                failed_digest: VerifiedProof(
+                    ots_path=f"ots-cache/{failed_digest}.ots",
+                    verified=True,
+                )
+            },
+        ),
+    )
+    _ots_staging(
+        staging,
+        root_path,
+        "obj:content-waiting",
+        OtsState(
+            phase=Phase.CONTENT_PENDING,
+            category_id=641,
+            submissions=(
+                Submission(
+                    submitted_at="2026-05-12T10:00:00Z",
+                    digests=(waiting_digest,),
+                    status="submitted",
+                    batch_id=batch_id,
+                    record_ids=("rec-waiting",),
+                ),
+            ),
+        ),
+    )
+    ots_cache_path(failed_dir, failed_digest).parent.mkdir(parents=True)
+    ots_cache_path(failed_dir, failed_digest).write_bytes(b"cached-ots")
+    save_batch(
+        staging,
+        BatchFile(
+            batch_id=batch_id,
+            target="content",
+            root_path=root_path,
+            category_id=641,
+            created_at="2026-05-12T10:00:00Z",
+            updated_at="2026-05-12T10:00:00Z",
+            objects=(
+                BatchObject(
+                    object_id="obj:content-reorg",
+                    status="upgraded",
+                    digests=(failed_digest,),
+                ),
+                BatchObject(
+                    object_id="obj:content-waiting",
+                    status="submitted",
+                    digests=(waiting_digest,),
+                ),
+            ),
+        ),
+    )
+
+    class _JumpStream:
+        calls = 0
+
+        def wait_for_block(self, timeout_ms: int) -> bytes | None:
+            self.calls += 1
+            if self.calls == 1:
+                return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
+            if self.calls == 2:
+                btc.extend(5)
+                return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
+            raise KeyboardInterrupt
+
+    _inject_fake_zmq(monkeypatch, _JumpStream())
+
+    result = _invoke(
+        runner,
+        storage_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--watch",
+    )
+
+    assert result.exit_code == 130, result.output
+    assert "halt:" not in result.output
+    batch = batch_state.load_batch(staging, batch_id)
+    rows = {row.object_id: row for row in batch.objects}
+    assert rows["obj:content-reorg"].status == "failed"
+    assert rows["obj:content-reorg"].last_error == "reorg_deeper_than_min_conf"
+    assert rows["obj:content-waiting"].status == "submitted"
+    assert all(failed_digest not in job.digests for job in batch.verify_jobs)
+    assert any(job.digests == (waiting_digest,) for job in batch.verify_jobs)
+    state = load_ots(failed_dir)
+    assert state.phase is Phase.CONTENT_PENDING
+    assert state.content_proofs[failed_digest].verified is False
+
+
+def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
+    runner: CliRunner,
+    storage_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    btc = FakeBitcoinRPC()
+    _inject_fake_sp(runner, sp_fake)
+    _inject_fake_btc(runner, btc)
+    from ocfl_cli.stage import commands as stage_commands
+    from ocfl_cli.stage import watch as stage_watch
+
+    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+
+    def deep_reorg(*args, **kwargs):
+        raise ReorgDetectedError("reorg deeper than confirmation depth")
+
+    monkeypatch.setattr(stage_commands, "verify_attestation", deep_reorg, raising=True)
+    root_path = str(storage_root)
+    staging = tmp_path / "staging"
+    batch_id = new_batch_id()
+    failed_digest = "3" * 64
+    waiting_digest = "4" * 64
+    failed_dir = _ots_staging(
+        staging,
+        root_path,
+        "obj:inventory-reorg",
+        OtsState(
+            phase=Phase.INVENTORY_UPGRADED,
+            category_id=641,
+            inventory_proof=InventoryProof(
+                version="v1",
+                digest=failed_digest,
+                proof=VerifiedProof(
+                    ots_path=f"ots-cache/{failed_digest}.ots",
+                    verified=True,
+                ),
+                batch_id=batch_id,
+                record_id="rec-failed",
+            ),
+        ),
+    )
+    _ots_staging(
+        staging,
+        root_path,
+        "obj:inventory-reorg-waiting",
+        OtsState(
+            phase=Phase.INVENTORY_PENDING,
+            category_id=641,
+            inventory_proof=InventoryProof(
+                version="v1",
+                digest=waiting_digest,
+                proof=VerifiedProof(verified=False),
+                batch_id=batch_id,
+                record_id="rec-waiting",
+            ),
+        ),
+    )
+    ots_cache_path(failed_dir, failed_digest).parent.mkdir(parents=True)
+    ots_cache_path(failed_dir, failed_digest).write_bytes(b"cached-ots")
+    save_batch(
+        staging,
+        BatchFile(
+            batch_id=batch_id,
+            target="inventory",
+            root_path=root_path,
+            category_id=641,
+            created_at="2026-05-12T10:00:00Z",
+            updated_at="2026-05-12T10:00:00Z",
+            objects=(
+                BatchObject(
+                    object_id="obj:inventory-reorg",
+                    status="upgraded",
+                    digests=(failed_digest,),
+                ),
+                BatchObject(
+                    object_id="obj:inventory-reorg-waiting",
+                    status="submitted",
+                    digests=(waiting_digest,),
+                ),
+            ),
+        ),
+    )
+
+    class _JumpStream:
+        calls = 0
+
+        def wait_for_block(self, timeout_ms: int) -> bytes | None:
+            self.calls += 1
+            if self.calls == 1:
+                return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
+            if self.calls == 2:
+                btc.extend(5)
+                return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
+            raise KeyboardInterrupt
+
+    _inject_fake_zmq(monkeypatch, _JumpStream())
+
+    result = _invoke(
+        runner,
+        storage_root,
+        staging,
+        "timestamp",
+        "batch",
+        "inventory",
+        "--batch",
+        batch_id,
+        "--watch",
+    )
+
+    assert result.exit_code == 130, result.output
+    assert "halt:" not in result.output
+    batch = batch_state.load_batch(staging, batch_id)
+    rows = {row.object_id: row for row in batch.objects}
+    assert rows["obj:inventory-reorg"].status == "failed"
+    assert rows["obj:inventory-reorg"].last_error == "reorg_deeper_than_min_conf"
+    assert rows["obj:inventory-reorg-waiting"].status == "submitted"
+    assert all(failed_digest not in job.digests for job in batch.verify_jobs)
+    assert any(job.digests == (waiting_digest,) for job in batch.verify_jobs)
+    state = load_ots(failed_dir)
+    assert state.phase is Phase.INVENTORY_PENDING
+    assert state.inventory_proof is not None
+    assert state.inventory_proof.proof.verified is False
+
+
+def test_batch_watch_node_halt_exits_operational_error(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    _inject_fake_btc(runner, TransientBitcoinRPC())
+    from ocfl_cli.stage import watch as stage_watch
+
+    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    stream = InMemoryHashBlockStream()
+    stream.push(b"\x00" * 32)
+    _inject_fake_zmq(monkeypatch, stream)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:batch-watch-halt",
+        ("a.txt", b"alpha"),
+    )
+
+    result = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:batch-watch-halt",
+        "--watch",
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "halt: Bitcoin RPC timeout" in result.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.objects[0].status == "submitted"
+    assert len(batch.verify_jobs) == 1
 
 
 def test_batch_upgrade_failed_verify_job_is_retryable(
