@@ -37,6 +37,7 @@ from ocfl_cli.stage.batch import (
 from ocfl_cli.stage.fsm import Phase
 from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
 from ocfl_cli.stage.state import (
+    InventoryProof,
     OtsState,
     Submission,
     VerifiedProof,
@@ -1158,6 +1159,575 @@ def test_batch_content_transient_submit_failure_is_persisted(
     assert batch.submissions[0].last_error == "SimpleProof HTTP 503"
     assert batch.objects[0].status == "prepared"
     assert batch.objects[0].last_error == "transient_sp_error"
+
+
+def test_batch_retry_no_resubmit_if_id_present(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner, empty_sha256_root, staging, "obj:no-retry", ("a.txt", b"a")
+    )
+    create = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:no-retry",
+    )
+    assert create.exit_code == 0, create.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    assert len(sp_fake._submissions) == 1
+
+    result = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--retry",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(sp_fake._submissions) == 1
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.submissions[0].status == "submitted"
+    assert batch.objects[0].status == "submitted"
+
+
+def test_batch_retry_bidirectional_record_id_propagation(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:bidirectional",
+        ("a.txt", b"a"),
+        ("b.txt", b"b"),
+    )
+    create = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:bidirectional",
+    )
+    assert create.exit_code == 0, create.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    digest_a, digest_b = batch.objects[0].digests
+    batch_state.save_batch(
+        staging,
+        replace(
+            batch,
+            objects=(replace(batch.objects[0], status="prepared"),),
+            submissions=(
+                BatchSubmission(
+                    chunk_index=0,
+                    digests=(digest_a,),
+                    status="submitted",
+                    record_ids=("batch-rec-a",),
+                    submitted_at="2026-05-12T10:01:00Z",
+                    attempts=1,
+                ),
+                BatchSubmission(
+                    chunk_index=1,
+                    digests=(digest_a, digest_b),
+                    status="failed",
+                    attempts=1,
+                    last_error="SimpleProof HTTP 503",
+                ),
+            ),
+        ),
+    )
+    staging_dir = StagingStore(staging).staging_path(
+        str(empty_sha256_root.resolve()), "obj:bidirectional"
+    )
+    state = load_ots(staging_dir)
+    save_ots(
+        staging_dir,
+        replace(
+            state,
+            phase=Phase.DRAFTING,
+            submissions=(
+                replace(
+                    state.submissions[0],
+                    status="submitting",
+                    record_ids=(None, "object-rec-b"),
+                ),
+            ),
+        ),
+    )
+
+    result = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--retry",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(sp_fake._submissions) == 1
+    updated = batch_state.load_batch(staging, batch_id)
+    assert updated.objects[0].status == "submitted"
+    assert updated.submissions[-1].status == "submitted"
+    assert updated.submissions[-1].digests == (digest_a, digest_b)
+    assert updated.submissions[-1].record_ids == ("batch-rec-a", "object-rec-b")
+    state = load_ots(staging_dir)
+    assert state.phase is Phase.CONTENT_PENDING
+    assert state.submissions[0].status == "submitted"
+    assert state.submissions[0].record_ids == ("batch-rec-a", "object-rec-b")
+
+
+def test_batch_retry_failed_chunk_partial_repair(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:partial-repair",
+        ("a.txt", b"a"),
+        ("b.txt", b"b"),
+        ("c.txt", b"c"),
+    )
+    create = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:partial-repair",
+    )
+    assert create.exit_code == 0, create.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    digest_a, digest_b, digest_c = batch.objects[0].digests
+    batch_state.save_batch(
+        staging,
+        replace(
+            batch,
+            objects=(replace(batch.objects[0], status="prepared"),),
+            submissions=(
+                BatchSubmission(
+                    chunk_index=0,
+                    digests=(digest_a, digest_b, digest_c),
+                    status="failed",
+                    attempts=1,
+                    last_error="SimpleProof HTTP 503",
+                ),
+                BatchSubmission(
+                    chunk_index=1,
+                    digests=(digest_a, digest_b),
+                    status="failed",
+                    attempts=1,
+                    last_error="SimpleProof HTTP 503",
+                ),
+            ),
+        ),
+    )
+    staging_dir = StagingStore(staging).staging_path(
+        str(empty_sha256_root.resolve()), "obj:partial-repair"
+    )
+    state = load_ots(staging_dir)
+    save_ots(
+        staging_dir,
+        replace(
+            state,
+            phase=Phase.DRAFTING,
+            submissions=(
+                replace(
+                    state.submissions[0],
+                    status="submitting",
+                    record_ids=("object-rec-a", None, None),
+                ),
+            ),
+        ),
+    )
+    sp_fake._submissions.clear()
+
+    result = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--retry",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(sp_fake._submissions) == 1
+    assert sp_fake._submissions[0].digests == (digest_b, digest_c)
+    updated = batch_state.load_batch(staging, batch_id)
+    assert updated.submissions[0].status == "failed"
+    assert updated.submissions[1].status == "failed"
+    repair, retry = updated.submissions[2:]
+    assert repair.status == "submitted"
+    assert repair.digests == (digest_a,)
+    assert repair.record_ids == ("object-rec-a",)
+    assert repair.attempts == 0
+    assert retry.status == "submitted"
+    assert retry.digests == (digest_b, digest_c)
+    assert retry.record_ids == sp_fake._submissions[0].record_ids
+    assert retry.attempts == 1
+    assert updated.objects[0].status == "submitted"
+    state = load_ots(staging_dir)
+    assert state.submissions[0].status == "submitted"
+    assert state.submissions[0].record_ids == (
+        "object-rec-a",
+        *sp_fake._submissions[0].record_ids,
+    )
+
+
+def test_batch_retry_inventory_propagates_batch_record_id(
+    runner: CliRunner,
+    storage_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    batch_id = new_batch_id()
+    digest = "sha256:" + ("a" * 64)
+    root_path = str(storage_root)
+    _ots_staging(
+        staging,
+        root_path,
+        "obj:inventory-retry",
+        OtsState(
+            phase=Phase.CONTENT_UPGRADED,
+            category_id=641,
+            inventory_proof=InventoryProof(
+                version="v1",
+                digest=digest,
+                batch_id=batch_id,
+                record_id=None,
+            ),
+        ),
+    )
+    save_batch(
+        staging,
+        BatchFile(
+            batch_id=batch_id,
+            target="inventory",
+            root_path=root_path,
+            category_id=641,
+            created_at="2026-05-12T10:00:00Z",
+            updated_at="2026-05-12T10:00:00Z",
+            objects=(
+                BatchObject(
+                    object_id="obj:inventory-retry",
+                    status="prepared",
+                    digests=(digest,),
+                ),
+            ),
+            submissions=(
+                BatchSubmission(
+                    chunk_index=0,
+                    digests=(digest,),
+                    status="submitted",
+                    record_ids=("batch-rec-inv",),
+                    submitted_at="2026-05-12T10:01:00Z",
+                    attempts=1,
+                ),
+            ),
+        ),
+    )
+
+    result = _invoke(
+        runner,
+        storage_root,
+        staging,
+        "timestamp",
+        "batch",
+        "inventory",
+        "--batch",
+        batch_id,
+        "--retry",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert sp_fake._submissions == []
+    updated = batch_state.load_batch(staging, batch_id)
+    assert updated.objects[0].status == "submitted"
+    state = load_ots(
+        StagingStore(staging).staging_path(root_path, "obj:inventory-retry")
+    )
+    assert state.inventory_proof is not None
+    assert state.inventory_proof.record_id == "batch-rec-inv"
+
+
+def test_batch_retry_pending_chunk_posts_after_crash_before_post(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner, empty_sha256_root, staging, "obj:pending-retry", ("a.txt", b"a")
+    )
+    create = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:pending-retry",
+    )
+    assert create.exit_code == 0, create.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    digest = batch.objects[0].digests[0]
+    batch_state.save_batch(
+        staging,
+        replace(
+            batch,
+            objects=(replace(batch.objects[0], status="prepared"),),
+            submissions=(
+                BatchSubmission(chunk_index=0, digests=(digest,), status="pending"),
+            ),
+        ),
+    )
+    staging_dir = StagingStore(staging).staging_path(
+        str(empty_sha256_root.resolve()), "obj:pending-retry"
+    )
+    state = load_ots(staging_dir)
+    save_ots(
+        staging_dir,
+        replace(
+            state,
+            phase=Phase.DRAFTING,
+            submissions=(
+                replace(
+                    state.submissions[0],
+                    status="submitting",
+                    record_ids=(None,),
+                ),
+            ),
+        ),
+    )
+    sp_fake._submissions.clear()
+
+    result = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--retry",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(sp_fake._submissions) == 1
+    assert sp_fake._submissions[0].digests == (digest,)
+    updated = batch_state.load_batch(staging, batch_id)
+    assert updated.submissions[0].status == "submitted"
+    assert updated.submissions[0].record_ids == sp_fake._submissions[0].record_ids
+    assert updated.submissions[0].attempts == 1
+    assert updated.objects[0].status == "submitted"
+
+
+def test_batch_retry_revalidates_before_post_and_marks_regressed(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner, empty_sha256_root, staging, "obj:retry-regressed", ("a.txt", b"a")
+    )
+    create = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:retry-regressed",
+    )
+    assert create.exit_code == 0, create.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    digest = batch.objects[0].digests[0]
+    batch_state.save_batch(
+        staging,
+        replace(
+            batch,
+            objects=(replace(batch.objects[0], status="prepared"),),
+            submissions=(
+                BatchSubmission(
+                    chunk_index=0,
+                    digests=(digest,),
+                    status="failed",
+                    attempts=1,
+                    last_error="SimpleProof HTTP 503",
+                ),
+            ),
+        ),
+    )
+    staging_dir = StagingStore(staging).staging_path(
+        str(empty_sha256_root.resolve()), "obj:retry-regressed"
+    )
+    state = load_ots(staging_dir)
+    save_ots(staging_dir, replace(state, submissions=()))
+    sp_fake._submissions.clear()
+
+    result = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--retry",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert sp_fake._submissions == []
+    updated = batch_state.load_batch(staging, batch_id)
+    assert updated.objects[0].status == "failed"
+    assert updated.objects[0].last_error == "regressed"
+    assert updated.submissions[0].status == "failed"
+
+
+def test_batch_retry_object_record_id_wins_for_non_failed_chunk(
+    runner: CliRunner,
+    storage_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    batch_id = new_batch_id()
+    digest = "sha256:" + ("b" * 64)
+    root_path = str(storage_root)
+    _ots_staging(
+        staging,
+        root_path,
+        "obj:conflict",
+        OtsState(
+            phase=Phase.DRAFTING,
+            category_id=641,
+            submissions=(
+                Submission(
+                    submitted_at="2026-05-12T10:00:00Z",
+                    digests=(digest,),
+                    status="submitting",
+                    batch_id=batch_id,
+                    record_ids=("object-rec",),
+                ),
+            ),
+        ),
+    )
+    save_batch(
+        staging,
+        BatchFile(
+            batch_id=batch_id,
+            target="content",
+            root_path=root_path,
+            category_id=641,
+            created_at="2026-05-12T10:00:00Z",
+            updated_at="2026-05-12T10:00:00Z",
+            objects=(
+                BatchObject(
+                    object_id="obj:conflict",
+                    status="prepared",
+                    digests=(digest,),
+                ),
+            ),
+            submissions=(
+                BatchSubmission(
+                    chunk_index=0,
+                    digests=(digest,),
+                    status="submitted",
+                    record_ids=("batch-rec",),
+                    submitted_at="2026-05-12T10:01:00Z",
+                    attempts=1,
+                ),
+            ),
+        ),
+    )
+
+    result = _invoke(
+        runner,
+        storage_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--retry",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert sp_fake._submissions == []
+    updated = batch_state.load_batch(staging, batch_id)
+    assert updated.objects[0].status == "submitted"
+    assert updated.submissions[0].status == "submitted"
+    assert updated.submissions[0].record_ids == ("object-rec",)
+    state = load_ots(StagingStore(staging).staging_path(root_path, "obj:conflict"))
+    assert state.submissions[0].record_ids == ("object-rec",)
 
 
 def _status_json_and_human(
