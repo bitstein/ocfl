@@ -10,6 +10,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
+import msgspec
 import typer
 from platformdirs import user_state_path
 from rich.text import Text
@@ -30,11 +31,19 @@ from ocfl_cli.errors import (
     SimpleProofError,
     StagingError,
 )
+from ocfl_cli.stage import batch as batch_state
 from ocfl_cli.stage import service, watch
 from ocfl_cli.stage.fsm import Phase
 from ocfl_cli.stage.ingest import ingest_file
 from ocfl_cli.stage.schemas import StagedMetadata
-from ocfl_cli.stage.state import has_ots, load_ots, save_ots, with_lock
+from ocfl_cli.stage.state import (
+    OtsState,
+    VerifiedProof,
+    has_ots,
+    load_ots,
+    save_ots,
+    with_lock,
+)
 from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import DigestAlgorithm
 
@@ -928,6 +937,454 @@ timestamp_app = typer.Typer(
     no_args_is_help=True,
 )
 stage_app.add_typer(timestamp_app, rich_help_panel=OTS_HELP_PANEL)
+
+batch_app = typer.Typer(
+    name="batch",
+    help="Inspect and clean up batch timestamping state.",
+    no_args_is_help=True,
+)
+timestamp_app.add_typer(batch_app)
+
+
+_BATCH_STATUSES = ("prepared", "submitted", "upgraded", "failed", "skipped")
+_BATCH_MISSING_NEXT = "Operate per-object via stage timestamp content/inventory"
+
+
+def _batch_counts(batch: batch_state.BatchFile) -> dict[str, int]:
+    counts = dict.fromkeys(_BATCH_STATUSES, 0)
+    for row in batch.objects:
+        counts[row.status] += 1
+    counts["total"] = len(batch.objects)
+    return counts
+
+
+def _batch_to_list_row(batch: batch_state.BatchFile) -> dict:
+    counts = _batch_counts(batch)
+    return {
+        "batch_id": batch.batch_id,
+        "short_batch_id": batch.batch_id.split("-", 1)[0],
+        "target": batch.target,
+        "category_id": batch.category_id,
+        "root_path": batch.root_path,
+        "created_at": batch.created_at,
+        "updated_at": batch.updated_at,
+        "counts": counts,
+        **counts,
+    }
+
+
+def _load_batches_or_exit(staging_root: Path) -> list[batch_state.BatchFile]:
+    rows: list[batch_state.BatchFile] = []
+    for path in sorted(batch_state.batches_dir(staging_root).glob("*.json")):
+        try:
+            rows.append(batch_state.load_batch(staging_root, path.stem))
+        except StagingError as e:
+            exit_for_error(e)
+    rows.sort(key=lambda batch: batch.updated_at, reverse=True)
+    return rows
+
+
+def _load_batch_or_usage(
+    ctx: typer.Context, staging_root: Path, batch_id: str
+) -> batch_state.BatchFile:
+    try:
+        path = batch_state.batch_file_path(staging_root, batch_id)
+    except StagingError as e:
+        exit_for_error(e)
+    if not path.is_file():
+        if appctx.json_mode(ctx):
+            output_json(
+                {
+                    "batch_id": batch_id,
+                    "reason": "batch_file_missing",
+                    "next": _BATCH_MISSING_NEXT,
+                }
+            )
+        else:
+            err(f"batch_file_missing: {batch_id}; {_BATCH_MISSING_NEXT}")
+        raise typer.Exit(2) from None
+    try:
+        return batch_state.load_batch(staging_root, batch_id)
+    except StagingError as e:
+        exit_for_error(e)
+
+
+def _reason_next(reason: str | None, *, batch: batch_state.BatchFile) -> str | None:
+    if reason is None:
+        return None
+    if reason == "regressed":
+        return "stage status OBJECT; reset or restart timestamp flow"
+    if reason == "missing_record_ids":
+        return f"stage timestamp batch {batch.target} --batch {batch.batch_id} --retry"
+    if reason == "lock_contended":
+        return f"Re-run --batch {batch.batch_id} after the other process exits"
+    if reason.startswith("in_batch="):
+        return f"stage timestamp batch status {reason.removeprefix('in_batch=')}"
+    if reason.startswith("category_mismatch="):
+        return (
+            "Start a separate batch for that category or reset/recreate the "
+            "staging session"
+        )
+    if reason in {"committed", "no_new_digests", "noop"}:
+        return "None"
+    if reason == "content_not_upgraded":
+        return "Upgrade content first"
+    if reason == "missing_metadata":
+        return "Add staged metadata or rerun with --allow-missing-metadata"
+    if reason == "sp_partial_results":
+        return "Re-run --upgrade later"
+    if reason in {
+        "results_expired",
+        "verify_job_failed",
+        "transient_rpc_error",
+    }:
+        return "Re-run --upgrade"
+    if reason == "transient_sp_error":
+        return f"stage timestamp batch {batch.target} --batch {batch.batch_id} --retry"
+    if reason == "reorg_deeper_than_min_conf":
+        return "Retry after node catches up or investigate chain state"
+    if reason == "attestation_mismatch":
+        return "Operator inspection required"
+    if reason == "batch_file_missing":
+        return _BATCH_MISSING_NEXT
+    if reason == "submit_pending":
+        return f"stage timestamp batch {batch.target} --batch {batch.batch_id} --retry"
+    return "Inspect batch status"
+
+
+def _object_staging_dir(staging_root: Path, *, root_path: str, object_id: str) -> Path:
+    return StagingStore(staging_root).staging_path(root_path, object_id)
+
+
+def _load_object_ots(staging_root: Path, batch: batch_state.BatchFile, object_id: str):
+    staging_dir = _object_staging_dir(
+        staging_root, root_path=batch.root_path, object_id=object_id
+    )
+    if not has_ots(staging_dir):
+        return None
+    try:
+        return load_ots(staging_dir)
+    except StagingError:
+        return None
+
+
+def _batch_complete(batch: batch_state.BatchFile) -> bool:
+    active = [row for row in batch.objects if row.status not in {"skipped", "failed"}]
+    return bool(active) and all(row.status == "upgraded" for row in active)
+
+
+def _submitted_count_from_batch(
+    row: batch_state.BatchObject, batch: batch_state.BatchFile
+) -> int:
+    submitted: set[str] = set()
+    wanted = set(row.digests)
+    for chunk in batch.submissions:
+        if chunk.record_ids is None:
+            continue
+        for digest, record_id in zip(chunk.digests, chunk.record_ids, strict=False):
+            if digest in wanted and record_id is not None:
+                submitted.add(digest)
+    return len(submitted)
+
+
+def _submitted_count_from_object(
+    batch: batch_state.BatchFile, row: batch_state.BatchObject, state: OtsState
+) -> int:
+    wanted = set(row.digests)
+    submitted: set[str] = set()
+    if batch.target == "content":
+        for submission in state.submissions:
+            if submission.batch_id != batch.batch_id or submission.record_ids is None:
+                continue
+            for digest, record_id in zip(
+                submission.digests, submission.record_ids, strict=False
+            ):
+                if digest in wanted and record_id is not None:
+                    submitted.add(digest)
+        return len(submitted)
+    proof = state.inventory_proof
+    if (
+        proof is not None
+        and proof.batch_id == batch.batch_id
+        and proof.digest in wanted
+        and proof.record_id is not None
+    ):
+        return 1
+    return 0
+
+
+def _object_record_ids_by_digest(
+    batch: batch_state.BatchFile, row: batch_state.BatchObject, state: OtsState | None
+) -> dict[str, str | None]:
+    record_ids: dict[str, str | None] = dict.fromkeys(row.digests)
+    if state is None:
+        return record_ids
+    wanted = set(row.digests)
+    if batch.target == "content":
+        for submission in state.submissions:
+            if submission.batch_id != batch.batch_id or submission.record_ids is None:
+                continue
+            for digest, record_id in zip(
+                submission.digests, submission.record_ids, strict=False
+            ):
+                if digest in wanted:
+                    record_ids[digest] = record_id
+        return record_ids
+    proof = state.inventory_proof
+    if (
+        proof is not None
+        and proof.batch_id == batch.batch_id
+        and proof.digest in wanted
+    ):
+        record_ids[proof.digest] = proof.record_id
+    return record_ids
+
+
+def _batch_record_ids_by_digest(
+    batch: batch_state.BatchFile, row: batch_state.BatchObject
+) -> dict[str, str | None]:
+    record_ids: dict[str, str | None] = dict.fromkeys(row.digests)
+    wanted = set(row.digests)
+    for chunk in batch.submissions:
+        if chunk.record_ids is None:
+            continue
+        for digest, record_id in zip(chunk.digests, chunk.record_ids, strict=False):
+            if digest in wanted:
+                record_ids[digest] = record_id
+    return record_ids
+
+
+def _submit_status_by_digest(
+    batch: batch_state.BatchFile, row: batch_state.BatchObject
+) -> dict[str, str | None]:
+    statuses: dict[str, str | None] = dict.fromkeys(row.digests)
+    wanted = set(row.digests)
+    for chunk in batch.submissions:
+        for digest in chunk.digests:
+            if digest in wanted:
+                statuses[digest] = chunk.status
+    return statuses
+
+
+def _verify_status_by_digest(
+    batch: batch_state.BatchFile, row: batch_state.BatchObject
+) -> dict[str, str | None]:
+    statuses: dict[str, str | None] = dict.fromkeys(row.digests)
+    wanted = set(row.digests)
+    for job in batch.verify_jobs:
+        for digest in job.digests:
+            if digest in wanted:
+                statuses[digest] = job.status
+    return statuses
+
+
+def _verified_count_for_row(
+    batch: batch_state.BatchFile, row: batch_state.BatchObject, state: OtsState | None
+) -> int:
+    if state is None:
+        return 0
+    wanted = set(row.digests)
+    if batch.target == "content":
+        return sum(
+            1
+            for digest in wanted
+            if state.content_proofs.get(digest, None) is not None
+            and state.content_proofs[digest].verified
+        )
+    proof = state.inventory_proof
+    if proof is None or proof.digest not in wanted:
+        return 0
+    return int(proof.proof.verified)
+
+
+def _verbose_digest_rows(
+    batch: batch_state.BatchFile,
+    row: batch_state.BatchObject,
+    state: OtsState | None,
+) -> list[dict]:
+    object_ids = _object_record_ids_by_digest(batch, row, state)
+    batch_ids = _batch_record_ids_by_digest(batch, row)
+    submit_statuses = _submit_status_by_digest(batch, row)
+    verify_statuses = _verify_status_by_digest(batch, row)
+    verified: set[str] = set()
+    if state is not None:
+        if batch.target == "content":
+            verified = {
+                digest
+                for digest in row.digests
+                if state.content_proofs.get(digest, VerifiedProof()).verified
+            }
+        elif state.inventory_proof is not None and state.inventory_proof.proof.verified:
+            verified = {state.inventory_proof.digest}
+    return [
+        {
+            "digest": digest,
+            "submitted": (object_ids.get(digest) or batch_ids.get(digest)) is not None,
+            "verified": digest in verified,
+            "record_id": object_ids.get(digest) or batch_ids.get(digest),
+            "submit_status": submit_statuses[digest],
+            "verify_status": verify_statuses[digest],
+        }
+        for digest in row.digests
+    ]
+
+
+def _verify_job_covers(
+    batch: batch_state.BatchFile, row: batch_state.BatchObject
+) -> bool:
+    wanted = set(row.digests)
+    return any(
+        job.status == "IN_PROGRESS" and wanted.issubset(set(job.digests))
+        for job in batch.verify_jobs
+    )
+
+
+def _next_for_row(
+    batch: batch_state.BatchFile,
+    row: batch_state.BatchObject,
+    *,
+    digests_submitted: int,
+) -> str:
+    reason = row.last_error or row.skipped_reason
+    if row.status in {"failed", "skipped"} or reason is not None:
+        if reason == "transient_sp_error" and row.status == "submitted":
+            return "Re-run --upgrade"
+        return _reason_next(reason, batch=batch) or "Inspect batch status"
+    if _batch_complete(batch):
+        return f"Batch complete; batch rm {batch.batch_id} to clean up"
+    if row.status == "prepared":
+        return f"Run --batch {batch.batch_id} to submit"
+    if row.status == "submitted":
+        if digests_submitted < len(row.digests):
+            return f"Run --batch {batch.batch_id} --retry"
+        if _verify_job_covers(batch, row):
+            return "Re-run --upgrade later"
+        return f"Run --batch {batch.batch_id} --upgrade"
+    if row.status == "upgraded":
+        return "Object complete"
+    return "Inspect batch status"
+
+
+def _batch_status_dict(
+    staging_root: Path, batch: batch_state.BatchFile, *, verbose: bool = False
+) -> dict:
+    objects = []
+    for row in batch.objects:
+        state = _load_object_ots(staging_root, batch, row.object_id)
+        phase = state.phase.name if state is not None else None
+        batch_submitted = _submitted_count_from_batch(row, batch)
+        object_submitted = (
+            _submitted_count_from_object(batch, row, state) if state is not None else 0
+        )
+        digests_submitted = max(batch_submitted, object_submitted)
+        object_data = {
+            "object_id": row.object_id,
+            "phase": phase,
+            "batch_status": row.status,
+            "digests_total": len(row.digests),
+            "digests_verified": _verified_count_for_row(batch, row, state),
+            "digests_submitted": digests_submitted,
+            "last_error": row.last_error,
+            "skipped_reason": row.skipped_reason,
+            "next": _next_for_row(batch, row, digests_submitted=digests_submitted),
+            "batch_id": batch.batch_id,
+        }
+        if verbose:
+            object_data["digests"] = _verbose_digest_rows(batch, row, state)
+        objects.append(object_data)
+    return {
+        "batch_id": batch.batch_id,
+        "target": batch.target,
+        "root_path": batch.root_path,
+        "category_id": batch.category_id,
+        "created_at": batch.created_at,
+        "updated_at": batch.updated_at,
+        "counts": _batch_counts(batch),
+        "objects": objects,
+        "submissions": [msgspec.to_builtins(row) for row in batch.submissions],
+        "verify_jobs": [msgspec.to_builtins(row) for row in batch.verify_jobs],
+    }
+
+
+@batch_app.command("ls")
+def timestamp_batch_ls(ctx: typer.Context) -> None:
+    """List local batch timestamping state files."""
+    staging_root = _stage_store(ctx)._root
+    rows = [_batch_to_list_row(batch) for batch in _load_batches_or_exit(staging_root)]
+    if appctx.json_mode(ctx):
+        output_json(rows)
+        return
+    for row in rows:
+        typer.echo(
+            f"{row['short_batch_id']}  {row['target']}  "
+            f"created={row['created_at']} updated={row['updated_at']}  "
+            f"prepared={row['prepared']} submitted={row['submitted']} "
+            f"upgraded={row['upgraded']} failed={row['failed']} "
+            f"skipped={row['skipped']} total={row['total']}"
+        )
+
+
+@batch_app.command("status")
+def timestamp_batch_status(
+    ctx: typer.Context,
+    batch_id: Annotated[str, typer.Argument(help="Batch ID.")],
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", help="Show per-digest submit/verify state."),
+    ] = False,
+) -> None:
+    """Show local per-object status for a batch."""
+    staging_root = _stage_store(ctx)._root
+    batch = _load_batch_or_usage(ctx, staging_root, batch_id)
+    data = _batch_status_dict(staging_root, batch, verbose=verbose)
+    if appctx.json_mode(ctx):
+        output_json(data)
+        return
+    _render_status_section("Batch")
+    typer.echo(f"  ID: {batch.batch_id}")
+    typer.echo(f"  Target: {batch.target}")
+    typer.echo(f"  Category: {batch.category_id}")
+    typer.echo(f"  Updated: {batch.updated_at}")
+    _render_status_section("Objects", leading_blank=True)
+    for row in data["objects"]:
+        typer.echo(
+            f"  {row['object_id']}  {row['batch_status']}  "
+            f"{row['digests_verified']}/{row['digests_total']} verified  "
+            f"Next: {row['next']}"
+        )
+        if verbose:
+            for digest in row["digests"]:
+                typer.echo(
+                    f"    {digest['digest']}  submitted={digest['submitted']} "
+                    f"verified={digest['verified']} "
+                    f"submit={digest['submit_status']} "
+                    f"verify={digest['verify_status']}"
+                )
+
+
+@batch_app.command("rm")
+def timestamp_batch_rm(
+    ctx: typer.Context,
+    batch_id: Annotated[str, typer.Argument(help="Batch ID.")],
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Delete the batch file even with open rows."),
+    ] = False,
+) -> None:
+    """Delete a local batch file when cleanup is safe."""
+    staging_root = _stage_store(ctx)._root
+    batch = _load_batch_or_usage(ctx, staging_root, batch_id)
+    open_rows = [
+        row for row in batch.objects if row.status in {"prepared", "submitted"}
+    ]
+    if open_rows and not force:
+        err(
+            f"batch {batch_id} has non-terminal rows; use --force to delete "
+            "the batch file only"
+        )
+        raise typer.Exit(1)
+    batch_state.batch_file_path(staging_root, batch_id).unlink()
+    typer.echo(f"removed batch {batch_id}")
 
 
 @timestamp_app.command("content")
