@@ -409,11 +409,48 @@ def test_batch_content_new_batch_json_emits_batch_id_before_submit(
     )
 
     assert result.exit_code == 0, result.output
-    data = json.loads(result.output)
+    events = [json.loads(line) for line in result.output.splitlines()]
+    data = events[0]
     assert data["event"] == "batch_created"
     assert data["target"] == "content"
     assert data["category_id"] == 641
     assert data["batch_id"]
+
+
+def test_batch_content_new_batch_json_is_ndjson_driving_output(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(runner, empty_sha256_root, staging, "obj:json", ("a.txt", b"a"))
+
+    result = _invoke_json(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:json",
+    )
+
+    assert result.exit_code == 0, result.output
+    events = [json.loads(line) for line in result.output.splitlines()]
+    assert [event["event"] for event in events] == [
+        "batch_created",
+        "object_prepared",
+        "object_submitted",
+        "summary",
+    ]
+    assert all(isinstance(line, dict) for line in events)
+    assert events[1]["object_id"] == "obj:json"
+    assert events[-1]["counts"]["submitted"] == 1
 
 
 def test_batch_content_bare_batch_mirrors_persisted_chunk_without_repost(
@@ -1926,6 +1963,8 @@ def test_batch_status_json_contract_uses_canonical_next(
 
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
+    assert "event" not in data
+    assert {"batch_id", "objects", "counts"}.issubset(data)
     assert data["batch_id"] == batch_id
     assert data["counts"]["submitted"] == 1
     assert data["submissions"][0]["record_ids"] == ["rec-a", "rec-b"]
@@ -2394,7 +2433,7 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
     batch = batch_state.load_batch(staging, batch_id)
     digest = batch.objects[0].digests[0]
 
-    first = _invoke(
+    first = _invoke_json(
         runner,
         empty_sha256_root,
         staging,
@@ -2406,6 +2445,13 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
         "--upgrade",
     )
     assert first.exit_code == 0, first.output
+    events = [json.loads(line) for line in first.output.splitlines()]
+    assert [event["event"] for event in events] == [
+        "batch_resumed",
+        "object_submitted",
+        "summary",
+    ]
+    assert events[1]["next"] == "Re-run --upgrade later"
     batch = batch_state.load_batch(staging, batch_id)
     assert len(batch.verify_jobs) == 1
     assert batch.verify_jobs[0].digests == (digest,)
@@ -2416,7 +2462,7 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
     _grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
     _register_attested(btc, digest)
 
-    second = _invoke(
+    second = _invoke_json(
         runner,
         empty_sha256_root,
         staging,
@@ -2428,6 +2474,14 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
         "--upgrade",
     )
     assert second.exit_code == 0, second.output
+    events = [json.loads(line) for line in second.output.splitlines()]
+    assert [event["event"] for event in events] == [
+        "batch_resumed",
+        "object_upgraded",
+        "summary",
+    ]
+    assert events[1]["object_id"] == "obj:batch-upgrade"
+    assert events[-1]["counts"]["upgraded"] == 1
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.objects[0].status == "upgraded"
     state = load_ots(

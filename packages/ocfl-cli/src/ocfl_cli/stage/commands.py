@@ -5,6 +5,7 @@ Thin glue: parse options, resolve context, call into ``service`` /
 """
 
 import contextlib
+import json
 import logging
 from dataclasses import dataclass
 from enum import StrEnum
@@ -974,6 +975,23 @@ def _batch_counts(batch: batch_state.BatchFile) -> dict[str, int]:
     return counts
 
 
+def _emit_batch_event(ctx: typer.Context, data: dict) -> None:
+    if appctx.json_mode(ctx):
+        typer.echo(json.dumps(data, separators=(",", ":")))
+
+
+def _event_for_row(row: batch_state.BatchObject) -> str:
+    if row.status == "prepared":
+        return "object_prepared"
+    if row.status == "submitted":
+        return "object_submitted"
+    if row.status == "upgraded":
+        return "object_upgraded"
+    if row.status == "skipped":
+        return "object_skipped"
+    return "object_failed"
+
+
 def _batch_to_list_row(batch: batch_state.BatchFile) -> dict:
     counts = _batch_counts(batch)
     return {
@@ -1320,6 +1338,75 @@ def _batch_status_dict(
         "submissions": [msgspec.to_builtins(row) for row in batch.submissions],
         "verify_jobs": [msgspec.to_builtins(row) for row in batch.verify_jobs],
     }
+
+
+def _batch_object_event(
+    staging_root: Path, batch: batch_state.BatchFile, row: batch_state.BatchObject
+) -> dict:
+    state = _load_object_ots(staging_root, batch, row.object_id)
+    batch_submitted = _submitted_count_from_batch(row, batch)
+    object_submitted = (
+        _submitted_count_from_object(batch, row, state) if state is not None else 0
+    )
+    digests_submitted = max(batch_submitted, object_submitted)
+    return {
+        "event": _event_for_row(row),
+        "batch_id": batch.batch_id,
+        "target": batch.target,
+        "object_id": row.object_id,
+        "status": row.status,
+        "digests_total": len(row.digests),
+        "digests_submitted": digests_submitted,
+        "digests_verified": _verified_count_for_row(batch, row, state),
+        "last_error": row.last_error,
+        "skipped_reason": row.skipped_reason,
+        "next": _next_for_row(batch, row, digests_submitted=digests_submitted),
+    }
+
+
+def _emit_batch_object_event(
+    ctx: typer.Context,
+    *,
+    staging_root: Path,
+    batch: batch_state.BatchFile,
+    row: batch_state.BatchObject,
+) -> None:
+    _emit_batch_event(ctx, _batch_object_event(staging_root, batch, row))
+
+
+def _emit_batch_object_changes(
+    ctx: typer.Context,
+    *,
+    staging_root: Path,
+    before: batch_state.BatchFile,
+    after: batch_state.BatchFile,
+) -> None:
+    previous = {row.object_id: row for row in before.objects}
+    for row in after.objects:
+        old = previous.get(row.object_id)
+        if old is None:
+            _emit_batch_object_event(
+                ctx, staging_root=staging_root, batch=after, row=row
+            )
+            continue
+        old_event = _batch_object_event(staging_root, before, old)
+        new_event = _batch_object_event(staging_root, after, row)
+        if old_event != new_event:
+            _emit_batch_event(ctx, new_event)
+
+
+def _emit_batch_summary(ctx: typer.Context, batch: batch_state.BatchFile) -> None:
+    _emit_batch_event(
+        ctx,
+        {
+            "event": "summary",
+            "batch_id": batch.batch_id,
+            "target": batch.target,
+            "category_id": batch.category_id,
+            "root_path": batch.root_path,
+            "counts": _batch_counts(batch),
+        },
+    )
 
 
 def _read_objects_file(path: Path) -> list[str]:
@@ -1799,6 +1886,7 @@ def _drive_batch_retry(
         command=(*_batch_command_tuple(target, batch.batch_id), "--retry"),
     ):
         _emit_batch_resumed(ctx, batch)
+        before_retry = batch
         batch = _retry_batch_submissions(
             target=target,
             cfg=cfg,
@@ -1807,6 +1895,10 @@ def _drive_batch_retry(
             batch=batch,
             sp_factory=appctx.sp_client_factory(ctx),
         )
+        _emit_batch_object_changes(
+            ctx, staging_root=staging_root, before=before_retry, after=batch
+        )
+    _emit_batch_summary(ctx, batch)
     if not appctx.json_mode(ctx):
         counts = _batch_counts(batch)
         typer.echo(
@@ -2743,6 +2835,7 @@ def _drive_batch_upgrade(
         command=(*_batch_command_tuple(target, batch.batch_id), "--upgrade"),
     ):
         _emit_batch_resumed(ctx, batch)
+        before_upgrade = batch
         batch = _run_batch_upgrade_pass(
             target=target,
             cfg=cfg,
@@ -2753,6 +2846,10 @@ def _drive_batch_upgrade(
             sp_factory=appctx.sp_client_factory(ctx),
             btc_factory=appctx.btc_rpc_factory(ctx),
         )
+        _emit_batch_object_changes(
+            ctx, staging_root=staging_root, before=before_upgrade, after=batch
+        )
+    _emit_batch_summary(ctx, batch)
     if not appctx.json_mode(ctx):
         counts = _batch_counts(batch)
         typer.echo(
@@ -3097,13 +3194,21 @@ def _drive_batch_watch(
                     batch = _replace_batch_object(batch, row)
                     with batch_state.with_batch_lock(staging_root, batch.batch_id):
                         batch_state.save_batch(staging_root, batch)
+                    _emit_batch_object_event(
+                        ctx, staging_root=staging_root, batch=batch, row=row
+                    )
             else:
                 _emit_batch_resumed(ctx, batch)
             recovered = _collect_recoverable_object_intents(store, batch)
             with batch_state.with_batch_lock(staging_root, batch.batch_id):
+                before_recovered = batch
                 batch = batch_state.load_batch(staging_root, batch.batch_id)
                 batch = _merge_recovered_object_intents(batch, recovered)
                 batch_state.save_batch(staging_root, batch)
+            _emit_batch_object_changes(
+                ctx, staging_root=staging_root, before=before_recovered, after=batch
+            )
+            before_submit = batch
             batch = _submit_batch(
                 target=target,
                 cfg=cfg,
@@ -3112,6 +3217,10 @@ def _drive_batch_watch(
                 batch=batch,
                 sp_factory=appctx.sp_client_factory(ctx),
             )
+            _emit_batch_object_changes(
+                ctx, staging_root=staging_root, before=before_submit, after=batch
+            )
+            before_upgrade = batch
             batch = _run_batch_upgrade_pass(
                 target=target,
                 cfg=cfg,
@@ -3121,6 +3230,9 @@ def _drive_batch_watch(
                 batch=batch,
                 sp_factory=appctx.sp_client_factory(ctx),
                 btc_factory=appctx.btc_rpc_factory(ctx),
+            )
+            _emit_batch_object_changes(
+                ctx, staging_root=staging_root, before=before_upgrade, after=batch
             )
             if not _batch_has_submitted_subset(batch):
                 exit_code = 0 if _batch_watch_successful(batch) else 1
@@ -3157,6 +3269,7 @@ def _drive_batch_watch(
                     last_height = info.height
                     last_tip_hash = info.best_block_hash
                     batch = batch_state.load_batch(staging_root, batch.batch_id)
+                    before_reverify = batch
                     if _height_jumped or _tip_changed_at_stable:
                         batch = _reverify_batch_watch_rows(
                             target=target,
@@ -3166,6 +3279,13 @@ def _drive_batch_watch(
                             batch=batch,
                             btc=btc,
                         )
+                        _emit_batch_object_changes(
+                            ctx,
+                            staging_root=staging_root,
+                            before=before_reverify,
+                            after=batch,
+                        )
+                    before_upgrade = batch
                     batch = _run_batch_upgrade_pass(
                         target=target,
                         cfg=cfg,
@@ -3175,6 +3295,12 @@ def _drive_batch_watch(
                         batch=batch,
                         sp_factory=appctx.sp_client_factory(ctx),
                         btc_factory=appctx.btc_rpc_factory(ctx),
+                    )
+                    _emit_batch_object_changes(
+                        ctx,
+                        staging_root=staging_root,
+                        before=before_upgrade,
+                        after=batch,
                     )
                     if not _batch_has_submitted_subset(batch):
                         exit_code = 0 if _batch_watch_successful(batch) else 1
@@ -3186,7 +3312,9 @@ def _drive_batch_watch(
     except (BitcoinError, ReorgDetectedError) as e:
         exit_for_error(e, message=f"halt: {e}")
     finally:
-        if not appctx.json_mode(ctx) and batch_id is not None:
+        if appctx.json_mode(ctx):
+            _emit_batch_summary(ctx, batch)
+        elif batch_id is not None:
             counts = _batch_counts(batch)
             typer.echo(
                 f"batch watched: {batch.batch_id} submitted={counts['submitted']} "
@@ -3206,7 +3334,7 @@ def _emit_batch_created(ctx: typer.Context, batch: batch_state.BatchFile) -> Non
         "created_at": batch.created_at,
     }
     if appctx.json_mode(ctx):
-        output_json(data)
+        _emit_batch_event(ctx, data)
     else:
         typer.echo(
             f"batch created: {batch.batch_id} target={batch.target} "
@@ -3216,14 +3344,15 @@ def _emit_batch_created(ctx: typer.Context, batch: batch_state.BatchFile) -> Non
 
 def _emit_batch_resumed(ctx: typer.Context, batch: batch_state.BatchFile) -> None:
     if appctx.json_mode(ctx):
-        output_json(
+        _emit_batch_event(
+            ctx,
             {
                 "event": "batch_resumed",
                 "batch_id": batch.batch_id,
                 "target": batch.target,
                 "category_id": batch.category_id,
                 "root_path": batch.root_path,
-            }
+            },
         )
     else:
         typer.echo(f"batch resumed: {batch.batch_id} target={batch.target}")
@@ -3304,13 +3433,21 @@ def _drive_batch_submit(
                 batch = _replace_batch_object(batch, row)
                 with batch_state.with_batch_lock(staging_root, batch.batch_id):
                     batch_state.save_batch(staging_root, batch)
+                _emit_batch_object_event(
+                    ctx, staging_root=staging_root, batch=batch, row=row
+                )
         else:
             _emit_batch_resumed(ctx, batch)
         recovered = _collect_recoverable_object_intents(store, batch)
         with batch_state.with_batch_lock(staging_root, batch.batch_id):
+            before_recovered = batch
             batch = batch_state.load_batch(staging_root, batch.batch_id)
             batch = _merge_recovered_object_intents(batch, recovered)
             batch_state.save_batch(staging_root, batch)
+        _emit_batch_object_changes(
+            ctx, staging_root=staging_root, before=before_recovered, after=batch
+        )
+        before_submit = batch
         batch = _submit_batch(
             target=target,
             cfg=cfg,
@@ -3319,6 +3456,10 @@ def _drive_batch_submit(
             batch=batch,
             sp_factory=appctx.sp_client_factory(ctx),
         )
+        _emit_batch_object_changes(
+            ctx, staging_root=staging_root, before=before_submit, after=batch
+        )
+    _emit_batch_summary(ctx, batch)
     if not appctx.json_mode(ctx):
         counts = _batch_counts(batch)
         typer.echo(
