@@ -3975,6 +3975,23 @@ def timestamp_inventory(
 # ---------------------------------------------------------------------------
 
 
+def _active_reset_batch_ids(state: OtsState) -> tuple[str, ...]:
+    batch_ids = (
+        *(
+            submission.batch_id
+            for submission in state.submissions
+            if submission.status in {"submitting", "submitted"}
+            and submission.batch_id is not None
+        ),
+        *(
+            ()
+            if state.inventory_proof is None or state.inventory_proof.batch_id is None
+            else (state.inventory_proof.batch_id,)
+        ),
+    )
+    return tuple(dict.fromkeys(batch_ids))
+
+
 @stage_app.command()
 def reset(
     ctx: typer.Context,
@@ -4007,10 +4024,19 @@ def reset(
         if any(n for _, n in counts):
             phase = state.phase.value
             summary = ", ".join(f"{k}={v}" for k, v in counts)
+            active_batch_ids = _active_reset_batch_ids(state)
+            batch_hint = ""
+            if active_batch_ids:
+                batch_id = active_batch_ids[0]
+                batch_hint = (
+                    f"; active batch_id={batch_id!r}; inspect with "
+                    f"'stage timestamp batch status {batch_id}'"
+                )
             if not force:
                 err(
                     f"reset would discard persisted OTS progress at phase "
-                    f"{phase!r} ({summary}); re-run with --force to proceed"
+                    f"{phase!r} ({summary}){batch_hint}; "
+                    f"re-run with --force to proceed"
                 )
                 raise typer.Exit(1)
             logger.warning(

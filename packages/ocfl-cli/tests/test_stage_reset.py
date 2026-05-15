@@ -90,22 +90,31 @@ def _verified_proof(digest: str = "deadbeef" * 8) -> VerifiedProof:
     )
 
 
-def _inv_proof(version: str = "v1", digest: str = "feedface" * 8) -> InventoryProof:
+def _inv_proof(
+    version: str = "v1",
+    digest: str = "feedface" * 8,
+    *,
+    batch_id: str | None = None,
+) -> InventoryProof:
     return InventoryProof(
         version=version,
         digest=digest,
         proof=_verified_proof(digest),
         job_id="job-inv",
+        batch_id=batch_id,
     )
 
 
-def _submission(digest: str) -> Submission:
+def _submission(
+    digest: str, *, status: str = "submitted", batch_id: str | None = None
+) -> Submission:
     return Submission(
         submitted_at="2026-04-25T14:00:00+00:00",
         digests=(digest,),
-        status="submitted",
+        status=status,
         job_id="job-1",
         attempts=1,
+        batch_id=batch_id,
     )
 
 
@@ -338,6 +347,51 @@ class TestResetPurgesOtsCache:
 
 
 class TestResetWarnMessage:
+    def test_refusal_message_names_active_content_batch_status_command(
+        self,
+        runner: CliRunner,
+        storage_root: Path,
+        tmp_path: Path,
+    ) -> None:
+        staging = tmp_path / "staging"
+        sd = _mk_ots_staging(runner, storage_root, staging, "obj:batch")
+
+        batch_id = "018f1f7e-7b4a-7c6a-8a2b-4a7f4c2e9d10"
+        _pin_state(
+            sd,
+            Phase.CONTENT_PENDING,
+            pending_digests=("a" * 64,),
+            submissions=(_submission("a" * 64, status="submitted", batch_id=batch_id),),
+        )
+
+        r = _invoke(runner, storage_root, staging, "reset", "obj:batch")
+
+        assert r.exit_code != 0, r.output
+        assert batch_id in r.output
+        assert f"stage timestamp batch status {batch_id}" in r.output
+
+    def test_refusal_message_names_active_inventory_batch_status_command(
+        self,
+        runner: CliRunner,
+        storage_root: Path,
+        tmp_path: Path,
+    ) -> None:
+        staging = tmp_path / "staging"
+        sd = _mk_ots_staging(runner, storage_root, staging, "obj:inventory-batch")
+
+        batch_id = "018f1f7e-7b4a-7c6a-8a2b-4a7f4c2e9d10"
+        _pin_state(
+            sd,
+            Phase.INVENTORY_PENDING,
+            inventory_proof=_inv_proof(batch_id=batch_id),
+        )
+
+        r = _invoke(runner, storage_root, staging, "reset", "obj:inventory-batch")
+
+        assert r.exit_code != 0, r.output
+        assert batch_id in r.output
+        assert f"stage timestamp batch status {batch_id}" in r.output
+
     def test_warn_message_names_phase_and_counts(
         self,
         runner: CliRunner,
