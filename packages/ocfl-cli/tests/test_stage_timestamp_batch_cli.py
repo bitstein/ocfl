@@ -9,14 +9,18 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from fakes import FakeSimpleProof
+from fakes import FakeBitcoinRPC, FakeSimpleProof
 from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
-from ocfl_cli.errors import SimpleProofTransient
+from ocfl_cli.errors import (
+    AttestationMismatchError,
+    BitcoinRPCTransient,
+    SimpleProofTransient,
+)
 from ocfl_cli.main import app
-from ocfl_cli.ots.simpleproof import SubmitResult
+from ocfl_cli.ots.simpleproof import JobStatus, SubmitResult
 from ocfl_cli.stage import batch as batch_state
 from ocfl_cli.stage import commands as stage_commands
 from ocfl_cli.stage import service
@@ -31,16 +35,19 @@ from ocfl_cli.stage.batch import (
     save_batch,
 )
 from ocfl_cli.stage.fsm import Phase
+from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
 from ocfl_cli.stage.state import (
     OtsState,
     Submission,
     VerifiedProof,
     VerifyJob,
     load_ots,
+    ots_cache_path,
     save_ots,
 )
 from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
+from tests.helpers.ots import build_attestation
 
 _SP_OK = """\
 [simpleproof]
@@ -67,6 +74,33 @@ class TransientSubmitFake(FakeSimpleProof):
     def submit_hashes(self, digests: list[str], category_id: int) -> SubmitResult:
         self.calls += 1
         raise SimpleProofTransient("SimpleProof HTTP 503")
+
+
+class TransientPollFake(FakeSimpleProof):
+    def poll_job(self, job_id: str):
+        raise SimpleProofTransient("SimpleProof HTTP 503")
+
+
+class ExpiredPollFake(FakeSimpleProof):
+    def poll_job(self, job_id: str) -> JobStatus:
+        job = self._jobs[job_id]
+        return JobStatus(
+            job_id=job.job_id,
+            status="EXPIRED",
+            results_url=job.results_url,
+        )
+
+
+class MismatchDownloadFake(FakeSimpleProof):
+    def download_results(
+        self, results_url: str, expected_digests: set[str]
+    ) -> dict[str, bytes]:
+        raise AttestationMismatchError("unexpected digest from SP")
+
+
+class TransientBitcoinRPC(FakeBitcoinRPC):
+    def getblockchaininfo(self):
+        raise BitcoinRPCTransient("Bitcoin RPC timeout")
 
 
 class BlockingSubmitFake(FakeSimpleProof):
@@ -119,8 +153,32 @@ def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
     runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
 
 
+def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
+    runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
+
+
 def _stage_args(root: Path, staging: Path, *args: str) -> list[str]:
     return ["--root", str(root), "stage", "--staging-root", str(staging), *args]
+
+
+DIGEST_BLOCK_HEIGHT = 800_000
+MIN_CONFS = 3
+
+
+def _ots_for(digest_hex: str, *, block_height: int = DIGEST_BLOCK_HEIGHT) -> bytes:
+    return build_attestation(bytes.fromhex(digest_hex), block_height=block_height)
+
+
+def _grow_chain_to(rpc: FakeBitcoinRPC, height: int) -> None:
+    needed = height - rpc.tip_height
+    if needed > 0:
+        rpc.extend(needed)
+
+
+def _register_attested(
+    rpc: FakeBitcoinRPC, digest_hex: str, height: int = DIGEST_BLOCK_HEIGHT
+) -> None:
+    rpc.register_merkle_root(height, bytes.fromhex(digest_hex)[::-1].hex())
 
 
 def _run_batch_command_process(
@@ -1711,6 +1769,519 @@ def test_batch_status_next_distinguishes_transient_sp_context(
         f"stage timestamp batch content --batch {batch_id} --retry"
     )
     assert rows["obj:2"]["next"] == "Re-run --upgrade"
+
+
+def test_batch_content_upgrade_posts_then_ingests_per_digest(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    btc = FakeBitcoinRPC()
+    _inject_fake_sp(runner, sp_fake)
+    _inject_fake_btc(runner, btc)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:batch-upgrade",
+        ("a.txt", b"alpha"),
+    )
+    submitted = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:batch-upgrade",
+    )
+    assert submitted.exit_code == 0, submitted.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    digest = batch.objects[0].digests[0]
+
+    first = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+    assert first.exit_code == 0, first.output
+    batch = batch_state.load_batch(staging, batch_id)
+    assert len(batch.verify_jobs) == 1
+    assert batch.verify_jobs[0].digests == (digest,)
+    assert batch.objects[0].status == "submitted"
+
+    ots_bytes = _ots_for(digest)
+    sp_fake.advance_to_completed(batch.verify_jobs[0].job_id, {digest: ots_bytes})
+    _grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+    _register_attested(btc, digest)
+
+    second = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+    assert second.exit_code == 0, second.output
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.objects[0].status == "upgraded"
+    state = load_ots(
+        StagingStore(staging).staging_path(
+            str(empty_sha256_root.resolve()), "obj:batch-upgrade"
+        )
+    )
+    assert state.phase is Phase.CONTENT_UPGRADED
+    assert state.content_proofs[digest].verified is True
+    assert (
+        ots_cache_path(
+            StagingStore(staging).staging_path(
+                str(empty_sha256_root.resolve()), "obj:batch-upgrade"
+            ),
+            digest,
+        ).read_bytes()
+        == ots_bytes
+    )
+
+
+def test_batch_upgrade_failed_verify_job_is_retryable(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    _inject_fake_btc(runner, FakeBitcoinRPC())
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:batch-failed-job",
+        ("a.txt", b"alpha"),
+    )
+    submitted = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:batch-failed-job",
+    )
+    assert submitted.exit_code == 0, submitted.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+
+    first = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+    assert first.exit_code == 0, first.output
+    failed_job_id = batch_state.load_batch(staging, batch_id).verify_jobs[0].job_id
+    sp_fake.fail_job(failed_job_id)
+
+    failed = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+    assert failed.exit_code == 0, failed.output
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.verify_jobs[0].status == "FAILED"
+    assert batch.objects[0].status == "submitted"
+    assert batch.objects[0].last_error == "verify_job_failed"
+
+    retried = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+    assert retried.exit_code == 0, retried.output
+    batch = batch_state.load_batch(staging, batch_id)
+    assert [job.status for job in batch.verify_jobs] == ["FAILED", "IN_PROGRESS"]
+    assert len(sp_fake._jobs) == 2
+
+
+def test_batch_upgrade_poll_transient_marks_retryable(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    sp = TransientPollFake()
+    _inject_fake_sp(runner, sp)
+    _inject_fake_btc(runner, FakeBitcoinRPC())
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:batch-poll-fails",
+        ("a.txt", b"alpha"),
+    )
+    submitted = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:batch-poll-fails",
+    )
+    assert submitted.exit_code == 0, submitted.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+
+    upgraded = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+
+    assert upgraded.exit_code == 0, upgraded.output
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.verify_jobs[0].status == "FAILED"
+    assert batch.verify_jobs[0].last_error == "SimpleProof HTTP 503"
+    assert batch.objects[0].status == "submitted"
+    assert batch.objects[0].last_error == "transient_sp_error"
+
+
+def test_batch_upgrade_download_mismatch_marks_terminal(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    sp = MismatchDownloadFake()
+    btc = FakeBitcoinRPC()
+    _inject_fake_sp(runner, sp)
+    _inject_fake_btc(runner, btc)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:batch-mismatch",
+        ("a.txt", b"alpha"),
+    )
+    submitted = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:batch-mismatch",
+    )
+    assert submitted.exit_code == 0, submitted.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+
+    first = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+    assert first.exit_code == 0, first.output
+    batch = batch_state.load_batch(staging, batch_id)
+    sp.advance_to_completed(batch.verify_jobs[0].job_id, {})
+
+    mismatched = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+
+    assert mismatched.exit_code == 0, mismatched.output
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.verify_jobs[0].status == "COMPLETED"
+    assert batch.verify_jobs[0].last_error == "attestation_mismatch"
+    assert batch.objects[0].status == "failed"
+    assert batch.objects[0].last_error == "attestation_mismatch"
+
+
+def test_batch_upgrade_bitcoin_transient_marks_retryable(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    _inject_fake_btc(runner, TransientBitcoinRPC())
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:batch-rpc-fails",
+        ("a.txt", b"alpha"),
+    )
+    submitted = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:batch-rpc-fails",
+    )
+    assert submitted.exit_code == 0, submitted.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+
+    first = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+    assert first.exit_code == 0, first.output
+    batch = batch_state.load_batch(staging, batch_id)
+    digest = batch.objects[0].digests[0]
+    sp_fake.advance_to_completed(
+        batch.verify_jobs[0].job_id, {digest: _ots_for(digest)}
+    )
+
+    failed = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+
+    assert failed.exit_code == 0, failed.output
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.verify_jobs[0].status == "COMPLETED"
+    assert batch.objects[0].status == "submitted"
+    assert batch.objects[0].last_error == "transient_rpc_error"
+
+
+def test_batch_upgrade_expired_poll_gets_fresh_job(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    sp = ExpiredPollFake()
+    _inject_fake_sp(runner, sp)
+    _inject_fake_btc(runner, FakeBitcoinRPC())
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:batch-expired",
+        ("a.txt", b"alpha"),
+    )
+    submitted = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:batch-expired",
+    )
+    assert submitted.exit_code == 0, submitted.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+
+    first = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+    assert first.exit_code == 0, first.output
+    assert batch_state.load_batch(staging, batch_id).verify_jobs[0].status == "EXPIRED"
+
+    second = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+
+    assert second.exit_code == 0, second.output
+    batch = batch_state.load_batch(staging, batch_id)
+    assert [job.status for job in batch.verify_jobs] == ["EXPIRED", "EXPIRED"]
+    assert len(sp._jobs) == 2
+
+
+def test_batch_inventory_upgrade_rejects_stale_plan_digest(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    btc = FakeBitcoinRPC()
+    _inject_fake_sp(runner, sp_fake)
+    _inject_fake_btc(runner, btc)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:inv-stale",
+        ("a.txt", b"alpha"),
+    )
+    store = StagingStore(staging)
+    root_path = str(empty_sha256_root.resolve())
+    staging_dir = store.staging_path(root_path, "obj:inv-stale")
+    digest = hashlib.sha256(b"alpha").hexdigest()
+    state = load_ots(staging_dir)
+    save_ots(
+        staging_dir,
+        replace(
+            state,
+            phase=Phase.CONTENT_UPGRADED,
+            content_proofs={digest: VerifiedProof(verified=True)},
+        ),
+    )
+
+    submitted = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "inventory",
+        "--object",
+        "obj:inv-stale",
+        "--allow-missing-metadata",
+    )
+    assert submitted.exit_code == 0, submitted.output
+    batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
+    batch = batch_state.load_batch(staging, batch_id)
+    inv_digest = batch.objects[0].digests[0]
+
+    store.save_metadata(
+        root_path,
+        "obj:inv-stale",
+        StagedMetadata(
+            message="changed after submit",
+            user=StagedUser(name="Alice", address="mailto:alice@example.org"),
+        ),
+    )
+    first = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "inventory",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+    assert first.exit_code == 0, first.output
+    batch = batch_state.load_batch(staging, batch_id)
+    ots_bytes = _ots_for(inv_digest)
+    sp_fake.advance_to_completed(batch.verify_jobs[0].job_id, {inv_digest: ots_bytes})
+    _grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+    _register_attested(btc, inv_digest)
+
+    upgraded = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "inventory",
+        "--batch",
+        batch_id,
+        "--upgrade",
+    )
+
+    assert upgraded.exit_code == 0, upgraded.output
+    batch = batch_state.load_batch(staging, batch_id)
+    assert batch.objects[0].status == "failed"
+    assert batch.objects[0].last_error == "regressed"
+    state = load_ots(staging_dir)
+    assert state.inventory_proof is not None
+    assert state.inventory_proof.proof.verified is False
 
 
 def test_batch_rm_refuses_non_terminal_without_force(

@@ -23,14 +23,18 @@ from ocfl_cli._io import err
 from ocfl_cli.archive.config import validate_digest_name
 from ocfl_cli.errors import (
     AttestationMismatchError,
+    BitcoinError,
     ConfigError,
     LockTimeoutError,
     MissingStagedMetadataError,
     PhaseError,
     ReorgDetectedError,
+    SimpleProofBadRequest,
     SimpleProofError,
+    SimpleProofTransient,
     StagingError,
 )
+from ocfl_cli.ots.simpleproof import _VERIFY_BATCH_CHUNK_SIZE
 from ocfl_cli.stage import batch as batch_state
 from ocfl_cli.stage import service, watch
 from ocfl_cli.stage.fsm import Phase
@@ -49,7 +53,7 @@ from ocfl_cli.stage.state import (
 )
 from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import DigestAlgorithm
-from ocfl_lib.update_plan import serialize
+from ocfl_lib.update_plan import deserialize, serialize
 
 if TYPE_CHECKING:
     from ocfl_cli._appctx import BtcRpcFactory, SpClientFactory
@@ -1837,6 +1841,578 @@ def _revalidate_inventory_submission(
     return {proof.digest}
 
 
+def _content_digest_verified(state: OtsState, digest: str) -> bool:
+    proof = state.content_proofs.get(digest)
+    return proof is not None and proof.verified
+
+
+def _inventory_digest_verified(state: OtsState, digest: str) -> bool:
+    proof = state.inventory_proof
+    return proof is not None and proof.digest == digest and proof.proof.verified
+
+
+def _batch_digest_verified(
+    *, target: batch_state.BatchTarget, state: OtsState, digest: str
+) -> bool:
+    if target == "content":
+        return _content_digest_verified(state, digest)
+    return _inventory_digest_verified(state, digest)
+
+
+def _covered_verify_digests(batch: batch_state.BatchFile) -> set[str]:
+    return {
+        digest
+        for job in batch.verify_jobs
+        if job.status in {"IN_PROGRESS", "COMPLETED"}
+        for digest in job.digests
+    }
+
+
+def _batch_unverified_submitted_digests(
+    *,
+    target: batch_state.BatchTarget,
+    store: StagingStore,
+    batch: batch_state.BatchFile,
+) -> tuple[str, ...]:
+    covered = _covered_verify_digests(batch)
+    pending: list[str] = []
+    seen: set[str] = set()
+    for row in batch.objects:
+        if row.status != "submitted":
+            continue
+        staging_dir = store.staging_path(batch.root_path, row.object_id)
+        with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+            state = load_ots(staging_dir)
+            for digest in row.digests:
+                if digest in seen or digest in covered:
+                    continue
+                if not _batch_digest_verified(
+                    target=target, state=state, digest=digest
+                ):
+                    pending.append(digest)
+                    seen.add(digest)
+    return tuple(pending)
+
+
+def _save_batch_upgrade(
+    staging_root: Path, batch: batch_state.BatchFile
+) -> batch_state.BatchFile:
+    batch = msgspec.structs.replace(batch, updated_at=now_utc_iso())
+    with batch_state.with_batch_lock(staging_root, batch.batch_id):
+        batch_state.save_batch(staging_root, batch)
+    return batch
+
+
+def _submit_batch_verify_jobs(
+    *,
+    target: batch_state.BatchTarget,
+    cfg,
+    store: StagingStore,
+    staging_root: Path,
+    batch: batch_state.BatchFile,
+    sp_factory,
+) -> batch_state.BatchFile:
+    sp = sp_factory(cfg)
+    digests = _batch_unverified_submitted_digests(
+        target=target, store=store, batch=batch
+    )
+    if not digests:
+        return batch
+    jobs = list(batch.verify_jobs)
+    for i in range(0, len(digests), _VERIFY_BATCH_CHUNK_SIZE):
+        chunk = tuple(digests[i : i + _VERIFY_BATCH_CHUNK_SIZE])
+        try:
+            job_id = sp.verify_batch(list(chunk), batch.category_id)
+        except SimpleProofTransient as e:
+            failed = batch_state.BatchVerifyJob(
+                job_id=f"failed-{len(jobs) + 1}",
+                digests=chunk,
+                status="FAILED",
+                submitted_at=now_utc_iso(),
+                attempts=1,
+                last_error=str(e),
+            )
+            jobs.append(failed)
+            rows = tuple(
+                msgspec.structs.replace(row, last_error="transient_sp_error")
+                if row.status == "submitted" and set(row.digests).intersection(chunk)
+                else row
+                for row in batch.objects
+            )
+            batch = msgspec.structs.replace(
+                batch, objects=rows, verify_jobs=tuple(jobs)
+            )
+            return _save_batch_upgrade(staging_root, batch)
+        jobs.append(
+            batch_state.BatchVerifyJob(
+                job_id=job_id,
+                digests=chunk,
+                status="IN_PROGRESS",
+                submitted_at=now_utc_iso(),
+                attempts=1,
+            )
+        )
+        batch = msgspec.structs.replace(batch, verify_jobs=tuple(jobs))
+        batch = _save_batch_upgrade(staging_root, batch)
+    return batch
+
+
+def _poll_batch_verify_jobs(
+    *, cfg, staging_root: Path, batch: batch_state.BatchFile, sp_factory
+) -> batch_state.BatchFile:
+    sp = sp_factory(cfg)
+    jobs: list[batch_state.BatchVerifyJob] = []
+    rows = list(batch.objects)
+    changed = False
+    for job in batch.verify_jobs:
+        if job.status != "IN_PROGRESS":
+            jobs.append(job)
+            continue
+        try:
+            poll = sp.poll_job(job.job_id)
+        except SimpleProofTransient as e:
+            jobs.append(
+                msgspec.structs.replace(
+                    job,
+                    status="FAILED",
+                    completed_at=now_utc_iso(),
+                    last_error=str(e),
+                )
+            )
+            affected = set(job.digests)
+            rows = [
+                msgspec.structs.replace(row, last_error="transient_sp_error")
+                if row.status == "submitted" and affected.intersection(row.digests)
+                else row
+                for row in rows
+            ]
+            changed = True
+            continue
+        except SimpleProofError as e:
+            jobs.append(
+                msgspec.structs.replace(
+                    job,
+                    status="FAILED",
+                    completed_at=now_utc_iso(),
+                    last_error=str(e),
+                )
+            )
+            affected = set(job.digests)
+            rows = [
+                msgspec.structs.replace(row, last_error="verify_job_failed")
+                if row.status == "submitted" and affected.intersection(row.digests)
+                else row
+                for row in rows
+            ]
+            changed = True
+            continue
+        status = (
+            poll.status
+            if poll.status in {"IN_PROGRESS", "COMPLETED", "FAILED", "EXPIRED"}
+            else "IN_PROGRESS"
+        )
+        updated = msgspec.structs.replace(
+            job,
+            status=status,
+            results_url=poll.results_url or job.results_url,
+            completed_at=(
+                now_utc_iso() if status in {"COMPLETED", "FAILED", "EXPIRED"} else None
+            ),
+            last_error=(
+                "verify_job_failed"
+                if status == "FAILED"
+                else "results_expired"
+                if status == "EXPIRED"
+                else job.last_error
+            ),
+        )
+        jobs.append(updated)
+        changed = changed or updated != job
+        if status == "FAILED":
+            affected = set(job.digests)
+            rows = [
+                msgspec.structs.replace(row, last_error="verify_job_failed")
+                if row.status == "submitted" and affected.intersection(row.digests)
+                else row
+                for row in rows
+            ]
+        if status == "EXPIRED":
+            affected = set(job.digests)
+            rows = [
+                msgspec.structs.replace(row, last_error="results_expired")
+                if row.status == "submitted" and affected.intersection(row.digests)
+                else row
+                for row in rows
+            ]
+    if not changed:
+        return batch
+    return _save_batch_upgrade(
+        staging_root,
+        msgspec.structs.replace(batch, objects=tuple(rows), verify_jobs=tuple(jobs)),
+    )
+
+
+def _content_row_upgraded(state: OtsState, row: batch_state.BatchObject) -> bool:
+    return all(_content_digest_verified(state, digest) for digest in row.digests)
+
+
+def _inventory_row_upgraded(state: OtsState, row: batch_state.BatchObject) -> bool:
+    return all(_inventory_digest_verified(state, digest) for digest in row.digests)
+
+
+def _ingest_batch_content_downloads(
+    *,
+    store: StagingStore,
+    sr,
+    batch: batch_state.BatchFile,
+    row: batch_state.BatchObject,
+    downloads: dict[str, bytes],
+    btc,
+    min_confirmations: int,
+) -> tuple[batch_state.BatchObject, bool]:
+    staging_dir = store.staging_path(batch.root_path, row.object_id)
+    with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+        state = load_ots(staging_dir)
+        inv = store.load_inventory(batch.root_path, row.object_id)
+        alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
+        head_state = {d: list(ps) for d, ps in inv.versions[inv.head].state.items()}
+        for digest in row.digests:
+            ots_bytes = downloads.get(digest)
+            if ots_bytes is None or _content_digest_verified(state, digest):
+                continue
+            state, inv = service._verify_and_ingest_digest(
+                digest,
+                ots_bytes,
+                state,
+                inv,
+                head_state,
+                alg,
+                btc=btc,
+                store=store,
+                root_path=batch.root_path,
+                object_id=row.object_id,
+                staging_dir=staging_dir,
+                min_confirmations=min_confirmations,
+            )
+        ready, _unverified_pending, _orphans = service._phase_advance_ready(
+            state, store, sr, batch.root_path, row.object_id
+        )
+        if ready and state.phase is not Phase.CONTENT_UPGRADED:
+            state = msgspec.structs.replace(state, phase=Phase.CONTENT_UPGRADED)
+            save_ots(staging_dir, state)
+        if _content_row_upgraded(state, row):
+            return (
+                msgspec.structs.replace(row, status="upgraded", last_error=None),
+                True,
+            )
+    return row, False
+
+
+def _ingest_batch_inventory_downloads(
+    *,
+    store: StagingStore,
+    sr,
+    batch: batch_state.BatchFile,
+    row: batch_state.BatchObject,
+    downloads: dict[str, bytes],
+    btc,
+    min_confirmations: int,
+) -> tuple[batch_state.BatchObject, bool]:
+    staging_dir = store.staging_path(batch.root_path, row.object_id)
+    with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+        state = load_ots(staging_dir)
+        proof = state.inventory_proof
+        if proof is None or proof.batch_id != batch.batch_id:
+            return (
+                msgspec.structs.replace(row, status="failed", last_error="regressed"),
+                True,
+            )
+        if not _inventory_plan_matches_submission(
+            store=store,
+            sr=sr,
+            batch=batch,
+            row=row,
+            staging_dir=staging_dir,
+            state=state,
+        ):
+            return (
+                msgspec.structs.replace(row, status="failed", last_error="regressed"),
+                True,
+            )
+        ots_bytes = downloads.get(proof.digest)
+        if ots_bytes is None or proof.proof.verified:
+            return row, False
+        state = service._verify_inventory_digest(
+            state, ots_bytes, btc, staging_dir, min_confirmations
+        )
+        if _inventory_row_upgraded(state, row):
+            return (
+                msgspec.structs.replace(row, status="upgraded", last_error=None),
+                True,
+            )
+    return row, False
+
+
+def _inventory_plan_matches_submission(
+    *,
+    store: StagingStore,
+    sr,
+    batch: batch_state.BatchFile,
+    row: batch_state.BatchObject,
+    staging_dir: Path,
+    state: OtsState,
+) -> bool:
+    proof = state.inventory_proof
+    if proof is None or proof.digest not in row.digests:
+        return False
+    path = plan_path(staging_dir)
+    if not path.is_file():
+        return False
+    prior_plan = deserialize(path.read_bytes())
+    prior_inv = prior_plan.new_inv.inventory
+    prior_created = prior_inv.versions[prior_inv.head].created
+    metadata = store.load_metadata(batch.root_path, row.object_id)
+    plan, _content_source = service.build_inventory_plan(
+        store,
+        sr,
+        batch.root_path,
+        row.object_id,
+        message=metadata.message,
+        user=service._version_user_from_staged(metadata),
+        created=prior_created,
+    )
+    if plan.new_inv.digest != proof.digest:
+        return False
+    path.write_bytes(serialize(plan))
+    return True
+
+
+def _ingest_batch_verify_jobs(
+    *,
+    target: batch_state.BatchTarget,
+    cfg,
+    store: StagingStore,
+    sr,
+    staging_root: Path,
+    batch: batch_state.BatchFile,
+    sp_factory,
+    btc_factory,
+) -> batch_state.BatchFile:
+    if cfg.bitcoin is None:
+        raise RuntimeError("bitcoin config missing")
+    sp = sp_factory(cfg)
+    btc = btc_factory(cfg)
+    min_confirmations = cfg.bitcoin.confirmations
+    rows = {row.object_id: row for row in batch.objects}
+    jobs = list(batch.verify_jobs)
+    changed = False
+    for index, job in enumerate(jobs):
+        if job.status != "COMPLETED" or job.results_url is None:
+            continue
+        try:
+            downloads = sp.download_results(job.results_url, set(job.digests))
+        except SimpleProofBadRequest as e:
+            jobs[index] = msgspec.structs.replace(
+                job, status="EXPIRED", last_error=str(e)
+            )
+            affected = set(job.digests)
+            rows = {
+                object_id: (
+                    msgspec.structs.replace(row, last_error="results_expired")
+                    if row.status == "submitted" and affected.intersection(row.digests)
+                    else row
+                )
+                for object_id, row in rows.items()
+            }
+            changed = True
+            continue
+        except SimpleProofTransient as e:
+            jobs[index] = msgspec.structs.replace(
+                job, status="FAILED", last_error=str(e)
+            )
+            affected = set(job.digests)
+            rows = {
+                object_id: (
+                    msgspec.structs.replace(row, last_error="transient_sp_error")
+                    if row.status == "submitted" and affected.intersection(row.digests)
+                    else row
+                )
+                for object_id, row in rows.items()
+            }
+            changed = True
+            continue
+        except AttestationMismatchError:
+            jobs[index] = msgspec.structs.replace(
+                job, status="COMPLETED", last_error="attestation_mismatch"
+            )
+            affected = set(job.digests)
+            rows = {
+                object_id: (
+                    msgspec.structs.replace(
+                        row, status="failed", last_error="attestation_mismatch"
+                    )
+                    if row.status == "submitted" and affected.intersection(row.digests)
+                    else row
+                )
+                for object_id, row in rows.items()
+            }
+            changed = True
+            continue
+        for row in list(rows.values()):
+            if row.status != "submitted" or not set(row.digests).intersection(
+                downloads
+            ):
+                continue
+            try:
+                if target == "content":
+                    new_row, row_changed = _ingest_batch_content_downloads(
+                        store=store,
+                        sr=sr,
+                        batch=batch,
+                        row=row,
+                        downloads=downloads,
+                        btc=btc,
+                        min_confirmations=min_confirmations,
+                    )
+                else:
+                    new_row, row_changed = _ingest_batch_inventory_downloads(
+                        store=store,
+                        sr=sr,
+                        batch=batch,
+                        row=row,
+                        downloads=downloads,
+                        btc=btc,
+                        min_confirmations=min_confirmations,
+                    )
+            except AttestationMismatchError:
+                new_row = msgspec.structs.replace(
+                    row, status="failed", last_error="attestation_mismatch"
+                )
+                row_changed = True
+            except ReorgDetectedError:
+                new_row = msgspec.structs.replace(
+                    row, status="failed", last_error="reorg_deeper_than_min_conf"
+                )
+                row_changed = True
+            except BitcoinError:
+                new_row = msgspec.structs.replace(row, last_error="transient_rpc_error")
+                row_changed = True
+            if row_changed:
+                rows[row.object_id] = new_row
+                changed = True
+    if not changed:
+        return batch
+    return _save_batch_upgrade(
+        staging_root,
+        msgspec.structs.replace(
+            batch,
+            objects=tuple(rows.values()),
+            verify_jobs=tuple(jobs),
+        ),
+    )
+
+
+def _reconcile_upgraded_batch_rows(
+    *,
+    target: batch_state.BatchTarget,
+    store: StagingStore,
+    staging_root: Path,
+    batch: batch_state.BatchFile,
+) -> batch_state.BatchFile:
+    rows: list[batch_state.BatchObject] = []
+    changed = False
+    for row in batch.objects:
+        if row.status != "submitted":
+            rows.append(row)
+            continue
+        staging_dir = store.staging_path(batch.root_path, row.object_id)
+        with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+            state = load_ots(staging_dir)
+            upgraded = (
+                _content_row_upgraded(state, row)
+                if target == "content"
+                else _inventory_row_upgraded(state, row)
+            )
+        if upgraded:
+            rows.append(
+                msgspec.structs.replace(row, status="upgraded", last_error=None)
+            )
+            changed = True
+        else:
+            rows.append(row)
+    if not changed:
+        return batch
+    return _save_batch_upgrade(
+        staging_root, msgspec.structs.replace(batch, objects=tuple(rows))
+    )
+
+
+def _drive_batch_upgrade(
+    ctx: typer.Context, *, target: batch_state.BatchTarget, batch_id: str | None
+) -> None:
+    if batch_id is None:
+        err("--upgrade requires --batch")
+        raise typer.Exit(2)
+    cfg = require_config(ctx)
+    require_simpleproof(ctx, cfg)
+    require_bitcoin(ctx, cfg)
+    store = _stage_store(ctx)
+    staging_root = store._root
+    batch = _load_batch_or_usage(ctx, staging_root, batch_id)
+    if batch.target != target:
+        err(f"batch {batch.batch_id} target is {batch.target!r}, not {target!r}")
+        raise typer.Exit(2)
+    sr, _fs = open_root(appctx.root(ctx))
+    with batch_state.with_driver_lease(
+        staging_root,
+        batch.batch_id,
+        command=(*_batch_command_tuple(target, batch.batch_id), "--upgrade"),
+    ):
+        _emit_batch_resumed(ctx, batch)
+        batch = _submit_batch_verify_jobs(
+            target=target,
+            cfg=cfg,
+            store=store,
+            staging_root=staging_root,
+            batch=batch,
+            sp_factory=appctx.sp_client_factory(ctx),
+        )
+        batch = _reconcile_upgraded_batch_rows(
+            target=target,
+            store=store,
+            staging_root=staging_root,
+            batch=batch,
+        )
+        batch = _poll_batch_verify_jobs(
+            cfg=cfg,
+            staging_root=staging_root,
+            batch=batch,
+            sp_factory=appctx.sp_client_factory(ctx),
+        )
+        batch = _ingest_batch_verify_jobs(
+            target=target,
+            cfg=cfg,
+            store=store,
+            sr=sr,
+            staging_root=staging_root,
+            batch=batch,
+            sp_factory=appctx.sp_client_factory(ctx),
+            btc_factory=appctx.btc_rpc_factory(ctx),
+        )
+        batch = _reconcile_upgraded_batch_rows(
+            target=target,
+            store=store,
+            staging_root=staging_root,
+            batch=batch,
+        )
+    if not appctx.json_mode(ctx):
+        counts = _batch_counts(batch)
+        typer.echo(
+            f"batch upgraded: {batch.batch_id} submitted={counts['submitted']} "
+            f"upgraded={counts['upgraded']} failed={counts['failed']}"
+        )
+
+
 def _emit_batch_created(ctx: typer.Context, batch: batch_state.BatchFile) -> None:
     data = {
         "event": "batch_created",
@@ -1988,8 +2564,18 @@ def timestamp_batch_content(
         int | None,
         typer.Option("--category", help="SimpleProof category for a new batch."),
     ] = None,
+    upgrade: Annotated[
+        bool,
+        typer.Option("--upgrade", help="Poll SP verify jobs and ingest proofs."),
+    ] = False,
 ) -> None:
     """Create or resume a content timestamping batch."""
+    if upgrade:
+        if object_ids or objects_file is not None or category is not None:
+            err("--upgrade is only supported with --batch")
+            raise typer.Exit(2)
+        _drive_batch_upgrade(ctx, target="content", batch_id=batch_id)
+        return
     _drive_batch_submit(
         ctx,
         target="content",
@@ -2027,8 +2613,18 @@ def timestamp_batch_inventory(
             help="Timestamp inventory even when staged metadata is incomplete.",
         ),
     ] = False,
+    upgrade: Annotated[
+        bool,
+        typer.Option("--upgrade", help="Poll SP verify jobs and ingest proofs."),
+    ] = False,
 ) -> None:
     """Create or resume an inventory timestamping batch."""
+    if upgrade:
+        if object_ids or objects_file is not None or category is not None:
+            err("--upgrade is only supported with --batch")
+            raise typer.Exit(2)
+        _drive_batch_upgrade(ctx, target="inventory", batch_id=batch_id)
+        return
     _drive_batch_submit(
         ctx,
         target="inventory",
