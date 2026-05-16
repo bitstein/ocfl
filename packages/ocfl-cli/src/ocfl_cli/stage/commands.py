@@ -964,7 +964,11 @@ def status(
 @stage_app.command()
 def commit(
     ctx: typer.Context,
-    object_id: Annotated[str, typer.Argument(help="Object ID.")],
+    object_id: Annotated[str | None, typer.Argument(help="Object ID.")] = None,
+    batch_id: Annotated[
+        str | None,
+        typer.Option("--batch", help="Commit every object in an inventory batch."),
+    ] = None,
     allow_missing_metadata: Annotated[
         bool,
         typer.Option(
@@ -974,6 +978,19 @@ def commit(
     ] = False,
 ) -> None:
     """Commit staged changes to the storage root."""
+    if (object_id is None) == (batch_id is None):
+        err("exactly one of OBJECT_ID or --batch is required")
+        raise typer.Exit(2)
+    if batch_id is not None:
+        if allow_missing_metadata:
+            err(
+                "--allow-missing-metadata is not supported with --batch; "
+                "commit those objects individually"
+            )
+            raise typer.Exit(2)
+        _drive_commit_batch(ctx, batch_id)
+        return
+    assert object_id is not None
     sr, fs = open_root(appctx.root(ctx))
     resolved = require_existing_staging(ctx, object_id)
     store = resolved.store
@@ -1219,6 +1236,38 @@ class BatchSummaryEventOutput(TypedDict):
     category_id: int
     root_path: str
     counts: BatchCountsOutput
+
+
+type CommitObjectEventName = Literal[
+    "object_committed",
+    "object_skipped",
+    "object_failed",
+]
+
+
+class CommitObjectEventOutput(TypedDict):
+    event: CommitObjectEventName
+    batch_id: str
+    target: batch_state.BatchTarget
+    object_id: str
+    reason: str | None
+    message: str | None
+
+
+class CommitCountsOutput(TypedDict):
+    committed: int
+    skipped: int
+    failed: int
+    total: int
+
+
+class CommitSummaryEventOutput(TypedDict):
+    event: Literal["summary"]
+    batch_id: str
+    target: batch_state.BatchTarget
+    category_id: int
+    root_path: str
+    counts: CommitCountsOutput
 
 
 class BatchCreatedEventOutput(TypedDict):
@@ -1726,6 +1775,179 @@ def _emit_batch_summary(ctx: typer.Context, batch: batch_state.BatchFile) -> Non
         "counts": _batch_counts(batch),
     }
     _emit_batch_event(ctx, event)
+
+
+def _commit_object_event(
+    *,
+    batch: batch_state.BatchFile,
+    object_id: str,
+    event: CommitObjectEventName,
+    reason: str | None = None,
+    message: str | None = None,
+) -> CommitObjectEventOutput:
+    return {
+        "event": event,
+        "batch_id": batch.batch_id,
+        "target": batch.target,
+        "object_id": object_id,
+        "reason": reason,
+        "message": message,
+    }
+
+
+def _commit_summary_event(
+    batch: batch_state.BatchFile, counts: CommitCountsOutput
+) -> CommitSummaryEventOutput:
+    return {
+        "event": "summary",
+        "batch_id": batch.batch_id,
+        "target": batch.target,
+        "category_id": batch.category_id,
+        "root_path": batch.root_path,
+        "counts": counts,
+    }
+
+
+def _emit_commit_event(
+    ctx: typer.Context, data: CommitObjectEventOutput | CommitSummaryEventOutput
+) -> None:
+    if appctx.json_mode(ctx):
+        typer.echo(json.dumps(data, separators=(",", ":")))
+        return
+    if data["event"] == "summary":
+        summary = cast("CommitSummaryEventOutput", data)
+        counts = summary["counts"]
+        typer.echo(
+            f"batch committed: {summary['batch_id']} committed={counts['committed']} "
+            f"skipped={counts['skipped']} failed={counts['failed']} "
+            f"total={counts['total']}"
+        )
+        return
+    object_id = data["object_id"]
+    if data["event"] == "object_committed":
+        typer.echo(f"{object_id}: committed")
+    elif data["event"] == "object_skipped":
+        typer.echo(f"{object_id}: skipped ({data['reason']})")
+    else:
+        typer.echo(f"{object_id}: failed ({data['reason']}): {data['message']}")
+
+
+def _commit_failure_reason(exc: Exception) -> str:
+    if isinstance(exc, AttestationMismatchError):
+        return "attestation_mismatch"
+    if isinstance(exc, PhaseError):
+        return "phase_error"
+    if isinstance(exc, MissingStagedMetadataError):
+        return "missing_metadata"
+    if isinstance(exc, service.StagingFileMissingError):
+        return "staging_file_missing"
+    if isinstance(exc, service.StagingFileChangedError):
+        return "staging_file_changed"
+    if isinstance(exc, service.CommitFailedError):
+        return "commit_failed"
+    if isinstance(exc, LockTimeoutError):
+        return "lock_contended"
+    raise TypeError(f"unsupported batch commit exception {type(exc).__name__}")
+
+
+def _drive_commit_batch(ctx: typer.Context, batch_id: str) -> None:
+    store = _stage_store(ctx)
+    staging_root = store._root
+    root_path = _resolve_root_path(ctx)
+    with batch_state.with_batch_lock(staging_root, batch_id):
+        batch = _load_batch_or_usage(ctx, staging_root, batch_id)
+        if batch.target != "inventory":
+            err(f"commit batches must target inventory; got {batch.target}")
+            raise typer.Exit(2)
+        if batch.root_path != root_path:
+            err(
+                f"batch {batch.batch_id} belongs to root {batch.root_path}; "
+                f"current root is {root_path}"
+            )
+            raise typer.Exit(2)
+        snapshot = tuple(
+            (row.object_id, row.status, row.skipped_reason) for row in batch.objects
+        )
+
+    sr, fs = open_root(appctx.root(ctx))
+    counts: CommitCountsOutput = {
+        "committed": 0,
+        "skipped": 0,
+        "failed": 0,
+        "total": len(snapshot),
+    }
+    failures = 0
+    for object_id, status, skipped_reason in snapshot:
+        staging_dir = store.staging_path(batch.root_path, object_id)
+        if not staging_dir.exists():
+            counts["skipped"] += 1
+            _emit_commit_event(
+                ctx,
+                _commit_object_event(
+                    batch=batch,
+                    object_id=object_id,
+                    event="object_skipped",
+                    reason="committed",
+                ),
+            )
+            continue
+        if status != "upgraded":
+            counts["skipped"] += 1
+            _emit_commit_event(
+                ctx,
+                _commit_object_event(
+                    batch=batch,
+                    object_id=object_id,
+                    event="object_skipped",
+                    reason=skipped_reason or status,
+                ),
+            )
+            continue
+        obj = sr.get_object(object_id)
+        try:
+            service.commit_ots(
+                store=store,
+                fs=fs,
+                obj_dir=obj._path,
+                root_path=batch.root_path,
+                object_id=object_id,
+                staging_dir=staging_dir,
+                allow_missing_metadata=False,
+            )
+        except (
+            AttestationMismatchError,
+            PhaseError,
+            MissingStagedMetadataError,
+            service.StagingFileMissingError,
+            service.StagingFileChangedError,
+            service.CommitFailedError,
+            LockTimeoutError,
+        ) as e:
+            counts["failed"] += 1
+            failures += 1
+            _emit_commit_event(
+                ctx,
+                _commit_object_event(
+                    batch=batch,
+                    object_id=object_id,
+                    event="object_failed",
+                    reason=_commit_failure_reason(e),
+                    message=str(e),
+                ),
+            )
+            continue
+        counts["committed"] += 1
+        _emit_commit_event(
+            ctx,
+            _commit_object_event(
+                batch=batch,
+                object_id=object_id,
+                event="object_committed",
+            ),
+        )
+    _emit_commit_event(ctx, _commit_summary_event(batch, counts))
+    if failures:
+        raise typer.Exit(1)
 
 
 def _read_objects_file(path: Path) -> list[str]:
