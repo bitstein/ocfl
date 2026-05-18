@@ -2755,6 +2755,8 @@ def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
     )
 
     assert result.exit_code == 130, result.output
+    assert "batch submitted:" in result.output
+    assert "waiting for Bitcoin blocks" in result.output
     assert subscribers == 1
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)

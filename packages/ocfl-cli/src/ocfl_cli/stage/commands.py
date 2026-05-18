@@ -1860,6 +1860,17 @@ def _emit_batch_watch_block(
         typer.echo(f"  {transition}")
 
 
+def _emit_batch_watch_waiting(ctx: typer.Context, batch: batch_state.BatchFile) -> None:
+    if appctx.json_mode(ctx):
+        return
+    counts = _batch_counts(batch)
+    typer.echo(
+        f"batch submitted: {batch.batch_id} submitted={counts['submitted']} "
+        f"upgraded={counts['upgraded']} failed={counts['failed']}; "
+        "waiting for Bitcoin blocks"
+    )
+
+
 def _commit_object_event(
     *,
     batch: batch_state.BatchFile,
@@ -3956,6 +3967,7 @@ def _drive_batch_watch(
             if done:
                 return
 
+            _emit_batch_watch_waiting(ctx, batch)
             btc = appctx.btc_rpc_factory(ctx)(cfg)
             stream = watch._get_zmq_subscriber(cfg)
             stream_cm = cast(
