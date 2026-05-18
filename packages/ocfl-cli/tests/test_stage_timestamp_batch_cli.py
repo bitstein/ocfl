@@ -93,6 +93,39 @@ def test_fixed_batch_reasons_are_canonicalized_through_helper() -> None:
     ] == list(stage_commands._FIXED_BATCH_REASONS)
 
 
+@pytest.mark.parametrize("status", ["PENDING", "PROCESSING"])
+def test_batch_verify_active_statuses_include_simpleproof_v2_states(
+    status: batch_state.BatchVerifyJobStatus,
+) -> None:
+    digest = "a" * 64
+    batch = BatchFile(
+        batch_id="batch-v2-statuses",
+        target="content",
+        root_path="/repo",
+        category_id=641,
+        created_at="2026-05-12T10:00:00Z",
+        updated_at="2026-05-12T10:00:00Z",
+        objects=(
+            BatchObject(
+                object_id="obj:v2-statuses",
+                status="submitted",
+                digests=(digest,),
+            ),
+        ),
+        verify_jobs=(
+            BatchVerifyJob(
+                job_id=f"job-{status.lower()}",
+                digests=(digest,),
+                status=status,
+                submitted_at="2026-05-12T10:00:00Z",
+            ),
+        ),
+    )
+
+    assert stage_commands._verify_job_covers(batch, batch.objects[0])
+    assert stage_commands._covered_verify_digests(batch) == {digest}
+
+
 def _assert_z_timestamp(value: str) -> None:
     assert value.endswith("Z")
     assert "+00:00" not in value
@@ -608,6 +641,9 @@ def test_batch_inventory_new_batch_submits_and_mirrors_record_id(
     updated = load_ots(staging_dir)
     assert updated.phase is Phase.INVENTORY_PENDING
     assert updated.inventory_proof is not None
+    assert batch.objects[0].digests == (updated.inventory_proof.digest,)
+    assert batch.submissions[0].digests == (updated.inventory_proof.digest,)
+    assert sp_fake._submissions[0].digests == (updated.inventory_proof.digest,)
     assert updated.inventory_proof.batch_id == batch_id
     assert updated.inventory_proof.record_id == "rec-1"
 
@@ -2724,6 +2760,63 @@ def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
     batch = batch_state.load_batch(staging, batch_id)
     assert len(batch.verify_jobs) == 1
     assert batch.verify_jobs[0].status == "IN_PROGRESS"
+
+
+def test_batch_watch_human_output_reports_observed_blocks(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    btc = FakeBitcoinRPC()
+    _inject_fake_sp(runner, sp_fake)
+    _inject_fake_btc(runner, btc)
+    from ocfl_cli.stage import watch as stage_watch
+
+    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+
+    class _OneBlockStream:
+        seen = False
+
+        def wait_for_block(self, timeout_ms: int) -> bytes | None:
+            if not self.seen:
+                self.seen = True
+                btc.extend(1)
+                return bytes.fromhex(btc.getblockhash(btc.tip_height))
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        stage_watch, "_get_zmq_subscriber", lambda *a, **kw: _OneBlockStream()
+    )
+    staging = tmp_path / "staging"
+    _new_ots_with_files(
+        runner,
+        empty_sha256_root,
+        staging,
+        "obj:batch-watch-block",
+        ("a.txt", b"alpha"),
+    )
+
+    result = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "timestamp",
+        "batch",
+        "content",
+        "--object",
+        "obj:batch-watch-block",
+        "--watch",
+    )
+
+    assert result.exit_code == 130, result.output
+    assert f"block 1 {stage_commands._short_block_hash(btc.getblockhash(1))}" in (
+        result.output
+    )
+    assert "submitted=1 upgraded=0 failed=0" in result.output
+    assert "verified=0/1 jobs=1 in_progress" in result.output
 
 
 def test_batch_watch_polls_during_quiet_periods(

@@ -69,7 +69,8 @@ class VerifyJob(msgspec.Struct, frozen=True):
 
     job_id: str
     digests: tuple[str, ...]
-    status: str  # "IN_PROGRESS" | "COMPLETED" | "FAILED" | "EXPIRED"
+    # Canonical SimpleProof statuses; unknown future statuses remain loadable.
+    status: str
     total_hashes: int | None = None
     verified_hashes: int | None = None
     created_at: str | None = None
@@ -84,7 +85,7 @@ class VerifyJob(msgspec.Struct, frozen=True):
 
 
 VERIFY_JOB_STATUSES = frozenset(
-    {"IN_PROGRESS", "PROCESSING", "COMPLETED", "FAILED", "EXPIRED"}
+    {"PENDING", "IN_PROGRESS", "PROCESSING", "COMPLETED", "FAILED", "EXPIRED"}
 )
 
 

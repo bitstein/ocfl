@@ -268,6 +268,29 @@ class TestTypedDecoding:
 
         assert loaded.verify_jobs == state.verify_jobs
 
+    def test_pending_verify_job_status_is_canonical(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ):
+        digest = _bare_hex("a")
+        state = OtsState(
+            schema_version=1,
+            phase=Phase.CONTENT_PENDING,
+            category_id=641,
+            pending_digests=(digest,),
+            verify_jobs=(
+                VerifyJob(job_id="job-pending", digests=(digest,), status="PENDING"),
+            ),
+        )
+
+        save_ots(tmp_path, state)
+        with caplog.at_level(logging.WARNING):
+            loaded = load_ots(tmp_path)
+
+        assert loaded.verify_jobs == state.verify_jobs
+        assert not any(
+            "unknown verify job status" in rec.getMessage() for rec in caplog.records
+        )
+
     def test_unknown_verify_job_status_polls_as_in_progress(self):
         digest = _bare_hex("a")
         state = OtsState(

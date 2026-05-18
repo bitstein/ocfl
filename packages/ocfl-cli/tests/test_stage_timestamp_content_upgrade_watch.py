@@ -245,6 +245,72 @@ def _seed_completed_verify_job(
 
 
 class TestWatchLoopAdvancesOnBlock:
+    def test_watch_exits_immediately_when_already_upgraded(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+        from ocfl_cli.stage import watch as stage_watch
+
+        monkeypatch.setattr(
+            stage_watch,
+            "_get_zmq_subscriber",
+            lambda *a, **kw: pytest.fail("already-upgraded watch subscribed to ZMQ"),
+            raising=True,
+        )
+
+        staging = tmp_path / "staging"
+        sd, _paths, digests = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:watch-done", ("a.txt", b"alpha")
+        )
+        d = digests["a.txt"]
+        _force_content_pending(sd, (d,))
+        ots_bytes = _ots_for(d)
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        _register_attested(btc_fake.rpc, d)
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:watch-done",
+                "--upgrade",
+            ),
+        )
+        assert r.exit_code == 0, r.output
+        assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:watch-done",
+                "--upgrade",
+                "--watch",
+            ),
+        )
+
+        assert r.exit_code == 0, r.output
+        assert "Watch:" in r.output
+        assert "Object: obj:watch-done" in r.output
+        assert "Phase: content-upgraded" in r.output
+        assert "Next: stage timestamp inventory" in r.output
+        assert "Waiting for Bitcoin blocks" not in r.output
+
     def test_watch_sleeps_after_block_before_upgrade(
         self,
         runner: CliRunner,

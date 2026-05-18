@@ -733,12 +733,16 @@ def _plural(n: int, singular: str, plural: str | None = None) -> str:
 
 
 def _render_watch_start(
-    object_id: str, jobs: tuple[service.JobProgress, ...] = ()
+    object_id: str,
+    jobs: tuple[service.JobProgress, ...] = (),
+    *,
+    waiting: bool = True,
 ) -> None:
     _render_status_section("Watch")
     typer.echo(f"  Object: {object_id}")
     _render_sp_submit_warning(jobs)
-    typer.echo("  Waiting for Bitcoin blocks")
+    if waiting:
+        typer.echo("  Waiting for Bitcoin blocks")
 
 
 def _short_job_id(job_id: str) -> str:
@@ -829,6 +833,11 @@ def _render_sp_submit_warning(jobs: tuple[service.JobProgress, ...]) -> None:
 
 
 def _render_watch_progress(kind: str, data: dict, *, next_action: str) -> None:
+    if kind == "already_advanced":
+        _render_status_section("Workflow", leading_blank=True)
+        typer.echo(f"  Phase: {data['phase']}")
+        typer.echo(f"  Next: {next_action}")
+        return
     if kind == "block":
         _render_status_section("Block", leading_blank=True)
         typer.echo(f"  Height: {data['height']}")
@@ -1638,7 +1647,8 @@ def _verify_job_covers(
 ) -> bool:
     wanted = set(row.digests)
     return any(
-        job.status == "IN_PROGRESS" and wanted.issubset(set(job.digests))
+        job.status in batch_state.BATCH_VERIFY_ACTIVE_STATUSES
+        and wanted.issubset(set(job.digests))
         for job in batch.verify_jobs
     )
 
@@ -1775,6 +1785,79 @@ def _emit_batch_summary(ctx: typer.Context, batch: batch_state.BatchFile) -> Non
         "counts": _batch_counts(batch),
     }
     _emit_batch_event(ctx, event)
+
+
+def _batch_verified_digest_counts(
+    staging_root: Path, batch: batch_state.BatchFile
+) -> tuple[int, int]:
+    verified = 0
+    total = 0
+    for row in batch.objects:
+        if row.status == "skipped":
+            continue
+        total += len(row.digests)
+        state = _load_object_ots(staging_root, batch, row.object_id)
+        verified += _verified_count_for_row(batch, row, state)
+    return verified, total
+
+
+def _batch_verify_job_status_counts(batch: batch_state.BatchFile) -> str:
+    if not batch.verify_jobs:
+        return "none"
+    counts: dict[str, int] = dict.fromkeys(batch_state.BATCH_VERIFY_JOB_STATUSES, 0)
+    for job in batch.verify_jobs:
+        counts[job.status] += 1
+    return " ".join(
+        f"{count} {status.lower()}" for status, count in counts.items() if count
+    )
+
+
+def _batch_verify_job_transitions(
+    before: batch_state.BatchFile, after: batch_state.BatchFile
+) -> tuple[str, ...]:
+    prior = {job.job_id: job for job in before.verify_jobs}
+    transitions: list[str] = []
+    for job in after.verify_jobs:
+        old = prior.get(job.job_id)
+        if old is None:
+            transitions.append(f"job {_short_job_id(job.job_id)}: new {job.status}")
+        elif old.status != job.status:
+            transitions.append(
+                f"job {_short_job_id(job.job_id)}: {old.status} -> {job.status}"
+            )
+    return tuple(transitions)
+
+
+def _short_block_hash(block_hash: str) -> str:
+    if len(block_hash) <= 12:
+        return block_hash
+    return block_hash[-12:]
+
+
+def _emit_batch_watch_block(
+    ctx: typer.Context,
+    *,
+    staging_root: Path,
+    before: batch_state.BatchFile,
+    after: batch_state.BatchFile,
+    height: int,
+    block_hash: str,
+    reverified: bool,
+) -> None:
+    if appctx.json_mode(ctx):
+        return
+    counts = _batch_counts(after)
+    verified, total = _batch_verified_digest_counts(staging_root, after)
+    jobs = _batch_verify_job_status_counts(after)
+    reverify_text = " reverified" if reverified else ""
+    typer.echo(
+        f"block {height} {_short_block_hash(block_hash)}: "
+        f"submitted={counts['submitted']} "
+        f"upgraded={counts['upgraded']} failed={counts['failed']} "
+        f"verified={verified}/{total} jobs={jobs}{reverify_text}"
+    )
+    for transition in _batch_verify_job_transitions(before, after):
+        typer.echo(f"  {transition}")
 
 
 def _commit_object_event(
@@ -2898,7 +2981,7 @@ def _covered_verify_digests(batch: batch_state.BatchFile) -> set[str]:
     return {
         digest
         for job in batch.verify_jobs
-        if job.status == "IN_PROGRESS"
+        if job.status in batch_state.BATCH_VERIFY_ACTIVE_STATUSES
         or (
             job.status == "COMPLETED"
             and job.last_error != _fixed_batch_reason("sp_partial_results")
@@ -3006,7 +3089,7 @@ def _poll_batch_verify_jobs(
     rows = list(batch.objects)
     changed = False
     for job in batch.verify_jobs:
-        if job.status != "IN_PROGRESS":
+        if job.status not in batch_state.BATCH_VERIFY_ACTIVE_STATUSES:
             jobs.append(job)
             continue
         try:
@@ -3053,7 +3136,7 @@ def _poll_batch_verify_jobs(
             continue
         status = (
             poll.status
-            if poll.status in {"IN_PROGRESS", "COMPLETED", "FAILED", "EXPIRED"}
+            if poll.status in batch_state.BATCH_VERIFY_JOB_STATUSES
             else "IN_PROGRESS"
         )
         updated = msgspec.structs.replace(
@@ -3062,7 +3145,7 @@ def _poll_batch_verify_jobs(
             results_url=poll.results_url or job.results_url,
             completed_at=(
                 batch_state.now_utc_iso_z()
-                if status in {"COMPLETED", "FAILED", "EXPIRED"}
+                if status in batch_state.BATCH_VERIFY_TERMINAL_STATUSES
                 else None
             ),
             last_error=(
@@ -3921,7 +4004,17 @@ def _drive_batch_watch(
                             before=before_reverify,
                             after=batch,
                         )
+                    before_block_upgrade = batch
                     batch, done = run_watch_upgrade_pass(batch)
+                    _emit_batch_watch_block(
+                        ctx,
+                        staging_root=staging_root,
+                        before=before_block_upgrade,
+                        after=batch,
+                        height=info.height,
+                        block_hash=info.best_block_hash,
+                        reverified=_height_jumped or _tip_changed_at_stable,
+                    )
                     if done:
                         return
     except KeyboardInterrupt:
@@ -4369,9 +4462,11 @@ def timestamp_content(
     sr, _fs = open_root(appctx.root(ctx))
 
     if watch_flag:
+        state = load_ots(resolved.staging_dir)
         _render_watch_start(
             object_id,
-            service.compute_job_progress(load_ots(resolved.staging_dir)),
+            service.compute_job_progress(state),
+            waiting=state.phase is not Phase.CONTENT_UPGRADED,
         )
         try:
             exit_code = watch._watch_loop(
@@ -4519,9 +4614,11 @@ def timestamp_inventory(
     sr, _fs = open_root(appctx.root(ctx))
 
     if watch_flag:
+        state = load_ots(resolved.staging_dir)
         _render_watch_start(
             object_id,
-            service.compute_job_progress(load_ots(resolved.staging_dir)),
+            service.compute_job_progress(state),
+            waiting=state.phase is not Phase.INVENTORY_UPGRADED,
         )
         try:
             exit_code = watch._inventory_watch_loop(

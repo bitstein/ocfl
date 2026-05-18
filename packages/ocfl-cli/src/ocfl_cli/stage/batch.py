@@ -34,7 +34,14 @@ DRIVER_LEASE_HEARTBEAT_SECONDS = 60
 BatchTarget = Literal["content", "inventory"]
 BatchObjectStatus = Literal["prepared", "submitted", "upgraded", "failed", "skipped"]
 BatchSubmissionStatus = Literal["pending", "submitted", "failed"]
-BatchVerifyJobStatus = Literal["IN_PROGRESS", "COMPLETED", "FAILED", "EXPIRED"]
+BatchVerifyJobStatus = Literal[
+    "PENDING", "IN_PROGRESS", "PROCESSING", "COMPLETED", "FAILED", "EXPIRED"
+]
+BATCH_VERIFY_ACTIVE_STATUSES = frozenset({"PENDING", "IN_PROGRESS", "PROCESSING"})
+BATCH_VERIFY_JOB_STATUSES = frozenset(
+    {*BATCH_VERIFY_ACTIVE_STATUSES, "COMPLETED", "FAILED", "EXPIRED"}
+)
+BATCH_VERIFY_TERMINAL_STATUSES = frozenset({"COMPLETED", "FAILED", "EXPIRED"})
 
 
 class BatchObject(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

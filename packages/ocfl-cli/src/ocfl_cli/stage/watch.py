@@ -76,6 +76,17 @@ def _watch_loop(
     last_height: int | None = None
     last_tip_hash: str | None = None
     prior_jobs: tuple[service.JobProgress, ...] = ()
+    state = load_ots(staging_dir)
+    if state.phase is Phase.CONTENT_UPGRADED:
+        if progress is not None:
+            progress(
+                "already_advanced",
+                {
+                    "phase": state.phase.value,
+                    "jobs": service.compute_job_progress(state),
+                },
+            )
+        return 0
     stream = _get_zmq_subscriber(cfg)
     # Real BitcoinZmqSubscriber is a context manager (closes the socket on
     # exit); test fakes implement only `wait_for_block`. nullcontext bridges
@@ -176,6 +187,17 @@ def _inventory_watch_loop(
     last_height: int | None = None
     last_tip_hash: str | None = None
     prior_jobs: tuple[service.JobProgress, ...] = ()
+    state = load_ots(staging_dir)
+    if state.phase is Phase.INVENTORY_UPGRADED:
+        if progress is not None:
+            progress(
+                "already_advanced",
+                {
+                    "phase": state.phase.value,
+                    "jobs": service.compute_job_progress(state),
+                },
+            )
+        return 0
     stream = _get_zmq_subscriber(cfg)
     stream_cm = cast(
         "contextlib.AbstractContextManager[HashBlockStream]",
