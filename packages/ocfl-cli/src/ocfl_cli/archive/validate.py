@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from typing import TYPE_CHECKING, Annotated, NoReturn
+from typing import TYPE_CHECKING, Annotated, NoReturn, cast
 
 import typer
 
@@ -22,14 +22,20 @@ from ocfl_cli.ots.bitcoin import (
     VerifiedAttestation,
     verify_attestation,
 )
-from ocfl_lib import OcflError, ValidationResult, validate_object, validate_root
+from ocfl_lib import (
+    OcflError,
+    StorageRoot,
+    ValidationResult,
+    validate_object,
+    validate_root,
+)
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.validation.result import ValidationError
 
 if TYPE_CHECKING:
     from ocfl_cli._appctx import BtcRpcFactory
     from ocfl_cli.config import Config
-    from ocfl_lib.fs.protocols import FS
+    from ocfl_lib.fs.protocols import FS, FileWalker
 
 
 _OTS_EXT_NAME = "NNNN-ots-timestamps"
@@ -83,13 +89,30 @@ def _validate_root(
     suppress: frozenset[str],
 ) -> None:
     path = resolve_root(appctx.root(ctx))
+    emit_progress = _should_emit_progress(ctx)
+    _emit(ctx, f"Validating OCFL storage root: {path}")
+    _emit(ctx, "Checking root structure (NAMASTE, layout, extensions)...")
+    _emit(ctx, "Walking object hierarchy...")
     try:
         fs = make_fs(path)
     except (OcflError, OSError) as e:
         _fail(str(e), json_mode)
 
+    object_ids = _object_ids_by_path(fs) if emit_progress else {}
+    if emit_progress:
+        _style.echo(_style.dim(f"  Found {len(object_ids)} objects"), err=True)
+    digest_status = "content digests enabled" if check_digests else "digests skipped"
+    _emit(ctx, f"Validating objects ({digest_status})...")
+
     result = ValidationResult()
     summary = validate_root(fs, "", result, check_digests=check_digests)
+    _emit_root_object_results(
+        emit_progress,
+        fs,
+        object_ids,
+        summary.object_errors,
+        truncated=summary.truncated,
+    )
     _merge_object_results(result, summary.object_errors)
     _output_result(result, json_mode, suppress)
     if not result.is_valid:
@@ -114,12 +137,24 @@ def _validate_object(
     except OcflError as e:
         _fail(str(e), json_mode)
 
+    _emit(ctx, f"Validating object: {object_id}")
+    _emit(ctx, "Checking OCFL structure...")
+    if check_digests:
+        _emit(ctx, "Verifying content digests...")
+
     result = ValidationResult()
     validate_object(fs, obj_path, result, check_digests=check_digests)
 
     if verify_ots and _ots_extension_present(fs, obj_path):
         cfg = appctx.config(ctx)
-        _verify_ots_walk(fs, obj_path, cfg, result, appctx.btc_rpc_factory(ctx))
+        _verify_ots_walk(
+            fs,
+            obj_path,
+            cfg,
+            result,
+            appctx.btc_rpc_factory(ctx),
+            emit_progress=_should_emit_progress(ctx),
+        )
 
     _output_result(result, json_mode, suppress)
     if not result.is_valid:
@@ -137,6 +172,8 @@ def _verify_ots_walk(
     cfg: Config | None,
     result: ValidationResult,
     btc_factory: BtcRpcFactory,
+    *,
+    emit_progress: bool = False,
 ) -> None:
     """Walk extension `inventory.json.{vkey}.ots` files through ``verify_attestation``.
 
@@ -161,6 +198,15 @@ def _verify_ots_walk(
     rpc = btc_factory(cfg)
     min_confs = cfg.bitcoin.confirmations
     ext_root = _join(obj_path, "extensions", _OTS_EXT_NAME)
+    if emit_progress:
+        version_word = "version" if len(versions) == 1 else "versions"
+        _style.echo(
+            _style.dim(
+                "Verifying OTS attestations "
+                f"({len(versions)} {version_word}, min {min_confs} confirmations)..."
+            ),
+            err=True,
+        )
 
     for vkey in versions:
         ots_rel = f"inventory.json.{vkey}.ots"
@@ -170,6 +216,7 @@ def _verify_ots_walk(
             ots_bytes = fs_utils.read_all(fs, ots_path_full)
             vinv_bytes = fs_utils.read_all(fs, vinv_path)
         except OSError:
+            _emit_ots_result(emit_progress, vkey, ots_rel, "skipped (missing files)")
             continue
 
         expected = hashlib.sha256(vinv_bytes).digest()
@@ -182,16 +229,29 @@ def _verify_ots_walk(
                 min_confirmations=min_confs,
             )
         except (AttestationMismatchError, ReorgDetectedError) as exc:
+            _emit_ots_result(emit_progress, vkey, ots_rel, f"failed ({exc})")
             result.error("E906", path=ots_rel, reason=str(exc))
             continue
 
         match outcome:
-            case VerifiedAttestation():
+            case VerifiedAttestation(confirmations=confirmations, block_height=height):
+                _emit_ots_result(
+                    emit_progress,
+                    vkey,
+                    ots_rel,
+                    f"confirmed ({confirmations} confs, block {height})",
+                )
                 continue
             case PendingVerification(reason=PendingReason.PENDING_ATTESTATION):
+                _emit_ots_result(
+                    emit_progress, vkey, ots_rel, "pending (pending_attestation)"
+                )
                 # Already covered by W902 from structural validation.
                 continue
             case PendingVerification(reason=reason):
+                _emit_ots_result(
+                    emit_progress, vkey, ots_rel, f"pending ({reason.value})"
+                )
                 result.warning("W903", path=ots_rel, reason=reason.value)
 
 
@@ -220,6 +280,81 @@ def _fail(msg: str, json_mode: bool) -> NoReturn:
     else:
         err(msg)
     raise typer.Exit(1)
+
+
+def _should_emit_progress(ctx: typer.Context) -> bool:
+    if appctx.json_mode(ctx):
+        return False
+    typed = appctx.app_ctx(ctx)
+    return appctx.verbose(ctx) and not typed.quiet
+
+
+def _emit(ctx: typer.Context, msg: str) -> None:
+    if _should_emit_progress(ctx):
+        _style.echo(_style.dim(msg), err=True)
+
+
+def _object_ids_by_path(fs: FS) -> dict[str, str]:
+    try:
+        root = StorageRoot(cast("FileWalker", fs))
+    except Exception:
+        return {}
+
+    object_ids: dict[str, str] = {}
+    for obj_path in root.object_paths():
+        object_ids[obj_path] = _read_object_id(fs, obj_path)
+    return object_ids
+
+
+def _read_object_id(fs: FS, obj_path: str) -> str:
+    try:
+        inv_data = json.loads(fs_utils.read_all(fs, _join(obj_path, "inventory.json")))
+    except OSError:
+        return obj_path
+    except ValueError:
+        return obj_path
+    if isinstance(inv_data, dict) and isinstance(inv_data.get("id"), str):
+        return inv_data["id"]
+    return obj_path
+
+
+def _emit_root_object_results(
+    emit_progress: bool,
+    fs: FS,
+    object_ids: dict[str, str],
+    object_errors: list[tuple[str, ValidationResult]],
+    *,
+    truncated: bool = False,
+) -> None:
+    if not emit_progress:
+        return
+    errors_by_path = {obj_path: obj_result for obj_path, obj_result in object_errors}
+    for obj_path, object_id in object_ids.items():
+        obj_result = errors_by_path.get(obj_path)
+        if obj_result is None:
+            if truncated:
+                _style.echo(
+                    f"  {object_id}: not validated (max errors reached)", err=True
+                )
+                continue
+            _style.echo(f"  {object_id}: ok", err=True)
+            continue
+        count = len(obj_result.errors)
+        suffix = "error" if count == 1 else "errors"
+        _style.echo(f"  {object_id}: {count} {suffix}", err=True)
+    for obj_path, obj_result in errors_by_path.items():
+        if obj_path in object_ids:
+            continue
+        count = len(obj_result.errors)
+        suffix = "error" if count == 1 else "errors"
+        _style.echo(f"  {_read_object_id(fs, obj_path)}: {count} {suffix}", err=True)
+
+
+def _emit_ots_result(
+    emit_progress: bool, version: str, ots_rel: str, outcome: str
+) -> None:
+    if emit_progress:
+        _style.echo(f"  {version} ({ots_rel}): {outcome}", err=True)
 
 
 def _merge_object_results(

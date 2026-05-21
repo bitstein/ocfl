@@ -204,6 +204,10 @@ def json_mode(ctx: typer.Context) -> bool:
     return cast("bool", _required(ctx, "json"))
 
 
+def verbose(ctx: typer.Context) -> bool:
+    return cast("bool", _required(ctx, "verbose"))
+
+
 def sp_client_factory(ctx: typer.Context) -> SpClientFactory:
     return cast("SpClientFactory", _required(ctx, "sp_client_factory"))
 

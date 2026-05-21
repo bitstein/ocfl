@@ -17,6 +17,7 @@ from ocfl_cli._appctx import (
     json_mode,
     root,
     sp_client_factory,
+    verbose,
 )
 from ocfl_cli.config import ArchiveConfig, Config
 
@@ -75,10 +76,14 @@ def test_app_ctx_reports_malformed_ctx_obj() -> None:
 
 
 def test_single_value_accessors_only_require_their_key() -> None:
-    ctx = typer.Context(click.Command("probe"), obj={"root": "/archive", "json": True})
+    ctx = typer.Context(
+        click.Command("probe"),
+        obj={"root": "/archive", "json": True, "verbose": True},
+    )
 
     assert root(ctx) == "/archive"
     assert json_mode(ctx) is True
+    assert verbose(ctx) is True
 
 
 def test_command_path_strips_click_root_program_name() -> None:

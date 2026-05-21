@@ -312,6 +312,59 @@ class TestNoVerifyOtsSkipsWalk:
         codes = {e["code"] for e in data["errors"]}
         assert "E906" not in codes
 
+    def test_verbose_omits_ots_section_when_no_verify_ots(
+        self,
+        runner: CliRunner,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+
+        r = runner.invoke(
+            app,
+            [
+                "--root",
+                str(root),
+                "-v",
+                "validate",
+                "obj-test",
+                "--no-verify-ots",
+            ],
+        )
+        assert r.exit_code == 0, r.output
+        assert "Verifying OTS attestations" not in r.stderr
+
+
+class TestVerboseVerifyOts:
+    def test_verbose_emits_per_version_ots_results(
+        self,
+        runner: CliRunner,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        digest_hex = hashlib.sha256(b"hello world").hexdigest()
+        _register_attested(btc_fake.rpc, digest_hex)
+        inv_path = root / "obj-test" / "inventory.json"
+        inv_digest_hex = hashlib.sha256(inv_path.read_bytes()).hexdigest()
+        _register_attested(btc_fake.rpc, inv_digest_hex)
+
+        r = runner.invoke(app, ["--root", str(root), "-v", "validate", "obj-test"])
+
+        assert r.exit_code == 0, r.output
+        assert "Verifying OTS attestations (1 version, min 3 confirmations)" in r.stderr
+        assert "  v1 (inventory.json.v1.ots): confirmed" in r.stderr
+        assert "block 800000" in r.stderr
+
 
 # =========================================================================== #
 # Test 3: missing [bitcoin] config + default-on → ConfigError, exit 6
