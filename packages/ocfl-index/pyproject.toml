@@ -3,6 +3,7 @@ name = "ocfl-index"
 version = "0.1.0"
 description = "SQLite cache of an OCFL storage root for projector consumption"
 requires-python = ">=3.14"
+license = "GPL-3.0-or-later"
 dependencies = [
     "ocfl-lib",
     "python-magic>=0.4",

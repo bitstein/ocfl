@@ -3,6 +3,7 @@ name = "ocfl-cli"
 version = "0.1.0"
 description = "CLI for managing an OCFL archive"
 requires-python = ">=3.14"
+license = "GPL-3.0-or-later"
 dependencies = [
     "filelock>=3.13",
     "httpx2>=2.0",
