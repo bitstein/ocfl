@@ -8,6 +8,7 @@ under a ZMQ-driven block loop.
 """
 
 import hashlib
+import json
 import logging
 import tempfile
 from contextlib import contextmanager
@@ -69,6 +70,17 @@ from ocfl_lib.update_plan import (
     revert_plan,
     serialize,
 )
+
+_OTS_EXTENSION_NAME = "NNNN-ots-timestamps"
+_OTS_EXTENSION_CONFIG_BYTES = json.dumps(
+    {
+        "extensionName": _OTS_EXTENSION_NAME,
+        "timestampInventory": True,
+        "timestampContent": True,
+    },
+    sort_keys=True,
+    separators=(",", ":"),
+).encode()
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -2265,8 +2277,11 @@ def commit_ots(
                 )
 
             head = plan.new_inv.inventory.head
+            plan.extension_files[f"extensions/{_OTS_EXTENSION_NAME}/config.json"] = (
+                _OTS_EXTENSION_CONFIG_BYTES
+            )
             plan.extension_files[
-                f"extensions/NNNN-ots-timestamps/inventory.json.{head}.ots"
+                f"extensions/{_OTS_EXTENSION_NAME}/inventory.json.{head}.ots"
             ] = inv_ots
 
             content_source = _validate_and_build_content_source(

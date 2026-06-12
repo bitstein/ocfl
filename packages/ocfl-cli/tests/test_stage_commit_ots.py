@@ -28,6 +28,7 @@ KeyError-style failures probing for the cached extension bytes in the
 committed object directory.
 """
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -256,6 +257,12 @@ class TestStageCommitOtsHappyPath:
         )
         assert ext_path.is_file(), f"missing extension file at {ext_path}"
         assert ext_path.read_bytes() == ots_bytes
+        config_path = ext_path.parent / "config.json"
+        assert json.loads(config_path.read_text()) == {
+            "extensionName": "NNNN-ots-timestamps",
+            "timestampInventory": True,
+            "timestampContent": True,
+        }
 
         # Staging purged (also removes the ots-cache subtree).
         store = StagingStore(staging)
