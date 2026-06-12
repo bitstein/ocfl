@@ -286,7 +286,7 @@ def _should_emit_progress(ctx: typer.Context) -> bool:
     if appctx.json_mode(ctx):
         return False
     typed = appctx.app_ctx(ctx)
-    return appctx.verbose(ctx) and not typed.quiet
+    return not typed.quiet
 
 
 def _emit(ctx: typer.Context, msg: str) -> None:

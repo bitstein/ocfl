@@ -35,24 +35,24 @@ class TestValidateRoot:
         )
         assert result.exit_code == 0
 
-    def test_verbose_root_emits_phase_headers(
+    def test_root_emits_phase_headers_by_default(
         self, runner: CliRunner, storage_root: Path
     ):
-        result = runner.invoke(app, ["--root", str(storage_root), "-v", "validate"])
+        result = runner.invoke(app, ["--root", str(storage_root), "validate"])
         assert result.exit_code == 0
         assert "Valid" in result.stdout
         assert "Validating OCFL storage root" in result.stderr
         assert "Checking root structure" in result.stderr
         assert "Validating objects (content digests enabled)" in result.stderr
 
-    def test_verbose_root_lists_each_object_ok(
+    def test_root_lists_each_object_ok_by_default(
         self, runner: CliRunner, storage_root: Path
     ):
-        result = runner.invoke(app, ["--root", str(storage_root), "-v", "validate"])
+        result = runner.invoke(app, ["--root", str(storage_root), "validate"])
         assert result.exit_code == 0
         assert "  obj:test: ok" in result.stderr
 
-    def test_verbose_root_lists_invalid_object_with_error_count(
+    def test_root_lists_invalid_object_with_error_count_by_default(
         self, runner: CliRunner, storage_root: Path
     ):
         from ocfl_lib import LocalFS, StorageRoot
@@ -64,7 +64,7 @@ class TestValidateRoot:
         inv["digestAlgorithm"] = "md5"
         inv_path.write_text(json.dumps(inv, separators=(",", ":")))
 
-        result = runner.invoke(app, ["--root", str(storage_root), "-v", "validate"])
+        result = runner.invoke(app, ["--root", str(storage_root), "validate"])
         assert result.exit_code == 1
         assert "  obj:test: 6 errors" in result.stderr
 
@@ -103,7 +103,7 @@ class TestValidateRoot:
         assert data["valid"] is False
         assert any(e["code"] == "E033" for e in data["errors"])
 
-    def test_verbose_root_marks_unvalidated_objects_when_truncated(
+    def test_root_marks_unvalidated_objects_when_truncated_by_default(
         self, runner: CliRunner, storage_root: Path, monkeypatch
     ):
         from ocfl_cli.archive import validate as validate_module
@@ -114,7 +114,7 @@ class TestValidateRoot:
 
         monkeypatch.setattr(validate_module, "validate_root", fake_validate_root)
 
-        result = runner.invoke(app, ["--root", str(storage_root), "-v", "validate"])
+        result = runner.invoke(app, ["--root", str(storage_root), "validate"])
 
         assert result.exit_code == 0
         assert "  obj:test: not validated (max errors reached)" in result.stderr
@@ -157,11 +157,11 @@ class TestValidateObject:
         )
         assert result.exit_code == 0
 
-    def test_verbose_object_emits_phase_headers(
+    def test_object_emits_phase_headers_by_default(
         self, runner: CliRunner, storage_root: Path
     ):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "-v", "validate", "obj:test"]
+            app, ["--root", str(storage_root), "validate", "obj:test"]
         )
         assert result.exit_code == 0
         assert "Validating object: obj:test" in result.stderr
@@ -169,7 +169,7 @@ class TestValidateObject:
         assert "Verifying content digests" in result.stderr
         assert "Verifying OTS attestations" not in result.stderr
 
-    def test_verbose_skips_digests_line_with_no_check_digests(
+    def test_skips_digests_line_with_no_check_digests_by_default(
         self, runner: CliRunner, storage_root: Path
     ):
         result = runner.invoke(
@@ -177,7 +177,6 @@ class TestValidateObject:
             [
                 "--root",
                 str(storage_root),
-                "-v",
                 "validate",
                 "obj:test",
                 "--no-check-digests",
@@ -186,18 +185,16 @@ class TestValidateObject:
         assert result.exit_code == 0
         assert "Verifying content digests" not in result.stderr
 
-    def test_verbose_silenced_by_json(self, runner: CliRunner, storage_root: Path):
-        result = runner.invoke(
-            app, ["--root", str(storage_root), "-v", "--json", "validate"]
-        )
+    def test_progress_silenced_by_json(self, runner: CliRunner, storage_root: Path):
+        result = runner.invoke(app, ["--root", str(storage_root), "--json", "validate"])
         assert result.exit_code == 0
         assert "Validating OCFL storage root" not in result.stderr
         data = json.loads(result.stdout)
         assert data["valid"] is True
 
-    def test_verbose_silenced_by_quiet(self, runner: CliRunner, storage_root: Path):
+    def test_progress_silenced_by_quiet(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "-v", "--quiet", "validate"]
+            app, ["--root", str(storage_root), "--quiet", "validate"]
         )
         assert result.exit_code == 0
         assert result.stderr == ""

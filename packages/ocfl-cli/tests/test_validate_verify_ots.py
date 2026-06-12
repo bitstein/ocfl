@@ -312,7 +312,7 @@ class TestNoVerifyOtsSkipsWalk:
         codes = {e["code"] for e in data["errors"]}
         assert "E906" not in codes
 
-    def test_verbose_omits_ots_section_when_no_verify_ots(
+    def test_omits_ots_section_when_no_verify_ots(
         self,
         runner: CliRunner,
         btc_fake,
@@ -329,7 +329,6 @@ class TestNoVerifyOtsSkipsWalk:
             [
                 "--root",
                 str(root),
-                "-v",
                 "validate",
                 "obj-test",
                 "--no-verify-ots",
@@ -339,8 +338,8 @@ class TestNoVerifyOtsSkipsWalk:
         assert "Verifying OTS attestations" not in r.stderr
 
 
-class TestVerboseVerifyOts:
-    def test_verbose_emits_per_version_ots_results(
+class TestVerifyOtsProgress:
+    def test_emits_per_version_ots_results_by_default(
         self,
         runner: CliRunner,
         btc_fake,
@@ -358,7 +357,7 @@ class TestVerboseVerifyOts:
         inv_digest_hex = hashlib.sha256(inv_path.read_bytes()).hexdigest()
         _register_attested(btc_fake.rpc, inv_digest_hex)
 
-        r = runner.invoke(app, ["--root", str(root), "-v", "validate", "obj-test"])
+        r = runner.invoke(app, ["--root", str(root), "validate", "obj-test"])
 
         assert r.exit_code == 0, r.output
         assert "Verifying OTS attestations (1 version, min 3 confirmations)" in r.stderr
