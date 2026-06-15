@@ -78,6 +78,40 @@ class TestNTupleOmitPrefixLayout:
             "f8./05v/000/f8.05v"
         )
 
+    def test_delimiter_is_case_insensitive(self):
+        layout = NTupleOmitPrefixLayout(
+            delimiter="edu/",
+            tuple_size=3,
+            number_of_tuples=3,
+            zero_padding="right",
+            reverse_object_root=False,
+        )
+        assert (
+            layout.resolve("https://institution.EDU/3448793") == "344/879/300/3448793"
+        )
+
+    def test_case_insensitive_rightmost_delimiter_wins(self):
+        layout = NTupleOmitPrefixLayout(
+            delimiter="edu/",
+            tuple_size=3,
+            number_of_tuples=3,
+            zero_padding="right",
+            reverse_object_root=False,
+        )
+        assert layout.resolve("https://x.EDU/abc/edu/f8.05v") == (
+            "f8./05v/000/f8.05v"
+        )
+
+    def test_casefold_expansion_keeps_original_slice_boundary(self):
+        layout = NTupleOmitPrefixLayout(
+            delimiter="ss/",
+            tuple_size=2,
+            number_of_tuples=2,
+            zero_padding="right",
+            reverse_object_root=False,
+        )
+        assert layout.resolve("prefix-ß/value") == "va/lu/value"
+
     # -- Validation --
 
     def test_empty_delimiter_raises(self):

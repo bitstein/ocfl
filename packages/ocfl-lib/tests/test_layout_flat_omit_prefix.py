@@ -38,6 +38,18 @@ class TestFlatOmitPrefixLayout:
         layout = FlatOmitPrefixLayout(delimiter="edu/")
         assert layout.resolve("https://institution.edu/abc/edu/f8.05v") == "f8.05v"
 
+    def test_delimiter_is_case_insensitive(self):
+        layout = FlatOmitPrefixLayout(delimiter="edu/")
+        assert layout.resolve("https://institution.EDU/3448793") == "3448793"
+
+    def test_case_insensitive_rightmost_delimiter_wins(self):
+        layout = FlatOmitPrefixLayout(delimiter="edu/")
+        assert layout.resolve("https://x.EDU/abc/edu/f8.05v") == "f8.05v"
+
+    def test_casefold_expansion_keeps_original_slice_boundary(self):
+        layout = FlatOmitPrefixLayout(delimiter="ss/")
+        assert layout.resolve("prefix-ß/value") == "value"
+
     # -- Validation --
 
     def test_no_delimiter_found_raises(self):

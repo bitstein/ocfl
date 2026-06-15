@@ -2,6 +2,7 @@
 
 import msgspec
 
+from ocfl_lib.layout._casefold import rfind_casefold_span
 from ocfl_lib.layout.types import Layout
 from ocfl_lib.validation.limits import validate_path_component
 
@@ -38,11 +39,11 @@ class FlatOmitPrefixLayout(Layout):
         return cls(delimiter=cfg.delimiter)
 
     def resolve(self, object_id: str) -> str:
-        idx = object_id.rfind(self._delimiter)
-        if idx < 0:
+        match = rfind_casefold_span(object_id, self._delimiter)
+        if match is None:
             raise ValueError(
                 f"delimiter {self._delimiter!r} not found in object ID {object_id!r}"
             )
-        remainder = object_id[idx + len(self._delimiter) :]
+        remainder = object_id[match[1] :]
         validate_path_component(remainder)
         return remainder
