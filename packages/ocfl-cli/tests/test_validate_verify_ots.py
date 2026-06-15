@@ -552,6 +552,92 @@ class TestVerifyTimeMismatchE906:
 
 
 # =========================================================================== #
+# Test 6: default-on with shallow confirmation depth → W903 warning
+# =========================================================================== #
+
+
+class TestVerifyPendingW903:
+    def test_default_on_pending_attestation_reports_w903_with_structural_warnings(
+        self,
+        runner: CliRunner,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        inv_path = root / "obj-test" / "inventory.json"
+        inv_digest = hashlib.sha256(inv_path.read_bytes()).digest()
+        (
+            root / "obj-test" / "extensions" / _EXT_NAME / "inventory.json.v1.ots"
+        ).write_bytes(
+            build_attestation(inv_digest, pending_uri="https://a.pool.example")
+        )
+
+        r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
+
+        assert r.exit_code == 0, r.output
+        data = json.loads(r.stdout)
+        assert data["valid"] is True
+        assert data.keys() == {"valid", "errors", "warnings"}
+        assert data["errors"] == []
+        warning_codes = {w["code"] for w in data["warnings"]}
+        assert {"W004", "W005", "W903"}.issubset(warning_codes)
+        w903 = [w for w in data["warnings"] if w["code"] == "W903"]
+        assert len(w903) == 1
+        assert "pending_attestation" in w903[0]["message"]
+
+    def test_default_on_insufficient_confirmations_reports_w903(
+        self,
+        runner: CliRunner,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT)
+        inv_path = root / "obj-test" / "inventory.json"
+        inv_digest_hex = hashlib.sha256(inv_path.read_bytes()).hexdigest()
+        _register_attested(btc_fake.rpc, inv_digest_hex)
+
+        r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
+
+        assert r.exit_code == 0, r.output
+        data = json.loads(r.stdout)
+        assert data["valid"] is True
+        w903 = [w for w in data["warnings"] if w["code"] == "W903"]
+        assert len(w903) == 1
+        assert "insufficient_confirmations" in w903[0]["message"]
+
+    def test_default_on_missing_block_reports_w903(
+        self,
+        runner: CliRunner,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT - 1)
+
+        r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
+
+        assert r.exit_code == 0, r.output
+        data = json.loads(r.stdout)
+        assert data["valid"] is True
+        w903 = [w for w in data["warnings"] if w["code"] == "W903"]
+        assert len(w903) == 1
+        assert "block_missing" in w903[0]["message"]
+
+
+# =========================================================================== #
 # Layer-3: regtest end-to-end (skipped without --run-bitcoin)
 # =========================================================================== #
 

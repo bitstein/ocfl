@@ -253,7 +253,9 @@ def _verify_ots_walk(
                 _emit_ots_result(
                     emit_progress, vkey, ots_rel, "pending (pending_attestation)"
                 )
-                # Already covered by W902 from structural validation.
+                result.warning(
+                    "W903", path=ots_rel, reason=PendingReason.PENDING_ATTESTATION.value
+                )
                 continue
             case PendingVerification(reason=reason):
                 _emit_ots_result(
