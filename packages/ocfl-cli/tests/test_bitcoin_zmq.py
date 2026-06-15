@@ -6,6 +6,7 @@ PAIR end. Bitcoin Core publishes ``hashblock`` as ``[topic, hash, sequence]``
 on PUB; our ``recv_multipart`` -> ``msg[1]`` logic is identical for PAIR.
 """
 
+import time
 from collections.abc import Iterator
 from uuid import uuid4
 
@@ -37,6 +38,35 @@ def zmq_pair() -> Iterator[tuple[zmq.Socket, BitcoinZmqSubscriber]]:
 
 
 class TestWaitForBlock:
+    def test_constructed_sub_socket_receives_hashblock_topic(self) -> None:
+        ctx = zmq.Context()
+        endpoint = f"inproc://btc-zmq-{uuid4().hex}"
+        sender = ctx.socket(zmq.PUB)
+        sender.bind(endpoint)
+        sub = BitcoinZmqSubscriber(endpoint, ctx=ctx)
+        block_hash = bytes.fromhex("ab" * 32)
+        decoy_hash = bytes.fromhex("cd" * 32)
+
+        try:
+            deadline = time.monotonic() + 1
+            got = None
+            while time.monotonic() < deadline:
+                sender.send_multipart(
+                    [b"rawtx", decoy_hash, (1).to_bytes(4, "little")]
+                )
+                sender.send_multipart(
+                    [b"hashblock", block_hash, (2).to_bytes(4, "little")]
+                )
+                got = sub.wait_for_block(timeout_ms=50)
+                if got is not None:
+                    break
+
+            assert got == block_hash
+        finally:
+            sub.close()
+            sender.close(linger=0)
+            ctx.term()
+
     def test_returns_block_hash_bytes_on_delivery(
         self, zmq_pair: tuple[zmq.Socket, BitcoinZmqSubscriber]
     ) -> None:
