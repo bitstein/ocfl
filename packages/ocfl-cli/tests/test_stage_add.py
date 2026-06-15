@@ -73,6 +73,21 @@ class TestStageAdd:
         entry = next(iter(cm.values()))
         assert entry["path"] == str(src)
 
+    def test_add_nonexistent_source_fails_without_mutating_state(
+        self, runner, storage_root, tmp_path
+    ):
+        staging = tmp_path / "staging"
+        missing = tmp_path / "missing.txt"
+
+        _invoke_new(runner, storage_root, staging)
+        result = _invoke_add(runner, storage_root, staging, "obj:new", missing)
+
+        assert result.exit_code == 1
+        assert "source not found" in result.output.lower()
+        store, root_path = _store_and_root(storage_root, staging)
+        inv = store.load_inventory(root_path, "obj:new")
+        assert inv.versions["v1"].state == {}
+
     def test_add_directory(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"
         src_dir = tmp_path / "mydir"

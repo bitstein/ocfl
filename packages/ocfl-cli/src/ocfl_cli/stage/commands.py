@@ -490,6 +490,14 @@ def add(
             path_to_digest[p] = d
 
     prior_digests = set(inv.manifest.keys())
+    sources = [Path(s) for s in src]
+    for p in sources:
+        if not p.exists():
+            err(f"source not found: {p}")
+            raise typer.Exit(1)
+        if not ((p.is_file() and not p.is_symlink()) or p.is_dir()):
+            err(f"unsupported source: {p}")
+            raise typer.Exit(1)
 
     def _add_file(file_path: Path, logical_path: str) -> None:
         _validate_logical_path(logical_path)
@@ -520,8 +528,7 @@ def add(
             state[d] = [logical_path]
         path_to_digest[logical_path] = d
 
-    for s in src:
-        p = Path(s)
+    for p in sources:
         if p.is_file() and not p.is_symlink():
             logical = as_path or p.name
             _add_file(p, logical)
