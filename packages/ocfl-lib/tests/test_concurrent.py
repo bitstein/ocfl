@@ -55,6 +55,49 @@ class TestBoundedMap:
         # Peak should be at most max_outstanding + small margin
         assert peak[0] <= 2 * workers + workers
 
+    def test_submission_does_not_exceed_outstanding_cap_before_yield(self):
+        release = threading.Event()
+        pulled = [0]
+        lock = threading.Lock()
+
+        class CountingIterable:
+            def __iter__(self):
+                for i in range(100):
+                    with lock:
+                        pulled[0] += 1
+                    yield i
+
+        def fn(x: int) -> int:
+            release.wait(timeout=5)
+            return x
+
+        gen = bounded_map(
+            fn, CountingIterable(), max_workers=2, max_outstanding=4
+        )
+        result: list[int] = []
+
+        def consume_one() -> None:
+            result.append(next(gen))
+
+        thread = threading.Thread(target=consume_one)
+        thread.start()
+
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            with lock:
+                if pulled[0] >= 4:
+                    break
+            time.sleep(0.001)
+
+        time.sleep(0.05)
+        with lock:
+            assert pulled[0] == 4
+
+        release.set()
+        thread.join(timeout=1)
+        gen.close()
+        assert result == [0]
+
     def test_consumer_abandon(self):
         call_count = [0]
 
