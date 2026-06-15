@@ -372,6 +372,39 @@ class TestValidationFailures:
         with pytest.raises(ValueError, match="already"):
             b.build()
 
+    @pytest.mark.parametrize(
+        "path",
+        ["", "/abs", "../x", "a/../b", "a/./b", "a//b", "x/"],
+    )
+    def test_rejects_invalid_logical_paths(self, path: str):
+        with pytest.raises(ValueError, match="logical path"):
+            (
+                InventoryBuilder()
+                .id("test")
+                .add_version({"abc": [path]}, created="2024-01-01T00:00:00Z")
+                .build()
+            )
+
+    def test_rejects_empty_logical_path_list(self):
+        with pytest.raises(ValueError, match="at least one logical path"):
+            (
+                InventoryBuilder()
+                .id("test")
+                .add_version({"abc": []}, created="2024-01-01T00:00:00Z")
+                .build()
+            )
+
+    @pytest.mark.parametrize("content_dir", ["", "a/b", ".", ".."])
+    def test_rejects_invalid_content_directory(self, content_dir: str):
+        with pytest.raises(ValueError, match="content directory"):
+            (
+                InventoryBuilder()
+                .id("test")
+                .content_directory(content_dir)
+                .add_version({"abc": ["file.txt"]}, created="2024-01-01T00:00:00Z")
+                .build()
+            )
+
 
 class TestMixedCaseDedupe:
     def test_mixed_case_digest_dedupes(self):
