@@ -306,10 +306,12 @@ def _validate_version_dir(
     # Parse version inventory
     try:
         vinv_data = json.loads(vinv_bytes)
-    except json.JSONDecodeError, ValueError:
+    except (json.JSONDecodeError, ValueError) as e:
+        result.error("E033", where=vkey, explanation=str(e))
         return
 
     if not isinstance(vinv_data, dict):
+        result.error("E034", where=vkey)
         return
 
     vinv = validate_inventory(vinv_data, result, lax_digests=lax_digests, where=vkey)
