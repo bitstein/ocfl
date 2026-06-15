@@ -8,9 +8,10 @@ through tracebacks or log handlers.
 import contextlib
 import time
 from base64 import b64encode
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import httpx2 as httpx
 import zmq
@@ -18,6 +19,7 @@ import zmq
 from ocfl_cli.errors import (
     AttestationMismatchError,
     BitcoinAuthError,
+    BitcoinBlockMissingError,
     BitcoinError,
     BitcoinRPCTransient,
     ReorgDetectedError,
@@ -125,6 +127,18 @@ class BitcoinRPCClient:
     def close(self) -> None:
         self._client.close()
 
+    def _raise_rpc_error(self, method: str, error: object) -> None:
+        if isinstance(error, Mapping):
+            error_body = cast("Mapping[str, object]", error)
+            code = error_body.get("code")
+            if code == -28:
+                raise BitcoinRPCTransient(f"Bitcoin RPC loading: {error}") from None
+            if method == "getblockhash" and code == -8:
+                raise BitcoinBlockMissingError(
+                    f"Bitcoin RPC block missing: {error}"
+                ) from None
+        raise BitcoinError(f"Bitcoin RPC error: {error}") from None
+
     def _call_once(self, method: str, params: list[Any]) -> Any:
         payload = {
             "jsonrpc": "1.0",
@@ -134,6 +148,12 @@ class BitcoinRPCClient:
         }
         try:
             response = self._client.post(self._rpc_url, json=payload)
+            if not response.is_success:
+                with contextlib.suppress(ValueError):
+                    body = response.json()
+                    error = body.get("error")
+                    if error is not None:
+                        self._raise_rpc_error(method, error)
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             _scrub_exc_request(exc)
@@ -158,9 +178,7 @@ class BitcoinRPCClient:
         body = response.json()
         error = body.get("error")
         if error is not None:
-            if isinstance(error, dict) and error.get("code") == -28:
-                raise BitcoinRPCTransient(f"Bitcoin RPC loading: {error}") from None
-            raise BitcoinError(f"Bitcoin RPC error: {error}")
+            self._raise_rpc_error(method, error)
         return body["result"]
 
     def _call(self, method: str, params: list[Any]) -> Any:
@@ -279,7 +297,7 @@ def verify_attestation(
 
     try:
         block_hash = rpc.getblockhash(parsed.block_height)
-    except IndexError:
+    except BitcoinBlockMissingError:
         return PendingVerification(PendingReason.BLOCK_MISSING)
 
     header = rpc.getblockheader(block_hash)

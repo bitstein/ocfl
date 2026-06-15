@@ -113,6 +113,10 @@ class BitcoinRPCTransient(BitcoinError, Transient):
     """Transient RPC/ZMQ error — retriable."""
 
 
+class BitcoinBlockMissingError(BitcoinError):
+    """Requested block is absent from the node's active chain."""
+
+
 class BitcoinUnavailable(BitcoinError):
     """Bitcoin node unreachable after retries — fail fast."""
 

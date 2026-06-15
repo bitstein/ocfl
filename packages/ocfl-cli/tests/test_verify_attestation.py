@@ -36,7 +36,11 @@ import hashlib
 import pytest
 from fakes import FakeBitcoinRPC
 
-from ocfl_cli.errors import AttestationMismatchError, ReorgDetectedError
+from ocfl_cli.errors import (
+    AttestationMismatchError,
+    BitcoinBlockMissingError,
+    ReorgDetectedError,
+)
 from ocfl_cli.ots.bitcoin import (
     PendingVerification,
     VerifiedAttestation,
@@ -154,6 +158,22 @@ class TestPending:
         rpc = FakeBitcoinRPC()
         _grow_chain_to(rpc, HEIGHT - 1)  # one short of HEIGHT
         # Don't register a merkle root — getblockhash(HEIGHT) will raise.
+
+        result = verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
+
+        assert isinstance(result, PendingVerification)
+        assert result.reason == "block_missing"
+
+    def test_rpc_block_missing_error_within_reorg_window_returns_pending(
+        self,
+    ) -> None:
+        class MissingBlockRPC(FakeBitcoinRPC):
+            def getblockhash(self, height: int) -> str:
+                raise BitcoinBlockMissingError(f"height {height} out of range")
+
+        ots = build_attestation(DIGEST, block_height=HEIGHT)
+        rpc = MissingBlockRPC()
+        _grow_chain_to(rpc, HEIGHT - 1)
 
         result = verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
 

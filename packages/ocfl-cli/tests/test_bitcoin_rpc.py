@@ -11,7 +11,12 @@ from collections.abc import Callable
 import httpx2 as httpx
 import pytest
 
-from ocfl_cli.errors import BitcoinAuthError, BitcoinError, BitcoinRPCTransient
+from ocfl_cli.errors import (
+    BitcoinAuthError,
+    BitcoinBlockMissingError,
+    BitcoinError,
+    BitcoinRPCTransient,
+)
 from ocfl_cli.ots.bitcoin import BitcoinRPCClient, BlockchainInfo, BlockHeader
 
 
@@ -311,6 +316,30 @@ class TestErrorMapping:
 
         with pytest.raises(BitcoinError):
             rpc.getblockhash(-1)
+
+        assert calls == 1
+        assert sleeps == []
+
+    def test_getblockhash_500_out_of_range_raises_block_missing(self) -> None:
+        calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(
+                500,
+                json={
+                    "result": None,
+                    "error": {"code": -8, "message": "Block height out of range"},
+                    "id": 1,
+                },
+            )
+
+        sleeps, sleep = _make_sleep()
+        rpc = _make_client(handler, sleep=sleep)
+
+        with pytest.raises(BitcoinBlockMissingError):
+            rpc.getblockhash(800_000)
 
         assert calls == 1
         assert sleeps == []
