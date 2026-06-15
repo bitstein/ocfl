@@ -89,6 +89,50 @@ class TestWaitForBlock:
 
         assert got is None
 
+    def test_returns_none_after_close(
+        self, zmq_pair: tuple[zmq.Socket, BitcoinZmqSubscriber]
+    ) -> None:
+        _sender, sub = zmq_pair
+        sub.close()
+
+        got = sub.wait_for_block(timeout_ms=50)
+
+        assert got is None
+
+    def test_short_multipart_frame_returns_none(
+        self, zmq_pair: tuple[zmq.Socket, BitcoinZmqSubscriber]
+    ) -> None:
+        sender, sub = zmq_pair
+        sender.send_multipart([b"hashblock"])
+
+        got = sub.wait_for_block(timeout_ms=1000)
+
+        assert got is None
+
+    def test_close_is_idempotent(
+        self, zmq_pair: tuple[zmq.Socket, BitcoinZmqSubscriber]
+    ) -> None:
+        _sender, sub = zmq_pair
+
+        sub.close()
+        sub.close()
+
+        assert sub.wait_for_block(timeout_ms=50) is None
+
+    def test_context_manager_closes_subscriber(self) -> None:
+        ctx = zmq.Context()
+        endpoint = f"inproc://btc-zmq-{uuid4().hex}"
+        receiver = ctx.socket(zmq.PAIR)
+
+        try:
+            with BitcoinZmqSubscriber(endpoint, ctx=ctx, socket=receiver) as sub:
+                assert sub.wait_for_block(timeout_ms=50) is None
+
+            assert sub.wait_for_block(timeout_ms=50) is None
+        finally:
+            sub.close()
+            ctx.term()
+
     def test_consecutive_blocks_drained_in_order(
         self, zmq_pair: tuple[zmq.Socket, BitcoinZmqSubscriber]
     ) -> None:
