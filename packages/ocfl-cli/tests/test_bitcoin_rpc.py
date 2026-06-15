@@ -14,7 +14,6 @@ import pytest
 from ocfl_cli.errors import (
     BitcoinAuthError,
     BitcoinBlockMissingError,
-    BitcoinError,
     BitcoinRPCTransient,
 )
 from ocfl_cli.ots.bitcoin import BitcoinRPCClient, BlockchainInfo, BlockHeader
@@ -296,7 +295,7 @@ class TestErrorMapping:
         assert calls == 3
         assert sleeps == [2.0, 4.0]
 
-    def test_rpc_non_loading_error_does_not_retry(self) -> None:
+    def test_getblockhash_200_out_of_range_raises_block_missing(self) -> None:
         calls = 0
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -314,7 +313,7 @@ class TestErrorMapping:
         sleeps, sleep = _make_sleep()
         rpc = _make_client(handler, sleep=sleep)
 
-        with pytest.raises(BitcoinError):
+        with pytest.raises(BitcoinBlockMissingError):
             rpc.getblockhash(-1)
 
         assert calls == 1
@@ -343,6 +342,23 @@ class TestErrorMapping:
 
         assert calls == 1
         assert sleeps == []
+
+    def test_500_non_object_json_error_body_raises_transient(self) -> None:
+        calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(500, json=["not", "a", "json-rpc", "object"])
+
+        sleeps, sleep = _make_sleep()
+        rpc = _make_client(handler, sleep=sleep)
+
+        with pytest.raises(BitcoinRPCTransient):
+            rpc.getblockchaininfo()
+
+        assert calls == 3
+        assert sleeps == [2.0, 4.0]
 
 
 class TestAuthHeaderScrubbing:

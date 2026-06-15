@@ -151,9 +151,11 @@ class BitcoinRPCClient:
             if not response.is_success:
                 with contextlib.suppress(ValueError):
                     body = response.json()
-                    error = body.get("error")
-                    if error is not None:
-                        self._raise_rpc_error(method, error)
+                    if isinstance(body, Mapping):
+                        body_map = cast("Mapping[str, object]", body)
+                        error = body_map.get("error")
+                        if error is not None:
+                            self._raise_rpc_error(method, error)
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             _scrub_exc_request(exc)
