@@ -88,6 +88,25 @@ class TestStageAdd:
         inv = store.load_inventory(root_path, "obj:new")
         assert inv.versions["v1"].state == {}
 
+    def test_add_symlink_source_fails_without_mutating_state(
+        self, runner, storage_root, tmp_path
+    ):
+        staging = tmp_path / "staging"
+        _invoke_new(runner, storage_root, staging)
+
+        target = tmp_path / "target.txt"
+        target.write_text("data")
+        source = tmp_path / "source.txt"
+        source.symlink_to(target)
+
+        result = _invoke_add(runner, storage_root, staging, "obj:new", source)
+
+        assert result.exit_code == 1
+        assert "unsupported source" in result.output.lower()
+        store, root_path = _store_and_root(storage_root, staging)
+        inv = store.load_inventory(root_path, "obj:new")
+        assert inv.versions["v1"].state == {}
+
     def test_add_directory(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"
         src_dir = tmp_path / "mydir"
