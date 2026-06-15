@@ -65,6 +65,10 @@ class TestHashAndIdNTupleConfig:
             digest_algorithm="md5", tuple_size=2, number_of_tuples=4
         )
         cfg = layout.config
+        assert cfg is not None
+        assert cfg["digestAlgorithm"] == "md5"
+        assert cfg["tupleSize"] == 2
+        assert cfg["numberOfTuples"] == 4
         layout2 = HashAndIdNTupleLayout.from_config(cfg)
         assert layout2.config == cfg
 
@@ -111,6 +115,12 @@ class TestNTupleOmitPrefixConfig:
             reverse_object_root=True,
         )
         cfg = layout.config
+        assert cfg is not None
+        assert cfg["delimiter"] == "/"
+        assert cfg["tupleSize"] == 2
+        assert cfg["numberOfTuples"] == 4
+        assert cfg["zeroPadding"] == "right"
+        assert cfg["reverseObjectRoot"] is True
         layout2 = NTupleOmitPrefixLayout.from_config(cfg)
         assert layout2.config == cfg
 
