@@ -54,6 +54,11 @@ class StorageRoot:
         Writes NAMASTE declaration, ocfl_layout.json (if layout), and
         extension config (if layout.config is not None).
         """
+        for existing_spec in Spec:
+            existing = _join(path, Namaste.for_root(existing_spec).filename)
+            if fsys.exists(existing):
+                raise ValueError("OCFL storage root already initialized")
+
         namaste = Namaste.for_root(spec)
         namaste_path = _join(path, namaste.filename)
         fs_utils.write_bytes(fsys, namaste_path, namaste.content.encode())

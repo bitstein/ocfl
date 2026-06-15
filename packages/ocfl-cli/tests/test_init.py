@@ -44,6 +44,28 @@ class TestInit:
         data = json.loads((tmp_path / "ocfl_layout.json").read_text())
         assert data["extension"] == "0002-flat-direct-storage-layout"
 
+    def test_init_existing_root_refuses_to_rewrite_layout(
+        self, runner: CliRunner, tmp_path: Path
+    ):
+        first = runner.invoke(app, ["--root", str(tmp_path), "init"])
+        assert first.exit_code == 0
+
+        result = runner.invoke(
+            app,
+            [
+                "--root",
+                str(tmp_path),
+                "init",
+                "--layout",
+                "0002-flat-direct-storage-layout",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "already initialized" in result.output
+
+        data = json.loads((tmp_path / "ocfl_layout.json").read_text())
+        assert data["extension"] == "0004-hashed-n-tuple-storage-layout"
+
     def test_init_layout_config(self, runner: CliRunner, tmp_path: Path):
         cfg = json.dumps(
             {

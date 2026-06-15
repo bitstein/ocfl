@@ -102,6 +102,16 @@ class TestStorageRootInit:
         assert root2.layout is not None
         assert root2.layout.name == "0004-hashed-n-tuple-storage-layout"
 
+    def test_init_existing_root_raises(self, tmp_path: Path):
+        fsys = LocalFS(tmp_path)
+        StorageRoot.init(fsys, fsys, layout=HashedNTupleLayout())
+
+        with pytest.raises(ValueError, match="already initialized"):
+            StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
+
+        data = json.loads((tmp_path / "ocfl_layout.json").read_text())
+        assert data["extension"] == "0004-hashed-n-tuple-storage-layout"
+
     def test_init_with_subpath(self, tmp_path: Path):
         """Init at a sub-path within the filesystem."""
         (tmp_path / "sub").mkdir()
