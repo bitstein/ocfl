@@ -55,6 +55,16 @@ class TestLsObject:
         assert result.exit_code == 0
         assert "file1.txt" in result.stdout
 
+    def test_nonexistent_version_reports_clean_error(
+        self, runner: CliRunner, storage_root: Path
+    ):
+        result = runner.invoke(
+            app, ["--root", str(storage_root), "ls", "obj:test", "--version", "v9"]
+        )
+        assert result.exit_code == 1
+        assert "not found" in result.stderr.lower()
+        assert result.exception.__class__.__name__ == "SystemExit"
+
     def test_list_files_json(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
             app, ["--root", str(storage_root), "--json", "ls", "obj:test"]

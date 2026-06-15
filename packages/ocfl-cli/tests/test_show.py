@@ -32,6 +32,16 @@ class TestShow:
         assert result.exit_code == 0
         assert "v1" in result.stdout
 
+    def test_nonexistent_version_reports_clean_error(
+        self, runner: CliRunner, storage_root: Path
+    ):
+        result = runner.invoke(
+            app, ["--root", str(storage_root), "show", "obj:test", "v9"]
+        )
+        assert result.exit_code == 1
+        assert "not found" in result.stderr.lower()
+        assert result.exception.__class__.__name__ == "SystemExit"
+
     def test_show_json(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
             app, ["--root", str(storage_root), "--json", "show", "obj:test"]

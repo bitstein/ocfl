@@ -37,23 +37,22 @@ def show(
         obj = root.get_object(object_id)
         if not obj.exists:
             raise ObjectNotFound(object_id)
+        v = parse_version(version) if version else obj.head
+        info = obj.version_info(v)
+
+        # Diff: v1 diffs against empty (all added), others diff against previous
+        if v.number == 1:
+            state = obj.version_state(v)
+            pm = to_path_map(state)
+            changes = [
+                DiffEntry(path=p, action="added", digest_after=d)
+                for p, d in sorted(pm.items())
+            ]
+        else:
+            prev_v = VNum(v.number - 1, v.padding)
+            changes = obj.diff_versions(prev_v, v)
     except OcflError as e:
         exit_for_error(e)
-
-    v = parse_version(version) if version else obj.head
-    info = obj.version_info(v)
-
-    # Diff: v1 diffs against empty (all added), others diff against previous
-    if v.number == 1:
-        state = obj.version_state(v)
-        pm = to_path_map(state)
-        changes = [
-            DiffEntry(path=p, action="added", digest_after=d)
-            for p, d in sorted(pm.items())
-        ]
-    else:
-        prev_v = VNum(v.number - 1, v.padding)
-        changes = obj.diff_versions(prev_v, v)
 
     if as_json:
         output_json(

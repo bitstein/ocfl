@@ -43,11 +43,11 @@ def export(
         obj = root.get_object(object_id)
         if not obj.exists:
             raise ObjectNotFound(object_id)
+        v = parse_version(version) if version else obj.head
+        state = obj.version_state(v)
     except OcflError as e:
         exit_for_error(e)
 
-    v = parse_version(version) if version else obj.head
-    state = obj.version_state(v)
     path_map = to_path_map(state)
     paths = sorted(path_map)
 

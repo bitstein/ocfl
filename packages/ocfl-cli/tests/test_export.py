@@ -80,6 +80,26 @@ class TestExport:
         assert (out / "file1.txt").read_text() == "hello"
         assert not (out / "file2.txt").exists()
 
+    def test_nonexistent_version_reports_clean_error(
+        self, runner: CliRunner, storage_root: Path, tmp_path: Path
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "--root",
+                str(storage_root),
+                "export",
+                "obj:test",
+                "--version",
+                "v9",
+                "--to",
+                str(tmp_path / "out"),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "not found" in result.stderr.lower()
+        assert result.exception.__class__.__name__ == "SystemExit"
+
     def test_export_single_file(
         self, runner: CliRunner, storage_root: Path, tmp_path: Path
     ):

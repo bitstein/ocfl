@@ -34,12 +34,11 @@ def diff(
         obj = root.get_object(object_id)
         if not obj.exists:
             raise ObjectNotFound(object_id)
+        vnum1 = parse_version(v1)
+        vnum2 = parse_version(v2)
+        entries = obj.diff_versions(vnum1, vnum2)
     except OcflError as e:
         exit_for_error(e)
-
-    vnum1 = parse_version(v1)
-    vnum2 = parse_version(v2)
-    entries = obj.diff_versions(vnum1, vnum2)
 
     if as_json:
         output_json(
