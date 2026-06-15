@@ -577,8 +577,23 @@ def mv(
         err(f"path not found: {src_path!r}")
         raise typer.Exit(1)
 
-    state[found_digest].remove(src_path)
     _validate_logical_path(dst_path)
+
+    def _path_exists(path: str) -> bool:
+        return any(path in paths for paths in state.values())
+
+    if dst_path != src_path and _path_exists(dst_path):
+        err(f"path already exists: {dst_path!r}")
+        raise typer.Exit(1)
+
+    if has_ots(staging_dir) and not src_path.endswith(".ots"):
+        src_ots = f"{src_path}.ots"
+        dst_ots = f"{dst_path}.ots"
+        if src_ots != dst_ots and _path_exists(src_ots) and _path_exists(dst_ots):
+            err(f"path already exists: {dst_ots!r}")
+            raise typer.Exit(1)
+
+    state[found_digest].remove(src_path)
     state[found_digest].append(dst_path)
 
     if has_ots(staging_dir):

@@ -72,6 +72,49 @@ class TestStageMv:
         )
         assert result.exit_code == 1
 
+    def test_mv_to_existing_path_errors_without_duplicate_state(
+        self, runner, storage_root, tmp_path
+    ):
+        staging, store, root_path = _setup_staged(runner, storage_root, tmp_path)
+        result = _invoke(
+            runner, storage_root, staging, "mv", "obj:new", "a.txt", "dir/b.txt"
+        )
+        assert result.exit_code == 1
+        assert "already exists" in result.output
+
+        inv = store.load_inventory(root_path, "obj:new")
+        paths = [p for ps in inv.versions["v1"].state.values() for p in ps]
+        assert paths.count("dir/b.txt") == 1
+        assert "a.txt" in paths
+
+    def test_mv_to_existing_companion_path_errors_without_duplicate_state(
+        self,
+        runner: CliRunner,
+        storage_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        staging = tmp_path / "staging"
+        _sd, _digests = _setup_ots_pair(runner, storage_root, staging, "obj:mv-ots")
+
+        src = tmp_path / "b.txt.ots"
+        src.write_bytes(b"existing companion")
+        r = _invoke(runner, storage_root, staging, "add", "obj:mv-ots", str(src))
+        assert r.exit_code == 0, r.output
+
+        store = StagingStore(staging)
+        root_path = str(storage_root.resolve())
+        before = _state_paths(store, root_path, "obj:mv-ots")
+        assert {"a.txt", "a.txt.ots", "b.txt.ots"} <= before
+
+        r = _invoke(runner, storage_root, staging, "mv", "obj:mv-ots", "a.txt", "b.txt")
+        assert r.exit_code == 1
+        assert "already exists" in r.output
+
+        after = _state_paths(store, root_path, "obj:mv-ots")
+        assert after == before
+
 
 class TestStageRm:
     def test_rm_exact_path(self, runner, storage_root, tmp_path):
