@@ -149,6 +149,16 @@ class TestFileDigest:
             file_digest(f, DigestAlgorithm.SHA256) == hashlib.sha256(data).hexdigest()
         )
 
+    @pytest.mark.parametrize("alg", list(DigestAlgorithm))
+    def test_matches_bytes_digest_for_all_algorithms(
+        self, tmp_path: Path, alg: DigestAlgorithm
+    ):
+        data = b"digest algorithm coverage"
+        f = tmp_path / "test.bin"
+        f.write_bytes(data)
+
+        assert file_digest(f, alg) == bytes_digest(data, alg)
+
 
 class TestStreamDigest:
     def test_sha256(self):
