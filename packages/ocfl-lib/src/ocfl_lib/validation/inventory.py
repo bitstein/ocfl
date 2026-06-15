@@ -276,11 +276,8 @@ def _validate_manifest(
             result.error("E101a", where=where, path=path)
         path_set.add(path)
 
-    # Path prefix conflict check (path used as both file and directory)
-    sorted_paths = sorted(path_set)
-    for i in range(len(sorted_paths) - 1):
-        if sorted_paths[i + 1].startswith(sorted_paths[i] + "/"):
-            result.error("E101b", where=where, path=sorted_paths[i])
+    for path in _path_prefix_conflicts(path_set):
+        result.error("E101b", where=where, path=path)
 
 
 def _validate_versions(
@@ -425,9 +422,27 @@ def _validate_created(
     if dt.tzinfo is None:
         result.error("E049a", where=where, version=version)
 
-    # Granularity to seconds: must contain T and HH:MM:SS
-    if "T" not in created or len(created) < 19:
+    if not _created_has_seconds(created):
         result.error("E049b", where=where, version=version)
+
+
+def _created_has_seconds(created: str) -> bool:
+    """Return true when an ISO datetime string includes HH:MM:SS."""
+    if "T" not in created:
+        return False
+
+    time_part = created.split("T", 1)[1]
+    if time_part.endswith("Z"):
+        time_part = time_part[:-1]
+    else:
+        for sign in ("+", "-"):
+            offset_start = time_part.rfind(sign)
+            if offset_start > 0:
+                time_part = time_part[:offset_start]
+                break
+
+    parts = time_part.split(":")
+    return len(parts) >= 3 and parts[2] != ""
 
 
 def _validate_version_state(
@@ -476,13 +491,13 @@ def _validate_version_state(
 
             # Check for leading/trailing slash
             if path.startswith("/") or path.endswith("/"):
-                result.error("E052", where=where, version=version, path=path)
+                result.error("E053", where=where, version=version, path=path)
                 continue
 
             # Check for ., .., empty segments
             segments = path.split("/")
             if any(s in ("", ".", "..") for s in segments):
-                result.error("E053", where=where, version=version, path=path)
+                result.error("E052", where=where, version=version, path=path)
                 continue
 
             all_logical_paths.append(path)
@@ -494,11 +509,20 @@ def _validate_version_state(
             result.error("E095a", where=where, version=version, path=path)
         seen.add(path)
 
-    # Path prefix conflicts
-    sorted_paths = sorted(seen)
-    for i in range(len(sorted_paths) - 1):
-        if sorted_paths[i + 1].startswith(sorted_paths[i] + "/"):
-            result.error("E095b", where=where, version=version, path=sorted_paths[i])
+    for path in _path_prefix_conflicts(seen):
+        result.error("E095b", where=where, version=version, path=path)
+
+
+def _path_prefix_conflicts(paths: set[str]) -> list[str]:
+    """Find paths that are used as both a file path and a directory prefix."""
+    conflicts: set[str] = set()
+    for path in paths:
+        parts = path.split("/")
+        for i in range(1, len(parts)):
+            prefix = "/".join(parts[:i])
+            if prefix in paths:
+                conflicts.add(prefix)
+    return sorted(conflicts)
 
 
 def _validate_user(

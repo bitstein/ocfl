@@ -420,7 +420,7 @@
       "version",
       "path"
     ],
-    "description": "OCFL Object {where} inventory {version} version block state block includes an invalid path {path} that starts or ends with /"
+    "description": "OCFL Object {where} inventory {version} version block state block includes an invalid path {path} that includes . .. or //"
   },
   "E053": {
     "params": [
@@ -428,7 +428,7 @@
       "version",
       "path"
     ],
-    "description": "OCFL Object {where} inventory {version} version block state block includes an invalid path {path} that includes . .. or //"
+    "description": "OCFL Object {where} inventory {version} version block state block includes an invalid path {path} that starts or ends with /"
   },
   "E054a": {
     "params": [

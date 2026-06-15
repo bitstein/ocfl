@@ -129,6 +129,22 @@ class TestManifestPathConflicts:
         validate_inventory(_inv_with_manifest(manifest, versions=versions), r)
         assert r.has_code("E101") or r.has_code("E095")
 
+    def test_non_adjacent_path_prefix_conflict(self):
+        r = ValidationResult()
+        manifest = {
+            _D1: ["v1/content/a"],
+            _D2: ["v1/content/a!"],
+            _D3: ["v1/content/a/b"],
+        }
+        versions = {
+            "v1": {
+                "created": "2024-01-01T00:00:00Z",
+                "state": {_D1: ["a"], _D2: ["a!"], _D3: ["b"]},
+            },
+        }
+        validate_inventory(_inv_with_manifest(manifest, versions=versions), r)
+        assert r.has_code("E101b")
+
 
 class TestManifestPathSegments:
     def test_dot_segment(self):

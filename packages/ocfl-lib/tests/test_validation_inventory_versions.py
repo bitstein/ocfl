@@ -261,6 +261,21 @@ class TestVersionBlock:
         assert not r.has_code("E049a")
         assert not r.has_code("E049b")
 
+    def test_created_with_offset_requires_seconds(self):
+        r = ValidationResult()
+        validate_inventory(
+            _inv(
+                versions={
+                    "v1": {
+                        "created": "2024-01-01T00:00+00:00",
+                        "state": {_D1: ["file.txt"]},
+                    },
+                }
+            ),
+            r,
+        )
+        assert r.has_code("E049b")
+
     def test_missing_state(self):
         r = ValidationResult()
         validate_inventory(
@@ -330,7 +345,8 @@ class TestLogicalPaths:
             ),
             r,
         )
-        assert r.has_code("E052") or r.has_code("E053")
+        assert r.has_code("E052")
+        assert not r.has_code("E053")
 
     def test_dotdot_in_path(self):
         r = ValidationResult()
@@ -345,7 +361,24 @@ class TestLogicalPaths:
             ),
             r,
         )
-        assert r.has_code("E052") or r.has_code("E053")
+        assert r.has_code("E052")
+        assert not r.has_code("E053")
+
+    def test_leading_slash_path(self):
+        r = ValidationResult()
+        validate_inventory(
+            _inv(
+                versions={
+                    "v1": {
+                        "created": "2024-01-01T00:00:00Z",
+                        "state": {_D1: ["/file.txt"]},
+                    },
+                }
+            ),
+            r,
+        )
+        assert r.has_code("E053")
+        assert not r.has_code("E052")
 
     def test_duplicate_logical_path(self):
         r = ValidationResult()
@@ -362,6 +395,22 @@ class TestLogicalPaths:
             r,
         )
         assert r.has_code("E095")
+
+    def test_non_adjacent_prefix_conflict(self):
+        r = ValidationResult()
+        validate_inventory(
+            _inv(
+                manifest={_D1: ["v1/content/a", "v1/content/a!", "v1/content/a/b"]},
+                versions={
+                    "v1": {
+                        "created": "2024-01-01T00:00:00Z",
+                        "state": {_D1: ["a", "a!", "a/b"]},
+                    },
+                },
+            ),
+            r,
+        )
+        assert r.has_code("E095b")
 
 
 class TestVersionMetadata:
