@@ -26,6 +26,7 @@ from fakes import FakeBitcoinRPC
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
+from ocfl_cli.errors import BitcoinRPCTransient
 from ocfl_cli.main import app
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
@@ -497,6 +498,57 @@ class TestVerifyTimeMismatchE906:
         data = json.loads(r.stdout)
         codes = {e["code"] for e in data["errors"]}
         assert "E906" in codes
+
+    def test_default_on_bitcoin_rpc_failure_reports_e906_json(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Bitcoin RPC failures during validation must keep JSON output valid."""
+
+        class DownRPC(FakeBitcoinRPC):
+            def getblockchaininfo(self):
+                raise BitcoinRPCTransient("Bitcoin RPC transport error")
+
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_btc(runner, DownRPC())
+
+        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+
+        r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
+
+        assert r.exit_code == 1, r.output
+        assert isinstance(r.exception, SystemExit)
+        data = json.loads(r.stdout)
+        codes = {e["code"] for e in data["errors"]}
+        assert "E906" in codes
+
+    def test_default_on_bitcoin_rpc_failure_reports_human_error(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Human output should include RPC context without a traceback."""
+
+        class DownRPC(FakeBitcoinRPC):
+            def getblockchaininfo(self):
+                raise BitcoinRPCTransient("Bitcoin RPC transport error")
+
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_btc(runner, DownRPC())
+
+        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+
+        r = runner.invoke(app, ["--root", str(root), "validate", "obj-test"])
+
+        assert r.exit_code == 1, r.output
+        assert isinstance(r.exception, SystemExit)
+        combined = r.output + (r.stderr or "")
+        assert "[E906]" in combined
+        assert "Bitcoin RPC transport error" in combined
+        assert "Traceback" not in combined
 
 
 # =========================================================================== #

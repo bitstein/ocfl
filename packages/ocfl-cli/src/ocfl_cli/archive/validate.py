@@ -13,6 +13,7 @@ from ocfl_cli._exit import exit_for_error
 from ocfl_cli._io import err
 from ocfl_cli.errors import (
     AttestationMismatchError,
+    BitcoinError,
     ConfigError,
     ReorgDetectedError,
 )
@@ -229,7 +230,12 @@ def _verify_ots_walk(
                 expected_digest=expected,
                 min_confirmations=min_confs,
             )
-        except (AttestationMismatchError, ReorgDetectedError, OtsParseError) as exc:
+        except (
+            AttestationMismatchError,
+            BitcoinError,
+            ReorgDetectedError,
+            OtsParseError,
+        ) as exc:
             _emit_ots_result(emit_progress, vkey, ots_rel, f"failed ({exc})")
             result.error("E906", path=ots_rel, reason=str(exc))
             continue
