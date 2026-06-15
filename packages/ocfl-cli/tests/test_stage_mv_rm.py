@@ -430,6 +430,32 @@ class TestRegressionFromContentUpgraded:
             "mv keeps digests; pending_digests should still contain da and db"
         )
 
+    def test_add_regresses_to_drafting_preserves_content_proofs(
+        self,
+        runner: CliRunner,
+        storage_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        staging = tmp_path / "staging"
+        sd, digests = _setup_ots_pair(
+            runner, storage_root, staging, "obj:add-cu", with_b=True
+        )
+        da, db = digests["a.txt"], digests["b.txt"]
+        _pin_content_upgraded(sd, da, db)
+
+        src = tmp_path / "new-content.txt"
+        src.write_text("new content")
+        r = _invoke(runner, storage_root, staging, "add", "obj:add-cu", str(src))
+        assert r.exit_code == 0, r.output
+
+        post = load_ots(sd)
+        assert post.phase is Phase.DRAFTING
+        assert da in post.content_proofs
+        assert db in post.content_proofs
+        assert set(post.pending_digests) == {da, db}
+
 
 # --------------------------------------------------------------------------- #
 # 5 & 6. Regression from inventory-* discards inventory_proof + plan.json
@@ -495,6 +521,36 @@ class TestRegressionFromInventoryPending:
         # pending_digests trimmed to digests still in state (a.txt removed).
         assert set(post.pending_digests) == {db}
 
+    def test_add_discards_inventory_proof_and_deletes_plan_json(
+        self,
+        runner: CliRunner,
+        storage_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        staging = tmp_path / "staging"
+        sd, digests = _setup_ots_pair(
+            runner, storage_root, staging, "obj:add-ip", with_b=True
+        )
+        da, db = digests["a.txt"], digests["b.txt"]
+        _pin_inventory_state(sd, da, db, phase=Phase.INVENTORY_PENDING)
+
+        plan_path(sd).write_bytes(b"sentinel-plan-json")
+        assert plan_path(sd).is_file()
+
+        src = tmp_path / "new-content.txt"
+        src.write_text("new content")
+        r = _invoke(runner, storage_root, staging, "add", "obj:add-ip", str(src))
+        assert r.exit_code == 0, r.output
+
+        post = load_ots(sd)
+        assert post.phase is Phase.DRAFTING
+        assert post.inventory_proof is None
+        assert not plan_path(sd).exists()
+        assert da in post.content_proofs
+        assert db in post.content_proofs
+
 
 class TestRegressionFromInventoryUpgraded:
     def test_mv_discards_inventory_proof_and_deletes_plan_json(
@@ -523,6 +579,36 @@ class TestRegressionFromInventoryUpgraded:
         assert post.inventory_proof is None
         assert not plan_path(sd).exists()
         # content_proofs preserved across regression.
+        assert da in post.content_proofs
+        assert db in post.content_proofs
+
+    def test_add_discards_inventory_proof_and_deletes_plan_json(
+        self,
+        runner: CliRunner,
+        storage_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        staging = tmp_path / "staging"
+        sd, digests = _setup_ots_pair(
+            runner, storage_root, staging, "obj:add-iu", with_b=True
+        )
+        da, db = digests["a.txt"], digests["b.txt"]
+        _pin_inventory_state(sd, da, db, phase=Phase.INVENTORY_UPGRADED)
+
+        plan_path(sd).write_bytes(b"sentinel-plan-json")
+        assert plan_path(sd).is_file()
+
+        src = tmp_path / "new-content.txt"
+        src.write_text("new content")
+        r = _invoke(runner, storage_root, staging, "add", "obj:add-iu", str(src))
+        assert r.exit_code == 0, r.output
+
+        post = load_ots(sd)
+        assert post.phase is Phase.DRAFTING
+        assert post.inventory_proof is None
+        assert not plan_path(sd).exists()
         assert da in post.content_proofs
         assert db in post.content_proofs
 

@@ -535,8 +535,20 @@ def add(
                 logical = f"{as_path}/{rel}" if as_path else rel
                 _add_file(child, logical)
 
-    store.save_inventory(root_path, object_id, service._update_head_state(inv, state))
-    store.save_content_map(root_path, object_id, content_map)
+    def _finalize() -> None:
+        store.save_inventory(
+            root_path, object_id, service._update_head_state(inv, state)
+        )
+        store.save_content_map(root_path, object_id, content_map)
+
+    if has_ots(staging_dir):
+        with with_lock(staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
+            _finalize()
+            service._apply_rm_mv_regression(
+                staging_dir, state, "add", f"stage add {' '.join(src)}"
+            )
+    else:
+        _finalize()
 
 
 @stage_app.command()
