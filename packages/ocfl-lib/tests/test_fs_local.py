@@ -92,6 +92,14 @@ class TestWrite:
         assert n == 4
         assert (fs_dir / "newdir" / "f.txt").read_bytes() == b"data"
 
+    def test_write_multiple_chunks(self, fs: LocalFS, fs_dir: Path):
+        data = b"0123456789abcdef" * 8192
+
+        n = fs.write("large.bin", BytesIO(data))
+
+        assert n == len(data)
+        assert (fs_dir / "large.bin").read_bytes() == data
+
     def test_write_atomic_no_partial_on_error(self, fs: LocalFS, fs_dir: Path):
         """If the source stream errors mid-read, no partial file should remain."""
         (fs_dir / "existing.txt").write_text("original")
