@@ -159,6 +159,27 @@ class TestDigestForcing:
         inv = store.load_inventory(str(storage_root.resolve()), "obj:new")
         assert inv.digest_algorithm == "sha256"
 
+    def test_ots_existing_sha512_object_rejected(
+        self,
+        runner: CliRunner,
+        storage_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Existing OTS objects must already use SHA-256."""
+        _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
+        staging = tmp_path / "staging"
+        result = runner.invoke(
+            app,
+            _stage_new_ots_args(storage_root, staging, "obj:test"),
+        )
+
+        assert result.exit_code != 0, result.output
+        combined = _strip_paths((result.output + (result.stderr or "")).lower())
+        assert "sha-256" in combined or "sha256" in combined, result.output
+        store = StagingStore(staging)
+        assert not store.exists(str(storage_root.resolve()), "obj:test")
+
 
 # --------------------------------------------------------------------------- #
 # Layer-1: config presence (fail early per resolved question 4)

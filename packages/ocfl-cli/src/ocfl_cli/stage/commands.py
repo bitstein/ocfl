@@ -362,6 +362,12 @@ def new(
     obj = sr.get_object(object_id)
     if obj.exists:
         head_inv = obj.inventory.inventory
+        if ots and head_inv.digest_algorithm != DigestAlgorithm.SHA256.ocfl_name:
+            err(
+                "--ots requires existing objects to use SHA-256 "
+                f"(got {head_inv.digest_algorithm})"
+            )
+            raise typer.Exit(2)
         builder = InventoryBuilder(head_inv).add_version(
             {}, created="1970-01-01T00:00:00Z"
         )
