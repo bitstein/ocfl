@@ -82,20 +82,22 @@ class TestBoundedMap:
         thread = threading.Thread(target=consume_one)
         thread.start()
 
-        deadline = time.monotonic() + 1
-        while time.monotonic() < deadline:
+        try:
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline:
+                with lock:
+                    if pulled[0] >= 4:
+                        break
+                time.sleep(0.001)
+
+            time.sleep(0.05)
             with lock:
-                if pulled[0] >= 4:
-                    break
-            time.sleep(0.001)
+                assert pulled[0] == 4
 
-        time.sleep(0.05)
-        with lock:
-            assert pulled[0] == 4
-
-        release.set()
-        thread.join(timeout=1)
-        gen.close()
+        finally:
+            release.set()
+            thread.join(timeout=1)
+            gen.close()
         assert result == [0]
 
     def test_consumer_abandon(self):
