@@ -7,6 +7,7 @@ on PUB; our ``recv_multipart`` -> ``msg[1]`` logic is identical for PAIR.
 """
 
 from collections.abc import Iterator
+from uuid import uuid4
 
 import pytest
 import zmq
@@ -17,8 +18,8 @@ from ocfl_cli.ots.bitcoin import BitcoinZmqSubscriber
 @pytest.fixture
 def zmq_pair() -> Iterator[tuple[zmq.Socket, BitcoinZmqSubscriber]]:
     """Yield (sender PAIR socket, subscriber wrapping the receiving PAIR)."""
-    ctx = zmq.Context.instance()
-    endpoint = "inproc://btc-zmq-test"
+    ctx = zmq.Context()
+    endpoint = f"inproc://btc-zmq-{uuid4().hex}"
 
     sender = ctx.socket(zmq.PAIR)
     sender.bind(endpoint)
@@ -32,6 +33,7 @@ def zmq_pair() -> Iterator[tuple[zmq.Socket, BitcoinZmqSubscriber]]:
     finally:
         sub.close()
         sender.close(linger=0)
+        ctx.term()
 
 
 class TestWaitForBlock:
