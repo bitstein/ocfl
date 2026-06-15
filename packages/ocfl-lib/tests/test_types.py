@@ -90,6 +90,11 @@ class TestVNumStr:
     def test_with_padding(self):
         assert str(VNum(1, 3)) == "v001"
 
+    @pytest.mark.parametrize("number", [100, 999])
+    def test_rejects_unrepresentable_padded_value(self, number: int):
+        with pytest.raises(ValueError, match="overflows padding"):
+            VNum(number, 3)
+
 
 class TestVNumOrdering:
     def test_lt(self):
@@ -127,7 +132,12 @@ class TestVNumNext:
 
     def test_next_overflow(self):
         with pytest.raises(ValueError):
-            VNum(999, 3).next()
+            VNum(99, 3).next()
+
+    def test_next_at_padded_boundary(self):
+        vn = VNum(98, 3).next()
+        assert vn == VNum(99, 3)
+        assert str(vn) == "v099"
 
     def test_next_no_overflow_without_padding(self):
         assert VNum(999, 0).next() == VNum(1000, 0)
