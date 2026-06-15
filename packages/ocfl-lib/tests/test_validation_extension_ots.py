@@ -191,6 +191,18 @@ def test_embedded_digest_mismatch(tmp_path: Path) -> None:
     assert r.has_code("E905"), f"expected E905, got errors={[e.code for e in r.errors]}"
 
 
+def test_corrupt_companion_file_reports_e905(tmp_path: Path) -> None:
+    """Unparseable `.ots` companion bytes → E905."""
+    _build_ots_object(
+        tmp_path,
+        companion_overrides={"file.txt": b"not an ots file"},
+    )
+
+    r = _validate(tmp_path)
+
+    assert r.has_code("E905"), f"expected E905, got errors={[e.code for e in r.errors]}"
+
+
 def test_embedded_digest_match_no_error(tmp_path: Path) -> None:
     """`.ots` committing to correct digest → no E905."""
     _build_ots_object(tmp_path)
