@@ -73,6 +73,35 @@ class TestStorageRootPurge:
             partial = "/".join(parts[: i + 1])
             assert not (tmp_path / partial).exists()
 
+    def test_purge_preserves_non_empty_shared_parent(self, tmp_path: Path):
+        fsys = LocalFS(tmp_path)
+        layout = HashedNTupleLayout(tuple_size=1, number_of_tuples=1)
+        root = StorageRoot.init(fsys, fsys, layout=layout)
+
+        ids_by_parent: dict[str, list[str]] = {}
+        for i in range(64):
+            obj_id = f"obj-{i}"
+            parent = root.object_path(obj_id).split("/", 1)[0]
+            ids_by_parent.setdefault(parent, []).append(obj_id)
+            if len(ids_by_parent[parent]) == 2:
+                obj_a, obj_b = ids_by_parent[parent]
+                break
+        else:  # pragma: no cover - impossible with 64 IDs into 16 hex buckets
+            raise AssertionError("could not find IDs with a shared parent")
+
+        _commit_object(tmp_path, root, fsys, obj_a, {"file.txt": "a"})
+        _commit_object(tmp_path, root, fsys, obj_b, {"file.txt": "b"})
+        obj_a_path = root.object_path(obj_a)
+        obj_b_path = root.object_path(obj_b)
+        shared_parent = obj_a_path.split("/", 1)[0]
+
+        root.purge(fsys, obj_a)
+
+        assert not (tmp_path / obj_a_path).exists()
+        assert (tmp_path / shared_parent).is_dir()
+        assert (tmp_path / obj_b_path).exists()
+        assert root.get_object(obj_b).exists
+
     def test_purge_nonexistent_raises(self, tmp_path: Path):
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
