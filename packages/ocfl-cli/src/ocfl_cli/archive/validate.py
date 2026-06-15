@@ -29,6 +29,7 @@ from ocfl_lib import (
     validate_object,
     validate_root,
 )
+from ocfl_lib.errors import OtsParseError
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.validation.result import ValidationError
 
@@ -228,7 +229,7 @@ def _verify_ots_walk(
                 expected_digest=expected,
                 min_confirmations=min_confs,
             )
-        except (AttestationMismatchError, ReorgDetectedError) as exc:
+        except (AttestationMismatchError, ReorgDetectedError, OtsParseError) as exc:
             _emit_ots_result(emit_progress, vkey, ots_rel, f"failed ({exc})")
             result.error("E906", path=ots_rel, reason=str(exc))
             continue

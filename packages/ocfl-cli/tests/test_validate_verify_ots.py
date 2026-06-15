@@ -474,6 +474,30 @@ class TestVerifyTimeMismatchE906:
             f"verify-time merkle mismatch must surface E906; got codes={codes}"
         )
 
+    def test_default_on_corrupt_inventory_ots_reports_e906_json(
+        self,
+        runner: CliRunner,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Corrupt extension inventory proofs must not escape as tracebacks."""
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        (
+            root / "obj-test" / "extensions" / _EXT_NAME / "inventory.json.v1.ots"
+        ).write_bytes(b"not an ots file")
+
+        r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
+
+        assert r.exit_code == 1, r.output
+        assert isinstance(r.exception, SystemExit)
+        data = json.loads(r.stdout)
+        codes = {e["code"] for e in data["errors"]}
+        assert "E906" in codes
+
 
 # =========================================================================== #
 # Layer-3: regtest end-to-end (skipped without --run-bitcoin)
