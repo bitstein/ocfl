@@ -248,6 +248,27 @@ class TestFixitySupport:
         assert "md5" in inv.fixity
         assert "sha1" in inv.fixity
 
+    def test_fixity_collision_keeps_all_paths(self):
+        state: DigestMap = {"abc": ["a.txt"], "def": ["b.txt"]}
+
+        class CollidingFixity:
+            def get_fixity(self, digest: str) -> dict[DigestAlgorithm, str]:
+                return {DigestAlgorithm.MD5: "same_md5"}
+
+        inv = (
+            InventoryBuilder()
+            .id("test")
+            .fixity_source(CollidingFixity())
+            .add_version(state, created="2024-01-01T00:00:00Z")
+            .build()
+        )
+
+        assert inv.fixity is not None
+        assert sorted(inv.fixity["md5"]["same_md5"]) == [
+            "v1/content/a.txt",
+            "v1/content/b.txt",
+        ]
+
     def test_fixity_merged_with_prev(self):
         """Fixity from prev inventory preserved, new fixity added."""
         # Build v1 with fixity

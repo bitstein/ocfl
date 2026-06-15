@@ -147,7 +147,9 @@ class InventoryBuilder:
                         fixity_digests = self._fixity_source.get_fixity(digest)
                         for fix_alg, fix_digest in fixity_digests.items():
                             alg_name = fix_alg.ocfl_name
-                            fixity.setdefault(alg_name, {})[fix_digest] = [content_path]
+                            fixity.setdefault(alg_name, {}).setdefault(
+                                fix_digest, []
+                            ).append(content_path)
 
             versions[vnum_str] = VersionInfo(
                 created=created,
