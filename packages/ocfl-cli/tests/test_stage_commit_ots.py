@@ -58,6 +58,7 @@ from test_stage_timestamp_inventory_upgrade import (
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
+from ocfl_cli.stage import service
 from ocfl_cli.stage.fsm import Phase
 from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
 from ocfl_cli.stage.state import (
@@ -583,6 +584,156 @@ class TestStageCommitOtsMissingCache:
         root_path = str(empty_sha256_root.resolve())
         assert store.exists(root_path, "obj:commit-missing")
         assert load_ots(sd).phase is Phase.INVENTORY_UPGRADED
+
+
+# =========================================================================== #
+# Layer-2: OTS commit command renders stale-source and lock errors
+# =========================================================================== #
+
+
+class TestStageCommitOtsPreExecuteErrors:
+    def test_changed_staged_file_reports_message_and_preserves_staging(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        _sd, _da, _inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:commit-changed-source",
+            sp_fake,
+            btc_fake,
+        )
+        store = StagingStore(staging)
+        root_path = str(empty_sha256_root.resolve())
+        content_map = store.load_content_map(root_path, "obj:commit-changed-source")
+        staged_src = Path(next(iter(content_map.values()))["path"])
+        staged_src.write_text("changed content")
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "commit",
+                "obj:commit-changed-source",
+            ),
+        )
+
+        assert r.exit_code == 1, r.output
+        assert isinstance(r.exception, SystemExit)
+        assert "changed" in r.output.lower()
+        assert store.exists(root_path, "obj:commit-changed-source")
+        assert (
+            not StorageRoot(LocalFS(empty_sha256_root))
+            .get_object("obj:commit-changed-source")
+            .exists
+        )
+
+    def test_missing_staged_file_reports_message_and_preserves_staging(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        _sd, _da, _inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:commit-missing-source",
+            sp_fake,
+            btc_fake,
+        )
+        store = StagingStore(staging)
+        root_path = str(empty_sha256_root.resolve())
+        content_map = store.load_content_map(root_path, "obj:commit-missing-source")
+        staged_src = Path(next(iter(content_map.values()))["path"])
+        staged_src.unlink()
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "commit",
+                "obj:commit-missing-source",
+            ),
+        )
+
+        assert r.exit_code == 1, r.output
+        assert isinstance(r.exception, SystemExit)
+        assert "missing" in r.output.lower()
+        assert store.exists(root_path, "obj:commit-missing-source")
+        assert (
+            not StorageRoot(LocalFS(empty_sha256_root))
+            .get_object("obj:commit-missing-source")
+            .exists
+        )
+
+    def test_lock_timeout_reports_canonical_exit_and_preserves_staging(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        _setup_at_inventory_upgraded(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:commit-lock-timeout",
+            sp_fake,
+            btc_fake,
+        )
+        root_path = str(empty_sha256_root.resolve())
+        monkeypatch.setattr(service, "_LOCK_TIMEOUT_SECONDS", 0.01)
+
+        with service._object_commit_lock(root_path, "obj:commit-lock-timeout"):
+            r = runner.invoke(
+                app,
+                _stage_args(
+                    empty_sha256_root,
+                    staging,
+                    "commit",
+                    "obj:commit-lock-timeout",
+                ),
+            )
+
+        assert r.exit_code == 4, r.output
+        assert isinstance(r.exception, SystemExit)
+        assert "lock" in r.output.lower()
+        store = StagingStore(staging)
+        assert store.exists(root_path, "obj:commit-lock-timeout")
+        assert (
+            not StorageRoot(LocalFS(empty_sha256_root))
+            .get_object("obj:commit-lock-timeout")
+            .exists
+        )
 
 
 # =========================================================================== #

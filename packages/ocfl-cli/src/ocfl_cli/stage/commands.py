@@ -1074,6 +1074,12 @@ def commit(
             exit_for_error(e)
         except MissingStagedMetadataError as e:
             exit_for_error(e)
+        except (
+            service.StagingFileMissingError,
+            service.StagingFileChangedError,
+            LockTimeoutError,
+        ) as e:
+            exit_for_error(e)
         except service.CommitFailedError as e:
             exit_for_error(e)
         return
