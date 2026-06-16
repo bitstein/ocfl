@@ -31,8 +31,6 @@ _KNOWN_UNREACHED: frozenset[str] = frozenset(
         "E058b",
         # State digest aggregate — individual E050f fires instead
         "E050a",
-        # Fixity file missing on disk — caught by E092a/E093a digest verify
-        "E093b",
         # Prior inventory version state digest checks — E066b covers the paths
         "E066d",
         "E066e",

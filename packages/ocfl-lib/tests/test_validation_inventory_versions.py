@@ -75,6 +75,14 @@ class TestVersionKeys:
         )
         assert r.has_code("E010")
 
+    def test_empty_versions_still_reported_when_head_missing(self):
+        inv = _inv(versions={})
+        del inv["head"]
+        r = ValidationResult()
+        validate_inventory(inv, r)
+        assert r.has_code("E008")
+        assert r.has_code("E036")
+
     def test_zero_padded_warning(self):
         r = ValidationResult()
         validate_inventory(

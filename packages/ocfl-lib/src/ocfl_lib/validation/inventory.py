@@ -94,6 +94,8 @@ def _validate_structure(
             ok = False
 
     if not ok:
+        if "versions" in data and data["versions"] == {}:
+            result.error("E008", where=where)
         return False
 
     # Unknown keys
@@ -610,7 +612,19 @@ def _validate_fixity(
 
             # Each path must be in manifest
             for path in paths:
-                if isinstance(path, str) and path not in manifest_paths:
+                if not isinstance(path, str):
+                    continue
+
+                if path.startswith("/") or path.endswith("/"):
+                    result.error("E100", where=where, path=path)
+                    continue
+
+                segments = path.split("/")
+                if any(s in ("", ".", "..") for s in segments):
+                    result.error("E099", where=where, path=path)
+                    continue
+
+                if path not in manifest_paths:
                     result.error(
                         "E057d",
                         where=where,

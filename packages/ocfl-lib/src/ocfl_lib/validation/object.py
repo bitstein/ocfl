@@ -139,7 +139,11 @@ def validate_object(
         if m:
             inv_versions[vkey] = int(vkey[1:])
 
+    _check_first_version_content_dir(fsys, path, inv_data, inv_versions, result)
+
     # 6. Validate object root structure
+    _check_version_dir_sequence(entries, result)
+
     # extensions/ and logs/ are allowed per spec
     allowed_root = {"inventory.json", sidecar_name, "extensions", "logs"}
     if namaste:
@@ -189,6 +193,7 @@ def validate_object(
             inv_bytes,
             alg,
             result,
+            check_digests=check_digests,
             lax_digests=lax_digests,
         )
 
@@ -237,6 +242,7 @@ def _validate_version_dir(
     root_alg: DigestAlgorithm,
     result: ValidationResult,
     *,
+    check_digests: bool,
     lax_digests: bool,
 ) -> None:
     """Validate a single version directory."""
@@ -339,9 +345,9 @@ def _validate_version_dir(
     # E103: version inventory spec must not be older than a later version's spec
     _check_spec_regression(vinv_data, root_inv_data, result, vkey=vkey)
 
-    # E092: when version alg differs from root, verify version manifest digests
+    # E092: non-head version inventories must describe their content correctly.
     vinv_alg_name = vinv_data.get("digestAlgorithm", "")
-    if vinv_alg_name != root_inv_data.get("digestAlgorithm", ""):
+    if check_digests and vkey != head:
         try:
             vinv_alg = DigestAlgorithm.from_ocfl_name(vinv_alg_name)
         except ValueError:
@@ -393,6 +399,53 @@ def _check_version_metadata(
                     prior_head=str(prior_head),
                     where="root",
                 )
+
+
+def _check_version_dir_sequence(entries: list[Any], result: ValidationResult) -> None:
+    """E010: version directories present on disk must be sequential."""
+    vnums: list[int] = []
+    for entry in entries:
+        if not entry.is_dir:
+            continue
+        if _VNUM_RE.match(entry.name):
+            vnums.append(int(entry.name[1:]))
+
+    if not vnums:
+        return
+
+    vnums.sort()
+    for i in range(1, len(vnums)):
+        if vnums[i] != vnums[i - 1] + 1:
+            result.error("E010", where="root")
+            return
+
+
+def _check_first_version_content_dir(
+    fsys: FS,
+    path: str,
+    root_inv_data: dict[str, Any],
+    inv_versions: dict[str, int],
+    result: ValidationResult,
+) -> None:
+    """E019: contentDirectory must be set consistently from the first version."""
+    if "contentDirectory" not in root_inv_data or not inv_versions:
+        return
+
+    first_vkey = min(inv_versions.items(), key=lambda item: item[1])[0]
+    vinv_path = _join(path, first_vkey, "inventory.json")
+    try:
+        vinv_bytes = fs_utils.read_all(fsys, vinv_path)
+        vinv_data = json.loads(vinv_bytes)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return
+
+    if not isinstance(vinv_data, dict):
+        return
+
+    first_cd = vinv_data.get("contentDirectory")
+    root_cd = root_inv_data.get("contentDirectory")
+    if first_cd != root_cd:
+        result.error("E019", where="root")
 
 
 _SPEC_RE = re.compile(r"https://ocfl\.io/(\d+\.\d+)/spec/#inventory")
@@ -492,7 +545,7 @@ def _verify_digests(
                         content_path=content_path,
                         content_digest=actual,
                     )
-            except OSError, ValueError:
+            except (OSError, ValueError):
                 pass
 
 
@@ -531,7 +584,15 @@ def _verify_fixity_digests(
                             content_path=content_path,
                             content_digest=actual,
                         )
-                except OSError, ValueError:
+                except OSError:
+                    result.error(
+                        "E093b",
+                        where=where,
+                        digest_algorithm=alg.ocfl_name,
+                        digest=digest,
+                        content_path=content_path,
+                    )
+                except ValueError:
                     pass
 
 

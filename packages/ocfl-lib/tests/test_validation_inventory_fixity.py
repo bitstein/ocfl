@@ -82,6 +82,24 @@ class TestFixityDigestMap:
         )
         assert r.has_code("E057d")
 
+    def test_path_with_invalid_segment(self):
+        r = ValidationResult()
+        validate_inventory(
+            _inv_with_fixity({"md5": {"d" * 32: ["v1/content/../file.txt"]}}),
+            r,
+        )
+        assert r.has_code("E099")
+        assert not r.has_code("E057d")
+
+    def test_path_with_leading_slash(self):
+        r = ValidationResult()
+        validate_inventory(
+            _inv_with_fixity({"md5": {"d" * 32: ["/v1/content/file.txt"]}}),
+            r,
+        )
+        assert r.has_code("E100")
+        assert not r.has_code("E057d")
+
     def test_path_in_manifest_accepted(self):
         r = ValidationResult()
         validate_inventory(

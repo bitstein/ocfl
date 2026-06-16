@@ -18,16 +18,7 @@ _CODE_RE = re.compile(r"[EW]\d+")
 # Fixtures requiring deeper cross-version checks not yet implemented
 _XFAIL_BAD: frozenset[str] = frozenset()
 
-_XFAIL_BAD_EXPECTED_CODES: dict[str, str] = {
-    "E008_E036_no_versions_no_head": "validator reports E036 but not E008",
-    "E010_missing_versions": "validator reports E046 but not E010",
-    "E019_inconsistent_content_dir": "validator reports E020 but not E019",
-    "E066_E092_old_manifest_digest_incorrect": "validator reports E066 but not E092",
-    "E092_E093_content_path_does_not_exist": "validator reports E092 but not E093",
-    "E100_E099_fixity_invalid_content_paths": (
-        "validator reports lower-level fixity/path errors but not E099/E100"
-    ),
-}
+_XFAIL_BAD_EXPECTED_CODES: dict[str, str] = {}
 
 
 def _parse_codes(dirname: str) -> list[str]:
@@ -210,6 +201,15 @@ class TestE019ContentDirectoryAdded:
         validate_object(fsys, "", r, check_digests=False)
         assert r.has_code("E019")
 
+    def test_root_cd_differs_from_first_version_cd(self, tmp_path: Path):
+        root_inv = _base_inv(contentDirectory="content")
+        ver_inv = _base_inv(contentDirectory="data")
+        _make_object(tmp_path, root_inv, version_inv=ver_inv)
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_object(fsys, "", r, check_digests=False)
+        assert r.has_code("E019")
+
 
 class TestE020ContentDirectoryMismatch:
     def test_version_cd_differs_from_root(self, tmp_path: Path):
@@ -222,7 +222,151 @@ class TestE020ContentDirectoryMismatch:
         assert r.has_code("E020")
 
 
+class TestE010VersionDirSequence:
+    def test_version_dirs_must_be_contiguous(self, tmp_path: Path):
+        root_inv = _base_inv(
+            head="v4",
+            versions={
+                "v1": {
+                    "created": "2024-01-01T00:00:00Z",
+                    "state": {_D1: ["file.txt"]},
+                },
+                "v2": {
+                    "created": "2024-01-02T00:00:00Z",
+                    "state": {_D1: ["file.txt"]},
+                },
+                "v3": {
+                    "created": "2024-01-03T00:00:00Z",
+                    "state": {_D1: ["file.txt"]},
+                },
+                "v4": {
+                    "created": "2024-01-04T00:00:00Z",
+                    "state": {_D1: ["file.txt"]},
+                },
+            },
+        )
+        _make_object(tmp_path, root_inv)
+        (tmp_path / "v4").mkdir()
+
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_object(fsys, "", r, check_digests=False)
+
+        assert r.has_code("E010")
+
+
 class TestVersionInventoryJson:
+    def test_non_head_inventory_manifest_digest_mismatch_fires_e092(
+        self, tmp_path: Path
+    ):
+        content = b"data"
+        digest = hashlib.sha512(content).hexdigest()
+        bad_digest = "0" + digest[1:]
+        root_inv = {
+            "id": "http://example.org/obj1",
+            "type": "https://ocfl.io/1.1/spec/#inventory",
+            "digestAlgorithm": "sha512",
+            "head": "v2",
+            "manifest": {digest: ["v1/content/file.txt", "v2/content/file.txt"]},
+            "versions": {
+                "v1": {
+                    "created": "2024-01-01T00:00:00Z",
+                    "state": {digest: ["file.txt"]},
+                },
+                "v2": {
+                    "created": "2024-01-02T00:00:00Z",
+                    "state": {digest: ["file.txt"]},
+                },
+            },
+        }
+        v1_inv = {
+            **root_inv,
+            "head": "v1",
+            "manifest": {bad_digest: ["v1/content/file.txt"]},
+            "versions": {
+                "v1": {
+                    "created": "2024-01-01T00:00:00Z",
+                    "state": {bad_digest: ["file.txt"]},
+                },
+            },
+        }
+
+        (tmp_path / "0=ocfl_object_1.1").write_text("ocfl_object_1.1\n")
+        root_inv_bytes = json.dumps(
+            root_inv, sort_keys=True, separators=(",", ":")
+        ).encode()
+        root_inv_digest = hashlib.sha512(root_inv_bytes).hexdigest()
+        (tmp_path / "inventory.json").write_bytes(root_inv_bytes)
+        (tmp_path / "inventory.json.sha512").write_text(
+            f"{root_inv_digest} inventory.json\n"
+        )
+
+        v1 = tmp_path / "v1"
+        (v1 / "content").mkdir(parents=True)
+        (v1 / "content" / "file.txt").write_bytes(content)
+        v1_inv_bytes = json.dumps(
+            v1_inv, sort_keys=True, separators=(",", ":")
+        ).encode()
+        (v1 / "inventory.json").write_bytes(v1_inv_bytes)
+        (v1 / "inventory.json.sha512").write_text(
+            f"{hashlib.sha512(v1_inv_bytes).hexdigest()} inventory.json\n"
+        )
+
+        v2 = tmp_path / "v2"
+        (v2 / "content").mkdir(parents=True)
+        (v2 / "content" / "file.txt").write_bytes(content)
+        (v2 / "inventory.json").write_bytes(root_inv_bytes)
+        (v2 / "inventory.json.sha512").write_text(f"{root_inv_digest} inventory.json\n")
+
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_object(fsys, "", r)
+
+        assert r.has_code("E092")
+
+    def test_missing_fixity_content_path_fires_e093(self, tmp_path: Path):
+        content = b"data"
+        digest = hashlib.sha512(content).hexdigest()
+        fixity_digest = hashlib.md5(content, usedforsecurity=False).hexdigest()
+        inv = {
+            "id": "http://example.org/obj1",
+            "type": "https://ocfl.io/1.1/spec/#inventory",
+            "digestAlgorithm": "sha512",
+            "head": "v1",
+            "manifest": {digest: ["v1/content/file.txt", "v1/content/missing.txt"]},
+            "versions": {
+                "v1": {
+                    "created": "2024-01-01T00:00:00Z",
+                    "state": {digest: ["file.txt"]},
+                },
+            },
+            "fixity": {
+                "md5": {
+                    fixity_digest: ["v1/content/file.txt", "v1/content/missing.txt"]
+                }
+            },
+        }
+        inv_bytes = json.dumps(inv, sort_keys=True, separators=(",", ":")).encode()
+        inv_digest = hashlib.sha512(inv_bytes).hexdigest()
+
+        (tmp_path / "0=ocfl_object_1.1").write_text("ocfl_object_1.1\n")
+        (tmp_path / "inventory.json").write_bytes(inv_bytes)
+        (tmp_path / "inventory.json.sha512").write_text(
+            f"{inv_digest} inventory.json\n"
+        )
+
+        v1 = tmp_path / "v1"
+        (v1 / "content").mkdir(parents=True)
+        (v1 / "content" / "file.txt").write_bytes(content)
+        (v1 / "inventory.json").write_bytes(inv_bytes)
+        (v1 / "inventory.json.sha512").write_text(f"{inv_digest} inventory.json\n")
+
+        fsys = LocalFS(tmp_path)
+        r = ValidationResult()
+        validate_object(fsys, "", r)
+
+        assert r.has_code("E093")
+
     def test_corrupt_non_head_inventory_fires_e033(self, tmp_path: Path):
         content = b"data"
         digest = hashlib.sha512(content).hexdigest()
