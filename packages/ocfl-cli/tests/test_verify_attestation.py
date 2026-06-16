@@ -46,7 +46,7 @@ from ocfl_cli.ots.bitcoin import (
     VerifiedAttestation,
     verify_attestation,
 )
-from tests.helpers.ots import build_attestation
+from tests.helpers.ots import build_attestation, build_committed_attestation
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -121,6 +121,45 @@ class TestMismatch:
 
         with pytest.raises(AttestationMismatchError):
             verify_attestation(rpc, ots, wrong_expected, min_confirmations=MIN_CONFS)
+
+
+class TestAttestedDistinctFromCommitment:
+    """With a real merkle path the attested root != the file commitment digest.
+
+    The plain ``build_attestation`` collapses them, so these tests can't tell
+    whether ``verify_attestation`` compares the chain merkle against the
+    attested digest (correct) or the commitment digest. Here they differ:
+    attested = sha256(commitment).
+    """
+
+    def test_chain_merkle_matching_attested_verifies(self) -> None:
+        ots, attested = build_committed_attestation(DIGEST, block_height=HEIGHT)
+        assert attested != DIGEST
+        rpc = FakeBitcoinRPC()
+        _grow_chain_to(rpc, HEIGHT + MIN_CONFS)
+        # Register the ATTESTED root (the value walked through the op), not the
+        # commitment digest.
+        rpc.register_merkle_root(HEIGHT, attested[::-1].hex())
+
+        result = verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
+
+        assert isinstance(result, VerifiedAttestation)
+        assert result.block_height == HEIGHT
+
+    def test_chain_merkle_matching_commitment_not_attested_raises(self) -> None:
+        # Register the chain merkle as the COMMITMENT digest. The commitment
+        # check passes (expected == DIGEST), so the only way this raises is the
+        # merkle check comparing the chain root against the ATTESTED digest —
+        # which it must not satisfy. Kills a mutant that compares the chain
+        # root against commitment_digest instead of attested_digest.
+        ots, attested = build_committed_attestation(DIGEST, block_height=HEIGHT)
+        assert attested != DIGEST
+        rpc = FakeBitcoinRPC()
+        _grow_chain_to(rpc, HEIGHT + MIN_CONFS)
+        rpc.register_merkle_root(HEIGHT, DIGEST_DISPLAY_HEX)
+
+        with pytest.raises(AttestationMismatchError):
+            verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
 
 
 # ---------------------------------------------------------------------------
