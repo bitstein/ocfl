@@ -557,6 +557,57 @@ class TestVerifyTimeMismatchE906:
 
 
 class TestVerifyPendingW903:
+    def test_default_on_missing_inventory_ots_skips_verify_time_warning(
+        self,
+        runner: CliRunner,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        root = _make_root_with_ots_object(
+            tmp_path,
+            obj_id="obj-test",
+            include_inventory_v1_ots=False,
+        )
+
+        r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
+
+        assert r.exit_code == 1, r.output
+        data = json.loads(r.stdout)
+        assert data["valid"] is False
+        error_codes = {e["code"] for e in data["errors"]}
+        warning_codes = {w["code"] for w in data["warnings"]}
+        assert "E904" in error_codes
+        assert "E906" not in error_codes
+        assert "W903" not in warning_codes
+
+    def test_default_on_missing_version_inventory_skips_verify_time_warning(
+        self,
+        runner: CliRunner,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        (root / "obj-test" / "v1" / "inventory.json").unlink()
+
+        r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
+
+        assert r.exit_code == 0, r.output
+        data = json.loads(r.stdout)
+        assert data["valid"] is True
+        error_codes = {e["code"] for e in data["errors"]}
+        warning_codes = {w["code"] for w in data["warnings"]}
+        assert "W010" in warning_codes
+        assert "E906" not in error_codes
+        assert "W903" not in warning_codes
+
     def test_default_on_pending_attestation_reports_w903_with_structural_warnings(
         self,
         runner: CliRunner,
