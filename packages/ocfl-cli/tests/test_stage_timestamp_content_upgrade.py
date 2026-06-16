@@ -1017,9 +1017,12 @@ class TestReorgShallow:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """First pass: verifies. Reorg replaces the attested block (shallow,
-        still within N of tip). Second pass: ``_reverify_existing_proofs``
-        notices block-hash mismatch and resets verified=False — no HALT."""
+        """First pass: verifies. Reorg replaces the attested block (shallow):
+        the chain is truncated to the attested height, so confirmations drop
+        below MIN_CONFS. Second pass: ``_reverify_existing_proofs`` sees the
+        insufficient-confirmations window and resets verified=False — no HALT.
+        (Merkle-mismatch-at-sufficient-confs after a reorg is a separate HALT
+        case, covered by ``TestReorgMerkleMismatch``.)"""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
@@ -1059,8 +1062,8 @@ class TestReorgShallow:
         # Reorg the attested height: block_hash changes, height still in chain
         # (within N). The cached .ots's embedded merkle path is now stale.
         btc_fake.rpc.reorg_at(DIGEST_BLOCK_HEIGHT)
-        # New block at this height has a DIFFERENT merkle root — the original
-        # proof no longer matches; do NOT re-register the old merkle.
+        # Chain now ends at the attested height: confs == 1 < MIN_CONFS, so
+        # re-verify returns insufficient-confirmations and resets the proof.
 
         # Round 2: --upgrade re-verifies existing proofs at head.
         r = runner.invoke(
@@ -1187,6 +1190,86 @@ class TestMerkleMismatch:
         assert state.phase is Phase.CONTENT_PENDING
         # ots.json's content_proofs unchanged for d (no verified=True written).
         assert d not in state.content_proofs or not state.content_proofs[d].verified
+
+
+class TestReorgMerkleMismatch:
+    def test_reorg_replaces_block_at_sufficient_confs_resets_and_resubmits(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Reorg replaces the attested block with DIFFERENT content, then
+        re-buries it to >= MIN_CONFS. Re-verify reaches the merkle comparison
+        (confs are sufficient, unlike the shallow case) and the replacement
+        block's root no longer matches the cached proof, so the proof is reset
+        to verified=False and a fresh verify job is submitted — graceful
+        re-anchoring, not a HALT (HALT is reserved for deep reorgs > N).
+
+        This is the honest merkle-mismatch path: it only resets because
+        ``reorg_at`` drops the orphaned merkle root. If the fake leaked the
+        stale root, the proof would still match at sufficient confs and stay
+        verified=True — so this test guards that fidelity.
+        """
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        sd, _paths, digests = _new_ots_staging(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:reorg-mm",
+            ("a.txt", b"alpha"),
+        )
+        d = digests["a.txt"]
+        _force_content_pending(sd, (d,))
+
+        ots_bytes = _ots_for(d)
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
+
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        _register_attested(btc_fake.rpc, d)
+
+        # Round 1: verifies + advances.
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root, staging, "timestamp", "content",
+                "obj:reorg-mm", "--upgrade",
+            ),
+        )
+        assert r.exit_code == 0, r.output
+        assert load_ots(sd).content_proofs[d].verified is True
+
+        # Reorg the attested height to different content, then re-bury it to
+        # MIN_CONFS. The replacement block reports a deterministic non-stale
+        # merkle root, so re-verify hits a genuine merkle mismatch at
+        # sufficient confirmations.
+        btc_fake.rpc.reorg_at(DIGEST_BLOCK_HEIGHT)
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+
+        # Round 2: --upgrade re-verifies, resets the proof, resubmits.
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root, staging, "timestamp", "content",
+                "obj:reorg-mm", "--upgrade",
+            ),
+        )
+        assert r.exit_code == 0, r.output
+        state = load_ots(sd)
+        # The merkle no longer matches → proof reset (fidelity guard).
+        assert state.content_proofs[d].verified is False
+        # A fresh verify job was queued to re-anchor the reset digest.
+        assert any(
+            d in j.digests and j.status == "IN_PROGRESS"
+            for j in state.verify_jobs
+        )
 
 
 # =========================================================================== #

@@ -12,6 +12,10 @@ def _hash_at(height: int, salt: bytes = b"") -> str:
     return sha256(f"block:{height}".encode() + salt).hexdigest()
 
 
+def _merkle_at(height: int, block_hash: str) -> str:
+    return sha256(f"merkle:{height}:{block_hash}".encode()).hexdigest()
+
+
 @dataclass
 class FakeBitcoinRPC:
     _chain: list[str] = field(default_factory=list)
@@ -36,6 +40,12 @@ class FakeBitcoinRPC:
         self._salt = self._salt + b"r"
         del self._chain[height:]
         self._chain.append(_hash_at(height, self._salt))
+        # The replacement block (and anything above it) is new content. Drop
+        # stale explicit roots so getblockheader falls back to the replacement
+        # block's deterministic root, matching real reorg semantics without
+        # preserving orphaned merkle data.
+        for h in [h for h in self._merkle_roots if h >= height]:
+            del self._merkle_roots[h]
 
     def register_merkle_root(self, height: int, merkle_hex: str) -> None:
         """Register the merkle_root reported by getblockheader at *height*.
@@ -59,7 +69,9 @@ class FakeBitcoinRPC:
             block_hash=block_hash,
             height=height,
             confirmations=self.tip_height - height + 1,
-            merkle_root=self._merkle_roots.get(height, ""),
+            merkle_root=self._merkle_roots.get(
+                height, _merkle_at(height, block_hash)
+            ),
             time=0,
         )
 
