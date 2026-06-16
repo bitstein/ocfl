@@ -1,5 +1,6 @@
 """Validation for the NNNN-ots-timestamps OCFL extension."""
 
+import hashlib
 from typing import TYPE_CHECKING, Any
 
 from ocfl_lib import ots
@@ -43,6 +44,8 @@ def validate_ots_extension(
         vots_rel = f"inventory.json.{vkey}.ots"
         if not fsys.exists(_join(ext_root, vots_rel)):
             result.error("E904", where=vkey, path=vots_rel)
+        else:
+            _check_inventory_proof(fsys, obj_path, vkey, vots_rel, result)
 
     if isinstance(manifest, dict):
         _check_embedded_digests(fsys, obj_path, manifest, result)
@@ -75,6 +78,39 @@ def _validate_version_state(
             continue
         if f"{p}.ots" not in path_set:
             result.error("E902", where=vkey, path=p)
+
+
+def _check_inventory_proof(
+    fsys: FS,
+    obj_path: str,
+    vkey: str,
+    vots_rel: str,
+    result: ValidationResult,
+) -> None:
+    ext_root = _join(obj_path, "extensions", EXTENSION_NAME)
+    try:
+        ots_bytes = fs_utils.read_all(fsys, _join(ext_root, vots_rel))
+        vinv_bytes = fs_utils.read_all(fsys, _join(obj_path, vkey, "inventory.json"))
+    except OSError:
+        return
+
+    expected = hashlib.sha256(vinv_bytes).digest()
+
+    try:
+        parsed = ots.parse(ots_bytes)
+    except OtsParseError as exc:
+        result.error("E905", path=vots_rel, reason=str(exc))
+        return
+
+    if parsed.commitment_digest != expected:
+        result.error(
+            "E905",
+            path=vots_rel,
+            reason=(
+                f"commitment_digest {parsed.commitment_digest.hex()} "
+                f"does not match inventory digest {expected.hex()}"
+            ),
+        )
 
 
 def _check_embedded_digests(
