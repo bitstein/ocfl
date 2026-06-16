@@ -11,7 +11,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from ocfl_lib.digest import DigestAlgorithm
+from ocfl_lib.digest import DigestAlgorithm, bytes_digest
 from ocfl_lib.errors import RevertCompletedError, StaleHeadError
 from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.inventory import Inventory, StoredInventory, VersionInfo
@@ -29,6 +29,8 @@ from ocfl_lib.update_plan import (
     revert_plan,
     serialize,
 )
+from ocfl_lib.validation.object import validate_object
+from ocfl_lib.validation.result import ValidationResult
 
 
 def test_revert_plan_refuses_completed():
@@ -287,6 +289,7 @@ def _build_v1_inventory(
     *,
     obj_id: str = "test:obj1",
     files: dict[str, str] | None = None,
+    alg: DigestAlgorithm = DigestAlgorithm.SHA512,
 ) -> StoredInventory:
     """Build a v1 StoredInventory with given logical files.
 
@@ -302,16 +305,18 @@ def _build_v1_inventory(
     inv = (
         InventoryBuilder()
         .id(obj_id)
+        .digest_algorithm(alg)
         .add_version(state, created="2024-01-01T00:00:00Z")
         .build()
     )
-    return StoredInventory.from_inventory(inv, DigestAlgorithm.SHA512)
+    return StoredInventory.from_inventory(inv, alg)
 
 
 def _build_v2_inventory(
     old_inv: StoredInventory,
     *,
     new_files: dict[str, str] | None = None,
+    alg: DigestAlgorithm = DigestAlgorithm.SHA512,
 ) -> StoredInventory:
     """Build a v2 StoredInventory adding new files."""
     if new_files is None:
@@ -322,10 +327,11 @@ def _build_v2_inventory(
 
     inv = (
         InventoryBuilder(old_inv.inventory)
+        .digest_algorithm(alg)
         .add_version(state, created="2024-02-01T00:00:00Z")
         .build()
     )
-    return StoredInventory.from_inventory(inv, DigestAlgorithm.SHA512)
+    return StoredInventory.from_inventory(inv, alg)
 
 
 class TestPrepareSteps:
@@ -843,6 +849,66 @@ class TestRevertPlan:
         assert (tmp_path / "obj1" / "0=ocfl_object_1.1").is_file()
         assert (tmp_path / "obj1" / "inventory.json").read_bytes() == old_inv.raw_bytes
         assert (tmp_path / "obj1" / old_inv.sidecar_filename).is_file()
+
+    def test_migration_root_sidecar_revert_restores_previous_head(self, tmp_path: Path):
+        """Rollback after root-sidecar completion restores the prior sidecar."""
+        old_digest = bytes_digest(b"hello", DigestAlgorithm.SHA256)
+        new_hello_digest = bytes_digest(b"hello", DigestAlgorithm.SHA512)
+        new_world_digest = bytes_digest(b"world", DigestAlgorithm.SHA512)
+        old_inv = _build_v1_inventory(
+            files={"file.txt": old_digest}, alg=DigestAlgorithm.SHA256
+        )
+        fsys = LocalFS(tmp_path)
+        plan1 = UpdatePlan(steps=[], new_inv=old_inv, old_inv=None)
+        prepare_steps(plan1, fsys, "obj1", _DictContentSource({old_digest: b"hello"}))
+        execute_plan(plan1)
+
+        new_inv = _build_v2_inventory(
+            old_inv,
+            new_files={"file.txt": new_hello_digest, "new.txt": new_world_digest},
+            alg=DigestAlgorithm.SHA512,
+        )
+        plan2 = UpdatePlan(
+            steps=[],
+            new_inv=new_inv,
+            old_inv=old_inv,
+            old_sidecar_alg=old_inv.digest_algorithm.ocfl_name,
+        )
+        prepare_steps(
+            plan2,
+            fsys,
+            "obj1",
+            _DictContentSource(
+                {new_hello_digest: b"hello", new_world_digest: b"world"}
+            ),
+        )
+
+        obj_dir = tmp_path / "obj1"
+        old_sidecar = obj_dir / old_inv.sidecar_filename
+        new_sidecar = obj_dir / new_inv.sidecar_filename
+        assert old_sidecar.name != new_sidecar.name
+
+        remove_old_sidecar = next(
+            s for s in plan2.steps if s.name == "remove-old-sidecar"
+        )
+
+        def _fail_remove_old_sidecar() -> int:
+            raise RuntimeError("remove old sidecar failed")
+
+        remove_old_sidecar.run = _fail_remove_old_sidecar
+
+        with pytest.raises(RuntimeError, match="remove old sidecar failed"):
+            execute_plan(plan2)
+
+        revert_plan(plan2)
+
+        assert (obj_dir / "inventory.json").read_bytes() == old_inv.raw_bytes
+        assert old_sidecar.read_text() == old_inv.sidecar_content
+        assert not new_sidecar.exists()
+
+        result = ValidationResult()
+        validate_object(fsys, "obj1", result)
+        assert result.is_valid, result.errors
 
 
 class TestPlanResume:
