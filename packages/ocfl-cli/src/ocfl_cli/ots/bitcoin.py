@@ -303,6 +303,15 @@ def verify_attestation(
         return PendingVerification(PendingReason.BLOCK_MISSING)
 
     header = rpc.getblockheader(block_hash)
+
+    # Confirmations BEFORE merkle: a block not yet buried min_confirmations
+    # deep is untrusted, so a merkle mismatch there is treated as PENDING (it
+    # self-heals on a shallow fork/reorg as the chain settles), not a
+    # HALT-worthy mismatch. Only a mismatch at trusted depth is a genuine
+    # (deep) divergence worth stopping for.
+    if header.confirmations < min_confirmations:
+        return PendingVerification(PendingReason.INSUFFICIENT_CONFIRMATIONS)
+
     attested = parsed.attested_digest
     # bitcoind's RPC returns ``merkleroot`` as hex of bytes in *reversed*
     # (display) order; OTS Bitcoin attestations commit to the raw block-header
@@ -312,9 +321,6 @@ def verify_attestation(
         raise AttestationMismatchError(
             "attested merkle root does not match block header"
         )
-
-    if header.confirmations < min_confirmations:
-        return PendingVerification(PendingReason.INSUFFICIENT_CONFIRMATIONS)
 
     return VerifiedAttestation(
         block_height=parsed.block_height,

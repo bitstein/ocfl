@@ -42,6 +42,7 @@ from ocfl_cli.errors import (
     ReorgDetectedError,
 )
 from ocfl_cli.ots.bitcoin import (
+    PendingReason,
     PendingVerification,
     VerifiedAttestation,
     verify_attestation,
@@ -121,6 +122,26 @@ class TestMismatch:
 
         with pytest.raises(AttestationMismatchError):
             verify_attestation(rpc, ots, wrong_expected, min_confirmations=MIN_CONFS)
+
+
+class TestConfirmationsBeforeMerkle:
+    def test_insufficient_confs_with_wrong_merkle_is_pending_not_mismatch(
+        self,
+    ) -> None:
+        """A block not yet buried min_confirmations deep is untrusted, so a
+        merkle mismatch there must surface as PENDING (it self-heals on a
+        shallow fork/reorg), not a HALT-worthy AttestationMismatchError. Only a
+        mismatch at trusted depth is a genuine, alarm-worthy divergence.
+        """
+        ots = build_attestation(DIGEST, block_height=HEIGHT)
+        rpc = FakeBitcoinRPC()
+        _grow_chain_to(rpc, HEIGHT)  # tip == HEIGHT -> 1 confirmation (< MIN_CONFS)
+        rpc.register_merkle_root(HEIGHT, "00" * 32)  # wrong merkle root
+
+        result = verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
+
+        assert isinstance(result, PendingVerification)
+        assert result.reason is PendingReason.INSUFFICIENT_CONFIRMATIONS
 
 
 class TestAttestedDistinctFromCommitment:

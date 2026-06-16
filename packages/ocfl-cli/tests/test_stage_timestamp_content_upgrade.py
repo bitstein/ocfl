@@ -1330,6 +1330,70 @@ class TestContentUpgradeExpired:
         )
 
 
+class TestConfirmationsBeforeMerkleCli:
+    def test_shallow_wrong_merkle_waits_but_trusted_depth_halts(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        sd, _paths, digests = _new_ots_staging(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:shallow-mm",
+            ("a.txt", b"alpha"),
+        )
+        d = digests["a.txt"]
+        _force_content_pending(sd, (d,))
+
+        ots_bytes = _ots_for(d)
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
+
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT)
+        btc_fake.rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, "00" * 32)
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:shallow-mm",
+                "--upgrade",
+            ),
+        )
+        assert r.exit_code == 0, r.output
+        assert "Waiting on 1 pending digest" in r.output
+        state = load_ots(sd)
+        assert state.phase is Phase.CONTENT_PENDING
+        assert state.content_proofs[d].verified is False
+
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:shallow-mm",
+                "--upgrade",
+            ),
+        )
+        assert r.exit_code == 5, r.output
+        assert "halt:" in r.output
+
+
 # =========================================================================== #
 # Layer-2: crash-recovery parametrized fault injection
 # =========================================================================== #
