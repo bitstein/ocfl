@@ -29,7 +29,7 @@ import hashlib
 from pathlib import Path
 
 import pytest
-from fakes import FakeSimpleProof
+from fakes import FakeBitcoinRPC, FakeSimpleProof
 from msgspec.structs import replace
 from pydantic import SecretStr
 from runner_helpers import runner_obj
@@ -44,13 +44,16 @@ from ocfl_cli.stage.fsm import Phase
 from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
 from ocfl_cli.stage.state import (
     VerifiedProof,
+    VerifyJob,
     load_ots,
+    ots_cache_path,
     plan_path,
     save_ots,
 )
 from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 from ocfl_lib.update_plan import deserialize
+from tests.helpers.ots import build_attestation
 
 # --------------------------------------------------------------------------- #
 # Config + path helpers (mirrors test_stage_timestamp_content_upgrade.py;
@@ -95,6 +98,10 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
 def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
     """Inject *fake* via ``runner.obj["sp_client_factory"]``."""
     runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
+
+
+def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
+    runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
 
 
 # --------------------------------------------------------------------------- #
@@ -202,6 +209,20 @@ def _setup_content_upgraded(
     )
     save_ots(sd, state)
     return sd, da, hashlib.sha256(ots_src.read_bytes()).hexdigest()
+
+
+def _grow_chain_to(rpc: FakeBitcoinRPC, height: int) -> None:
+    needed = height - rpc.tip_height
+    if needed > 0:
+        rpc.extend(needed)
+
+
+def _register_attested(rpc: FakeBitcoinRPC, digest_hex: str) -> None:
+    rpc.register_merkle_root(800_000, bytes.fromhex(digest_hex)[::-1].hex())
+
+
+def _ots_for(digest_hex: str) -> bytes:
+    return build_attestation(bytes.fromhex(digest_hex), block_height=800_000)
 
 
 # =========================================================================== #
@@ -396,6 +417,131 @@ class TestInventorySubmissionPrimitives:
         assert result.submitted_count == 0
         assert load_ots(sd).phase is Phase.INVENTORY_UPGRADED
         assert not sp_fake._submissions
+
+
+class TestUnverifiedContentGate:
+    def test_inventory_timestamp_blocked_when_content_proof_unverified(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A reorg can reset a content proof to verified=False while the phase
+        stays content-upgraded. ``timestamp inventory`` must then refuse rather
+        than anchor the inventory over an unverified content proof (exit 3) —
+        the proof must be re-anchored via ``timestamp content --upgrade`` first.
+        """
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+
+        staging = tmp_path / "staging"
+        sd, da, _ots_digest = _setup_content_upgraded(
+            runner, empty_sha256_root, staging, "obj:reorg-gate"
+        )
+        # Simulate a reorg resetting the content proof; phase stays upgraded.
+        state = load_ots(sd)
+        state = replace(
+            state,
+            content_proofs={
+                da: replace(state.content_proofs[da], verified=False)
+            },
+        )
+        save_ots(sd, state)
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "inventory",
+                "obj:reorg-gate",
+            ),
+        )
+
+        assert r.exit_code == 3, r.output
+        assert "unverified" in r.output.lower()
+        # No inventory work happened; phase held at content-upgraded.
+        assert not plan_path(sd).exists()
+        assert not sp_fake._submissions
+        assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
+
+    def test_inventory_timestamp_blocked_after_reorg_reverify_resets_content(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        sd, _paths, digests = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:reorg-real", ("a.txt", b"alpha")
+        )
+        d = digests["a.txt"]
+        ots_bytes = _ots_for(d)
+        cache = ots_cache_path(sd, d)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_bytes(ots_bytes)
+        _grow_chain_to(btc_fake.rpc, 800_000 + 3 - 1)
+        _register_attested(btc_fake.rpc, d)
+        state = replace(
+            load_ots(sd),
+            phase=Phase.CONTENT_UPGRADED,
+            pending_digests=(d,),
+            verify_jobs=(
+                VerifyJob(job_id="old-job", digests=(d,), status="COMPLETED"),
+            ),
+            content_proofs={
+                d: VerifiedProof(
+                    ots_path=f"ots-cache/{d}.ots",
+                    verified=True,
+                    block_height=800_000,
+                    confirmations_at_verify=3,
+                    verified_at="2026-04-23T16:30:00+00:00",
+                )
+            },
+        )
+        save_ots(sd, state)
+
+        btc_fake.rpc.reorg_at(800_000)
+        _grow_chain_to(btc_fake.rpc, 800_000 + 3 - 1)
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:reorg-real",
+                "--upgrade",
+            ),
+        )
+        assert r.exit_code == 0, r.output
+        assert load_ots(sd).content_proofs[d].verified is False
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "inventory",
+                "obj:reorg-real",
+            ),
+        )
+
+        assert r.exit_code == 3, r.output
+        assert "unverified" in r.output.lower()
+        assert not plan_path(sd).exists()
+        assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
 
 
 class TestMetadataGate:

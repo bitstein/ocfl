@@ -271,6 +271,54 @@ class TestStageCommitOtsHappyPath:
         assert not store.exists(root_path, "obj:commit-ok")
         assert not sd.exists()
 
+    def test_commit_blocks_when_content_proof_invalidated_after_inventory_upgrade(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        sd, da, _inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:commit-content-invalid",
+            sp_fake,
+            btc_fake,
+        )
+        state = load_ots(sd)
+        state = replace(
+            state,
+            content_proofs={
+                da: replace(state.content_proofs[da], verified=False)
+            },
+        )
+        save_ots(sd, state)
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "commit",
+                "obj:commit-content-invalid",
+            ),
+        )
+
+        assert r.exit_code == 3, r.output
+        assert "content proof" in r.output.lower()
+        assert "unverified" in r.output.lower()
+        assert StagingStore(staging).exists(
+            str(empty_sha256_root.resolve()), "obj:commit-content-invalid"
+        )
+
 
 class TestStageCommitOtsAfterMetadataInvalidation:
     def test_commit_blocks_after_metadata_edit_invalidates_inventory_plan(

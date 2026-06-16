@@ -259,6 +259,16 @@ def _unverified(state: OtsState, digests: tuple[str, ...]) -> list[str]:
     ]
 
 
+def _require_verified_content_before_inventory(state: OtsState) -> None:
+    unverified = _unverified(state, state.pending_digests)
+    if unverified:
+        raise PhaseError(
+            f"{len(unverified)} content proof(s) unverified after reorg; "
+            "re-run 'stage timestamp content --upgrade' before "
+            "timestamping inventory or committing"
+        )
+
+
 def _validate_metadata_input(value: str | None, *, field: str) -> str | None:
     if value is not None and not value.strip():
         raise MetadataInputError(f"staged metadata {field} cannot be empty")
@@ -2029,6 +2039,13 @@ def prepare_inventory_submission_locked(
         raise RuntimeError("simpleproof config missing")
     state = load_ots(staging_dir)
     target_phase = check_transition(state.phase, "timestamp inventory")
+
+    # Hold the gate when a reorg (or any reverify) reset a content proof after
+    # the phase advanced: the inventory must not be timestamped over an
+    # unverified content proof. Re-anchor the content first.
+    if state.phase is Phase.CONTENT_UPGRADED:
+        _require_verified_content_before_inventory(state)
+
     category_id = apply_category_id(state, sp_cfg.proof_category_id)
 
     if state.phase is Phase.INVENTORY_UPGRADED:
@@ -2241,6 +2258,7 @@ def commit_ots(
         with with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS):
             state = load_ots(staging_dir)
             target_phase = check_transition(state.phase, "commit (ots path)")
+            _require_verified_content_before_inventory(state)
 
             if (
                 state.inventory_proof is None
