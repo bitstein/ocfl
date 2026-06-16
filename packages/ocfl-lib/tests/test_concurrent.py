@@ -71,9 +71,7 @@ class TestBoundedMap:
             release.wait(timeout=5)
             return x
 
-        gen = bounded_map(
-            fn, CountingIterable(), max_workers=2, max_outstanding=4
-        )
+        gen = bounded_map(fn, CountingIterable(), max_workers=2, max_outstanding=4)
         result: list[int] = []
 
         def consume_one() -> None:

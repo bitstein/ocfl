@@ -124,9 +124,7 @@ def _build_ots_object(
                 )
             else:
                 inventory_ots = build_attestation(inv_sha256, block_height=800_000)
-            (ext_dir / "inventory.json.v1.ots").write_bytes(
-                inventory_ots
-            )
+            (ext_dir / "inventory.json.v1.ots").write_bytes(inventory_ots)
 
     return tmp_path
 

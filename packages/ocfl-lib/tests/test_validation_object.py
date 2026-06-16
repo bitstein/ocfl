@@ -244,9 +244,7 @@ class TestVersionInventoryJson:
         v2 = tmp_path / "v2"
         (v2 / "content").mkdir(parents=True)
         (v2 / "inventory.json").write_bytes(root_inv_bytes)
-        (v2 / "inventory.json.sha512").write_text(
-            f"{root_inv_digest} inventory.json\n"
-        )
+        (v2 / "inventory.json.sha512").write_text(f"{root_inv_digest} inventory.json\n")
 
         fsys = LocalFS(tmp_path)
         r = ValidationResult()
@@ -297,9 +295,7 @@ class TestVersionInventoryJson:
         v2 = tmp_path / "v2"
         (v2 / "content").mkdir(parents=True)
         (v2 / "inventory.json").write_bytes(root_inv_bytes)
-        (v2 / "inventory.json.sha512").write_text(
-            f"{root_inv_digest} inventory.json\n"
-        )
+        (v2 / "inventory.json.sha512").write_text(f"{root_inv_digest} inventory.json\n")
 
         fsys = LocalFS(tmp_path)
         r = ValidationResult()

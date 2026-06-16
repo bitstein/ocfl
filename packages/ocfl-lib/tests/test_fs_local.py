@@ -109,7 +109,7 @@ class TestWrite:
                 raise OSError("read failed")
 
         with pytest.raises(OSError, match="read failed"):
-            fs.write("existing.txt", BadStream())  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            fs.write("existing.txt", BadStream())  # type: ignore[arg-type]
         # Original file should be unchanged
         assert (fs_dir / "existing.txt").read_text() == "original"
 

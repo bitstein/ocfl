@@ -22,7 +22,7 @@ class TestFileRef:
     def test_frozen(self):
         ref = FileRef(path="a.txt", size=0)
         try:
-            ref.path = "b.txt"  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+            ref.path = "b.txt"  # type: ignore[misc]
             raise AssertionError("should be frozen")
         except AttributeError:
             pass
@@ -55,7 +55,7 @@ class TestFsEntry:
     def test_frozen(self):
         entry = FsEntry(name="x", is_dir=False, is_file=True, size=0)
         try:
-            entry.name = "y"  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+            entry.name = "y"  # type: ignore[misc]
             raise AssertionError("should be frozen")
         except AttributeError:
             pass

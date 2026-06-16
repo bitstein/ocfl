@@ -71,9 +71,9 @@ class DigestAlgorithm(enum.Enum):
 
 
 def file_digest(path: Path, alg: DigestAlgorithm) -> str:
-    """Compute hex digest of a file. Stdlib handles chunking."""
+    """Compute hex digest of a file."""
     with open(path, "rb") as f:
-        return hashlib.file_digest(f, alg.new_hasher).hexdigest()
+        return stream_digest(f, alg)
 
 
 def stream_digest(stream: BinaryIO, alg: DigestAlgorithm) -> str:

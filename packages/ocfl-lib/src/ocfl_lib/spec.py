@@ -69,9 +69,7 @@ class VNum:
         if self.padding < 0:
             raise ValueError(f"padding must be >= 0, got {self.padding}")
         if self.padding and len(str(self.number)) >= self.padding:
-            raise ValueError(
-                f"v{self.number} overflows padding width {self.padding}"
-            )
+            raise ValueError(f"v{self.number} overflows padding width {self.padding}")
 
     @classmethod
     def parse(cls, s: str) -> VNum:

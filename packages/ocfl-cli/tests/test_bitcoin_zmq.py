@@ -51,9 +51,7 @@ class TestWaitForBlock:
             deadline = time.monotonic() + 1
             got = None
             while time.monotonic() < deadline:
-                sender.send_multipart(
-                    [b"rawtx", decoy_hash, (1).to_bytes(4, "little")]
-                )
+                sender.send_multipart([b"rawtx", decoy_hash, (1).to_bytes(4, "little")])
                 sender.send_multipart(
                     [b"hashblock", block_hash, (2).to_bytes(4, "little")]
                 )

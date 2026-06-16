@@ -98,9 +98,7 @@ class TestNTupleOmitPrefixLayout:
             zero_padding="right",
             reverse_object_root=False,
         )
-        assert layout.resolve("https://x.EDU/abc/edu/f8.05v") == (
-            "f8./05v/000/f8.05v"
-        )
+        assert layout.resolve("https://x.EDU/abc/edu/f8.05v") == ("f8./05v/000/f8.05v")
 
     def test_casefold_expansion_keeps_original_slice_boundary(self):
         layout = NTupleOmitPrefixLayout(
