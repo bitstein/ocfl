@@ -229,11 +229,14 @@ def _covered_digests(state: OtsState) -> set[str]:
 
 
 def _is_failed_verify_job(status: str) -> bool:
-    return status == "FAILED"
+    # EXPIRED is dead like FAILED: the job will never yield a result, so its
+    # digests are not covered and must be resubmitted (cf. batch.py terminal
+    # set). Treating it as still-active stalls per-object --upgrade forever.
+    return status in {"FAILED", "EXPIRED"}
 
 
 def _is_terminal_verify_job(status: str) -> bool:
-    return status in {"COMPLETED", "FAILED"}
+    return status in {"COMPLETED", "FAILED", "EXPIRED"}
 
 
 def _verify_job_from_ack(

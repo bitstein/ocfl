@@ -1272,6 +1272,64 @@ class TestReorgMerkleMismatch:
         )
 
 
+class TestContentUpgradeExpired:
+    def test_expired_content_verify_job_triggers_fresh_batch(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        sd, _paths, digests = _new_ots_staging(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:content-exp",
+            ("a.txt", b"alpha"),
+        )
+        d = digests["a.txt"]
+        _force_content_pending(sd, (d,))
+
+        dead_id = sp_fake.verify_batch([d]).job_id
+        sp_fake.expire_job(dead_id)
+        state = replace(
+            load_ots(sd),
+            verify_jobs=(
+                VerifyJob(job_id=dead_id, digests=(d,), status="EXPIRED"),
+            ),
+        )
+        save_ots(sd, state)
+        assert len(sp_fake._jobs) == 1
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:content-exp",
+                "--upgrade",
+            ),
+        )
+
+        assert r.exit_code == 0, r.output
+        assert len(sp_fake._jobs) == 2
+        state = load_ots(sd)
+        assert any(
+            d in j.digests
+            and j.status not in {"FAILED", "EXPIRED", "COMPLETED"}
+            for j in state.verify_jobs
+        )
+
+
 # =========================================================================== #
 # Layer-2: crash-recovery parametrized fault injection
 # =========================================================================== #

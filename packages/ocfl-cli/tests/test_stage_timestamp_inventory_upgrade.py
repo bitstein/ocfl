@@ -487,6 +487,71 @@ class TestInventoryUpgradeHappyPath:
         assert set(post_inv.manifest) == pre_manifest_keys
 
 
+class TestInventoryUpgradeExpired:
+    def test_expired_verify_job_triggers_fresh_batch(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An EXPIRED verify job must not count as covering the inventory
+        digest. The per-object --upgrade pass should submit a FRESH
+        verify_batch (like the batch driver does) instead of stalling forever
+        on the dead job. Guards the EXPIRED-as-active stall.
+        """
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        staging = tmp_path / "staging"
+        sd, _da, inv_digest = _setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-exp"
+        )
+
+        # Seed an EXPIRED job covering the inventory digest.
+        dead_id = sp_fake.verify_batch([inv_digest]).job_id
+        sp_fake.expire_job(dead_id)
+        state = load_ots(sd)
+        assert state.inventory_proof is not None
+        state = replace(
+            state,
+            inventory_proof=replace(state.inventory_proof, job_id=dead_id),
+            verify_jobs=(
+                *state.verify_jobs,
+                VerifyJob(
+                    job_id=dead_id, digests=(inv_digest,), status="EXPIRED"
+                ),
+            ),
+        )
+        save_ots(sd, state)
+        assert len(sp_fake._jobs) == 1
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "inventory",
+                "obj:inv-exp",
+                "--upgrade",
+            ),
+        )
+        assert r.exit_code == 0, r.output
+        # A fresh verify_batch was POSTed despite the EXPIRED job.
+        assert len(sp_fake._jobs) == 2
+        # State carries an active (non-terminal) job for the digest.
+        state = load_ots(sd)
+        assert any(
+            inv_digest in j.digests
+            and j.status not in {"FAILED", "EXPIRED", "COMPLETED"}
+            for j in state.verify_jobs
+        )
+
+
 # =========================================================================== #
 # Layer-2: inventory crash-recovery  (parametrize on step boundaries)
 # =========================================================================== #

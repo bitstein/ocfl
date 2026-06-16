@@ -140,6 +140,9 @@ class FakeSimpleProof:
     def fail_job(self, job_id: str) -> None:
         self._jobs[job_id].status = "FAILED"
 
+    def expire_job(self, job_id: str) -> None:
+        self._jobs[job_id].status = "EXPIRED"
+
     def _alloc_record(self) -> int:
         self._next_record += 1
         return self._next_record
