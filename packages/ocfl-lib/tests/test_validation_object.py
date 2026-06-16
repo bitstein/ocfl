@@ -18,10 +18,29 @@ _CODE_RE = re.compile(r"[EW]\d+")
 # Fixtures requiring deeper cross-version checks not yet implemented
 _XFAIL_BAD: frozenset[str] = frozenset()
 
+_XFAIL_BAD_EXPECTED_CODES: dict[str, str] = {
+    "E008_E036_no_versions_no_head": "validator reports E036 but not E008",
+    "E010_missing_versions": "validator reports E046 but not E010",
+    "E019_inconsistent_content_dir": "validator reports E020 but not E019",
+    "E066_E092_old_manifest_digest_incorrect": "validator reports E066 but not E092",
+    "E092_E093_content_path_does_not_exist": "validator reports E092 but not E093",
+    "E100_E099_fixity_invalid_content_paths": (
+        "validator reports lower-level fixity/path errors but not E099/E100"
+    ),
+}
+
 
 def _parse_codes(dirname: str) -> list[str]:
     """Extract base codes from fixture dir names."""
     return _CODE_RE.findall(dirname)
+
+
+def _has_fixture_error_code(result: ValidationResult, expected: str) -> bool:
+    for error in result.errors:
+        match = _CODE_RE.match(error.code)
+        if match is not None and match.group(0) == expected:
+            return True
+    return False
 
 
 def _collect_fixtures(spec_ver: str, category: str) -> list[tuple[str, Path]]:
@@ -69,12 +88,15 @@ class TestBadObjects:
         fsys = LocalFS(path)
         r = ValidationResult()
         validate_object(fsys, "", r)
-        # Some fixtures trigger different sub-codes than dir name implies
-        # (known spec ambiguities, see plan decision #23)
-        found = any(r.has_code(code) for code in codes)
-        assert found or not r.is_valid, (
-            f"{name}: expected one of {codes}, got {[e.code for e in r.errors]}"
-        )
+        actual = [e.code for e in r.errors]
+        if name in _XFAIL_BAD_EXPECTED_CODES and not all(
+            _has_fixture_error_code(r, code) for code in codes
+        ):
+            pytest.xfail(_XFAIL_BAD_EXPECTED_CODES[name])
+        for code in codes:
+            assert _has_fixture_error_code(r, code), (
+                f"{name}: expected {code}, got {actual}"
+            )
 
 
 # Warn objects — both spec versions
