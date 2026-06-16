@@ -705,16 +705,31 @@ def _cache_bytes(staging_dir: Path) -> int:
     )
 
 
+def _submission_submitted_at(state: OtsState, digests: tuple[str, ...]) -> str:
+    """Earliest submitted_at among submissions overlapping *digests*.
+
+    Production never back-fills Submission.job_id (see make_content_submission),
+    so a verify job is matched to its originating submission by digest overlap
+    rather than job_id; joining on job_id always missed, rendering every
+    outstanding job '0s ago'. ISO-8601 UTC strings sort chronologically.
+    """
+    target = set(digests)
+    times = [
+        s.submitted_at
+        for s in state.submissions
+        if s.submitted_at and target & set(s.digests)
+    ]
+    return min(times) if times else ""
+
+
 def _build_outstanding_jobs(
     state: OtsState, now: datetime
 ) -> list[_OutstandingJobJson]:
-    sub_by_id = {s.job_id: s for s in state.submissions if s.job_id is not None}
     outstanding: list[_OutstandingJobJson] = []
     for j in state.verify_jobs:
         if _is_terminal_verify_job(j.status):
             continue
-        sub = sub_by_id.get(j.job_id)
-        submitted_at = sub.submitted_at if sub is not None else ""
+        submitted_at = _submission_submitted_at(state, j.digests)
         outstanding.append(
             {
                 "job_id": j.job_id,

@@ -387,11 +387,13 @@ class TestStageStatusOts:
             Phase.CONTENT_PENDING,
             pending_digests=(da,),
             submissions=(
+                # Production never back-fills Submission.job_id; the verify job
+                # is matched to its submission by digest overlap. (Fabricating
+                # job_id here would let a job_id-keyed join pass spuriously.)
                 Submission(
                     submitted_at="2026-04-25T14:00:00+00:00",
                     digests=(da,),
                     status="submitted",
-                    job_id="job-1",
                     attempts=1,
                 ),
             ),
@@ -414,10 +416,10 @@ class TestStageStatusOts:
         assert entry["job_id"] == "job-1"
         assert entry["digests"] == [da]
         assert entry["status"] == "IN_PROGRESS"
-        assert isinstance(entry["submitted_at"], str)
-        assert entry["submitted_at"]  # non-empty ISO-8601
+        # Joined to the submission by digest overlap → real submitted_at, not "".
+        assert entry["submitted_at"] == "2026-04-25T14:00:00+00:00"
         assert isinstance(entry["age_seconds"], int)
-        assert entry["age_seconds"] >= 0
+        assert entry["age_seconds"] > 0
 
     # ---- 4. content-pending + FAILED job covering remaining digest -> retry_content
     def test_status_content_pending_with_failed_job_next_retry(
@@ -971,14 +973,17 @@ class TestStageStatusOts:
         _inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, digests = _new_ots_staging(
-            runner,
-            empty_sha256_root,
-            staging,
-            "obj:s-h-hr",
-            ("a.txt", b"alpha"),
+        r = runner.invoke(
+            app,
+            _stage_args(empty_sha256_root, staging, "new", "obj:s-h-hr", "--ots"),
         )
-        da = digests["a.txt"]
+        assert r.exit_code == 0, r.output
+        src = tmp_path / "a.txt"
+        src.write_bytes(b"alpha")
+        r = runner.invoke(
+            app, _stage_args(empty_sha256_root, staging, "add", "obj:s-h-hr", str(src))
+        )
+        assert r.exit_code == 0, r.output
 
         from datetime import UTC, datetime, timedelta
 
@@ -988,25 +993,35 @@ class TestStageStatusOts:
 
         from ocfl_cli.stage import service as stage_cmd
 
+        monkeypatch.setattr(
+            stage_cmd, "now_utc_iso", lambda: submitted_iso, raising=False
+        )
         monkeypatch.setattr(stage_cmd, "_status_now", lambda: fake_now, raising=False)
 
-        _set_phase(
-            sd,
-            Phase.CONTENT_PENDING,
-            pending_digests=(da,),
-            submissions=(
-                Submission(
-                    submitted_at=submitted_iso,
-                    digests=(da,),
-                    status="submitted",
-                    job_id="job-hr",
-                    attempts=1,
-                ),
-            ),
-            verify_jobs=(
-                VerifyJob(job_id="job-hr", digests=(da,), status="IN_PROGRESS"),
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root, staging, "timestamp", "content", "obj:s-h-hr"
             ),
         )
+        assert r.exit_code == 0, r.output
+        sd = _staging_dir(empty_sha256_root, staging, "obj:s-h-hr")
+        state = load_ots(sd)
+        assert state.submissions[0].job_id is None
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:s-h-hr",
+                "--upgrade",
+            ),
+        )
+        assert r.exit_code == 0, r.output
+        assert load_ots(sd).verify_jobs[0].status == "IN_PROGRESS"
 
         r = runner.invoke(
             app, _stage_args(empty_sha256_root, staging, "status", "obj:s-h-hr")
