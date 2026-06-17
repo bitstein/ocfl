@@ -346,8 +346,12 @@ def _validate_version_dir(
     _check_spec_regression(vinv_data, root_inv_data, result, vkey=vkey)
 
     # E092: non-head version inventories must describe their content correctly.
+    # Under check_digests, verify every non-head version. Always verify when the
+    # version alg differs from root, even in lax mode, so a mismatched non-head
+    # alg can never go unchecked.
     vinv_alg_name = vinv_data.get("digestAlgorithm", "")
-    if check_digests and vkey != head:
+    alg_differs = vinv_alg_name != root_inv_data.get("digestAlgorithm", "")
+    if vkey != head and (check_digests or alg_differs):
         try:
             vinv_alg = DigestAlgorithm.from_ocfl_name(vinv_alg_name)
         except ValueError:
