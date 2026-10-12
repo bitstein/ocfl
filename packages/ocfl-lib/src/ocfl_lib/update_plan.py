@@ -134,6 +134,8 @@ class _PlanState(msgspec.Struct):
     old_inv: _StoredInvState | None = None
     old_sidecar_alg: str = ""
     revert_inv: _StoredInvState | None = None
+    # rel_path -> base64 bytes
+    extension_files_b64: dict[str, str] = {}
     expected_root_sidecar_digest: str | None = None
     expected_root_sidecar_algorithm: str = ""
     version: int = _PLAN_WIRE_VERSION
@@ -173,6 +175,10 @@ def serialize(plan: UpdatePlan) -> bytes:
         old_inv=_inv_to_state(plan.old_inv) if plan.old_inv else None,
         old_sidecar_alg=plan.old_sidecar_alg,
         revert_inv=_inv_to_state(plan.revert_inv) if plan.revert_inv else None,
+        extension_files_b64={
+            path: base64.b64encode(data).decode("ascii")
+            for path, data in plan.extension_files.items()
+        },
         expected_root_sidecar_digest=plan.expected_root_sidecar_digest,
         expected_root_sidecar_algorithm=plan.expected_root_sidecar_algorithm,
     )
@@ -205,6 +211,10 @@ def deserialize(data: bytes) -> UpdatePlan:
         old_inv=_state_to_inv(state.old_inv) if state.old_inv else None,
         old_sidecar_alg=state.old_sidecar_alg,
         revert_inv=_state_to_inv(state.revert_inv) if state.revert_inv else None,
+        extension_files={
+            path: base64.b64decode(data)
+            for path, data in state.extension_files_b64.items()
+        },
         expected_root_sidecar_digest=state.expected_root_sidecar_digest,
         expected_root_sidecar_algorithm=state.expected_root_sidecar_algorithm,
     )

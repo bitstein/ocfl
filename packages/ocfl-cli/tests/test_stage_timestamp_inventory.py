@@ -707,7 +707,7 @@ class TestMetadataGate:
 
 
 class TestPlanRoundTrip:
-    def test_plan_json_round_trip_excludes_extension_files(
+    def test_plan_json_round_trip_has_no_extension_files_yet(
         self,
         runner: CliRunner,
         empty_sha256_root: Path,
@@ -742,11 +742,8 @@ class TestPlanRoundTrip:
         assert state.inventory_proof is not None
         # Round-trips the new_inv digest exactly.
         assert plan2.new_inv.digest == state.inventory_proof.digest
-        # extension_files are filled at `stage commit`, never serialized here.
+        # extension_files are filled at `stage commit`, not at this step.
         assert plan2.extension_files == {}
-        # Wire bytes do not include the field name.
-        assert b"extension_files" not in raw
-        assert b"extensionFiles" not in raw
 
 
 # =========================================================================== #

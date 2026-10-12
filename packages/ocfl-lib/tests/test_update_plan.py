@@ -171,6 +171,22 @@ class TestSerialization:
         assert restored.steps[0].completed is True
         assert restored.steps[0].size == 512
 
+    def test_extension_files_round_trip(self):
+        """extension_files (incl. non-UTF-8 bytes) survive round-trip."""
+        files = {
+            "extensions/ext-a/config.json": b'{"k": 1}',
+            "extensions/ext-b/blob.bin": b"\x00\xff\xfe",
+        }
+        plan = UpdatePlan(
+            steps=[],
+            new_inv=_make_stored_inventory(),
+            old_inv=None,
+            extension_files=files,
+        )
+
+        restored = deserialize(serialize(plan))
+        assert restored.extension_files == files
+
     def test_inventory_bytes_preserved(self):
         """Exact raw_bytes must survive serialization round-trip."""
         new_inv = _make_stored_inventory()
@@ -1375,38 +1391,29 @@ class TestExtensionFilesSteps:
 
 
 class TestExtensionFilesWireFormat:
-    def test_serialize_excludes_extension_files_bytes(self):
+    def test_serialize_includes_extension_files_as_base64(self):
         new_inv = _build_v1_inventory()
-        secret = b"SECRET_PROOF_BYTES_DO_NOT_LEAK"
+        proof = b"PROOF_BYTES"
         plan = UpdatePlan(
             steps=[PlanStep(name="object-root")],
             new_inv=new_inv,
             old_inv=None,
             extension_files={
-                "extensions/NNNN-ots-timestamps/inventory.json.v1.ots": secret,
+                "extensions/NNNN-ots-timestamps/inventory.json.v1.ots": proof,
             },
         )
 
         data = serialize(plan)
 
-        assert secret not in data
-        assert base64.b64encode(secret) not in data
-        assert secret.hex().encode() not in data
-        assert b"extension_files" not in data
+        assert base64.b64encode(proof) in data
 
-    def test_deserialize_defaults_extension_files_to_empty(self):
+    def test_deserialize_missing_extension_files_defaults_to_empty(self):
         new_inv = _build_v1_inventory()
-        plan = UpdatePlan(
-            steps=[PlanStep(name="object-root")],
-            new_inv=new_inv,
-            old_inv=None,
-            extension_files={
-                "extensions/NNNN-ots-timestamps/inventory.json.v1.ots": b"bytes",
-            },
-        )
+        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
+        decoded = msgspec.json.decode(serialize(plan))
+        del decoded["extension_files_b64"]
 
-        data = serialize(plan)
-        restored = deserialize(data)
+        restored = deserialize(msgspec.json.encode(decoded))
 
         assert restored.extension_files == {}
 
@@ -1479,12 +1486,4 @@ class TestExtensionFilesProperty:
                 p.extension_files,
             )
 
-        # extension_files is runtime-only; wire excludes it.
-        assert restored.extension_files == {}
-        assert _project(restored) == (
-            len(plan.steps),
-            [s.name for s in plan.steps],
-            plan.new_inv.digest,
-            plan.old_inv is None,
-            {},
-        )
+        assert _project(restored) == _project(plan)
