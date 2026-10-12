@@ -4,11 +4,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ocfl_lib.errors import InventorySidecarMismatch, VersionNotFound
-from ocfl_lib.fs.local import LocalFS
-from ocfl_lib.inventory import VersionInfo
-from ocfl_lib.object import DiffEntry, Object
-from ocfl_lib.spec import Spec, VNum
+from ocfl_lib._errors import InventorySidecarMismatch, VersionNotFound
+from ocfl_lib._inventory import VersionInfo
+from ocfl_lib._object import DiffEntry, Object
+from ocfl_lib._spec import Spec, VNum
+from ocfl_lib.fs._local import LocalFS
 
 if TYPE_CHECKING:
     from pathlib import Path

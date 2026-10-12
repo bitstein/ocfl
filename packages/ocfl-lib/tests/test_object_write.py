@@ -5,15 +5,15 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ocfl_lib import apply_update_plan, plan_update, update_object
-from ocfl_lib.digest import DigestAlgorithm
-from ocfl_lib.errors import StaleHeadError
-from ocfl_lib.fs.local import LocalFS
-from ocfl_lib.inventory import UserInfo
-from ocfl_lib.object import Object
-from ocfl_lib.spec import Spec, VNum
-from ocfl_lib.update_plan import deserialize, revert_plan, serialize
-from ocfl_lib.validation.object import validate_object
-from ocfl_lib.version_state import VersionState, scan_dir
+from ocfl_lib._digest import DigestAlgorithm
+from ocfl_lib._errors import StaleHeadError
+from ocfl_lib._inventory import UserInfo
+from ocfl_lib._object import Object
+from ocfl_lib._spec import Spec, VNum
+from ocfl_lib._update_plan import deserialize_plan, revert_plan, serialize_plan
+from ocfl_lib._version_state import VersionState, scan_dir
+from ocfl_lib.fs._local import LocalFS
+from ocfl_lib.validation._object import validate_object
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -500,8 +500,8 @@ class TestTwoStepWrite:
         )
 
         # Serialize and deserialize
-        data = serialize(plan)
-        plan2 = deserialize(data)
+        data = serialize_plan(plan)
+        plan2 = deserialize_plan(data)
 
         # Apply deserialized plan
         obj = apply_update_plan(obj_fs, obj, plan2, stage.content_source)

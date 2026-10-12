@@ -3,7 +3,7 @@
 import msgspec
 import pytest
 
-from ocfl_lib.layout.ext0007_n_tuple_omit_prefix import (
+from ocfl_lib._layout.ext0007_n_tuple_omit_prefix import (
     NTupleOmitPrefixConfig,
     NTupleOmitPrefixLayout,
 )

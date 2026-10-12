@@ -4,13 +4,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ocfl_lib.digest import DigestAlgorithm
-from ocfl_lib.inventory import Inventory, UserInfo
-from ocfl_lib.inventory_builder import InventoryBuilder
-from ocfl_lib.spec import Spec
+from ocfl_lib._digest import DigestAlgorithm
+from ocfl_lib._inventory import Inventory, UserInfo
+from ocfl_lib._inventory_builder import InventoryBuilder
+from ocfl_lib._spec import Spec
 
 if TYPE_CHECKING:
-    from ocfl_lib.digest_map import DigestMap
+    from ocfl_lib._digest_map import DigestMap
 
 
 class TestBuildFirstVersion:

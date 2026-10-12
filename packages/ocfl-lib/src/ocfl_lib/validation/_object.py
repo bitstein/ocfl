@@ -5,22 +5,22 @@ import json
 import re
 from typing import TYPE_CHECKING
 
+from ocfl_lib._digest import DigestAlgorithm, bytes_digest, stream_digest
+from ocfl_lib._json_value import as_str, object_field, parse_json
 from ocfl_lib._path import join_path
-from ocfl_lib.digest import DigestAlgorithm, bytes_digest, stream_digest
-from ocfl_lib.fs import utils as fs_utils
-from ocfl_lib.json_value import as_str, object_field, parse_json
-from ocfl_lib.spec import VERSION_DIR_RE, Namaste
-from ocfl_lib.validation.extension_ots import validate_ots_extension
-from ocfl_lib.validation.inventory import (
+from ocfl_lib._spec import VERSION_DIR_RE, Namaste
+from ocfl_lib.fs import _utils as fs_utils
+from ocfl_lib.validation._extension_ots import validate_ots_extension
+from ocfl_lib.validation._inventory import (
     validate_inventory,
     validate_inventory_against_prior,
 )
-from ocfl_lib.validation.report import FindingCollector
+from ocfl_lib.validation._report import FindingCollector
 
 if TYPE_CHECKING:
-    from ocfl_lib.fs.protocols import FS, FileWalker, FsEntry
-    from ocfl_lib.json_value import JsonObject
-    from ocfl_lib.validation.report import ValidationReport
+    from ocfl_lib._json_value import JsonObject
+    from ocfl_lib.fs._protocols import FS, FileWalker, FsEntry
+    from ocfl_lib.validation._report import ValidationReport
 
 _SIDECAR_RE = re.compile(r"^inventory\.json\.(\S+)$")
 

@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from ocfl_index import db
-from ocfl_lib.errors import OtsParseError
+from ocfl_lib import OtsParseError
 from ocfl_lib.ots import parse as parse_ots
 
 

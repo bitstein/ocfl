@@ -55,7 +55,7 @@ Per-chunk atomicity
 
 Parser-error mapping
 --------------------
-    Bad ``.ots`` bytes (``ocfl_lib.errors.OtsParseError``) downloaded from
+    Bad ``.ots`` bytes (``ocfl_lib._errors.OtsParseError``) downloaded from
     SP are wrapped in ``AttestationMismatchError`` (HALT) with the
     ``OtsParseError`` as ``__cause__``. SP is never trusted to hand back
     the right bytes.
@@ -94,7 +94,7 @@ from ocfl_cli.ots.simpleproof import (
     SubmitResult,
     VerifyBatchAck,
 )
-from ocfl_lib.errors import OtsParseError
+from ocfl_lib import OtsParseError
 from tests.helpers.ots import build_attestation
 
 # ---------------------------------------------------------------------------

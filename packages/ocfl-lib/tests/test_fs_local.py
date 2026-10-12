@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from ocfl_lib.fs import CopyFS
-from ocfl_lib.fs.local import LocalFS
+from ocfl_lib.fs._local import LocalFS
 
 
 @pytest.fixture
@@ -222,14 +222,14 @@ class TestPathValidation:
 class TestFileTypeRejection:
     def test_read_dir_rejects_symlink(self, fs: LocalFS, fs_dir: Path):
         (fs_dir / "link").symlink_to(fs_dir / "a.txt")
-        from ocfl_lib.fs.protocols import OcflFileTypeError
+        from ocfl_lib.fs._protocols import OcflFileTypeError
 
         with pytest.raises(OcflFileTypeError, match="symlink"):
             list(fs.read_dir("."))
 
     def test_walk_files_rejects_symlink(self, fs: LocalFS, fs_dir: Path):
         (fs_dir / "sub" / "link").symlink_to(fs_dir / "a.txt")
-        from ocfl_lib.fs.protocols import OcflFileTypeError
+        from ocfl_lib.fs._protocols import OcflFileTypeError
 
         with pytest.raises(OcflFileTypeError, match="symlink"):
             list(fs.walk_files("."))
@@ -238,7 +238,7 @@ class TestFileTypeRejection:
         import os
 
         os.mkfifo(fs_dir / "pipe")
-        from ocfl_lib.fs.protocols import OcflFileTypeError
+        from ocfl_lib.fs._protocols import OcflFileTypeError
 
         with pytest.raises(OcflFileTypeError, match="fifo"):
             list(fs.read_dir("."))

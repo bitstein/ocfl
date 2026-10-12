@@ -15,7 +15,7 @@ class ValidationCode:
 
 
 def _load_codes() -> dict[str, ValidationCode]:
-    data_file = files("ocfl_lib.data").joinpath("validation-errors.json")
+    data_file = files("ocfl_lib._data").joinpath("validation-errors.json")
     raw = json.loads(data_file.read_text(encoding="utf-8"))
     codes: dict[str, ValidationCode] = {}
     for code, entry in raw.items():

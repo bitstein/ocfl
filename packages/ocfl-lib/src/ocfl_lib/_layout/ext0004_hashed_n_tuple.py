@@ -1,37 +1,24 @@
-"""0003-hash-and-id-n-tuple-storage-layout extension."""
+"""0004-hashed-n-tuple-storage-layout extension."""
 
 import msgspec
 
-from ocfl_lib.digest import DigestAlgorithm
-from ocfl_lib.errors import InvalidLayoutConfig
-from ocfl_lib.layout.types import Layout
+from ocfl_lib._digest import DigestAlgorithm
+from ocfl_lib._errors import InvalidLayoutConfig
+from ocfl_lib._layout.types import Layout
 
-EXTENSION_NAME = "0003-hash-and-id-n-tuple-storage-layout"
-
-_SAFE = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
-_MAX_ENCODED_LENGTH = 100
+EXTENSION_NAME = "0004-hashed-n-tuple-storage-layout"
 
 
-def _percent_encode(s: str) -> str:
-    """Percent-encode a string. Safe chars: [A-Za-z0-9-_]."""
-    out: list[str] = []
-    for byte in s.encode("utf-8"):
-        if byte in _SAFE:
-            out.append(chr(byte))
-        else:
-            out.append(f"%{byte:02x}")
-    return "".join(out)
-
-
-class HashAndIdNTupleConfig(msgspec.Struct, rename="camel"):
+class HashedNTupleConfig(msgspec.Struct, rename="camel"):
     extension_name: str = EXTENSION_NAME
     digest_algorithm: str = "sha256"
     tuple_size: int = 3
     number_of_tuples: int = 3
+    short_object_root: bool = False
 
 
-class HashAndIdNTupleLayout(Layout):
-    """OCFL 0003: hash and id n-tuple storage layout."""
+class HashedNTupleLayout(Layout):
+    """OCFL 0004: hashed n-tuple storage layout."""
 
     def __init__(
         self,
@@ -39,10 +26,12 @@ class HashAndIdNTupleLayout(Layout):
         digest_algorithm: str = "sha256",
         tuple_size: int = 3,
         number_of_tuples: int = 3,
+        short_object_root: bool = False,
     ) -> None:
         self._alg = DigestAlgorithm.from_ocfl_name(digest_algorithm)
         self._tuple_size = tuple_size
         self._n_tuples = number_of_tuples
+        self._short_root = short_object_root
         self._validate()
 
     def _validate(self) -> None:
@@ -51,10 +40,15 @@ class HashAndIdNTupleLayout(Layout):
             raise InvalidLayoutConfig(
                 "tupleSize and numberOfTuples must both be 0 or both non-zero"
             )
-        if ts * nt > self._alg.hex_length:
+        prefix_len = ts * nt
+        if prefix_len > self._alg.hex_length:
             raise InvalidLayoutConfig(
-                f"tupleSize*numberOfTuples ({ts * nt}) exceeds "
+                f"tupleSize*numberOfTuples ({prefix_len}) exceeds "
                 f"digest hex length ({self._alg.hex_length})"
+            )
+        if self._short_root and prefix_len == self._alg.hex_length:
+            raise InvalidLayoutConfig(
+                "shortObjectRoot invalid when tuples cover full digest"
             )
 
     @property
@@ -63,22 +57,24 @@ class HashAndIdNTupleLayout(Layout):
 
     @property
     def config(self) -> dict:
-        cfg = HashAndIdNTupleConfig(
+        cfg = HashedNTupleConfig(
             digest_algorithm=self._alg.ocfl_name,
             tuple_size=self._tuple_size,
             number_of_tuples=self._n_tuples,
+            short_object_root=self._short_root,
         )
         return msgspec.to_builtins(cfg)
 
     @classmethod
-    def from_config(cls, config: dict | None = None) -> HashAndIdNTupleLayout:
+    def from_config(cls, config: dict | None = None) -> HashedNTupleLayout:
         if config is None:
             return cls()
-        cfg = msgspec.convert(config, HashAndIdNTupleConfig)
+        cfg = msgspec.convert(config, HashedNTupleConfig)
         return cls(
             digest_algorithm=cfg.digest_algorithm,
             tuple_size=cfg.tuple_size,
             number_of_tuples=cfg.number_of_tuples,
+            short_object_root=cfg.short_object_root,
         )
 
     def resolve(self, object_id: str) -> str:
@@ -92,10 +88,10 @@ class HashAndIdNTupleLayout(Layout):
             if self._tuple_size > 0
             else []
         )
-        encoded = _percent_encode(object_id)
-        if len(encoded) > _MAX_ENCODED_LENGTH:
-            encoded = f"{encoded[:_MAX_ENCODED_LENGTH]}-{digest}"
-        return "/".join([*tuples, encoded])
+
+        root = digest[prefix_len:] if self._short_root else digest
+        parts = [*tuples, root]
+        return "/".join(parts)
 
     def _hash_id(self, object_id: str) -> str:
         h = self._alg.new_hasher()

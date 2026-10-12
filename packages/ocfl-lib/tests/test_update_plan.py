@@ -11,25 +11,25 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from ocfl_lib.digest import DigestAlgorithm, bytes_digest
-from ocfl_lib.errors import RevertCompletedError, StaleHeadError
-from ocfl_lib.fs.local import LocalFS
-from ocfl_lib.inventory import Inventory, StoredInventory, VersionInfo
+from ocfl_lib._digest import DigestAlgorithm, bytes_digest
+from ocfl_lib._errors import RevertCompletedError, StaleHeadError
+from ocfl_lib._inventory import Inventory, StoredInventory, VersionInfo
+from ocfl_lib.fs._local import LocalFS
 
 if TYPE_CHECKING:
-    from ocfl_lib.fs.protocols import FS
-from ocfl_lib.inventory_builder import InventoryBuilder
-from ocfl_lib.update_plan import (
+    from ocfl_lib.fs._protocols import FS
+from ocfl_lib._inventory_builder import InventoryBuilder
+from ocfl_lib._update_plan import (
     PlanStep,
     RevertError,
     UpdatePlan,
-    deserialize,
+    deserialize_plan,
     execute_plan,
     prepare_steps,
     revert_plan,
-    serialize,
+    serialize_plan,
 )
-from ocfl_lib.validation.object import validate_object
+from ocfl_lib.validation._object import validate_object
 
 
 def test_revert_plan_refuses_completed():
@@ -140,10 +140,10 @@ class TestSerialization:
         ]
         plan = UpdatePlan(steps=steps, new_inv=new_inv, old_inv=None)
 
-        data = serialize(plan)
+        data = serialize_plan(plan)
         assert isinstance(data, bytes)
 
-        restored = deserialize(data)
+        restored = deserialize_plan(data)
         assert len(restored.steps) == 3
         assert restored.steps[0].name == "object-root"
         assert restored.steps[2].content_digest == "abc123"
@@ -162,8 +162,8 @@ class TestSerialization:
             old_inv=old_inv,
         )
 
-        data = serialize(plan)
-        restored = deserialize(data)
+        data = serialize_plan(plan)
+        restored = deserialize_plan(data)
         assert restored.old_inv is not None
         assert restored.old_inv.inventory.id == "test:old"
         assert restored.new_inv.inventory.id == "test:new"
@@ -183,7 +183,7 @@ class TestSerialization:
             extension_files=files,
         )
 
-        restored = deserialize(serialize(plan))
+        restored = deserialize_plan(serialize_plan(plan))
         assert restored.extension_files == files
 
     def test_inventory_bytes_preserved(self):
@@ -191,8 +191,8 @@ class TestSerialization:
         new_inv = _make_stored_inventory()
         plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
 
-        data = serialize(plan)
-        restored = deserialize(data)
+        data = serialize_plan(plan)
+        restored = deserialize_plan(data)
         assert restored.new_inv.raw_bytes == new_inv.raw_bytes
         assert restored.new_inv.digest == new_inv.digest
 
@@ -201,8 +201,8 @@ class TestSerialization:
         new_inv = _make_stored_inventory(obj_id="test:new")
         plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=old_inv)
 
-        data = serialize(plan)
-        restored = deserialize(data)
+        data = serialize_plan(plan)
+        restored = deserialize_plan(data)
         assert restored.old_inv is not None
         assert restored.old_inv.raw_bytes == old_inv.raw_bytes
         assert restored.new_inv.raw_bytes == new_inv.raw_bytes
@@ -219,8 +219,8 @@ class TestSerialization:
             revert_inv=revert_inv,
         )
 
-        data = serialize(plan)
-        restored = deserialize(data)
+        data = serialize_plan(plan)
+        restored = deserialize_plan(data)
         assert restored.revert_inv is not None
         assert restored.revert_inv.raw_bytes == revert_inv.raw_bytes
         assert restored.revert_inv.digest == revert_inv.digest
@@ -232,8 +232,8 @@ class TestSerialization:
             new_inv=_make_stored_inventory(),
             old_inv=None,
         )
-        data = serialize(plan)
-        restored = deserialize(data)
+        data = serialize_plan(plan)
+        restored = deserialize_plan(data)
         assert restored.revert_inv is None
 
     def test_expected_root_sidecar_round_trip(self):
@@ -248,7 +248,7 @@ class TestSerialization:
             expected_root_sidecar_algorithm="sha512",
         )
 
-        restored = deserialize(serialize(plan))
+        restored = deserialize_plan(serialize_plan(plan))
 
         assert restored.expected_root_sidecar_digest == "a" * 128
         assert restored.expected_root_sidecar_algorithm == "sha512"
@@ -263,8 +263,8 @@ class TestSerialization:
             new_inv=_make_stored_inventory(),
             old_inv=None,
         )
-        data = serialize(plan)
-        restored = deserialize(data)
+        data = serialize_plan(plan)
+        restored = deserialize_plan(data)
         assert restored.steps[0].error == "disk full"
         assert restored.steps[1].revert_error == "cleanup failed"
 
@@ -945,8 +945,8 @@ class TestPlanResume:
             step.completed = True
 
         # Serialize and deserialize (simulates process restart)
-        data = serialize(plan)
-        restored = deserialize(data)
+        data = serialize_plan(plan)
+        restored = deserialize_plan(data)
 
         # Re-prepare with callables
         prepare_steps(restored, fsys, "obj1", source)
@@ -1009,8 +1009,8 @@ class TestPlanResume:
         execute_plan(plan)
 
         # Serialize/deserialize fully completed plan
-        data = serialize(plan)
-        restored = deserialize(data)
+        data = serialize_plan(plan)
+        restored = deserialize_plan(data)
         prepare_steps(restored, fsys, "obj1", source)
 
         # All steps already completed
@@ -1133,8 +1133,8 @@ class TestExhaustiveFaultTolerance:
                 execute_plan(plan)
 
             # Verify serialization round-trips mid-failure state
-            data = serialize(plan)
-            deserialize(data)  # validates no crash on partial state
+            data = serialize_plan(plan)
+            deserialize_plan(data)  # validates no crash on partial state
 
             # Revert the failed attempt
             revert_plan(plan)
@@ -1204,35 +1204,35 @@ class TestPlanWireVersion:
     def test_roundtrip_includes_version(self):
         import json
 
-        from ocfl_lib.update_plan import deserialize, serialize
+        from ocfl_lib._update_plan import deserialize_plan, serialize_plan
 
         plan = _make_plan()
-        data = serialize(plan)
+        data = serialize_plan(plan)
         decoded = json.loads(data)
         assert decoded.get("version") == 1
-        deserialize(data)  # roundtrip ok
+        deserialize_plan(data)  # roundtrip ok
 
     def test_bumped_version_raises(self):
         import json
 
         import pytest
 
-        from ocfl_lib.update_plan import deserialize, serialize
+        from ocfl_lib._update_plan import deserialize_plan, serialize_plan
 
         plan = _make_plan()
-        data = serialize(plan)
+        data = serialize_plan(plan)
         decoded = json.loads(data)
         decoded["version"] = 999
         with pytest.raises(ValueError, match="wire version"):
-            deserialize(json.dumps(decoded).encode())
+            deserialize_plan(json.dumps(decoded).encode())
 
 
 def _make_plan():
     """Build a minimal plan for serialization tests."""
-    from ocfl_lib.digest import DigestAlgorithm
-    from ocfl_lib.inventory import StoredInventory
-    from ocfl_lib.inventory_builder import InventoryBuilder
-    from ocfl_lib.update_plan import UpdatePlan
+    from ocfl_lib._digest import DigestAlgorithm
+    from ocfl_lib._inventory import StoredInventory
+    from ocfl_lib._inventory_builder import InventoryBuilder
+    from ocfl_lib._update_plan import UpdatePlan
 
     inv = (
         InventoryBuilder()
@@ -1401,17 +1401,17 @@ class TestExtensionFilesWireFormat:
             },
         )
 
-        data = serialize(plan)
+        data = serialize_plan(plan)
 
         assert base64.b64encode(proof) in data
 
     def test_deserialize_missing_extension_files_defaults_to_empty(self):
         new_inv = _build_v1_inventory()
         plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
-        decoded = msgspec.json.decode(serialize(plan))
+        decoded = msgspec.json.decode(serialize_plan(plan))
         del decoded["extension_files_b64"]
 
-        restored = deserialize(msgspec.json.encode(decoded))
+        restored = deserialize_plan(msgspec.json.encode(decoded))
 
         assert restored.extension_files == {}
 
@@ -1427,7 +1427,7 @@ class TestExtensionFilesWireFormat:
             },
         )
         for plan in (plain, populated):
-            data = serialize(plan)
+            data = serialize_plan(plan)
             decoded = msgspec.json.decode(data)
             assert decoded["version"] == 1
 
@@ -1473,7 +1473,7 @@ class TestExtensionFilesProperty:
             extension_files=extension_files,
         )
 
-        restored = deserialize(serialize(plan))
+        restored = deserialize_plan(serialize_plan(plan))
 
         def _project(p: UpdatePlan) -> tuple:
             return (

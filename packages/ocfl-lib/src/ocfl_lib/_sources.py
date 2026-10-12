@@ -3,8 +3,8 @@
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from ocfl_lib.digest import DigestAlgorithm
-    from ocfl_lib.fs.protocols import FS
+    from ocfl_lib._digest import DigestAlgorithm
+    from ocfl_lib.fs._protocols import FS
 
 
 class ContentSource(Protocol):

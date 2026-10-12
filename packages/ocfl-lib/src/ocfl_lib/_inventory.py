@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import msgspec
 
-from ocfl_lib.digest import DigestAlgorithm, bytes_digest
+from ocfl_lib._digest import DigestAlgorithm, bytes_digest
 
 
 class UserInfo(msgspec.Struct, frozen=True, omit_defaults=True):

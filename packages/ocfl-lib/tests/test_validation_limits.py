@@ -1,6 +1,6 @@
 import pytest
 
-from ocfl_lib.validation.limits import MAX_OBJECT_ID, validate_path_component
+from ocfl_lib.validation._limits import MAX_OBJECT_ID, validate_path_component
 
 
 @pytest.mark.parametrize("s", ["abc", "urn-nbn-de", "a", "x" * MAX_OBJECT_ID])

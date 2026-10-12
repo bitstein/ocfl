@@ -9,9 +9,7 @@ from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import open_root, output_json, parse_version
 from ocfl_cli._exit import exit_for_error
-from ocfl_lib import ObjectNotFound, OcflError, VNum
-from ocfl_lib.digest_map import to_path_map
-from ocfl_lib.object import DiffEntry
+from ocfl_lib import DiffEntry, ObjectNotFound, OcflError, VNum, to_path_map
 
 _ACTION_SYMBOLS = {"added": "A", "deleted": "D", "modified": "M", "renamed": "R"}
 _SYM_STYLE = {

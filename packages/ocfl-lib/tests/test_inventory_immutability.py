@@ -2,7 +2,7 @@
 
 import pytest
 
-from ocfl_lib.inventory import Inventory, UserInfo, VersionInfo
+from ocfl_lib._inventory import Inventory, UserInfo, VersionInfo
 
 
 def _inv() -> Inventory:

@@ -3,10 +3,10 @@
 from io import BytesIO
 from typing import TYPE_CHECKING
 
-from ocfl_lib.fs.protocols import CopyFS, WriteFS
+from ocfl_lib.fs._protocols import CopyFS, WriteFS
 
 if TYPE_CHECKING:
-    from ocfl_lib.fs.protocols import FS
+    from ocfl_lib.fs._protocols import FS
 
 
 def read_all(fsys: FS, name: str) -> bytes:

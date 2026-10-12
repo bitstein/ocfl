@@ -2,8 +2,8 @@
 
 import msgspec
 
-from ocfl_lib.layout.types import Layout
-from ocfl_lib.validation.limits import validate_path_component
+from ocfl_lib._layout.types import Layout
+from ocfl_lib.validation._limits import validate_path_component
 
 EXTENSION_NAME = "0002-flat-direct-storage-layout"
 

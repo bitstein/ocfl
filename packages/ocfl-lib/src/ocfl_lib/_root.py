@@ -3,8 +3,7 @@
 import posixpath
 from typing import TYPE_CHECKING
 
-from ocfl_lib._path import join_path
-from ocfl_lib.errors import (
+from ocfl_lib._errors import (
     LayoutNotConfigured,
     MultipleRootDeclarations,
     NotAnOcflRoot,
@@ -12,26 +11,27 @@ from ocfl_lib.errors import (
     RootExistsError,
     SpecVersionError,
 )
-from ocfl_lib.fs import utils as fs_utils
-from ocfl_lib.layout import DEFAULT_LAYOUTS, get_layout
-from ocfl_lib.layout.config import (
+from ocfl_lib._layout import DEFAULT_LAYOUTS, get_layout
+from ocfl_lib._layout.config import (
     read_layout_config,
     read_ocfl_layout,
     write_layout_config,
     write_ocfl_layout,
 )
-from ocfl_lib.object import Object
-from ocfl_lib.object_update import update_object
-from ocfl_lib.spec import DEFAULT_SPEC, Namaste, Spec
+from ocfl_lib._object import Object
+from ocfl_lib._object_update import update_object
+from ocfl_lib._path import join_path
+from ocfl_lib._spec import DEFAULT_SPEC, Namaste, Spec
+from ocfl_lib.fs import _utils as fs_utils
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from ocfl_lib.fs.protocols import FileWalker, WriteFS
-    from ocfl_lib.inventory import UserInfo
-    from ocfl_lib.layout.registry import LayoutRegistry
-    from ocfl_lib.layout.types import Layout
-    from ocfl_lib.version_state import VersionState
+    from ocfl_lib._inventory import UserInfo
+    from ocfl_lib._layout.registry import LayoutRegistry
+    from ocfl_lib._layout.types import Layout
+    from ocfl_lib._version_state import VersionState
+    from ocfl_lib.fs._protocols import FileWalker, WriteFS
 
 
 class StorageRoot:

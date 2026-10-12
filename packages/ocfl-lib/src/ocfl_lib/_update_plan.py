@@ -24,33 +24,33 @@ from typing import TYPE_CHECKING
 
 import msgspec
 
-from ocfl_lib._path import join_path
-from ocfl_lib.digest import DigestAlgorithm, bytes_digest
-from ocfl_lib.errors import (
+from ocfl_lib._digest import DigestAlgorithm, bytes_digest
+from ocfl_lib._errors import (
     PlanMismatchError,
     RevertCompletedError,
     RevertError,
     StaleHeadError,
 )
-from ocfl_lib.fs import utils as fs_utils
-from ocfl_lib.inventory import StoredInventory
-from ocfl_lib.spec import Namaste, Spec, VNum
+from ocfl_lib._inventory import StoredInventory
+from ocfl_lib._path import join_path
+from ocfl_lib._spec import Namaste, Spec, VNum
+from ocfl_lib.fs import _utils as fs_utils
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from ocfl_lib.fs.protocols import FS, WriteFS
-    from ocfl_lib.sources import ContentSource
+    from ocfl_lib._sources import ContentSource
+    from ocfl_lib.fs._protocols import FS, WriteFS
 
 __all__ = [
     "PlanStep",
     "RevertError",
     "UpdatePlan",
-    "deserialize",
+    "deserialize_plan",
     "execute_plan",
     "prepare_steps",
     "revert_plan",
-    "serialize",
+    "serialize_plan",
 ]
 
 
@@ -155,7 +155,7 @@ def _state_to_inv(state: _StoredInvState) -> StoredInventory:
     return StoredInventory.from_bytes(raw, alg)
 
 
-def serialize(plan: UpdatePlan) -> bytes:
+def serialize_plan(plan: UpdatePlan) -> bytes:
     """Serialize an UpdatePlan to JSON bytes."""
     step_states = [
         _StepState(
@@ -185,7 +185,7 @@ def serialize(plan: UpdatePlan) -> bytes:
     return msgspec.json.encode(state)
 
 
-def deserialize(data: bytes) -> UpdatePlan:
+def deserialize_plan(data: bytes) -> UpdatePlan:
     """Deserialize an UpdatePlan from JSON bytes. Callables are None."""
     state = msgspec.json.decode(data, type=_PlanState)
     if state.version != _PLAN_WIRE_VERSION:

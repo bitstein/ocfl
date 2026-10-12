@@ -3,10 +3,10 @@
 from datetime import UTC
 from typing import TYPE_CHECKING, Self
 
-from ocfl_lib.digest import DigestAlgorithm
-from ocfl_lib.errors import InvalidPath, InventoryBuildError
-from ocfl_lib.inventory import Inventory, UserInfo, VersionInfo
-from ocfl_lib.spec import (
+from ocfl_lib._digest import DigestAlgorithm
+from ocfl_lib._errors import InvalidPath, InventoryBuildError
+from ocfl_lib._inventory import Inventory, UserInfo, VersionInfo
+from ocfl_lib._spec import (
     DEFAULT_CONTENT_DIRECTORY,
     DEFAULT_SPEC,
     Spec,
@@ -16,8 +16,8 @@ from ocfl_lib.spec import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from ocfl_lib.digest_map import DigestMap
-    from ocfl_lib.sources import FixitySource
+    from ocfl_lib._digest_map import DigestMap
+    from ocfl_lib._sources import FixitySource
 
 
 class InventoryBuilder:

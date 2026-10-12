@@ -2,7 +2,7 @@
 
 import pytest
 
-from ocfl_lib.json_value import (
+from ocfl_lib._json_value import (
     JsonObject,
     as_object,
     as_str,

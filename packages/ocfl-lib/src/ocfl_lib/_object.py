@@ -4,25 +4,25 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, BinaryIO, Literal
 
-from ocfl_lib._path import join_path
-from ocfl_lib.digest import DigestAlgorithm
-from ocfl_lib.digest_map import to_path_map
-from ocfl_lib.errors import (
+from ocfl_lib._digest import DigestAlgorithm
+from ocfl_lib._digest_map import to_path_map
+from ocfl_lib._errors import (
     ContentNotFound,
     InventorySidecarMismatch,
     LogicalPathNotFound,
     VersionNotFound,
 )
-from ocfl_lib.fs import utils as fs_utils
-from ocfl_lib.inventory import StoredInventory, VersionInfo
-from ocfl_lib.sources import ContentSource
-from ocfl_lib.spec import INVENTORY_FILENAME, Namaste, Spec, VNum
+from ocfl_lib._inventory import StoredInventory, VersionInfo
+from ocfl_lib._path import join_path
+from ocfl_lib._sources import ContentSource
+from ocfl_lib._spec import INVENTORY_FILENAME, Namaste, Spec, VNum
+from ocfl_lib.fs import _utils as fs_utils
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from ocfl_lib.fs.protocols import FS
-    from ocfl_lib.version_state import VersionState
+    from ocfl_lib._version_state import VersionState
+    from ocfl_lib.fs._protocols import FS
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,7 +110,7 @@ class Object:
         Its ContentSource is backed by this object's manifest.
         Raises VersionNotFound if the version is absent.
         """
-        from ocfl_lib.version_state import VersionState
+        from ocfl_lib._version_state import VersionState
 
         state = self.version_info(v).state
         inv = self.inventory.inventory

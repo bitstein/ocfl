@@ -3,15 +3,15 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ocfl_lib.digest import DigestAlgorithm, stream_multi_digest
-from ocfl_lib.errors import ContentNotFound, DigestAlgorithmMismatch
-from ocfl_lib.sources import ContentSource, FixitySource
+from ocfl_lib._digest import DigestAlgorithm, stream_multi_digest
+from ocfl_lib._errors import ContentNotFound, DigestAlgorithmMismatch
+from ocfl_lib._sources import ContentSource, FixitySource
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from ocfl_lib.digest_map import DigestMap
-    from ocfl_lib.fs.protocols import FS, FileWalker
+    from ocfl_lib._digest_map import DigestMap
+    from ocfl_lib.fs._protocols import FS, FileWalker
 
 
 @dataclass
@@ -30,7 +30,7 @@ class VersionState:
         share the same digest_algorithm. Content and fixity sources
         are chained: tries each in order.
         """
-        from ocfl_lib.digest_map import merge
+        from ocfl_lib._digest_map import merge
 
         for other in others:
             if other.digest_algorithm != self.digest_algorithm:

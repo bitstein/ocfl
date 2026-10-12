@@ -9,7 +9,7 @@ Also declares filesystem-safety bounds beyond spec: ``validate_path_component``
 defensively rejects object-id components that would be unsafe on disk.
 """
 
-from ocfl_lib.errors import InvalidPath
+from ocfl_lib._errors import InvalidPath
 
 MAX_OBJECT_ID = 1024
 MAX_PATH = 4096

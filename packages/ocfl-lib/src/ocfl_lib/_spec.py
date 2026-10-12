@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from ocfl_lib.errors import InvalidVersionNumber, UnknownInventoryType
+from ocfl_lib._errors import InvalidVersionNumber, UnknownInventoryType
 
 
 class Spec(enum.StrEnum):

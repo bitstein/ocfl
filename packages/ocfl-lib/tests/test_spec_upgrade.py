@@ -5,17 +5,17 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ocfl_lib import plan_update
-from ocfl_lib.digest import DigestAlgorithm
-from ocfl_lib.errors import SpecVersionError
-from ocfl_lib.fs.local import LocalFS
-from ocfl_lib.layout import FlatDirectLayout
-from ocfl_lib.object import Object
-from ocfl_lib.root import StorageRoot
-from ocfl_lib.spec import Spec
-from ocfl_lib.update_plan import prepare_steps, revert_plan
-from ocfl_lib.validation.object import validate_object
-from ocfl_lib.validation.root import validate_root
-from ocfl_lib.version_state import VersionState, scan_dir
+from ocfl_lib._digest import DigestAlgorithm
+from ocfl_lib._errors import SpecVersionError
+from ocfl_lib._layout import FlatDirectLayout
+from ocfl_lib._object import Object
+from ocfl_lib._root import StorageRoot
+from ocfl_lib._spec import Spec
+from ocfl_lib._update_plan import prepare_steps, revert_plan
+from ocfl_lib._version_state import VersionState, scan_dir
+from ocfl_lib.fs._local import LocalFS
+from ocfl_lib.validation._object import validate_object
+from ocfl_lib.validation._root import validate_root
 
 if TYPE_CHECKING:
     from pathlib import Path

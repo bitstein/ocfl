@@ -7,8 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
-from ocfl_lib import DigestAlgorithm
-from ocfl_lib.digest import bytes_digest
+from ocfl_lib import DigestAlgorithm, bytes_digest
 
 
 def _rewrite_root_logical_paths(storage_root: Path, logical_paths: list[str]) -> None:

@@ -186,12 +186,12 @@ class TestRemoveAll:
     def test_storage_root_purge_preserves_sibling_object_path(
         self, s3_client: S3Client, tmp_path: Path
     ):
-        from ocfl_lib.digest import DigestAlgorithm
-        from ocfl_lib.fs.local import LocalFS
+        from ocfl_lib._digest import DigestAlgorithm
+        from ocfl_lib._layout import FlatDirectLayout
+        from ocfl_lib._root import StorageRoot
+        from ocfl_lib._version_state import scan_dir
+        from ocfl_lib.fs._local import LocalFS
         from ocfl_lib.fs.s3 import S3FS
-        from ocfl_lib.layout import FlatDirectLayout
-        from ocfl_lib.root import StorageRoot
-        from ocfl_lib.version_state import scan_dir
 
         s3fs = S3FS(BUCKET, client=s3_client)
         root = StorageRoot.init(s3fs, s3fs, layout=FlatDirectLayout())
@@ -212,15 +212,15 @@ class TestRemoveAll:
     def test_stale_update_plan_cannot_publish(
         self, s3_client: S3Client, tmp_path: Path
     ):
-        from ocfl_lib.digest import DigestAlgorithm
-        from ocfl_lib.errors import StaleHeadError
-        from ocfl_lib.fs.local import LocalFS
+        from ocfl_lib._digest import DigestAlgorithm
+        from ocfl_lib._errors import StaleHeadError
+        from ocfl_lib._layout import FlatDirectLayout
+        from ocfl_lib._object import Object
+        from ocfl_lib._root import StorageRoot
+        from ocfl_lib._spec import VNum
+        from ocfl_lib._version_state import scan_dir
+        from ocfl_lib.fs._local import LocalFS
         from ocfl_lib.fs.s3 import S3FS
-        from ocfl_lib.layout import FlatDirectLayout
-        from ocfl_lib.object import Object
-        from ocfl_lib.root import StorageRoot
-        from ocfl_lib.spec import VNum
-        from ocfl_lib.version_state import scan_dir
 
         s3fs = S3FS(BUCKET, client=s3_client)
         root = StorageRoot.init(s3fs, s3fs, layout=FlatDirectLayout())

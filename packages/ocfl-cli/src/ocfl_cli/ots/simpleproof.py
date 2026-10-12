@@ -17,7 +17,7 @@ from ocfl_cli.errors import (
     SimpleProofTransient,
 )
 from ocfl_cli.ots._retry import retry
-from ocfl_lib.errors import OtsParseError
+from ocfl_lib import OtsParseError
 from ocfl_lib.ots import parse as parse_ots
 
 if TYPE_CHECKING:

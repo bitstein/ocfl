@@ -1,18 +1,18 @@
 """OCFL storage layout extensions."""
 
-from ocfl_lib.layout.config import (
+from ocfl_lib._layout.config import (
     read_layout_config,
     read_ocfl_layout,
     write_layout_config,
     write_ocfl_layout,
 )
-from ocfl_lib.layout.ext0002_flat_direct import FlatDirectLayout
-from ocfl_lib.layout.ext0003_hash_and_id_n_tuple import HashAndIdNTupleLayout
-from ocfl_lib.layout.ext0004_hashed_n_tuple import HashedNTupleLayout
-from ocfl_lib.layout.ext0006_flat_omit_prefix import FlatOmitPrefixLayout
-from ocfl_lib.layout.ext0007_n_tuple_omit_prefix import NTupleOmitPrefixLayout
-from ocfl_lib.layout.registry import LayoutRegistry
-from ocfl_lib.layout.types import Layout
+from ocfl_lib._layout.ext0002_flat_direct import FlatDirectLayout
+from ocfl_lib._layout.ext0003_hash_and_id_n_tuple import HashAndIdNTupleLayout
+from ocfl_lib._layout.ext0004_hashed_n_tuple import HashedNTupleLayout
+from ocfl_lib._layout.ext0006_flat_omit_prefix import FlatOmitPrefixLayout
+from ocfl_lib._layout.ext0007_n_tuple_omit_prefix import NTupleOmitPrefixLayout
+from ocfl_lib._layout.registry import LayoutRegistry
+from ocfl_lib._layout.types import Layout
 
 __all__ = [
     "DEFAULT_LAYOUTS",

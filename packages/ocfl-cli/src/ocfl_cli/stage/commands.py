@@ -59,8 +59,7 @@ from ocfl_cli.stage.state import (
     with_lock,
 )
 from ocfl_cli.stage.store import StagingStore
-from ocfl_lib import DigestAlgorithm
-from ocfl_lib.update_plan import deserialize, serialize
+from ocfl_lib import DigestAlgorithm, deserialize_plan, serialize_plan
 
 if TYPE_CHECKING:
     from ocfl_cli._appctx import BtcRpcFactory, SpClientFactory
@@ -341,7 +340,7 @@ def new(
 ) -> None:
     """Create a new staging area for an object."""
     from ocfl_cli.stage.state import OtsState
-    from ocfl_lib.inventory_builder import InventoryBuilder
+    from ocfl_lib import InventoryBuilder
 
     try:
         metadata = service.staged_metadata_from_options(
@@ -2243,7 +2242,7 @@ def _prepare_batch_object(
                 ),
             )
             if prepared.plan is not None:
-                plan_path(staging_dir).write_bytes(serialize(prepared.plan))
+                plan_path(staging_dir).write_bytes(serialize_plan(prepared.plan))
             return batch_state.BatchObject(
                 object_id=object_id, status="prepared", digests=(prepared.digest,)
             )
@@ -3369,7 +3368,7 @@ def _inventory_plan_matches_submission(
     path = plan_path(staging_dir)
     if not path.is_file():
         return False
-    prior_plan = deserialize(path.read_bytes())
+    prior_plan = deserialize_plan(path.read_bytes())
     prior_inv = prior_plan.new_inv.inventory
     prior_created = prior_inv.versions[prior_inv.head].created
     metadata = store.load_metadata(batch.root_path, row.object_id)
@@ -3384,7 +3383,7 @@ def _inventory_plan_matches_submission(
     )
     if plan.new_inv.digest != proof.digest:
         return False
-    path.write_bytes(serialize(plan))
+    path.write_bytes(serialize_plan(plan))
     return True
 
 

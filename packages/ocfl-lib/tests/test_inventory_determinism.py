@@ -2,8 +2,8 @@
 
 import json
 
-from ocfl_lib.digest import DigestAlgorithm
-from ocfl_lib.inventory import Inventory, StoredInventory, VersionInfo
+from ocfl_lib._digest import DigestAlgorithm
+from ocfl_lib._inventory import Inventory, StoredInventory, VersionInfo
 
 
 def _make_inventory(manifest, versions, *, fixity=None):

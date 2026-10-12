@@ -5,10 +5,10 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from ocfl_lib.errors import UnknownLayout
+from ocfl_lib._errors import UnknownLayout
 
 if TYPE_CHECKING:
-    from ocfl_lib.layout.types import Layout
+    from ocfl_lib._layout.types import Layout
 
 type LayoutFactory = Callable[[dict[str, Any] | None], Layout]
 

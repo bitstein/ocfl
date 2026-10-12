@@ -9,26 +9,26 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ocfl_lib.digest import DigestAlgorithm
-from ocfl_lib.fs.local import LocalFS
-from ocfl_lib.inventory import UserInfo
-from ocfl_lib.layout import (
+from ocfl_lib._digest import DigestAlgorithm
+from ocfl_lib._inventory import UserInfo
+from ocfl_lib._layout import (
     FlatDirectLayout,
     FlatOmitPrefixLayout,
     HashAndIdNTupleLayout,
     HashedNTupleLayout,
     NTupleOmitPrefixLayout,
 )
-from ocfl_lib.root import StorageRoot
-from ocfl_lib.spec import Spec, VNum
-from ocfl_lib.validation.object import validate_object
-from ocfl_lib.validation.root import validate_root
-from ocfl_lib.version_state import scan_dir
+from ocfl_lib._root import StorageRoot
+from ocfl_lib._spec import Spec, VNum
+from ocfl_lib._version_state import scan_dir
+from ocfl_lib.fs._local import LocalFS
+from ocfl_lib.validation._object import validate_object
+from ocfl_lib.validation._root import validate_root
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ocfl_lib.layout.types import Layout
+    from ocfl_lib._layout.types import Layout
 
 
 def _write_files(base: Path, files: dict[str, str]) -> None:

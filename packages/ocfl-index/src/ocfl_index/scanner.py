@@ -10,10 +10,17 @@ from ocfl_index import db, ots
 from ocfl_index.constants import OTS_EXTENSION_DIR
 from ocfl_index.mediatype import OCTET_STREAM, sniff
 from ocfl_index.models import ScanReport
-from ocfl_lib import DigestAlgorithm, Object, Spec, StorageRoot, VNum
+from ocfl_lib import (
+    DigestAlgorithm,
+    Object,
+    Spec,
+    StorageRoot,
+    StoredInventory,
+    VersionInfo,
+    VNum,
+)
 from ocfl_lib import fs as ocfl_fs
-from ocfl_lib.fs.protocols import FS
-from ocfl_lib.inventory import StoredInventory, VersionInfo
+from ocfl_lib.fs import FS
 
 _SNIFF_PRIMARY_BYTES = 8 * 1024
 _SNIFF_RETRY_BYTES = 1024 * 1024

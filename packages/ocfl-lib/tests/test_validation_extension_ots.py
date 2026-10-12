@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from ocfl_lib.fs.local import LocalFS
-from ocfl_lib.validation.object import validate_object
-from ocfl_lib.validation.report import ValidationReport
+from ocfl_lib.fs._local import LocalFS
+from ocfl_lib.validation._object import validate_object
+from ocfl_lib.validation._report import ValidationReport
 from tests.helpers.ots import build_attestation
 
 _EXT_NAME = "NNNN-ots-timestamps"
@@ -289,6 +289,6 @@ def test_pending_attestation_warns_not_error(tmp_path: Path) -> None:
 )
 def test_ots_codes_registered(code: str) -> None:
     """Codes used by the extension must be registered in validation-errors.json."""
-    from ocfl_lib.validation.codes import get_code
+    from ocfl_lib.validation._codes import get_code
 
     get_code(code)

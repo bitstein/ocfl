@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, BinaryIO, cast
 import boto3
 from botocore.exceptions import ClientError
 
-from ocfl_lib.fs.protocols import CopyFS, FileRef, FileWalker, FsEntry
+from ocfl_lib.fs._protocols import CopyFS, FileRef, FileWalker, FsEntry
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

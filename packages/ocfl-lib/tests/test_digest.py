@@ -9,7 +9,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from ocfl_lib.digest import (
+from ocfl_lib._digest import (
     DigestAlgorithm,
     bytes_digest,
     digest_files,

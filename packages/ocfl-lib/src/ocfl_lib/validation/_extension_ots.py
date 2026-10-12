@@ -4,16 +4,16 @@ import hashlib
 from typing import TYPE_CHECKING
 
 from ocfl_lib import ots
+from ocfl_lib._errors import OtsParseError
+from ocfl_lib._json_value import object_field
 from ocfl_lib._path import join_path
-from ocfl_lib.errors import OtsParseError
-from ocfl_lib.fs import utils as fs_utils
-from ocfl_lib.json_value import object_field
+from ocfl_lib.fs import _utils as fs_utils
 
 if TYPE_CHECKING:
-    from ocfl_lib.digest import DigestAlgorithm
-    from ocfl_lib.fs.protocols import FS
-    from ocfl_lib.json_value import JsonObject, JsonValue
-    from ocfl_lib.validation.report import FindingCollector
+    from ocfl_lib._digest import DigestAlgorithm
+    from ocfl_lib._json_value import JsonObject, JsonValue
+    from ocfl_lib.fs._protocols import FS
+    from ocfl_lib.validation._report import FindingCollector
 
 
 EXTENSION_NAME = "NNNN-ots-timestamps"

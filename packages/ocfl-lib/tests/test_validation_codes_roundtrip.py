@@ -12,7 +12,7 @@ _ERRORS_JSON = (
     Path(__file__).resolve().parents[1]
     / "src"
     / "ocfl_lib"
-    / "data"
+    / "_data"
     / "validation-errors.json"
 )
 

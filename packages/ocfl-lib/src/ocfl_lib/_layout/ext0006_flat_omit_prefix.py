@@ -2,10 +2,10 @@
 
 import msgspec
 
-from ocfl_lib.errors import InvalidLayoutConfig
-from ocfl_lib.layout._casefold import rfind_casefold_span
-from ocfl_lib.layout.types import Layout
-from ocfl_lib.validation.limits import validate_path_component
+from ocfl_lib._errors import InvalidLayoutConfig
+from ocfl_lib._layout._casefold import rfind_casefold_span
+from ocfl_lib._layout.types import Layout
+from ocfl_lib.validation._limits import validate_path_component
 
 EXTENSION_NAME = "0006-flat-omit-prefix-storage-layout"
 

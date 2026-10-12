@@ -9,7 +9,7 @@ from opentimestamps.core.serialize import BytesSerializationContext
 from opentimestamps.core.timestamp import DetachedTimestampFile, Timestamp
 
 from ocfl_lib import ots
-from ocfl_lib.errors import OtsParseError
+from ocfl_lib._errors import OtsParseError
 from tests.helpers.ots import build_attestation
 
 

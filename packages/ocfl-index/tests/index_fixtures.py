@@ -16,13 +16,14 @@ from opentimestamps.core.timestamp import DetachedTimestampFile, Timestamp
 
 from ocfl_lib import (
     DigestAlgorithm,
+    FlatDirectLayout,
+    Inventory,
     LocalFS,
     StorageRoot,
+    StoredInventory,
     UserInfo,
     scan_dir,
 )
-from ocfl_lib.inventory import Inventory, StoredInventory
-from ocfl_lib.layout import FlatDirectLayout
 
 
 def write_files(dir_path: Path, files: Mapping[str, bytes | str]) -> None:

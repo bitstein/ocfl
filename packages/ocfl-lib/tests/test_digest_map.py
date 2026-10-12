@@ -1,6 +1,6 @@
 """Tests for DigestMap operations."""
 
-from ocfl_lib.digest_map import (
+from ocfl_lib._digest_map import (
     DigestMap,
     PathMap,
     eq,

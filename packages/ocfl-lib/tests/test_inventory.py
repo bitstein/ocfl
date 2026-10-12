@@ -6,8 +6,8 @@ import pathlib
 import msgspec
 import pytest
 
-from ocfl_lib.digest import DigestAlgorithm, bytes_digest
-from ocfl_lib.inventory import (
+from ocfl_lib._digest import DigestAlgorithm, bytes_digest
+from ocfl_lib._inventory import (
     Inventory,
     StoredInventory,
     UserInfo,

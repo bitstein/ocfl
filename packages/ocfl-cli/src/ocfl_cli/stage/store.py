@@ -10,7 +10,7 @@ import msgspec
 
 from ocfl_cli.errors import StagingError
 from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
-from ocfl_lib.inventory import Inventory
+from ocfl_lib import Inventory
 
 if TYPE_CHECKING:
     from pathlib import Path

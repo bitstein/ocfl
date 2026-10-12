@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypedDict
 
-from ocfl_lib.digest import file_digest
+from ocfl_lib import file_digest
 
 if TYPE_CHECKING:
     from pathlib import Path

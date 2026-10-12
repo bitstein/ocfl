@@ -5,8 +5,8 @@ from types import MappingProxyType
 
 import pytest
 
-from ocfl_lib.validation.codes import get_code
-from ocfl_lib.validation.report import Finding, FindingCollector, Severity
+from ocfl_lib.validation._codes import get_code
+from ocfl_lib.validation._report import Finding, FindingCollector, Severity
 
 
 class TestValidationCode:

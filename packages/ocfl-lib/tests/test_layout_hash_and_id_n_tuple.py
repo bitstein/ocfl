@@ -3,7 +3,7 @@
 import msgspec
 import pytest
 
-from ocfl_lib.layout.ext0003_hash_and_id_n_tuple import (
+from ocfl_lib._layout.ext0003_hash_and_id_n_tuple import (
     HashAndIdNTupleConfig,
     HashAndIdNTupleLayout,
     _percent_encode,

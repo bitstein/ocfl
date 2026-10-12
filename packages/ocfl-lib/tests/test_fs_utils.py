@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ocfl_lib.fs.local import LocalFS
-from ocfl_lib.fs.utils import copy, read_all, read_text, write_bytes
+from ocfl_lib.fs._local import LocalFS
+from ocfl_lib.fs._utils import copy, read_all, read_text, write_bytes
 
 if TYPE_CHECKING:
     from pathlib import Path

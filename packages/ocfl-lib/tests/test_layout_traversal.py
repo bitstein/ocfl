@@ -1,8 +1,8 @@
 import pytest
 
-from ocfl_lib.layout.ext0002_flat_direct import FlatDirectLayout
-from ocfl_lib.layout.ext0006_flat_omit_prefix import FlatOmitPrefixLayout
-from ocfl_lib.layout.ext0007_n_tuple_omit_prefix import NTupleOmitPrefixLayout
+from ocfl_lib._layout.ext0002_flat_direct import FlatDirectLayout
+from ocfl_lib._layout.ext0006_flat_omit_prefix import FlatOmitPrefixLayout
+from ocfl_lib._layout.ext0007_n_tuple_omit_prefix import NTupleOmitPrefixLayout
 
 
 @pytest.fixture

@@ -21,9 +21,7 @@ from ocfl_cli.stage.commands import (
 from ocfl_cli.stage.fsm import Phase
 from ocfl_cli.stage.state import OtsState, save_ots
 from ocfl_cli.stage.store import StagingStore
-from ocfl_lib import DigestAlgorithm
-from ocfl_lib.inventory import Inventory
-from ocfl_lib.inventory_builder import InventoryBuilder
+from ocfl_lib import DigestAlgorithm, Inventory, InventoryBuilder
 
 
 def _ctx(

@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO
 
-from ocfl_lib.fs.protocols import (
+from ocfl_lib.fs._protocols import (
     CopyFS,
     FileRef,
     FileWalker,

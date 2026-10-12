@@ -4,12 +4,12 @@ import hashlib
 import json
 from typing import TYPE_CHECKING
 
-from ocfl_lib.fs.local import LocalFS
+from ocfl_lib.fs._local import LocalFS
 
 if TYPE_CHECKING:
     from pathlib import Path
-from ocfl_lib.validation.report import ValidationReport
-from ocfl_lib.validation.root import validate_root
+from ocfl_lib.validation._report import ValidationReport
+from ocfl_lib.validation._root import validate_root
 
 
 class TestValidRoot:

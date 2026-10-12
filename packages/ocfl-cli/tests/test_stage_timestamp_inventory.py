@@ -13,7 +13,7 @@ Pins the build-submit-serialize contract from `OTS workflow contract`:
 - POST a single-digest payload (the inventory digest) to SimpleProof via
   ``sp.submit_hashes([inv_digest], category_id)``.
 - Serialize the ``UpdatePlan`` to ``<staging>/plan.json`` (``msgspec.json``)
-  via ``ocfl_lib.update_plan.serialize``; round-trip via ``deserialize``.
+  via ``ocfl_lib._update_plan.serialize``; round-trip via ``deserialize``.
   ``extension_files`` MUST be excluded from the wire format.
 - Phase advances to ``inventory-pending``.
 
@@ -51,8 +51,7 @@ from ocfl_cli.stage.state import (
     save_ots,
 )
 from ocfl_cli.stage.store import StagingStore
-from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
-from ocfl_lib.update_plan import deserialize
+from ocfl_lib import LocalFS, Spec, StorageRoot, deserialize_plan, get_layout
 from tests.helpers.ots import build_attestation
 
 # --------------------------------------------------------------------------- #
@@ -267,7 +266,7 @@ class TestInventoryBuild:
 
         # Re-load the on-disk plan and inspect its inventory's manifest.
         plan_bytes = plan_path(sd).read_bytes()
-        plan2 = deserialize(plan_bytes)
+        plan2 = deserialize_plan(plan_bytes)
         manifest = plan2.new_inv.inventory.manifest
         assert da in manifest, f"data digest {da!r} missing from manifest"
         assert ots_digest in manifest, (
@@ -308,7 +307,7 @@ class TestInventoryBuild:
         )
         assert r.exit_code == 0, r.output
 
-        plan2 = deserialize(plan_path(sd).read_bytes())
+        plan2 = deserialize_plan(plan_path(sd).read_bytes())
         vi = plan2.new_inv.inventory.versions[plan2.new_inv.inventory.head]
         assert vi.message == "Timestamped inventory"
         assert vi.user is not None
@@ -736,7 +735,7 @@ class TestPlanRoundTrip:
         assert r.exit_code == 0, r.output
 
         raw = plan_path(sd).read_bytes()
-        plan2 = deserialize(raw)
+        plan2 = deserialize_plan(raw)
 
         state = load_ots(sd)
         assert state.inventory_proof is not None

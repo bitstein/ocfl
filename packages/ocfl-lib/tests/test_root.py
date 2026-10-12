@@ -10,16 +10,16 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-from ocfl_lib.errors import (
+from ocfl_lib._errors import (
     LayoutNotConfigured,
     MultipleRootDeclarations,
     NotAnOcflRoot,
 )
-from ocfl_lib.fs.local import LocalFS
-from ocfl_lib.fs.protocols import FileRef
-from ocfl_lib.object import Object
-from ocfl_lib.root import StorageRoot
-from ocfl_lib.spec import Spec
+from ocfl_lib._object import Object
+from ocfl_lib._root import StorageRoot
+from ocfl_lib._spec import Spec
+from ocfl_lib.fs._local import LocalFS
+from ocfl_lib.fs._protocols import FileRef
 
 
 def _make_object(

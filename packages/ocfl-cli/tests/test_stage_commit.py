@@ -12,8 +12,7 @@ from ocfl_cli.errors import LockTimeoutError
 from ocfl_cli.main import app
 from ocfl_cli.stage import service
 from ocfl_cli.stage.store import StagingStore
-from ocfl_lib import LocalFS, StorageRoot
-from ocfl_lib.errors import StaleHeadError
+from ocfl_lib import LocalFS, StaleHeadError, StorageRoot
 
 
 @pytest.fixture

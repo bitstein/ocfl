@@ -1,7 +1,7 @@
 """Tests for inventory validation — versions checks."""
 
-from ocfl_lib.validation.inventory import validate_inventory
-from ocfl_lib.validation.report import FindingCollector
+from ocfl_lib.validation._inventory import validate_inventory
+from ocfl_lib.validation._report import FindingCollector
 
 _D1 = "a" * 128
 _D2 = "b" * 128

@@ -9,7 +9,7 @@ from index_fixtures import FixtureRoot, build_proof
 from ocfl_index import Index, db, scanner
 from ocfl_index.scanner import scan
 from ocfl_lib import DigestAlgorithm
-from ocfl_lib.fs.protocols import FileRef
+from ocfl_lib.fs import FileRef
 
 _SCANNER_LOGGER = "ocfl_index.scanner"
 

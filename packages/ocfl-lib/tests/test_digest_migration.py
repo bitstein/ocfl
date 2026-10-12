@@ -5,13 +5,13 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ocfl_lib import apply_update_plan, plan_update, update_object
-from ocfl_lib.digest import DigestAlgorithm, bytes_digest
-from ocfl_lib.fs.local import LocalFS
-from ocfl_lib.object import Object
-from ocfl_lib.spec import Spec, VNum
-from ocfl_lib.update_plan import execute_plan, prepare_steps, revert_plan
-from ocfl_lib.validation.object import validate_object
-from ocfl_lib.version_state import VersionState, scan_dir
+from ocfl_lib._digest import DigestAlgorithm, bytes_digest
+from ocfl_lib._object import Object
+from ocfl_lib._spec import Spec, VNum
+from ocfl_lib._update_plan import execute_plan, prepare_steps, revert_plan
+from ocfl_lib._version_state import VersionState, scan_dir
+from ocfl_lib.fs._local import LocalFS
+from ocfl_lib.validation._object import validate_object
 
 if TYPE_CHECKING:
     from pathlib import Path

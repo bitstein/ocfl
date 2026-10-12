@@ -5,11 +5,11 @@ from typing import TYPE_CHECKING
 
 import msgspec
 
-from ocfl_lib.digest import DigestAlgorithm
-from ocfl_lib.inventory import Inventory
-from ocfl_lib.json_value import object_field
-from ocfl_lib.spec import VERSION_DIR_RE, Spec
-from ocfl_lib.validation.limits import (
+from ocfl_lib._digest import DigestAlgorithm
+from ocfl_lib._inventory import Inventory
+from ocfl_lib._json_value import object_field
+from ocfl_lib._spec import VERSION_DIR_RE, Spec
+from ocfl_lib.validation._limits import (
     MAX_MESSAGE,
     MAX_OBJECT_ID,
     MAX_PATH,
@@ -18,8 +18,8 @@ from ocfl_lib.validation.limits import (
 )
 
 if TYPE_CHECKING:
-    from ocfl_lib.json_value import JsonObject, JsonValue
-    from ocfl_lib.validation.report import FindingCollector
+    from ocfl_lib._json_value import JsonObject, JsonValue
+    from ocfl_lib.validation._report import FindingCollector
 
 _KNOWN_KEYS = frozenset(
     {

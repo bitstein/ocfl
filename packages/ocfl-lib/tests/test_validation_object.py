@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from ocfl_lib.fs.local import LocalFS
-from ocfl_lib.validation.object import validate_object
-from ocfl_lib.validation.report import ValidationReport
+from ocfl_lib.fs._local import LocalFS
+from ocfl_lib.validation._object import validate_object
+from ocfl_lib.validation._report import ValidationReport
 
 FIXTURES_ROOT = Path(__file__).resolve().parents[3] / "tests" / "fixtures"
 
@@ -114,7 +114,7 @@ class TestWarnObjects:
 
 
 def test_spec_tuple_orders_numerically():
-    from ocfl_lib.validation.object import _spec_tuple
+    from ocfl_lib.validation._object import _spec_tuple
 
     # Lex compare bug: "1.10" < "1.2"; numeric: 1.10 > 1.2
     assert _spec_tuple("1.2") < _spec_tuple("1.10")

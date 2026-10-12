@@ -12,8 +12,7 @@ from ocfl_cli._common import open_root, parse_version
 from ocfl_cli._exit import exit_for_error
 from ocfl_cli._io import err
 from ocfl_cli.errors import CLIError
-from ocfl_lib import ObjectNotFound, OcflError
-from ocfl_lib.digest_map import to_path_map
+from ocfl_lib import ObjectNotFound, OcflError, to_path_map
 
 
 def export(

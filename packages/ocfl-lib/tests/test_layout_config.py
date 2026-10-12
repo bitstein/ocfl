@@ -4,13 +4,13 @@ import json
 
 import pytest
 
-from ocfl_lib.fs import LocalFS
-from ocfl_lib.layout.config import (
+from ocfl_lib._layout.config import (
     read_layout_config,
     read_ocfl_layout,
     write_layout_config,
     write_ocfl_layout,
 )
+from ocfl_lib.fs import LocalFS
 
 
 @pytest.fixture

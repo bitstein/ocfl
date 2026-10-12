@@ -5,15 +5,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ocfl_lib.digest import DigestAlgorithm
-from ocfl_lib.errors import LayoutNotConfigured
-from ocfl_lib.fs.local import LocalFS
-from ocfl_lib.inventory import UserInfo
-from ocfl_lib.layout import FlatDirectLayout, HashedNTupleLayout
-from ocfl_lib.root import StorageRoot
-from ocfl_lib.spec import Spec, VNum
-from ocfl_lib.validation.object import validate_object
-from ocfl_lib.version_state import scan_dir
+from ocfl_lib._digest import DigestAlgorithm
+from ocfl_lib._errors import LayoutNotConfigured
+from ocfl_lib._inventory import UserInfo
+from ocfl_lib._layout import FlatDirectLayout, HashedNTupleLayout
+from ocfl_lib._root import StorageRoot
+from ocfl_lib._spec import Spec, VNum
+from ocfl_lib._version_state import scan_dir
+from ocfl_lib.fs._local import LocalFS
+from ocfl_lib.validation._object import validate_object
 
 if TYPE_CHECKING:
     from pathlib import Path

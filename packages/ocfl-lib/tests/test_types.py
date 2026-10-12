@@ -2,7 +2,7 @@
 
 import pytest
 
-from ocfl_lib.spec import (
+from ocfl_lib._spec import (
     DEFAULT_CONTENT_DIRECTORY,
     DEFAULT_DIGEST_ALGORITHM,
     DEFAULT_SPEC,

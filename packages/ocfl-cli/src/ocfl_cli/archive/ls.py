@@ -9,8 +9,7 @@ from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import open_root, output_json, parse_version
 from ocfl_cli._exit import exit_for_error
-from ocfl_lib import ObjectNotFound, OcflError
-from ocfl_lib.digest_map import to_path_map
+from ocfl_lib import ObjectNotFound, OcflError, to_path_map
 
 if TYPE_CHECKING:
     from ocfl_lib import VNum

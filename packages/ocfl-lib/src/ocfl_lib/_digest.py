@@ -6,7 +6,7 @@ import re
 from functools import cached_property
 from typing import TYPE_CHECKING, BinaryIO, Protocol, cast
 
-from ocfl_lib.errors import UnknownDigestAlgorithm
+from ocfl_lib._errors import UnknownDigestAlgorithm
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence

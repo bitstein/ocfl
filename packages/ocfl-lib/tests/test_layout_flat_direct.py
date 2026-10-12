@@ -3,7 +3,7 @@
 import msgspec
 import pytest
 
-from ocfl_lib.layout.ext0002_flat_direct import FlatDirectConfig, FlatDirectLayout
+from ocfl_lib._layout.ext0002_flat_direct import FlatDirectConfig, FlatDirectLayout
 
 
 class TestFlatDirectLayout:

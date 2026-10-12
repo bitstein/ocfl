@@ -9,7 +9,7 @@ from opentimestamps.core.serialize import (
 )
 from opentimestamps.core.timestamp import DetachedTimestampFile
 
-from ocfl_lib.errors import OtsParseError
+from ocfl_lib._errors import OtsParseError
 
 
 @dataclass(frozen=True, slots=True)

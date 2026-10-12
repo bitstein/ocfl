@@ -1,8 +1,8 @@
 """OCFL library — Oxford Common File Layout implementation."""
 
-from ocfl_lib.digest import DigestAlgorithm, bytes_digest, file_digest
-from ocfl_lib.digest_map import DigestMap, PathMap
-from ocfl_lib.errors import (
+from ocfl_lib._digest import DigestAlgorithm, bytes_digest, file_digest
+from ocfl_lib._digest_map import DigestMap, PathMap, to_path_map
+from ocfl_lib._errors import (
     ContentNotFound,
     DigestAlgorithmMismatch,
     ErrorClass,
@@ -32,11 +32,10 @@ from ocfl_lib.errors import (
     UnknownLayout,
     VersionNotFound,
 )
-from ocfl_lib.fs import FS, CopyFS, FileWalker, LocalFS, WriteFS
-from ocfl_lib.inventory import Inventory, StoredInventory, UserInfo, VersionInfo
-from ocfl_lib.inventory_builder import InventoryBuilder
-from ocfl_lib.json_value import JsonObject, JsonValue
-from ocfl_lib.layout import (
+from ocfl_lib._inventory import Inventory, StoredInventory, UserInfo, VersionInfo
+from ocfl_lib._inventory_builder import InventoryBuilder
+from ocfl_lib._json_value import JsonObject, JsonValue
+from ocfl_lib._layout import (
     DEFAULT_LAYOUTS,
     FlatDirectLayout,
     FlatOmitPrefixLayout,
@@ -47,16 +46,24 @@ from ocfl_lib.layout import (
     NTupleOmitPrefixLayout,
     get_layout,
 )
-from ocfl_lib.object import Object
-from ocfl_lib.object_update import apply_update_plan, plan_update, update_object
-from ocfl_lib.root import StorageRoot
-from ocfl_lib.sources import ContentSource, FixitySource
-from ocfl_lib.spec import Namaste, Spec, VNum
-from ocfl_lib.update_plan import UpdatePlan, execute_plan, revert_plan
-from ocfl_lib.validation.object import validate_object
-from ocfl_lib.validation.report import Finding, Severity, ValidationReport
-from ocfl_lib.validation.root import validate_root
-from ocfl_lib.version_state import VersionState, scan_dir
+from ocfl_lib._object import DiffEntry, Object
+from ocfl_lib._object_update import apply_update_plan, plan_update, update_object
+from ocfl_lib._root import StorageRoot
+from ocfl_lib._sources import ContentSource, FixitySource
+from ocfl_lib._spec import Namaste, Spec, VNum
+from ocfl_lib._update_plan import (
+    UpdatePlan,
+    deserialize_plan,
+    execute_plan,
+    prepare_steps,
+    revert_plan,
+    serialize_plan,
+)
+from ocfl_lib._version_state import VersionState, scan_dir
+from ocfl_lib.fs import FS, CopyFS, FileWalker, LocalFS, WriteFS
+from ocfl_lib.validation._object import validate_object
+from ocfl_lib.validation._report import Finding, Severity, ValidationReport
+from ocfl_lib.validation._root import validate_root
 
 __all__ = [
     "DEFAULT_LAYOUTS",
@@ -64,6 +71,7 @@ __all__ = [
     "ContentNotFound",
     "ContentSource",
     "CopyFS",
+    "DiffEntry",
     "DigestAlgorithm",
     "DigestAlgorithmMismatch",
     "DigestMap",
@@ -124,12 +132,16 @@ __all__ = [
     "WriteFS",
     "apply_update_plan",
     "bytes_digest",
+    "deserialize_plan",
     "execute_plan",
     "file_digest",
     "get_layout",
     "plan_update",
+    "prepare_steps",
     "revert_plan",
     "scan_dir",
+    "serialize_plan",
+    "to_path_map",
     "update_object",
     "validate_object",
     "validate_root",

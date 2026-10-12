@@ -1,6 +1,6 @@
 """Tests for Layout.config property."""
 
-from ocfl_lib.layout import (
+from ocfl_lib._layout import (
     FlatDirectLayout,
     FlatOmitPrefixLayout,
     HashAndIdNTupleLayout,

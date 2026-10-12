@@ -4,16 +4,16 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ocfl_lib.digest import DigestAlgorithm, file_digest, multi_digest
-from ocfl_lib.fs.protocols import FS
+from ocfl_lib._digest import DigestAlgorithm, file_digest, multi_digest
+from ocfl_lib.fs._protocols import FS
 
 if TYPE_CHECKING:
     from pathlib import Path
-from ocfl_lib.fs.local import LocalFS
-from ocfl_lib.object import Object
-from ocfl_lib.sources import ContentSource
-from ocfl_lib.spec import VNum
-from ocfl_lib.version_state import FixitySource, VersionState, scan_dir
+from ocfl_lib._object import Object
+from ocfl_lib._sources import ContentSource
+from ocfl_lib._spec import VNum
+from ocfl_lib._version_state import FixitySource, VersionState, scan_dir
+from ocfl_lib.fs._local import LocalFS
 
 
 class _DummyFS:
@@ -349,7 +349,7 @@ class TestObjectVersionState:
 
     def test_version_stage_invalid_version(self, good_objects_1_1: Path):
         """version_stage raises VersionNotFound for nonexistent version."""
-        from ocfl_lib.errors import VersionNotFound
+        from ocfl_lib._errors import VersionNotFound
 
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)

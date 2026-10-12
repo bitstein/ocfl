@@ -8,9 +8,7 @@ import pytest
 from ocfl_cli.errors import StagingError
 from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
 from ocfl_cli.stage.store import StagingStore
-from ocfl_lib import DigestAlgorithm, Spec
-from ocfl_lib.inventory import Inventory
-from ocfl_lib.inventory_builder import InventoryBuilder
+from ocfl_lib import DigestAlgorithm, Inventory, InventoryBuilder, Spec
 
 
 @pytest.fixture

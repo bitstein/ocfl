@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from ocfl_lib.errors import PathCollision
+from ocfl_lib._errors import PathCollision
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

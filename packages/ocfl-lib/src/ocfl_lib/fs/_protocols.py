@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, BinaryIO, Protocol, runtime_checkable
 
-from ocfl_lib.errors import OcflFileTypeError
+from ocfl_lib._errors import OcflFileTypeError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

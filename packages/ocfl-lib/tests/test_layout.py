@@ -2,8 +2,8 @@
 
 import pytest
 
-from ocfl_lib.errors import UnknownLayout
-from ocfl_lib.layout import DEFAULT_LAYOUTS, Layout, LayoutRegistry, get_layout
+from ocfl_lib._errors import UnknownLayout
+from ocfl_lib._layout import DEFAULT_LAYOUTS, Layout, LayoutRegistry, get_layout
 
 
 class _DummyLayout(Layout):

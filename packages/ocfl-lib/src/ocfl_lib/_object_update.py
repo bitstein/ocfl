@@ -5,14 +5,14 @@
 
 from typing import TYPE_CHECKING
 
+from ocfl_lib._digest import DigestAlgorithm, stream_digest
+from ocfl_lib._errors import SpecVersionError
+from ocfl_lib._inventory import Inventory, StoredInventory, UserInfo, VersionInfo
+from ocfl_lib._inventory_builder import InventoryBuilder
+from ocfl_lib._object import Object
 from ocfl_lib._path import join_path
-from ocfl_lib.digest import DigestAlgorithm, stream_digest
-from ocfl_lib.errors import SpecVersionError
-from ocfl_lib.inventory import Inventory, StoredInventory, UserInfo, VersionInfo
-from ocfl_lib.inventory_builder import InventoryBuilder
-from ocfl_lib.object import Object
-from ocfl_lib.spec import Spec
-from ocfl_lib.update_plan import (
+from ocfl_lib._spec import Spec
+from ocfl_lib._update_plan import (
     RevertError,
     UpdatePlan,
     execute_plan,
@@ -21,9 +21,9 @@ from ocfl_lib.update_plan import (
 )
 
 if TYPE_CHECKING:
-    from ocfl_lib.fs.protocols import FS, WriteFS
-    from ocfl_lib.sources import ContentSource
-    from ocfl_lib.version_state import VersionState
+    from ocfl_lib._sources import ContentSource
+    from ocfl_lib._version_state import VersionState
+    from ocfl_lib.fs._protocols import FS, WriteFS
 
 
 def update_object(

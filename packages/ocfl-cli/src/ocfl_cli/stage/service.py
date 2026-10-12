@@ -58,18 +58,19 @@ from ocfl_cli.stage.state import (
     save_ots,
     with_lock,
 )
-from ocfl_lib import plan_update
-from ocfl_lib.errors import OtsParseError
-from ocfl_lib.inventory import UserInfo, VersionInfo
-from ocfl_lib.ots import parse as parse_ots
-from ocfl_lib.update_plan import (
+from ocfl_lib import (
+    OtsParseError,
     UpdatePlan,
-    deserialize,
+    UserInfo,
+    VersionInfo,
+    deserialize_plan,
     execute_plan,
+    plan_update,
     prepare_steps,
     revert_plan,
-    serialize,
+    serialize_plan,
 )
+from ocfl_lib.ots import parse as parse_ots
 
 _OTS_EXTENSION_NAME = "NNNN-ots-timestamps"
 _OTS_EXTENSION_CONFIG_BYTES = json.dumps(
@@ -95,10 +96,8 @@ if TYPE_CHECKING:
         VerifyBatchAck,
     )
     from ocfl_cli.stage.store import StagingStore
-    from ocfl_lib import DigestAlgorithm
-    from ocfl_lib.fs.protocols import FS, WriteFS
-    from ocfl_lib.inventory import Inventory
-    from ocfl_lib.sources import ContentSource
+    from ocfl_lib import ContentSource, DigestAlgorithm, Inventory
+    from ocfl_lib.fs import FS, WriteFS
 
 
 logger = logging.getLogger(__name__)
@@ -498,7 +497,7 @@ def next_action_for(state: OtsState, has_files: bool) -> tuple[NextActionKind, s
 
 def _update_head_state(inv: Inventory, state: StateMap) -> Inventory:
     """Return new Inventory with updated head version state."""
-    from ocfl_lib.inventory import Inventory, VersionInfo
+    from ocfl_lib import Inventory, VersionInfo
 
     head = inv.head
     vi = inv.versions[head]
@@ -569,8 +568,7 @@ def build_inventory_plan(
     Returns the plan and the `_StagingContentSource` (commit needs it
     for `prepare_steps`).
     """
-    from ocfl_lib import DigestAlgorithm
-    from ocfl_lib.version_state import VersionState
+    from ocfl_lib import DigestAlgorithm, VersionState
 
     inv = store.load_inventory(root_path, object_id)
     alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
@@ -908,8 +906,7 @@ def status_diff_dict(
     store: StagingStore, root_path: str, object_id: str
 ) -> dict[str, Any]:
     """Build the staged-vs-prior diff payload."""
-    from ocfl_lib.digest_map import to_path_map
-    from ocfl_lib.spec import VNum
+    from ocfl_lib import VNum, to_path_map
 
     inv = store.load_inventory(root_path, object_id)
     head = inv.head
@@ -2065,7 +2062,7 @@ def prepare_inventory_submission_locked(
     # inventory digest stays identical across retries.
     prior_created: str | None = None
     if state.inventory_proof is not None and plan_path(staging_dir).is_file():
-        prior_plan = deserialize(plan_path(staging_dir).read_bytes())
+        prior_plan = deserialize_plan(plan_path(staging_dir).read_bytes())
         prior_inv = prior_plan.new_inv.inventory
         prior_created = prior_inv.versions[prior_inv.head].created
 
@@ -2128,7 +2125,7 @@ def submit_prepared_inventory_locked(
     sp = sp_factory(cfg)
     sp.submit_hashes([prepared.digest], prepared.category_id)
 
-    plan_path(staging_dir).write_bytes(serialize(prepared.plan))
+    plan_path(staging_dir).write_bytes(serialize_plan(prepared.plan))
 
     _log_phase(prepared.previous_phase, prepared.target_phase)
     return SubmitInventoryResult(
@@ -2277,7 +2274,7 @@ def commit_ots(
                     "inventory timestamp plan missing or stale; "
                     "run `stage timestamp inventory`"
                 )
-            plan = deserialize(plan_path(staging_dir).read_bytes())
+            plan = deserialize_plan(plan_path(staging_dir).read_bytes())
             if plan.new_inv.digest != inv_digest:
                 raise AttestationMismatchError(
                     f"inventory timestamp plan digest {plan.new_inv.digest} "

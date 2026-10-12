@@ -3,7 +3,7 @@
 import msgspec
 import pytest
 
-from ocfl_lib.layout.ext0006_flat_omit_prefix import (
+from ocfl_lib._layout.ext0006_flat_omit_prefix import (
     FlatOmitPrefixConfig,
     FlatOmitPrefixLayout,
 )

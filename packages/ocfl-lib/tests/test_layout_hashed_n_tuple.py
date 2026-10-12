@@ -3,7 +3,7 @@
 import msgspec
 import pytest
 
-from ocfl_lib.layout.ext0004_hashed_n_tuple import (
+from ocfl_lib._layout.ext0004_hashed_n_tuple import (
     HashedNTupleConfig,
     HashedNTupleLayout,
 )

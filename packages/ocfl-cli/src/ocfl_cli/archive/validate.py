@@ -26,19 +26,19 @@ from ocfl_cli.ots.bitcoin import (
 from ocfl_lib import (
     Finding,
     OcflError,
+    OtsParseError,
     Severity,
     StorageRoot,
     ValidationReport,
     validate_object,
     validate_root,
 )
-from ocfl_lib.errors import OtsParseError
-from ocfl_lib.fs import utils as fs_utils
+from ocfl_lib import fs as fs_utils
 
 if TYPE_CHECKING:
     from ocfl_cli._appctx import BtcRpcFactory
     from ocfl_cli.config import Config
-    from ocfl_lib.fs.protocols import FS, FileWalker
+    from ocfl_lib.fs import FS, FileWalker
 
 
 _OTS_EXT_NAME = "NNNN-ots-timestamps"

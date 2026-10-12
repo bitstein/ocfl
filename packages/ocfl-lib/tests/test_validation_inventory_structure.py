@@ -1,7 +1,7 @@
 """Tests for inventory validation — structural checks (raw dict)."""
 
-from ocfl_lib.validation.inventory import validate_inventory
-from ocfl_lib.validation.report import FindingCollector
+from ocfl_lib.validation._inventory import validate_inventory
+from ocfl_lib.validation._report import FindingCollector
 
 
 def _minimal_inv() -> dict:

@@ -5,16 +5,16 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ocfl_lib._json_value import parse_json
 from ocfl_lib._path import join_path
-from ocfl_lib.fs import utils as fs_utils
-from ocfl_lib.json_value import parse_json
-from ocfl_lib.spec import Namaste, Spec
-from ocfl_lib.validation.object import validate_object
-from ocfl_lib.validation.report import FindingCollector
+from ocfl_lib._spec import Namaste, Spec
+from ocfl_lib.fs import _utils as fs_utils
+from ocfl_lib.validation._object import validate_object
+from ocfl_lib.validation._report import FindingCollector
 
 if TYPE_CHECKING:
-    from ocfl_lib.fs.protocols import FileWalker
-    from ocfl_lib.validation.report import ValidationReport
+    from ocfl_lib.fs._protocols import FileWalker
+    from ocfl_lib.validation._report import ValidationReport
 
 # Known OCFL community extensions (for storage root)
 _KNOWN_ROOT_EXTENSIONS = frozenset(

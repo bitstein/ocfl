@@ -135,6 +135,74 @@ class TestErrors:
         assert issubclass(ocfl_lib.VersionNotFound, LookupError)
 
 
+# --- 2. public API
+
+PUBLIC_MODULES = {
+    "ocfl_lib",
+    "ocfl_lib.fs",
+    "ocfl_lib.fs.s3",
+    "ocfl_lib.ots",
+    "ocfl_lib.validation",
+}
+
+
+class TestPublicApi:
+    def test_only_public_modules_lack_underscore(self):
+        public = set()
+        for p in _py_files(LIB_SRC):
+            name = _lib_module_name(p)
+            if not any(seg.startswith("_") for seg in name.split(".")):
+                public.add(name)
+        assert public == PUBLIC_MODULES
+
+    def test_consumers_import_no_private_modules(self):
+        bad = []
+        roots = [
+            CLI_SRC,
+            INDEX_SRC,
+            REPO / "packages/ocfl-cli/tests",
+            REPO / "packages/ocfl-index/tests",
+        ]
+        for root in roots:
+            for p in _py_files(root):
+                for node in ast.walk(_tree(p)):
+                    mods = []
+                    if isinstance(node, ast.ImportFrom) and node.module:
+                        mods = [node.module]
+                    elif isinstance(node, ast.Import):
+                        mods = [a.name for a in node.names]
+                    for m in mods:
+                        segs = m.split(".")
+                        if segs[0] == "ocfl_lib" and any(
+                            s.startswith("_") for s in segs[1:]
+                        ):
+                            bad.append(f"{p}:{getattr(node, 'lineno', '?')} {m}")
+                    if (
+                        isinstance(node, ast.ImportFrom)
+                        and node.module
+                        and (node.module.split(".")[0] == "ocfl_lib")
+                    ):
+                        for a in node.names:
+                            if a.name.startswith("_"):
+                                bad.append(f"{p}:{node.lineno} {a.name}")
+        assert not bad, "\n".join(bad)
+
+    def test_all_names_importable(self):
+        import ocfl_lib
+
+        for name in ocfl_lib.__all__:
+            assert hasattr(ocfl_lib, name), name
+
+    def test_object_path_public(self):
+        from ocfl_lib import LocalFS, Object
+
+        obj = Object(LocalFS(REPO), "some/path")
+        assert obj.path == "some/path"
+
+    def test_changelog(self):
+        assert (REPO / "packages/ocfl-lib/CHANGELOG.md").is_file()
+
+
 # --- 3. Object reads; StorageRoot.open
 
 

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-from ocfl_lib.validation.codes import get_code
+from ocfl_lib.validation._codes import get_code
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping

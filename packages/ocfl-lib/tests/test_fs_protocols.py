@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, BinaryIO
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-from ocfl_lib.fs.protocols import (
+from ocfl_lib.fs._protocols import (
     CopyFS,
     FileRef,
     FsEntry,

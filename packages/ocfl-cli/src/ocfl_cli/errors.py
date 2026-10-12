@@ -1,6 +1,6 @@
 """Typed exception hierarchy for ocfl_cli.
 
-Single-rooted at CLIError. Never imports from ocfl_lib.errors.
+Single-rooted at CLIError. Never imports from ocfl_lib._errors.
 
 The `Transient` marker mixin signals a retriable fault to `ots._retry.retry`.
 Concrete exception classes that mix it in (e.g. `SimpleProofTransient`)
