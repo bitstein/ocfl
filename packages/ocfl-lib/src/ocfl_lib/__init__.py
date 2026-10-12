@@ -25,6 +25,7 @@ from ocfl_lib._errors import (
     OtsParseError,
     PathCollision,
     PlanMismatchError,
+    RecoveryActionError,
     RecoveryRequiredError,
     RevertCompletedError,
     RootExistsError,
@@ -51,6 +52,7 @@ from ocfl_lib._layout import (
     get_layout,
 )
 from ocfl_lib._object import DiffEntry, Object
+from ocfl_lib._recovery import CommitState, CommitStatus, RecoveryAction
 from ocfl_lib._root import StorageRoot
 from ocfl_lib._sources import ContentSource, FixitySource
 from ocfl_lib._spec import Namaste, Spec, VNum
@@ -74,6 +76,8 @@ __all__ = [
     "ClaimFS",
     "ClaimLostError",
     "CommitPlan",
+    "CommitState",
+    "CommitStatus",
     "ConditionalFS",
     "ContentNotFound",
     "ContentSource",
@@ -118,6 +122,8 @@ __all__ = [
     "PathCollision",
     "PathMap",
     "PlanMismatchError",
+    "RecoveryAction",
+    "RecoveryActionError",
     "RecoveryRequiredError",
     "RevertCompletedError",
     "RootExistsError",

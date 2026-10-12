@@ -293,6 +293,13 @@ class RecoveryRequiredError(OcflError):
     error_class = ErrorClass.STATE
 
 
+class RecoveryActionError(OcflError):
+    """The recovery action does not apply to the object's partial state."""
+
+    code = "recovery_action"
+    error_class = ErrorClass.USAGE
+
+
 class ObjectLockedError(OcflError):
     """Another process holds the object's commit lock."""
 

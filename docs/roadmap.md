@@ -34,7 +34,7 @@ Target architecture from the 2026-10-11 design session. Terms: [CONTEXT.md](../C
 
 - [x] The plan records only the intent, with a new `plan.json` format.
 - [x] Local: build `vN/` (or a new object) in the work dir, then claim with `renameat2(RENAME_NOREPLACE)`. S3: claim with a create-only `vN/inventory.json`. Then the inventory proof, then the root inventory, then the root sidecar.
-- [ ] Recovery tables, one per backend, including the stale-sidecar case (E060) and pruning empty parents (E073).
+- [x] Recovery tables, one per backend, including the stale-sidecar case (E060) and pruning empty parents (E073).
 - [x] `StorageRoot.commit(...)` is the only write entry point.
 - [ ] Purge follows the ADR-0001 order and refuses to run over a live or stray claim.
 - [ ] `recover OBJ --resume|--revert|--remove-stray VN`.

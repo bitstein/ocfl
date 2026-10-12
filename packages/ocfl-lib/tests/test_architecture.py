@@ -648,3 +648,55 @@ class TestClaimThenPublish:
 
         text = (LIB_SRC / "validation/_root.py").read_text()
         assert WORK_DIR_EXTENSION not in text
+
+
+# --- 3.3 recovery tables, one per backend
+
+
+class TestRecoveryTables:
+    def test_one_full_table_per_backend(self):
+        from ocfl_lib import CommitState, RecoveryAction
+        from ocfl_lib._recovery import TABLES
+
+        assert set(TABLES) == {"local", "s3"}
+        for name, table in TABLES.items():
+            assert set(table) == set(CommitState), name
+            for state, row in table.items():
+                assert set(row) == set(RecoveryAction), (name, state)
+
+    def test_tables_differ_where_backends_differ(self):
+        from ocfl_lib import CommitState, RecoveryAction
+        from ocfl_lib._recovery import TABLES
+
+        claimed = CommitState.CLAIMED
+        for action in (RecoveryAction.RESUME, RecoveryAction.REVERT):
+            assert TABLES["local"][claimed][action] is not TABLES["s3"][claimed][action]
+        stray = TABLES["local"][CommitState.STRAY][RecoveryAction.REMOVE_STRAY]
+        assert stray is not TABLES["s3"][CommitState.STRAY][RecoveryAction.REMOVE_STRAY]
+
+    def test_status_reads_only(self, tmp_path):
+        from ocfl_lib import LocalFS
+        from ocfl_lib._recovery import detect
+
+        inner = LocalFS(tmp_path)
+
+        class ReadOnly:
+            def open_file(self, n):
+                return inner.open_file(n)
+
+            def read_dir(self, n):
+                return inner.read_dir(n)
+
+            def exists(self, n):
+                return inner.exists(n)
+
+        status, plan = detect(ReadOnly(), "", "obj", "x:1")  # ty: ignore[invalid-argument-type]
+        assert plan is None and status.state.value == "clean"
+
+    def test_recovery_reads_progress_from_storage_only(self):
+        """No module records commit progress next to the plan."""
+        text = (LIB_SRC / "_recovery.py").read_text() + (
+            LIB_SRC / "_commit.py"
+        ).read_text()
+        for word in ("completed", "journal", "progress.json"):
+            assert word not in text, word

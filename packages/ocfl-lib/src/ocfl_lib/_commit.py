@@ -371,18 +371,18 @@ def publish(t: Target, base: StoredInventory | None, *, tag: str | None = None) 
     else:
         _check_still_base(t, base)
         fs_utils.write_bytes(fsys, rinv, plan.inventory.raw_bytes)
-    finish_sidecar(fsys, t.obj_path, plan.inventory, base)
+    finish_sidecar(fsys, t.obj_path, plan.inventory, plan.base_digest_algorithm)
 
 
 def finish_sidecar(
     fsys: WriteFS,
     obj_path: str,
     inv: StoredInventory,
-    base: StoredInventory | None,
+    old_algorithm: str | None,
 ) -> None:
     """Make the root sidecar certify `inv`; an old-algorithm one goes first."""
-    if base is not None and base.digest_algorithm is not inv.digest_algorithm:
-        remove_if_exists(fsys, join_path(obj_path, base.sidecar_filename))
+    if old_algorithm and old_algorithm != inv.digest_algorithm.ocfl_name:
+        remove_if_exists(fsys, join_path(obj_path, f"inventory.json.{old_algorithm}"))
     fs_utils.write_bytes(
         fsys,
         join_path(obj_path, inv.sidecar_filename),

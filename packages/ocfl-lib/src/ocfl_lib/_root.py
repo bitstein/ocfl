@@ -24,6 +24,7 @@ from ocfl_lib._layout.config import (
 )
 from ocfl_lib._object import Object
 from ocfl_lib._path import join_path
+from ocfl_lib._recovery import CommitStatus, RecoveryAction, detect, recover
 from ocfl_lib._spec import DEFAULT_SPEC, Namaste, Spec
 from ocfl_lib.fs import _utils as fs_utils
 
@@ -249,6 +250,35 @@ class StorageRoot:
         obj = self.get_object(id)
         commit_plan(fsys, self._path, obj.path, plan, content or _NO_CONTENT)
         return Object(self._fsys, obj.path)
+
+    def commit_status(self, id: str) -> CommitStatus:
+        """How far the last commit of object `id` got. Reads only."""
+        obj_path = join_path(self._path, self.object_path(id))
+        status, _plan = detect(self._fsys, self._path, obj_path, id)
+        return status
+
+    def recover(
+        self,
+        fsys: WriteFS,
+        id: str,
+        action: RecoveryAction,
+        *,
+        version: str | None = None,
+        content: ContentSource | None = None,
+    ) -> CommitStatus:
+        """Finish or undo the last commit of object `id`. Returns the state found.
+
+        RESUME finishes a claimed version (an unclaimed one is discarded;
+        nothing of it is in the object). REVERT undoes a version that is not
+        published yet, else raises RevertCompletedError. REMOVE_STRAY removes
+        the stray claim `version` and its inventory proof. Every action also
+        removes empty work dirs and empty layout parents (E073). On S3,
+        resuming a claim whose content is incomplete needs `content`.
+        """
+        obj_path = join_path(self._path, self.object_path(id))
+        return recover(
+            fsys, self._path, obj_path, id, action, version=version, content=content
+        )
 
     def object_paths(self, *, strict: bool = False) -> Iterator[str]:
         """Walk the hierarchy and yield paths to all OCFL objects.
