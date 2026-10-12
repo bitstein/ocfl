@@ -181,10 +181,12 @@ def validate_object(
 
     validate_ots_extension(fsys, path, inv_data, alg, inv_versions, result)
 
-    # 8. Validate each version directory
+    # 8. Validate each version directory. E103: each version's spec must be
+    # the same as or later than the preceding version's; root is the last.
+    prev_spec: tuple[str, str] | None = None  # (version dir, spec version)
     for vkey, _vnum in sorted(inv_versions.items(), key=lambda x: x[1]):
         vdir = _join(path, vkey)
-        _validate_version_dir(
+        vspec = _validate_version_dir(
             fsys,
             vdir,
             vkey,
@@ -196,6 +198,8 @@ def validate_object(
             check_digests=check_digests,
             lax_digests=lax_digests,
         )
+        prev_spec = _check_spec_sequence(prev_spec, vkey, vspec, result)
+    _check_spec_sequence(prev_spec, "root", _inventory_spec(inv_data), result)
 
     # 9. Validate content files against manifest
     manifest = inv_data.get("manifest", {})
@@ -244,13 +248,13 @@ def _validate_version_dir(
     *,
     check_digests: bool,
     lax_digests: bool,
-) -> None:
+) -> str | None:
     """Validate a single version directory."""
     try:
         entries = list(fsys.read_dir(vdir))
     except OSError:
         result.error("E046a", version_dir=vkey)
-        return
+        return None
 
     # Detect version inventory sidecar algorithm from actual files
     version_sidecar_alg = None
@@ -293,7 +297,7 @@ def _validate_version_dir(
         vinv_bytes = fs_utils.read_all(fsys, vinv_path)
     except OSError:
         result.warning("W010", where=vkey)
-        return
+        return None
 
     # Validate version inventory sidecar (use detected alg or root alg)
     sidecar_alg = version_sidecar_alg or root_alg
@@ -314,15 +318,15 @@ def _validate_version_dir(
         vinv_data = json.loads(vinv_bytes)
     except (json.JSONDecodeError, ValueError) as e:
         result.error("E033", where=vkey, explanation=str(e))
-        return
+        return None
 
     if not isinstance(vinv_data, dict):
         result.error("E034", where=vkey)
-        return
+        return None
 
     vinv = validate_inventory(vinv_data, result, lax_digests=lax_digests, where=vkey)
     if vinv is None:
-        return
+        return None
 
     # E019/E020: contentDirectory consistency between version and root
     root_cd = root_inv_data.get("contentDirectory")
@@ -342,8 +346,6 @@ def _validate_version_dir(
     if vinv_head != vkey:
         result.error("E040", where=vkey, got=vinv_head, expected=vkey)
 
-    # E103: version inventory spec must not be older than a later version's spec
-    _check_spec_regression(vinv_data, root_inv_data, result, vkey=vkey)
 
     # E092: non-head version inventories must describe their content correctly.
     # Under check_digests, verify every non-head version. Always verify when the
@@ -370,6 +372,8 @@ def _validate_version_dir(
 
     # W011: check version metadata consistency
     _check_version_metadata(vinv_data, root_inv_data, result, vkey=vkey)
+
+    return _inventory_spec(vinv_data)
 
 
 def _check_version_metadata(
@@ -455,26 +459,34 @@ def _check_first_version_content_dir(
 _SPEC_RE = re.compile(r"https://ocfl\.io/(\d+\.\d+)/spec/#inventory")
 
 
-def _check_spec_regression(
-    vinv_data: dict[str, Any],
-    root_inv_data: dict[str, Any],
+def _inventory_spec(inv_data: dict[str, Any]) -> str | None:
+    """Spec version ("1.1") from an inventory's type URI, or None."""
+    itype = inv_data.get("type", "")
+    m = _SPEC_RE.match(itype) if isinstance(itype, str) else None
+    return m.group(1) if m else None
+
+
+def _check_spec_sequence(
+    prev: tuple[str, str] | None,
+    where: str,
+    spec: str | None,
     result: ValidationResult,
-    *,
-    vkey: str,
-) -> None:
-    """E103: version inventory spec must not be older than root spec."""
-    vtype = vinv_data.get("type", "")
-    rtype = root_inv_data.get("type", "")
-    vm = _SPEC_RE.match(vtype) if isinstance(vtype, str) else None
-    rm = _SPEC_RE.match(rtype) if isinstance(rtype, str) else None
-    if vm and rm and _spec_tuple(vm.group(1)) < _spec_tuple(rm.group(1)):
+) -> tuple[str, str] | None:
+    """E103: *spec* must not be older than the preceding version's *prev*.
+
+    Returns the new (where, spec) to compare the next version against.
+    """
+    if spec is None:
+        return prev
+    if prev is not None and _spec_tuple(spec) < _spec_tuple(prev[1]):
         result.error(
             "E103",
-            where=vkey,
-            this_spec_version=vm.group(1),
-            prev_version_dir="root",
-            prev_spec_version=rm.group(1),
+            where=where,
+            this_spec_version=spec,
+            prev_version_dir=prev[0],
+            prev_spec_version=prev[1],
         )
+    return (where, spec)
 
 
 def _spec_tuple(version: str) -> tuple[int, int]:

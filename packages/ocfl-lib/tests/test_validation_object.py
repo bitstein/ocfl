@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -324,9 +325,7 @@ class TestVersionInventoryJson:
 
         assert r.has_code("E092")
 
-    def test_non_head_alg_mismatch_fires_e092_even_in_lax_mode(
-        self, tmp_path: Path
-    ):
+    def test_non_head_alg_mismatch_fires_e092_even_in_lax_mode(self, tmp_path: Path):
         # A non-head version whose digestAlgorithm differs from root must always
         # have its manifest digests verified, even under check_digests=False.
         content = b"data"
@@ -610,3 +609,42 @@ class TestW003EmptyContentDir:
         r = ValidationResult()
         validate_object(fsys, "", r, check_digests=False)
         assert r.has_code("W003")
+
+
+def _set_inventory_type(vdir: Path, spec: str) -> None:
+    inv_path = vdir / "inventory.json"
+    raw = re.sub(
+        rb"https://ocfl\.io/\d+\.\d+/spec/#inventory",
+        f"https://ocfl.io/{spec}/spec/#inventory".encode(),
+        inv_path.read_bytes(),
+    )
+    inv_path.write_bytes(raw)
+    digest = hashlib.sha512(raw).hexdigest()
+    (vdir / "inventory.json.sha512").write_text(f"{digest} inventory.json\n")
+
+
+class TestE103SpecSequence:
+    """E103: each version is the same or a later spec than the one before."""
+
+    def test_upgraded_object_is_valid(
+        self, bad_objects_1_1: Path, tmp_path: Path
+    ) -> None:
+        obj = tmp_path / "obj"
+        shutil.copytree(bad_objects_1_1 / "E103_older_spec_v2", obj)
+        _set_inventory_type(obj / "v1", "1.0")
+        _set_inventory_type(obj / "v2", "1.1")
+
+        r = ValidationResult()
+        validate_object(LocalFS(obj), "", r)
+        assert not r.has_code("E103")
+        assert r.is_valid, [e.code for e in r.errors]
+
+    def test_older_than_previous_version_reports_against_it(
+        self, bad_objects_1_1: Path
+    ) -> None:
+        r = ValidationResult()
+        validate_object(LocalFS(bad_objects_1_1 / "E103_older_spec_v2"), "", r)
+        e103 = [e for e in r.errors if e.code == "E103"]
+        assert len(e103) == 1
+        assert "v2 inventory" in e103[0].message
+        assert "the v1 inventory" in e103[0].message
