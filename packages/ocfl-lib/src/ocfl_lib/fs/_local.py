@@ -101,6 +101,40 @@ def _renameat2_noreplace(src: Path, dst: Path) -> None:
         raise OSError(code, os.strerror(code), str(src), None, str(dst))
 
 
+def _fsync_dir(path: Path) -> None:
+    """Make the entries of directory `path` (creates, renames, removes) durable."""
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _fsync_file(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _makedirs(path: Path) -> None:
+    """`mkdir -p` that fsyncs the parent of every directory it creates."""
+    missing = []
+    p = path
+    while not p.is_dir():
+        missing.append(p)
+        p = p.parent
+    for d in reversed(missing):
+        try:
+            d.mkdir()
+        except FileExistsError:
+            if not d.is_dir():
+                raise
+            continue
+        _fsync_dir(d.parent)
+
+
 def _same_inode(path: Path, fd: int) -> bool:
     try:
         st = path.stat()
@@ -151,9 +185,13 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
     # -- WriteFS --
 
     def write(self, name: str, data: BinaryIO) -> int:
-        """Write data to a file atomically."""
+        """Write data to a file atomically and durably.
+
+        The bytes are fsynced before the rename, and the directory after it,
+        so a power loss leaves the old file or the new one.
+        """
         target = self._resolve(name)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        _makedirs(target.parent)
         fd = None
         tmp_path = None
         try:
@@ -162,10 +200,12 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
             while chunk := data.read(_CHUNK_SIZE):
                 os.write(fd, chunk)
                 total += len(chunk)
+            os.fchmod(fd, 0o644)
+            os.fsync(fd)
             os.close(fd)
             fd = None
-            os.chmod(tmp_path, 0o644)
             os.replace(tmp_path, target)
+            _fsync_dir(target.parent)
             return total
         except BaseException:
             if fd is not None:
@@ -176,7 +216,9 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
 
     def remove(self, name: str) -> None:
         """Remove a file."""
-        os.remove(self._resolve(name))
+        path = self._resolve(name)
+        os.remove(path)
+        _fsync_dir(path.parent)
 
     def remove_all(self, name: str) -> None:
         """Remove a file or directory tree."""
@@ -187,14 +229,15 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
             os.remove(path)
         else:
             raise FileNotFoundError(f"path not found: {name!r}")
+        _fsync_dir(path.parent)
 
     def mkdir(self, name: str) -> None:
         """Create directory, including parents.
 
-        Safe under concurrent invocation: ``os.makedirs(exist_ok=True)``
-        is idempotent on POSIX.
+        Safe under concurrent invocation. Each new directory is made durable
+        by an fsync of its parent.
         """
-        os.makedirs(self._resolve(name), exist_ok=True)
+        _makedirs(self._resolve(name))
 
     # -- CopyFS --
 
@@ -203,6 +246,8 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
         src_path = self._resolve(src)
         dst_path = self._resolve(dst)
         shutil.copy2(src_path, dst_path)
+        _fsync_file(dst_path)
+        _fsync_dir(dst_path.parent)
         return dst_path.stat().st_size
 
     # -- ClaimFS --
@@ -213,7 +258,11 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
         Uses Linux renameat2(RENAME_NOREPLACE). Raises OSError with ENOSYS,
         EINVAL or EXDEV where the platform or filesystem cannot do it.
         """
-        _renameat2_noreplace(self._resolve(src), self._resolve(dst))
+        src_path, dst_path = self._resolve(src), self._resolve(dst)
+        _renameat2_noreplace(src_path, dst_path)
+        _fsync_dir(dst_path.parent)
+        if src_path.parent != dst_path.parent:
+            _fsync_dir(src_path.parent)
 
     @contextmanager
     def lock(self, name: str, *, timeout: float = 0.0) -> Iterator[None]:
@@ -249,10 +298,12 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
 
     def remove_empty_dir(self, name: str) -> bool:
         """Remove directory `name` if it is empty. True if it was removed."""
+        path = self._resolve(name)
         try:
-            os.rmdir(self._resolve(name))
+            os.rmdir(path)
         except OSError:
             return False
+        _fsync_dir(path.parent)
         return True
 
     # -- FileWalker --

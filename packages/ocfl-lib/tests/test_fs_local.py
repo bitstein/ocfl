@@ -277,3 +277,52 @@ def test_exists_local(tmp_path):
     assert fsys.exists("a.txt") is True
     (tmp_path / "d").mkdir()
     assert fsys.exists("d") is True
+
+
+class TestDurability:
+    """Writes, renames and removes are fsynced (file, then its directory)."""
+
+    @pytest.fixture
+    def synced(self, monkeypatch):
+        import os
+        import stat
+
+        seen: list[str] = []
+        real = os.fsync
+
+        def fsync(fd):
+            seen.append("dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+            return real(fd)
+
+        monkeypatch.setattr(os, "fsync", fsync)
+        return seen
+
+    def test_write_syncs_file_then_dir(self, tmp_path: Path, synced):
+        LocalFS(tmp_path).write("a", BytesIO(b"x"))
+        assert synced == ["file", "dir"]
+
+    def test_write_syncs_new_parent_dirs(self, tmp_path: Path, synced):
+        LocalFS(tmp_path).write("d/e/a", BytesIO(b"x"))
+        assert synced == ["dir", "dir", "file", "dir"]
+
+    def test_rename_syncs_both_dirs(self, tmp_path: Path, synced):
+        (tmp_path / "s").mkdir()
+        (tmp_path / "s" / "x").mkdir()
+        (tmp_path / "t").mkdir()
+        LocalFS(tmp_path).rename_noreplace("s/x", "t/x")
+        assert synced == ["dir", "dir"]
+
+    def test_removes_sync_dir(self, tmp_path: Path, synced):
+        fs = LocalFS(tmp_path)
+        (tmp_path / "f").write_text("x")
+        (tmp_path / "d").mkdir()
+        (tmp_path / "e").mkdir()
+        fs.remove("f")
+        fs.remove_all("d")
+        assert fs.remove_empty_dir("e")
+        assert synced == ["dir", "dir", "dir"]
+
+    def test_copy_syncs_file_then_dir(self, tmp_path: Path, synced):
+        (tmp_path / "a").write_text("x")
+        LocalFS(tmp_path).copy("a", "b")
+        assert synced == ["file", "dir"]
