@@ -37,7 +37,9 @@ from ocfl_lib import (
     RevertCompletedError,
     Spec,
     StorageRoot,
+    VNum,
     get_layout,
+    ots,
     scan_dir,
 )
 from ocfl_lib.validation import validate_root
@@ -106,6 +108,9 @@ class CommitCrashRules:
     @rule(files=FILES, crash_at=CRASH_AT)
     def commit(self, files, crash_at):
         vs, plan = self._planned(files)
+        self._commit(vs, plan, crash_at)
+
+    def _commit(self, vs, plan, crash_at):
         writer, _ = fail_at(self.fs, crash_at)
         try:
             self.root.commit(writer, OID, plan, content=vs.content_source)
@@ -196,13 +201,57 @@ class OtsCommitCrashRules(CommitCrashRules):
         vs, plan = super()._planned(files)
         return vs, with_inventory_proof(plan)
 
-    @precondition(lambda self: self.pending is None and self.published is not None)
+    def _timestamped(self) -> bool:
+        return self.published is not None
+
+    @precondition(lambda self: self.pending is None and self._timestamped())
     @rule(files=FILES)
     def commit_without_proof(self, files):
         vs, plan = super()._planned(files)
         with pytest.raises(MissingInventoryProofError):
             self.root.commit(self.fs, OID, plan, content=vs.content_source)
         assert self.root.commit_status(OID).state is CommitState.CLEAN
+
+
+class StartTimestampingRules(OtsCommitCrashRules):
+    """The object starts without the extension; a commit with a proof starts it.
+
+    Every later commit is timestamped. A crash while starting recovers to
+    either the old head without the extension or vN with `timestampFrom`
+    set to vN.
+    """
+
+    def _timestamped(self) -> bool:
+        if self.published is None:
+            return False
+        return ots.read_config(self.fs, self.root.get_object(OID).path) is not None
+
+    def _planned(self, files: dict[str, bytes]):
+        if self._timestamped():
+            return super()._planned(files)
+        return CommitCrashRules._planned(self, files)
+
+    @precondition(
+        lambda self: (
+            self.pending is None
+            and self.published is not None
+            and not self._timestamped()
+        )
+    )
+    @rule(files=FILES, crash_at=CRASH_AT)
+    def start_timestamping(self, files, crash_at):
+        vs, plan = OtsCommitCrashRules._planned(self, files)
+        self._commit(vs, plan, crash_at)
+
+    @invariant()
+    def started_at_a_covered_version(self):
+        if self.pending is not None or not self._timestamped():
+            return
+        cfg = ots.read_config(self.fs, self.root.get_object(OID).path)
+        assert cfg is not None
+        if cfg.timestamp_from is not None:
+            head = self.root.get_object(OID).head
+            assert VNum.parse(cfg.timestamp_from) <= VNum.parse(str(head))
 
 
 def with_inventory_proof(plan: CommitPlan) -> CommitPlan:
@@ -256,6 +305,28 @@ class S3OtsCommitCrash(OtsCommitCrashRules, RuleBasedStateMachine):
         super().teardown()
 
 
+class LocalStartTimestamping(StartTimestampingRules, RuleBasedStateMachine):
+    def make_fs(self):
+        d = self.tmp / "root"
+        d.mkdir()
+        return LocalFS(d)
+
+
+class S3StartTimestamping(StartTimestampingRules, RuleBasedStateMachine):
+    def make_fs(self):
+        from ocfl_lib.fs.s3 import S3FS
+
+        self._mock = mock_aws()
+        self._mock.start()
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket=BUCKET)
+        return S3FS(BUCKET, client=client)
+
+    def teardown(self):
+        self._mock.stop()
+        super().teardown()
+
+
 def _settings(max_examples: int) -> settings:
     return settings(
         max_examples=max_examples,
@@ -273,3 +344,7 @@ TestLocalOtsCommitCrash = LocalOtsCommitCrash.TestCase
 TestLocalOtsCommitCrash.settings = _settings(30)
 TestS3OtsCommitCrash = S3OtsCommitCrash.TestCase
 TestS3OtsCommitCrash.settings = _settings(10)
+TestLocalStartTimestamping = LocalStartTimestamping.TestCase
+TestLocalStartTimestamping.settings = _settings(30)
+TestS3StartTimestamping = S3StartTimestamping.TestCase
+TestS3StartTimestamping.settings = _settings(10)

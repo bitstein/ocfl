@@ -46,7 +46,7 @@ Target architecture from the 2026-10-11 design session. Terms: [CONTEXT.md](../C
 - [x] Move the extension name, config, sidecar rules, the `.ots` validation walk and the S3 URI → FS factory into the lib.
 - [x] A `BlockHeaderSource` Protocol and a pure attestation check. A Bitcoin RPC client in the `[bitcoin]` extra.
 - [x] `StorageRoot.commit` refuses to commit a version without an inventory proof when the object's config requires one (else E904). It also refuses a path without its content proof (E902), a non-sha256 inventory (E901) and an unreadable config (E908).
-- [ ] An existing object can start timestamping: the commit that adds the extension writes a config with `timestampFrom` set to the new version. Phase 3 refuses this for now.
+- [x] An existing object can start timestamping: the commit that adds the extension writes a config with `timestampFrom` set to the new version, after the claim and before the inventory proof. Revert and remove-stray remove a config that their version started.
 
 ## 5. CLI layers
 

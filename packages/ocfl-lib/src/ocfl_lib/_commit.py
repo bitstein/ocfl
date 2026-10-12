@@ -17,6 +17,7 @@ The plan holds only intent. How far a commit got is read back from storage.
 import contextlib
 import errno
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, BinaryIO
 
@@ -29,6 +30,7 @@ from ocfl_lib._errors import (
     MissingContentProofError,
     MissingInventoryProofError,
     ObjectLockedError,
+    OtsConfigError,
     PlanMismatchError,
     RecoveryRequiredError,
     RevertCompletedError,
@@ -307,15 +309,36 @@ def check_base(fsys: FS, t: Target, raw: bytes | None) -> StoredInventory | None
         raise RecoveryRequiredError(
             f"{t.obj_path} has a stray claim on {t.vn}; run recover"
         )
+    base = StoredInventory.from_bytes(raw, alg)
     cfg = ots.read_config(fsys, t.obj_path)
     if cfg is not None:
         check_extension(plan, cfg)
     elif plan.inventory_proof is not None:
+        _check_all_sha256(fsys, t, base)
+        check_extension(plan, start_config(plan))
+    return base
+
+
+def start_config(plan: CommitPlan) -> ots.OtsConfig:
+    """The config a proof starts: from v1 for a new object, else from vN."""
+    return ots.OtsConfig(timestamp_from=None if plan.is_new_object else plan.version)
+
+
+def _check_all_sha256(fsys: FS, t: Target, base: StoredInventory) -> None:
+    """E901 covers every inventory, also those before `timestampFrom`."""
+    algs = {base.digest_algorithm.ocfl_name}
+    for v in base.inventory.versions:
+        raw = read_or_none(fsys, t.obj(v, INVENTORY_FILENAME))
+        if raw is not None:
+            try:
+                algs.add(json.loads(raw).get("digestAlgorithm"))
+            except ValueError, AttributeError:
+                algs.add(None)
+    if algs != {"sha256"}:
         raise PlanMismatchError(
-            f"object {plan.object_id!r} does not use the {ots.EXTENSION_NAME} "
-            "extension; an inventory proof can only start a new object"
+            f"object {t.plan.object_id!r} cannot start the {ots.EXTENSION_NAME} "
+            "extension: every inventory must use sha256 (E901)"
         )
-    return StoredInventory.from_bytes(raw, alg)
 
 
 def check_extension(plan: CommitPlan, cfg: ots.OtsConfig) -> None:
@@ -345,9 +368,16 @@ def check_extension(plan: CommitPlan, cfg: ots.OtsConfig) -> None:
 
 
 def write_proof(t: Target) -> None:
-    """Write the plan's inventory proof, or remove a stale one for vN."""
+    """Write the plan's inventory proof, or remove a stale one for vN.
+
+    A proof for an existing object without the extension starts it: the
+    config, with `timestampFrom` set to vN, is written just before the proof.
+    """
     path = t.obj(ots.inventory_proof_path(t.vn))
     if t.plan.inventory_proof is not None:
+        config = t.obj(ots.CONFIG_PATH)
+        if not t.plan.is_new_object and read_or_none(t.fsys, config) is None:
+            fs_utils.write_bytes(t.fsys, config, start_config(t.plan).to_json())
         if read_or_none(t.fsys, path) != t.plan.inventory_proof:
             fs_utils.write_bytes(t.fsys, path, t.plan.inventory_proof)
     else:
@@ -452,6 +482,7 @@ def revert_claimed(t: Target, base: StoredInventory | None) -> None:
             fs_utils.write_bytes(fsys, t.obj(old.filename), old.content.encode())
         remove_if_exists(fsys, t.obj(new.filename))
     remove_if_exists(fsys, t.obj(ots.inventory_proof_path(t.vn)))
+    unstart_extension(fsys, t.obj_path, t.vn)
     if isinstance(fsys, ConditionalFS) and is_s3(fsys):
         prefix = t.obj_path if t.plan.is_new_object else t.obj(t.vn)
         for ref in list(fsys.walk_files(prefix)):
@@ -461,6 +492,30 @@ def revert_claimed(t: Target, base: StoredInventory | None) -> None:
     elif fsys.exists(t.claim):
         fsys.remove_all(t.claim)
     discard(t)
+
+
+def unstart_extension(fsys: WriteFS, obj_path: str, version: str) -> None:
+    """Remove the extension that unpublished `version` started, if it did.
+
+    Only a config whose `timestampFrom` is `version` was written by the
+    commit of `version`; its proof goes first, then the config, then the
+    empty directories.
+    """
+    raw = read_or_none(fsys, join_path(obj_path, ots.CONFIG_PATH))
+    if raw is None:
+        return
+    try:
+        cfg = ots.OtsConfig.from_json(raw)
+    except OtsConfigError:
+        return
+    if cfg.timestamp_from != version:
+        return
+    remove_if_exists(fsys, join_path(obj_path, ots.inventory_proof_path(version)))
+    remove_if_exists(fsys, join_path(obj_path, ots.CONFIG_PATH))
+    if isinstance(fsys, ClaimFS):
+        for d in (ots.EXTENSION_DIR, "extensions"):
+            if not fsys.remove_empty_dir(join_path(obj_path, d)):
+                return
 
 
 def _undo(
@@ -533,7 +588,7 @@ def new_object_files(plan: CommitPlan) -> dict[str, bytes]:
     namaste = Namaste.for_object(spec)
     files = {namaste.filename: namaste.content.encode()}
     if plan.inventory_proof is not None:
-        files[ots.CONFIG_PATH] = ots.OtsConfig().to_json()
+        files[ots.CONFIG_PATH] = start_config(plan).to_json()
         files[ots.inventory_proof_path(plan.version)] = plan.inventory_proof
     return files
 

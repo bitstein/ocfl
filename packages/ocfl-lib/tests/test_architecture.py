@@ -1049,3 +1049,31 @@ class TestCommitRefusesUnproved:
         assert {"LocalOtsCommitCrash", "S3OtsCommitCrash"} <= set(machines)
         text = path.read_text()
         assert "inventory_proof" in text and "MissingInventoryProofError" in text
+
+
+# --- 4.5 an existing object can start timestamping
+
+
+class TestStartTimestamping:
+    def test_config_is_written_before_the_proof(self):
+        """Order: claim -> config -> proof -> root inventory -> root sidecar."""
+        body = ast.unparse(_func(LIB_SRC / "_commit.py", "write_proof"))
+        assert body.index("ots.CONFIG_PATH") < body.index("inventory_proof)")
+        assert "start_config" in body
+
+    def test_start_sets_timestamp_from_to_the_new_version(self):
+        body = ast.unparse(_func(LIB_SRC / "_commit.py", "start_config"))
+        assert "timestamp_from" in body and "plan.version" in body
+
+    def test_revert_and_remove_stray_undo_a_started_extension(self):
+        assert "unstart_extension" in _names(
+            _func(LIB_SRC / "_commit.py", "revert_claimed")
+        )
+        for fn in ("_remove_stray_local", "_remove_stray_s3"):
+            assert "unstart_extension" in _names(_func(LIB_SRC / "_recovery.py", fn))
+
+    def test_state_machines_start_timestamping(self):
+        path = REPO / "packages/ocfl-lib/tests/test_commit_stateful.py"
+        text = path.read_text()
+        assert "def start_timestamping" in text
+        assert "LocalStartTimestamping" in text and "S3StartTimestamping" in text

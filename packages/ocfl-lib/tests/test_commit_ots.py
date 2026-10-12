@@ -16,6 +16,8 @@ from ocfl_lib import (
     MissingInventoryProofError,
     OtsConfigError,
     PlanMismatchError,
+    RecoveryAction,
+    RevertCompletedError,
     Spec,
     StorageRoot,
     get_layout,
@@ -24,6 +26,7 @@ from ocfl_lib import (
 )
 from ocfl_lib.fs import read_all, write_bytes
 from ocfl_lib.validation import validate_root
+from tests.helpers.faults import Crash, fail_at
 from tests.helpers.ots import build_attestation
 
 OID = "obj"
@@ -156,3 +159,84 @@ def test_proof_and_content_proofs_commit(root):
     root.commit(proved({**FILES, "c": b"c"}), proof=True)
     assert root.read(ots.inventory_proof_path("v2")) is not None
     root.assert_clean()
+
+
+# --- 4.5 an existing object starts timestamping
+
+
+def test_start_on_existing_object(root):
+    root.commit(FILES, proof=False)
+    root.commit(proved(FILES), proof=True)
+    raw = root.read(ots.CONFIG_PATH)
+    assert raw is not None
+    assert ots.OtsConfig.from_json(raw) == ots.OtsConfig(timestamp_from="v2")
+    assert root.read(ots.inventory_proof_path("v1")) is None
+    assert root.read(ots.inventory_proof_path("v2")) is not None
+    root.assert_clean()
+    with pytest.raises(MissingInventoryProofError):
+        root.commit(proved(FILES), proof=False)
+    root.commit(proved({**FILES, "c": b"c"}), proof=True)
+    root.assert_clean()
+
+
+def test_start_needs_proofs_for_carried_files(root):
+    root.commit(FILES, proof=False)
+    with pytest.raises(MissingContentProofError, match=r"a\.txt"):
+        root.commit({**FILES, **proved({"c": b"c"})}, proof=True)
+    assert root.read(ots.CONFIG_PATH) is None
+    root.assert_clean()
+
+
+def test_start_refuses_sha512_history(root):
+    root.commit(FILES, proof=False, alg=DigestAlgorithm.SHA512)
+    with pytest.raises(PlanMismatchError):
+        root.commit(proved(FILES), proof=True)
+    assert root.read(ots.CONFIG_PATH) is None
+
+
+def test_new_object_config_has_no_timestamp_from(root):
+    root.commit(proved(FILES), proof=True)
+    raw = root.read(ots.CONFIG_PATH)
+    assert raw is not None and ots.OtsConfig.from_json(raw) == ots.OtsConfig()
+
+
+@pytest.mark.parametrize("action", [RecoveryAction.RESUME, RecoveryAction.REVERT])
+def test_start_crash_at_every_write(root, action):
+    """Each partial state of a starting commit (claimed; config; config and
+    proof; root inventory) recovers to v1 without the extension or to v2
+    with it."""
+    seen = set()
+    for n in range(1, 60):
+        if root.root.get_object(OID).exists:
+            root.root.purge(root.fs, OID)
+        root.commit(FILES, proof=False)
+        plan, vs = root.plan(proved(FILES), proof=True)
+        writer, _ = fail_at(root.fs, n)
+        try:
+            root.root.commit(writer, OID, plan, content=vs.content_source)
+        except Crash:
+            pass
+        else:
+            break
+        seen.add(
+            (
+                root.root.commit_status(OID).state,
+                root.read(ots.CONFIG_PATH) is not None,
+                root.read(ots.inventory_proof_path("v2")) is not None,
+            )
+        )
+        try:
+            root.root.recover(root.fs, OID, action, content=vs.content_source)
+        except RevertCompletedError:
+            root.root.recover(root.fs, OID, RecoveryAction.RESUME)
+        root.assert_clean()
+        obj = root.root.object_path(OID)
+        if str(root.root.get_object(OID).head) == "v2":
+            assert root.read(ots.CONFIG_PATH) is not None
+            assert root.read(ots.inventory_proof_path("v2")) is not None
+        else:
+            assert not root.fs.exists(f"{obj}/{ots.EXTENSION_DIR}")
+    else:
+        pytest.fail("commit never finished")
+    assert (CommitState.CLAIMED, True, False) in seen  # config, no proof yet
+    assert (CommitState.CLAIMED, True, True) in seen  # config and proof

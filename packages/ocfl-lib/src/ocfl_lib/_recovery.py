@@ -29,6 +29,7 @@ from ocfl_lib._commit import (
     remove_if_exists,
     revert_claimed,
     tidy_work_dir,
+    unstart_extension,
     work_dir,
     write_proof,
 )
@@ -338,6 +339,7 @@ def _remove_stray_local(ctx: _Ctx) -> None:
     """Remove the stray `vN/` and its inventory proof."""
     v = _stray_version(ctx)
     remove_if_exists(ctx.fsys, ctx.obj(ots.inventory_proof_path(v)))
+    unstart_extension(ctx.fsys, ctx.obj_path, v)
     if ctx.fsys.exists(ctx.obj(v)):
         ctx.fsys.remove_all(ctx.obj(v))
 
@@ -348,6 +350,7 @@ def _remove_stray_s3(ctx: _Ctx) -> None:
     fsys = ctx.fsys
     assert isinstance(fsys, ConditionalFS)
     remove_if_exists(fsys, ctx.obj(ots.inventory_proof_path(v)))
+    unstart_extension(fsys, ctx.obj_path, v)
     claim = ctx.obj(v, INVENTORY_FILENAME)
     for ref in list(fsys.walk_files(ctx.obj(v))):
         if ref.path != claim:
