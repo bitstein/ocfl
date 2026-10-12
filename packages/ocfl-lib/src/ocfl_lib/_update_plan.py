@@ -1,37 +1,29 @@
-"""UpdatePlan data structures, serialization, and step construction.
+"""In-memory update steps that write a CommitPlan into an object.
 
 ## Cancellation and recovery
 
-``ocfl_lib`` is a transactional library: ``Object.update`` auto-reverts on
-any ``Exception``, leaving the object directory in its pre-update state
-before re-raising. Same convention as SQLAlchemy, SQLite's ``with conn:``,
-and Django's ``atomic()``.
+``ocfl_lib`` is a transactional library: ``StorageRoot.commit`` auto-reverts
+on any ``Exception`` or ``KeyboardInterrupt``, leaving the object directory in
+its pre-update state before re-raising. Same convention as SQLAlchemy,
+SQLite's ``with conn:``, and Django's ``atomic()``.
 
-``BaseException`` (including ``KeyboardInterrupt``, ``SystemExit``,
-``MemoryError``) propagates without cleanup. Callers that want to revert
-on Ctrl-C must use the explicit form (``plan_update`` + ``prepare_steps``
-+ ``execute_plan`` + ``revert_plan``) and handle the interrupt themselves.
-The CLI does this in ``ocfl_cli/commands/stage.py:commit``.
+Any other ``BaseException`` (``SystemExit``, ``MemoryError``) propagates
+without cleanup.
 
 A process killed hard (SIGKILL, power loss, OOM) cannot be cleanly
 recovered: partial state sits on disk and requires manual cleanup.
 """
 
-import base64
 import contextlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-import msgspec
-
-from ocfl_lib._digest import DigestAlgorithm, bytes_digest
+from ocfl_lib._digest import bytes_digest
 from ocfl_lib._errors import (
-    PlanMismatchError,
     RevertCompletedError,
     RevertError,
     StaleHeadError,
 )
-from ocfl_lib._inventory import StoredInventory
 from ocfl_lib._path import join_path
 from ocfl_lib._spec import Namaste, Spec, VNum
 from ocfl_lib.fs import _utils as fs_utils
@@ -39,6 +31,7 @@ from ocfl_lib.fs import _utils as fs_utils
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from ocfl_lib._inventory import StoredInventory
     from ocfl_lib._sources import ContentSource
     from ocfl_lib.fs._protocols import FS, WriteFS
 
@@ -46,11 +39,9 @@ __all__ = [
     "PlanStep",
     "RevertError",
     "UpdatePlan",
-    "deserialize_plan",
     "execute_plan",
     "prepare_steps",
     "revert_plan",
-    "serialize_plan",
 ]
 
 
@@ -65,7 +56,6 @@ class PlanStep:
     size: int = 0
     error: str = ""
     revert_error: str = ""
-    # Not serialized:
     run: Callable[[], int] | None = field(default=None, repr=False)
     revert: Callable[[], None] | None = field(default=None, repr=False)
 
@@ -75,12 +65,8 @@ class UpdatePlan:
     """Plan for creating or updating an OCFL object version.
 
     **Non-atomic completion caveat:** ``step.run()`` followed by
-    ``step.completed = True`` is not atomic.  If the process dies
-    between the two (SIGKILL, OOM), the side-effect is committed but
-    ``revert_plan`` won't roll it back because ``completed`` is still
-    ``False``.  A future serializable/resumable plan will close this
-    gap; for now callers should treat incomplete reverts as requiring
-    manual inspection.
+    ``step.completed = True`` is not atomic. Steps live in memory only;
+    a process that dies mid-plan leaves partial state for manual cleanup.
     """
 
     steps: list[PlanStep]
@@ -100,129 +86,7 @@ class UpdatePlan:
             )
 
 
-# --- Wire format (msgspec structs for serialization) ---
-
-
-class _StepState(msgspec.Struct):
-    """Serializable step state (no callables)."""
-
-    name: str
-    content_digest: str = ""
-    is_async: bool = False
-    completed: bool = False
-    size: int = 0
-    error: str = ""
-    revert_error: str = ""
-
-
-class _StoredInvState(msgspec.Struct):
-    """Serializable StoredInventory state with base64 raw_bytes."""
-
-    raw_bytes_b64: str
-    digest: str
-    digest_algorithm: str
-
-
-_PLAN_WIRE_VERSION = 1
-
-
-class _PlanState(msgspec.Struct):
-    """Serializable UpdatePlan state."""
-
-    steps: list[_StepState]
-    new_inv: _StoredInvState
-    old_inv: _StoredInvState | None = None
-    old_sidecar_alg: str = ""
-    revert_inv: _StoredInvState | None = None
-    # rel_path -> base64 bytes
-    extension_files_b64: dict[str, str] = {}
-    expected_root_sidecar_digest: str | None = None
-    expected_root_sidecar_algorithm: str = ""
-    version: int = _PLAN_WIRE_VERSION
-
-
-def _inv_to_state(stored: StoredInventory) -> _StoredInvState:
-    return _StoredInvState(
-        raw_bytes_b64=base64.b64encode(stored.raw_bytes).decode("ascii"),
-        digest=stored.digest,
-        digest_algorithm=stored.digest_algorithm.ocfl_name,
-    )
-
-
-def _state_to_inv(state: _StoredInvState) -> StoredInventory:
-    raw = base64.b64decode(state.raw_bytes_b64)
-    alg = DigestAlgorithm.from_ocfl_name(state.digest_algorithm)
-    return StoredInventory.from_bytes(raw, alg)
-
-
-def serialize_plan(plan: UpdatePlan) -> bytes:
-    """Serialize an UpdatePlan to JSON bytes."""
-    step_states = [
-        _StepState(
-            name=s.name,
-            content_digest=s.content_digest,
-            is_async=s.is_async,
-            completed=s.completed,
-            size=s.size,
-            error=s.error,
-            revert_error=s.revert_error,
-        )
-        for s in plan.steps
-    ]
-    state = _PlanState(
-        steps=step_states,
-        new_inv=_inv_to_state(plan.new_inv),
-        old_inv=_inv_to_state(plan.old_inv) if plan.old_inv else None,
-        old_sidecar_alg=plan.old_sidecar_alg,
-        revert_inv=_inv_to_state(plan.revert_inv) if plan.revert_inv else None,
-        extension_files_b64={
-            path: base64.b64encode(data).decode("ascii")
-            for path, data in plan.extension_files.items()
-        },
-        expected_root_sidecar_digest=plan.expected_root_sidecar_digest,
-        expected_root_sidecar_algorithm=plan.expected_root_sidecar_algorithm,
-    )
-    return msgspec.json.encode(state)
-
-
-def deserialize_plan(data: bytes) -> UpdatePlan:
-    """Deserialize an UpdatePlan from JSON bytes. Callables are None."""
-    state = msgspec.json.decode(data, type=_PlanState)
-    if state.version != _PLAN_WIRE_VERSION:
-        raise PlanMismatchError(
-            f"unsupported plan wire version: got {state.version}, "
-            f"expected {_PLAN_WIRE_VERSION}"
-        )
-    steps = [
-        PlanStep(
-            name=s.name,
-            content_digest=s.content_digest,
-            is_async=s.is_async,
-            completed=s.completed,
-            size=s.size,
-            error=s.error,
-            revert_error=s.revert_error,
-        )
-        for s in state.steps
-    ]
-    return UpdatePlan(
-        steps=steps,
-        new_inv=_state_to_inv(state.new_inv),
-        old_inv=_state_to_inv(state.old_inv) if state.old_inv else None,
-        old_sidecar_alg=state.old_sidecar_alg,
-        revert_inv=_state_to_inv(state.revert_inv) if state.revert_inv else None,
-        extension_files={
-            path: base64.b64decode(data)
-            for path, data in state.extension_files_b64.items()
-        },
-        expected_root_sidecar_digest=state.expected_root_sidecar_digest,
-        expected_root_sidecar_algorithm=state.expected_root_sidecar_algorithm,
-    )
-
-
 # --- Step construction ---
-
-
 
 
 def _noop_run() -> int:
@@ -295,9 +159,9 @@ def _check_stale_head(
     if expected is None:
         inv_path = join_path(obj_dir, "inventory.json")
         sidecar_path = join_path(obj_dir, plan.new_inv.sidecar_filename)
-        if (
-            not allow_planned_root_inventory and fsys.exists(inv_path)
-        ) or fsys.exists(sidecar_path):
+        if (not allow_planned_root_inventory and fsys.exists(inv_path)) or fsys.exists(
+            sidecar_path
+        ):
             raise StaleHeadError(
                 object_path=obj_dir,
                 expected_digest=None,
@@ -320,15 +184,7 @@ def prepare_steps(
     obj_dir: str,
     content_source: ContentSource,
 ) -> None:
-    """Build run/revert callables on plan steps from inventory data.
-
-    Populates plan.steps with the full step sequence. Called after
-    construction or deserialization to make the plan executable.
-
-    On resume (plan.steps non-empty from deserialization): validates
-    rebuilt steps match existing by (name, content_digest), then
-    transfers completed/error state from old steps to new.
-    """
+    """Build run/revert callables on plan steps from inventory data."""
     new_inv = plan.new_inv
     old_inv = plan.old_inv
     revert_src = plan.revert_inv or old_inv  # Original inv for revert data
@@ -338,8 +194,6 @@ def prepare_steps(
     vnum_str = str(vnum)
     version_dir = join_path(obj_dir, vnum_str)
     is_new = old_inv is None
-
-    old_manifest = old_inv.inventory.manifest if old_inv else {}
 
     steps: list[PlanStep] = []
 
@@ -407,11 +261,14 @@ def prepare_steps(
         )
     )
 
-    # 4. Content copies (async)
-    for digest, content_paths in inv.manifest.items():
-        if digest in old_manifest:
-            continue
-        content_path = content_paths[0]
+    # 4. Content copies (async): the content paths of the new version
+    new_content = [
+        (digest, path)
+        for digest, paths in inv.manifest.items()
+        for path in paths
+        if path.startswith(f"{vnum_str}/")
+    ]
+    for digest, content_path in new_content:
         dest = join_path(obj_dir, content_path)
 
         def _make_copy(d: str = digest, dst: str = dest) -> int:
@@ -581,29 +438,6 @@ def prepare_steps(
                 revert=_noop_revert,
             )
         )
-
-    # On resume: validate new steps match existing, transfer completed state
-    if plan.steps:
-        old_steps = plan.steps
-        if len(old_steps) != len(steps):
-            raise PlanMismatchError(
-                f"plan step count mismatch: existing {len(old_steps)}, "
-                f"rebuilt {len(steps)}"
-            )
-        for old, new in zip(old_steps, steps, strict=False):
-            if old.name != new.name or old.content_digest != new.content_digest:
-                raise PlanMismatchError(
-                    f"plan step mismatch: existing ({old.name!r}, "
-                    f"{old.content_digest!r}) != rebuilt ({new.name!r}, "
-                    f"{new.content_digest!r})"
-                )
-            new.completed = old.completed
-            new.size = old.size
-            # Only transfer error/revert_error for completed steps;
-            # incomplete steps with stale errors will be re-run clean
-            if old.completed:
-                new.error = old.error
-                new.revert_error = old.revert_error
 
     plan.steps = steps
 

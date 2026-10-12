@@ -5,12 +5,14 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ocfl_lib import apply_update_plan, plan_update, update_object
+from ocfl_lib._commit import commit
+from ocfl_lib._commit_plan import CommitPlan, build_plan
 from ocfl_lib._digest import DigestAlgorithm
 from ocfl_lib._errors import StaleHeadError
 from ocfl_lib._inventory import UserInfo
 from ocfl_lib._object import Object
 from ocfl_lib._spec import Spec, VNum
-from ocfl_lib._update_plan import deserialize_plan, revert_plan, serialize_plan
+from ocfl_lib._update_plan import revert_plan
 from ocfl_lib._version_state import VersionState, scan_dir
 from ocfl_lib.fs._local import LocalFS
 from ocfl_lib.validation._object import validate_object
@@ -244,12 +246,8 @@ class TestObjectUpdate:
         # Object dir should be cleaned up (v1 revert removes all)
         assert not obj_dir.exists() or not any(obj_dir.iterdir())
 
-    def test_keyboard_interrupt_propagates_without_revert(self, tmp_path: Path):
-        """KeyboardInterrupt propagates from update() without auto-revert.
-
-        Library treats BaseException as out-of-band: callers wanting clean
-        rollback on Ctrl-C must use the explicit plan/revert form.
-        """
+    def test_keyboard_interrupt_reverts_then_propagates(self, tmp_path: Path):
+        """KeyboardInterrupt reverts the partial version, then propagates."""
         obj_dir = tmp_path / "obj"
         obj_dir.mkdir()
 
@@ -274,12 +272,13 @@ class TestObjectUpdate:
                 spec=Spec.V1_1,
                 created="2024-01-01T00:00:00Z",
             )
+        assert not obj_dir.exists() or not any(obj_dir.iterdir())
 
     def test_keyboard_interrupt_v2_preserves_root_inventory(self, tmp_path: Path):
         """KeyboardInterrupt during v2 → v1 root inventory still intact.
 
         Root inventory swap is the final step; KI before then leaves v1's
-        root inventory untouched even though no auto-revert runs.
+        root inventory untouched.
         """
         src = _make_src_dir(tmp_path, {"file.txt": "v1-content"})
         obj_dir = tmp_path / "obj"
@@ -481,7 +480,7 @@ class TestTwoStepWrite:
         assert result.is_valid
 
     def test_plan_serializable(self, tmp_path: Path):
-        """Plan can be serialized, deserialized, and applied."""
+        """A CommitPlan survives plan.json and can be committed."""
         src = _make_src_dir(tmp_path, {"file.txt": "hello"})
         obj_dir = tmp_path / "obj"
         obj_dir.mkdir()
@@ -492,19 +491,17 @@ class TestTwoStepWrite:
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
 
-        plan = plan_update(obj,
+        plan = build_plan(
+            obj,
             stage,
-            id="test:1",
+            object_id="test:1",
             spec=Spec.V1_1,
             created="2024-01-01T00:00:00Z",
         )
+        plan2 = CommitPlan.from_json(plan.to_json())
+        assert plan2 == plan
 
-        # Serialize and deserialize
-        data = serialize_plan(plan)
-        plan2 = deserialize_plan(data)
-
-        # Apply deserialized plan
-        obj = apply_update_plan(obj_fs, obj, plan2, stage.content_source)
+        obj = commit(obj_fs, obj, plan2, stage.content_source)
         assert obj.exists
 
         result = validate_object(obj_fs, "")

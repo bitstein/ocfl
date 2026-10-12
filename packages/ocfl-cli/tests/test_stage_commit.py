@@ -2,6 +2,7 @@
 
 import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import filelock
@@ -13,6 +14,9 @@ from ocfl_cli.main import app
 from ocfl_cli.stage import service
 from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import LocalFS, StaleHeadError, StorageRoot
+
+# Content lookups run mid-commit, after the commit has started writing.
+_FAIL_DURING_COMMIT = "ocfl_cli.stage.service._StagingContentSource.get_content"
 
 
 @pytest.fixture
@@ -269,9 +273,7 @@ class TestSignalHandling:
         _new_with_metadata(runner, storage_root, staging, "obj:interrupted")
         _invoke(runner, storage_root, staging, "add", "obj:interrupted", str(src))
 
-        with patch(
-            "ocfl_cli.stage.service.execute_plan", side_effect=KeyboardInterrupt
-        ):
+        with patch(_FAIL_DURING_COMMIT, side_effect=KeyboardInterrupt):
             result = _invoke(runner, storage_root, staging, "commit", "obj:interrupted")
 
         assert result.exit_code == 130
@@ -286,9 +288,7 @@ class TestSignalHandling:
         _new_with_metadata(runner, storage_root, staging, "obj:retry")
         _invoke(runner, storage_root, staging, "add", "obj:retry", str(src))
 
-        with patch(
-            "ocfl_cli.stage.service.execute_plan", side_effect=KeyboardInterrupt
-        ):
+        with patch(_FAIL_DURING_COMMIT, side_effect=KeyboardInterrupt):
             _invoke(runner, storage_root, staging, "commit", "obj:retry")
 
         store = StagingStore(staging)
@@ -306,9 +306,7 @@ class TestSignalHandling:
         _new_with_metadata(runner, storage_root, staging, "obj:clean")
         _invoke(runner, storage_root, staging, "add", "obj:clean", str(src))
 
-        with patch(
-            "ocfl_cli.stage.service.execute_plan", side_effect=KeyboardInterrupt
-        ):
+        with patch(_FAIL_DURING_COMMIT, side_effect=KeyboardInterrupt):
             _invoke(runner, storage_root, staging, "commit", "obj:clean")
 
         # Object should not exist (new object, fully reverted)
@@ -326,9 +324,7 @@ class TestSignalHandling:
         _invoke(runner, storage_root, staging, "add", "obj:retried", str(src))
 
         # First attempt: interrupted
-        with patch(
-            "ocfl_cli.stage.service.execute_plan", side_effect=KeyboardInterrupt
-        ):
+        with patch(_FAIL_DURING_COMMIT, side_effect=KeyboardInterrupt):
             _invoke(runner, storage_root, staging, "commit", "obj:retried")
 
         # Retry succeeds
@@ -353,21 +349,14 @@ class TestCrashRecovery:
         _new_with_metadata(runner, storage_root, staging, oid)
         _invoke(runner, storage_root, staging, "add", oid, str(src))
 
-        with (
-            patch(
-                "ocfl_cli.stage.service.execute_plan",
-                side_effect=RuntimeError("simulated crash"),
-            ),
-            patch(
-                "ocfl_cli.stage.service.revert_plan",
-                wraps=service.revert_plan,
-            ) as revert_spy,
+        with patch(
+            _FAIL_DURING_COMMIT,
+            side_effect=RuntimeError("simulated crash"),
         ):
             result = _invoke(runner, storage_root, staging, "commit", oid)
 
         assert result.exit_code == 1, result.output
         assert "simulated crash" in result.output
-        assert revert_spy.call_count == 1
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -405,7 +394,7 @@ class TestCommitLocking:
         peak = 0
         guard = threading.Lock()
 
-        def fake_execute_plan(_plan):
+        def fake_commit(*_args, **_kwargs):
             nonlocal current, peak
             with guard:
                 current += 1
@@ -420,22 +409,17 @@ class TestCommitLocking:
         staging_dir = store.staging_path(root_path, object_id)
         staging_dir.mkdir(parents=True)
 
-        with (
-            patch(
-                "ocfl_cli.stage.service.build_inventory_plan",
-                return_value=(object(), object()),
-            ),
-            patch("ocfl_cli.stage.service.prepare_steps"),
-            patch("ocfl_cli.stage.service.execute_plan", side_effect=fake_execute_plan),
+        with patch(
+            "ocfl_cli.stage.service.build_inventory_plan",
+            return_value=(SimpleNamespace(object_id=object_id), object()),
         ):
             threads = [
                 threading.Thread(
                     target=service.commit_bare,
                     kwargs={
                         "store": StagingStore(tmp_path / "staging"),
-                        "sr": object(),
+                        "sr": SimpleNamespace(commit=fake_commit),
                         "fs": object(),
-                        "obj_dir": "obj",
                         "root_path": root_path,
                         "object_id": object_id,
                         "staging_dir": staging_dir,
@@ -526,10 +510,7 @@ class TestCommitLocking:
             expected_digest="a" * 128,
             actual_digest="b" * 128,
         )
-        with (
-            patch("ocfl_cli.stage.service.execute_plan", side_effect=stale),
-            patch("ocfl_cli.stage.service.revert_plan", wraps=service.revert_plan),
-        ):
+        with patch(_FAIL_DURING_COMMIT, side_effect=stale):
             result = _invoke(runner, storage_root, staging, "commit", oid)
 
         assert result.exit_code == 1, result.output

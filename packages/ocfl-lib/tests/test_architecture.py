@@ -5,6 +5,7 @@ import ast
 import dataclasses
 import importlib
 import inspect
+import json
 import pkgutil
 import re
 import shutil
@@ -460,3 +461,71 @@ class TestNoDuplicates:
                 mod = importlib.import_module(m.name)
                 assert not hasattr(mod, "exists"), m.name
         assert not hasattr(fs, "exists")
+
+
+# --- phase 3 (docs/roadmap.md §3, ADR-0001)
+
+
+def _plan(tmp_path):
+    from ocfl_lib import (
+        DigestAlgorithm,
+        LocalFS,
+        Spec,
+        StorageRoot,
+        get_layout,
+        scan_dir,
+    )
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("a")
+    root_dir = tmp_path / "root"
+    root_dir.mkdir()
+    fs = LocalFS(root_dir)
+    layout = get_layout("0002-flat-direct-storage-layout")
+    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
+    vs = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+    return StorageRoot.open(fs).plan("x:1", vs, created="2026-01-01T00:00:00Z")
+
+
+# --- 3.1 the plan records only the intent
+
+
+class TestPlanIntent:
+    def test_plan_fields_are_intent_only(self):
+        from ocfl_lib import CommitPlan
+
+        assert CommitPlan.__dataclass_params__.frozen
+        assert [f.name for f in dataclasses.fields(CommitPlan)] == [
+            "object_id",
+            "version",
+            "base_digest",
+            "base_digest_algorithm",
+            "inventory",
+            "inventory_proof",
+        ]
+
+    def test_plan_json_keys(self, tmp_path):
+        data = json.loads(_plan(tmp_path).to_json())
+        assert set(data) == {
+            "planFormat",
+            "objectId",
+            "version",
+            "base",
+            "inventory",
+            "inventoryProof",
+        }
+
+    def test_no_step_serialization(self):
+        import ocfl_lib
+
+        for name in ("serialize_plan", "deserialize_plan"):
+            assert not hasattr(ocfl_lib, name), name
+        bad = [
+            f"{p.name}:{node.name}"
+            for p in _py_files(LIB_SRC)
+            for node in ast.walk(_tree(p))
+            if isinstance(node, ast.ClassDef)
+            and node.name in ("_StepState", "_PlanState")
+        ]
+        assert not bad, bad

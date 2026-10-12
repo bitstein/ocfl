@@ -10,9 +10,9 @@ Preservation storage for SNI's archive: OCFL objects on local disk or S3, with c
 The complete logical path→digest mapping of one object version, plus where its content can be found. Input to building a version.
 _Avoid_: Stage (old lib name)
 
-**Update Plan**:
-The ordered, serializable list of storage writes that turns an object's current head into a new version.
-_Avoid_: Commit plan, transaction
+**Commit Plan**:
+The intent of one commit: the object, the new version, the base and new inventory digests, the new inventory bytes and an optional inventory proof. It records no progress; the storage root does. Saved as `plan.json`.
+_Avoid_: Update plan, transaction
 
 **Claim**:
 The atomic, create-only write that reserves version N of an object for one writer. Losing the claim means another writer owns vN.

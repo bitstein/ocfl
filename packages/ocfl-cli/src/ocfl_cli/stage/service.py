@@ -7,8 +7,8 @@ returned data; watch loops in `stage/watch.py` reuse these primitives
 under a ZMQ-driven block loop.
 """
 
+import dataclasses
 import hashlib
-import json
 import logging
 import tempfile
 from contextlib import contextmanager
@@ -59,29 +59,13 @@ from ocfl_cli.stage.state import (
     with_lock,
 )
 from ocfl_lib import (
+    CommitPlan,
     OtsParseError,
-    UpdatePlan,
+    PlanMismatchError,
     UserInfo,
     VersionInfo,
-    deserialize_plan,
-    execute_plan,
-    plan_update,
-    prepare_steps,
-    revert_plan,
-    serialize_plan,
 )
 from ocfl_lib.ots import parse as parse_ots
-
-_OTS_EXTENSION_NAME = "NNNN-ots-timestamps"
-_OTS_EXTENSION_CONFIG_BYTES = json.dumps(
-    {
-        "extensionName": _OTS_EXTENSION_NAME,
-        "timestampInventory": True,
-        "timestampContent": True,
-    },
-    sort_keys=True,
-    separators=(",", ":"),
-).encode()
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -96,7 +80,7 @@ if TYPE_CHECKING:
         VerifyBatchAck,
     )
     from ocfl_cli.stage.store import StagingStore
-    from ocfl_lib import ContentSource, DigestAlgorithm, Inventory
+    from ocfl_lib import ContentSource, DigestAlgorithm, Inventory, StorageRoot
     from ocfl_lib.fs import FS, WriteFS
 
 
@@ -187,7 +171,7 @@ class PreparedInventorySubmission:
     category_id: int
     previous_phase: Phase
     target_phase: Phase
-    plan: UpdatePlan | None = None
+    plan: CommitPlan | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -560,13 +544,12 @@ def build_inventory_plan(
     message: str | None = None,
     user: UserInfo | None = None,
     created: str | None = None,
-) -> tuple[UpdatePlan, ContentSource]:
-    """Build an UpdatePlan from the staged inventory + content map.
+) -> tuple[CommitPlan, ContentSource]:
+    """Build a CommitPlan from the staged inventory + content map.
 
-    Used by both `stage commit` (which then prepares/executes) and
-    `stage timestamp inventory` (which serializes for later commit).
-    Returns the plan and the `_StagingContentSource` (commit needs it
-    for `prepare_steps`).
+    Used by both `stage commit` (which commits it) and `stage timestamp
+    inventory` (which saves it as `plan.json` for a later commit). Returns
+    the plan and the `_StagingContentSource` the commit reads content from.
     """
     from ocfl_lib import DigestAlgorithm, VersionState
 
@@ -580,17 +563,16 @@ def build_inventory_plan(
         digest_algorithm=alg,
         content_source=content_source,
     )
-    obj = sr.get_object(object_id)
-    plan = plan_update(
-        obj,
-        stage_obj,
-        id=object_id if not obj.exists else None,
-        spec=sr.spec if not obj.exists else None,
-        message=message,
-        user=user,
-        created=created,
-    )
+    plan = sr.plan(object_id, stage_obj, message=message, user=user, created=created)
     return plan, content_source
+
+
+def load_plan(staging_dir: Path) -> CommitPlan | None:
+    """The staged `plan.json`, or None if it is missing or unreadable."""
+    try:
+        return CommitPlan.from_json(plan_path(staging_dir).read_bytes())
+    except FileNotFoundError, PlanMismatchError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -2061,9 +2043,9 @@ def prepare_inventory_submission_locked(
     # On resubmit, preserve `created` from the prior plan so the new
     # inventory digest stays identical across retries.
     prior_created: str | None = None
-    if state.inventory_proof is not None and plan_path(staging_dir).is_file():
-        prior_plan = deserialize_plan(plan_path(staging_dir).read_bytes())
-        prior_inv = prior_plan.new_inv.inventory
+    prior_plan = load_plan(staging_dir) if state.inventory_proof is not None else None
+    if prior_plan is not None:
+        prior_inv = prior_plan.inventory.inventory
         prior_created = prior_inv.versions[prior_inv.head].created
 
     plan, _cs = build_inventory_plan(
@@ -2075,8 +2057,8 @@ def prepare_inventory_submission_locked(
         user=_version_user_from_staged(metadata),
         created=prior_created,
     )
-    inv_digest = plan.new_inv.digest
-    head_version = plan.new_inv.inventory.head
+    inv_digest = plan.inventory.digest
+    head_version = plan.version
 
     existing = state.inventory_proof
     intent_proof = InventoryProof(
@@ -2125,7 +2107,7 @@ def submit_prepared_inventory_locked(
     sp = sp_factory(cfg)
     sp.submit_hashes([prepared.digest], prepared.category_id)
 
-    plan_path(staging_dir).write_bytes(serialize_plan(prepared.plan))
+    plan_path(staging_dir).write_bytes(prepared.plan.to_json())
 
     _log_phase(prepared.previous_phase, prepared.target_phase)
     return SubmitInventoryResult(
@@ -2194,15 +2176,14 @@ def retry_inventory_locked(
 def commit_bare(
     *,
     store: StagingStore,
-    sr,
+    sr: StorageRoot,
     fs: WriteFS,
-    obj_dir: str,
     root_path: str,
     object_id: str,
     staging_dir: Path,
     allow_missing_metadata: bool,
 ) -> None:
-    """`stage commit` (non-OTS path): build plan, prepare, execute, purge."""
+    """`stage commit` (non-OTS path): build the plan, commit it, purge staging."""
     with (
         _object_commit_lock(root_path, object_id),
         with_lock(staging_dir, timeout=_LOCK_TIMEOUT_SECONDS),
@@ -2217,40 +2198,39 @@ def commit_bare(
             message=metadata.message,
             user=_version_user_from_staged(metadata),
         )
-        prepare_steps(plan, fs, obj_dir, content_source)
-
-        # Transactional boundary: execute_plan failure -> revert + preserve staging
-        # for retry. revert_plan failures propagate as-is.
-        try:
-            execute_plan(plan)
-        except KeyboardInterrupt:
-            revert_plan(plan)
-            raise CommitFailedError(
-                "commit interrupted, reverting...", interrupted=True
-            ) from None
-        except Exception as exc:
-            revert_plan(plan)
-            raise CommitFailedError(str(exc)) from exc
-
+        _commit_plan(sr, fs, plan, content_source)
         store.purge(root_path, object_id)
+
+
+def _commit_plan(
+    sr: StorageRoot, fs: WriteFS, plan: CommitPlan, content_source: ContentSource
+) -> None:
+    """Commit `plan`. The lib reverts a failed commit; staging is kept for retry."""
+    try:
+        sr.commit(fs, plan.object_id, plan, content=content_source)
+    except KeyboardInterrupt:
+        raise CommitFailedError(
+            "commit interrupted, reverting...", interrupted=True
+        ) from None
+    except Exception as exc:
+        raise CommitFailedError(str(exc)) from exc
 
 
 def commit_ots(
     *,
     store: StagingStore,
+    sr: StorageRoot,
     fs: WriteFS,
-    obj_dir: str,
     root_path: str,
     object_id: str,
     staging_dir: Path,
     allow_missing_metadata: bool,
 ) -> None:
-    """Complete deferred extension_files from cache, prepare + execute plan.
+    """Attach the cached inventory proof to the timestamped plan and commit it.
 
     Caller catches `AttestationMismatchError` (-> exit 5) and `PhaseError`
-    (-> exit 3). The staging lock is released before plan execution:
-    `prepare_steps` / `execute_plan` / `revert_plan` mutate the OCFL
-    object directory, not staging, so a concurrent `--upgrade --watch`
+    (-> exit 3). The staging lock is released before the commit, which
+    writes the OCFL object, not staging, so a concurrent `--upgrade --watch`
     can keep running.
     """
     with _object_commit_lock(root_path, object_id):
@@ -2269,20 +2249,20 @@ def commit_ots(
                 )
 
             inv_digest = state.inventory_proof.digest
-            if not plan_path(staging_dir).is_file():
+            plan = load_plan(staging_dir)
+            if plan is None:
                 raise PhaseError(
                     "inventory timestamp plan missing or stale; "
                     "run `stage timestamp inventory`"
                 )
-            plan = deserialize_plan(plan_path(staging_dir).read_bytes())
-            if plan.new_inv.digest != inv_digest:
+            if plan.inventory.digest != inv_digest:
                 raise AttestationMismatchError(
-                    f"inventory timestamp plan digest {plan.new_inv.digest} "
+                    f"inventory timestamp plan digest {plan.inventory.digest} "
                     f"does not match verified inventory digest {inv_digest}; "
                     "re-run `stage timestamp inventory` and "
                     "`stage timestamp inventory --upgrade`"
                 )
-            version = plan.new_inv.inventory.versions[plan.new_inv.inventory.head]
+            version = plan.inventory.inventory.versions[plan.version]
             require_timestamped_plan_metadata(
                 version,
                 allow_missing_metadata=allow_missing_metadata,
@@ -2311,32 +2291,13 @@ def commit_ots(
                     f"{inv_digest}; re-run `stage timestamp inventory --upgrade`"
                 )
 
-            head = plan.new_inv.inventory.head
-            plan.extension_files[f"extensions/{_OTS_EXTENSION_NAME}/config.json"] = (
-                _OTS_EXTENSION_CONFIG_BYTES
-            )
-            plan.extension_files[
-                f"extensions/{_OTS_EXTENSION_NAME}/inventory.json.{head}.ots"
-            ] = inv_ots
-
+            plan = dataclasses.replace(plan, inventory_proof=inv_ots)
             content_source = _validate_and_build_content_source(
                 store, root_path, object_id
             )
             prev_phase = state.phase
 
-        prepare_steps(plan, fs, obj_dir, content_source)
-        # Transactional boundary: execute_plan failure -> revert + preserve staging
-        # for retry. revert_plan failures propagate as-is.
-        try:
-            execute_plan(plan)
-        except KeyboardInterrupt:
-            revert_plan(plan)
-            raise CommitFailedError(
-                "commit interrupted, reverting...", interrupted=True
-            ) from None
-        except Exception as exc:
-            revert_plan(plan)
-            raise CommitFailedError(str(exc)) from exc
+        _commit_plan(sr, fs, plan, content_source)
 
         # Purge staging on success (also removes ots-cache/, ots.json, plan.json).
         store.purge(root_path, object_id)

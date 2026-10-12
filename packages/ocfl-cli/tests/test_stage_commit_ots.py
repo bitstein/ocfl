@@ -1,19 +1,18 @@
 """Tests for `ocfl stage commit` OTS path (step 16 of `OTS workflow contract`).
 
-Pins the deferred-`extension_files` completion at commit time:
+Pins attaching the inventory proof at commit time:
 
 - Precondition: phase ``inventory-upgraded``.
 - Load ``<staging>/plan.json``, read the cached
   ``<staging>/ots-cache/<inv_digest>.ots`` bytes, re-parse, and assert
-  ``parsed.commitment_digest == plan.new_inv.digest``. On mismatch /
+  ``parsed.commitment_digest == plan.inventory.digest``. On mismatch /
   parse / missing → ``AttestationMismatchError`` with an actionable hint
   to re-run ``stage timestamp inventory --upgrade`` (HALT, exit 5).
-- Fill ``plan.extension_files`` at
-  ``extensions/NNNN-ots-timestamps/inventory.json.v<head>.ots`` with the
-  cached bytes BEFORE ``prepare_steps``, so the extension-file step is
-  included in the executable plan.
-- Run ``prepare_steps`` + ``execute_plan``; on ``KeyboardInterrupt`` →
-  ``revert_plan`` (exit 130) leaving staging intact for retry. On
+- Set ``plan.inventory_proof`` to the cached bytes BEFORE the commit; the
+  lib writes it to
+  ``extensions/NNNN-ots-timestamps/inventory.json.v<head>.ots``.
+- Run ``StorageRoot.commit``; on ``KeyboardInterrupt`` the lib reverts
+  (exit 130) leaving staging intact for retry. On
   generic ``Exception`` → revert + exit 1; staging preserved; phase
   unchanged in ``ots.json``; ``plan.json`` and ``ots-cache/`` remain
   intact, so a fresh re-run of ``stage commit`` re-loads the same
@@ -72,6 +71,9 @@ from ocfl_cli.stage.state import (
 from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
+
+# Content lookups run mid-commit, after the commit has started writing.
+_FAIL_DURING_COMMIT = "ocfl_cli.stage.service._StagingContentSource.get_content"
 
 # --------------------------------------------------------------------------- #
 # Local fixture (sibling tests redefine `empty_sha256_root` because it
@@ -296,9 +298,7 @@ class TestStageCommitOtsHappyPath:
         state = load_ots(sd)
         state = replace(
             state,
-            content_proofs={
-                da: replace(state.content_proofs[da], verified=False)
-            },
+            content_proofs={da: replace(state.content_proofs[da], verified=False)},
         )
         save_ots(sd, state)
 
@@ -799,7 +799,7 @@ class TestStageCommitOtsKeyboardInterrupt:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``execute_plan`` raises ``KeyboardInterrupt`` ⇒ exit 130, the
+        """The commit is interrupted by ``KeyboardInterrupt`` ⇒ exit 130, the
         revert undoes any object-side writes (no extension file, no root
         inventory), and staging survives for retry."""
         _write_config(tmp_path, monkeypatch)
@@ -811,9 +811,7 @@ class TestStageCommitOtsKeyboardInterrupt:
             runner, empty_sha256_root, staging, "obj:commit-sigint", sp_fake, btc_fake
         )
 
-        with patch(
-            "ocfl_cli.stage.service.execute_plan", side_effect=KeyboardInterrupt
-        ):
+        with patch(_FAIL_DURING_COMMIT, side_effect=KeyboardInterrupt):
             r = runner.invoke(
                 app,
                 _stage_args(
@@ -857,7 +855,7 @@ class TestStageCommitOtsCrashRecovery:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Round 1: ``execute_plan`` raises a generic ``RuntimeError`` ⇒
+        """Round 1: the commit fails with a generic ``RuntimeError`` ⇒
         exit 1, staging preserved, phase unchanged in ots.json,
         ``plan.json`` + ``ots-cache/<inv_digest>.ots`` still on disk.
 
@@ -873,10 +871,7 @@ class TestStageCommitOtsCrashRecovery:
         )
 
         # --- Round 1: induced crash ---
-        with patch(
-            "ocfl_cli.stage.service.execute_plan",
-            side_effect=RuntimeError("simulated crash"),
-        ):
+        with patch(_FAIL_DURING_COMMIT, side_effect=RuntimeError("simulated crash")):
             r1 = runner.invoke(
                 app,
                 _stage_args(

@@ -4,17 +4,17 @@ Pins the build-submit-serialize contract from `OTS workflow contract`:
 
 - Precondition: phase ``content-upgraded`` (else ``PhaseError`` ⇒ exit 3
   with a next-step hint).
-- Build the staged inventory via ``plan_update`` (same path as
+- Build the staged inventory via ``StorageRoot.plan`` (same path as
   ``stage commit``); the inventory's manifest now contains the ``<file>.ots``
   companion content files ingested by the prior ``--upgrade`` pass.
-- Compute ``plan.new_inv.digest`` and write an ``InventoryProof`` intent
+- Compute ``plan.inventory.digest`` and write an ``InventoryProof`` intent
   (``version=<head>``, ``digest=<inv_digest>``, ``job_id=None``) into
   ``ots.json``.
 - POST a single-digest payload (the inventory digest) to SimpleProof via
   ``sp.submit_hashes([inv_digest], category_id)``.
-- Serialize the ``UpdatePlan`` to ``<staging>/plan.json`` (``msgspec.json``)
-  via ``ocfl_lib._update_plan.serialize``; round-trip via ``deserialize``.
-  ``extension_files`` MUST be excluded from the wire format.
+- Save the ``CommitPlan`` to ``<staging>/plan.json`` (``CommitPlan.to_json``);
+  round-trip via ``CommitPlan.from_json``. The inventory proof is attached
+  at ``stage commit``, so the saved plan has none.
 - Phase advances to ``inventory-pending``.
 
 FSM (already encoded in ``_TRANSITIONS``):
@@ -51,7 +51,7 @@ from ocfl_cli.stage.state import (
     save_ots,
 )
 from ocfl_cli.stage.store import StagingStore
-from ocfl_lib import LocalFS, Spec, StorageRoot, deserialize_plan, get_layout
+from ocfl_lib import CommitPlan, LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
 
 # --------------------------------------------------------------------------- #
@@ -266,16 +266,16 @@ class TestInventoryBuild:
 
         # Re-load the on-disk plan and inspect its inventory's manifest.
         plan_bytes = plan_path(sd).read_bytes()
-        plan2 = deserialize_plan(plan_bytes)
-        manifest = plan2.new_inv.inventory.manifest
+        plan2 = CommitPlan.from_json(plan_bytes)
+        manifest = plan2.inventory.inventory.manifest
         assert da in manifest, f"data digest {da!r} missing from manifest"
         assert ots_digest in manifest, (
             f".ots companion digest {ots_digest!r} missing from manifest"
         )
 
-        # inventory_proof.digest matches new_inv.digest; version matches head.
-        assert state.inventory_proof.digest == plan2.new_inv.digest
-        assert state.inventory_proof.version == plan2.new_inv.inventory.head
+        # inventory_proof.digest matches the plan digest; version matches head.
+        assert state.inventory_proof.digest == plan2.inventory.digest
+        assert state.inventory_proof.version == plan2.version
         # job_id stays None here; verify-batches is the upgrade pass's job.
         assert state.inventory_proof.job_id is None
 
@@ -307,8 +307,8 @@ class TestInventoryBuild:
         )
         assert r.exit_code == 0, r.output
 
-        plan2 = deserialize_plan(plan_path(sd).read_bytes())
-        vi = plan2.new_inv.inventory.versions[plan2.new_inv.inventory.head]
+        plan2 = CommitPlan.from_json(plan_path(sd).read_bytes())
+        vi = plan2.inventory.inventory.versions[plan2.version]
         assert vi.message == "Timestamped inventory"
         assert vi.user is not None
         assert vi.user.name == "Alice"
@@ -443,9 +443,7 @@ class TestUnverifiedContentGate:
         state = load_ots(sd)
         state = replace(
             state,
-            content_proofs={
-                da: replace(state.content_proofs[da], verified=False)
-            },
+            content_proofs={da: replace(state.content_proofs[da], verified=False)},
         )
         save_ots(sd, state)
 
@@ -701,12 +699,12 @@ class TestMetadataGate:
 
 
 # =========================================================================== #
-# Layer-2: plan.json round-trip via msgspec.json; extension_files excluded
+# Layer-2: plan.json round-trip; no inventory proof yet
 # =========================================================================== #
 
 
 class TestPlanRoundTrip:
-    def test_plan_json_round_trip_has_no_extension_files_yet(
+    def test_plan_json_round_trip_has_no_inventory_proof_yet(
         self,
         runner: CliRunner,
         empty_sha256_root: Path,
@@ -735,14 +733,14 @@ class TestPlanRoundTrip:
         assert r.exit_code == 0, r.output
 
         raw = plan_path(sd).read_bytes()
-        plan2 = deserialize_plan(raw)
+        plan2 = CommitPlan.from_json(raw)
 
         state = load_ots(sd)
         assert state.inventory_proof is not None
-        # Round-trips the new_inv digest exactly.
-        assert plan2.new_inv.digest == state.inventory_proof.digest
-        # extension_files are filled at `stage commit`, not at this step.
-        assert plan2.extension_files == {}
+        # Round-trips the inventory digest exactly.
+        assert plan2.inventory.digest == state.inventory_proof.digest
+        # The inventory proof is attached at `stage commit`, not at this step.
+        assert plan2.inventory_proof is None
 
 
 # =========================================================================== #

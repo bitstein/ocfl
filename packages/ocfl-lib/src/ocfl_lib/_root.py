@@ -3,11 +3,15 @@
 import posixpath
 from typing import TYPE_CHECKING
 
+from ocfl_lib._commit import commit as commit_plan
+from ocfl_lib._commit_plan import CommitPlan, build_plan
 from ocfl_lib._errors import (
+    ContentNotFound,
     LayoutNotConfigured,
     MultipleRootDeclarations,
     NotAnOcflRoot,
     ObjectNotFound,
+    PlanMismatchError,
     RootExistsError,
     SpecVersionError,
 )
@@ -19,7 +23,6 @@ from ocfl_lib._layout.config import (
     write_ocfl_layout,
 )
 from ocfl_lib._object import Object
-from ocfl_lib._object_update import update_object
 from ocfl_lib._path import join_path
 from ocfl_lib._spec import DEFAULT_SPEC, Namaste, Spec
 from ocfl_lib.fs import _utils as fs_utils
@@ -30,8 +33,9 @@ if TYPE_CHECKING:
     from ocfl_lib._inventory import UserInfo
     from ocfl_lib._layout.registry import LayoutRegistry
     from ocfl_lib._layout.types import Layout
+    from ocfl_lib._sources import ContentSource
     from ocfl_lib._version_state import VersionState
-    from ocfl_lib.fs._protocols import FileWalker, WriteFS
+    from ocfl_lib.fs._protocols import FS, FileWalker, WriteFS
 
 
 class StorageRoot:
@@ -173,9 +177,8 @@ class StorageRoot:
                 break
             fsys.remove_all(parent)
 
-    def commit(
+    def plan(
         self,
-        fsys: WriteFS,
         id: str,
         version_state: VersionState,
         *,
@@ -183,18 +186,13 @@ class StorageRoot:
         message: str | None = None,
         user: UserInfo | None = None,
         created: str | None = None,
-    ) -> Object:
-        """Add or update an object in the storage root.
+    ) -> CommitPlan:
+        """Plan the next version of object `id`. Reads only.
 
-        Resolves id to path via layout, then delegates to update_object().
-        For new objects, spec defaults to root's spec.
+        For a new object, spec defaults to the root's spec.
         Raises LayoutNotConfigured if no layout is configured.
         """
-        obj_path = self.object_path(id)
-        full_path = join_path(self._path, obj_path)
-        obj = Object(self._fsys, full_path)
-
-        # Default spec to root's spec for new objects
+        obj = self.get_object(id)
         obj_spec = spec if spec is not None else (None if obj.exists else self._spec)
         effective = obj_spec if obj_spec is not None else obj.spec
         if effective.is_newer_than(self._spec):
@@ -202,17 +200,54 @@ class StorageRoot:
                 f"E081: object spec {effective} is newer than "
                 f"storage root spec {self._spec}"
             )
-
-        return update_object(
-            fsys,
+        return build_plan(
             obj,
             version_state,
-            id=id,
+            object_id=id,
             spec=obj_spec,
             message=message,
             user=user,
             created=created,
         )
+
+    def commit(
+        self,
+        fsys: WriteFS,
+        id: str,
+        version: VersionState | CommitPlan,
+        *,
+        content: ContentSource | None = None,
+        spec: Spec | None = None,
+        message: str | None = None,
+        user: UserInfo | None = None,
+        created: str | None = None,
+    ) -> Object:
+        """Write the next version of object `id`. The only way to write one.
+
+        `version` is a VersionState (planned here, with spec, message, user
+        and created) or a CommitPlan from `plan`, whose content comes from
+        `content`. Raises StaleHeadError if the object moved past the plan's
+        base. Returns the object at its new head.
+        """
+        if isinstance(version, CommitPlan):
+            if any(v is not None for v in (spec, message, user, created)):
+                raise PlanMismatchError(
+                    "spec, message, user and created belong to plan(), not to "
+                    "a commit of a CommitPlan"
+                )
+            plan = version
+            if plan.object_id != id:
+                raise PlanMismatchError(
+                    f"plan is for object {plan.object_id!r}, not {id!r}"
+                )
+        else:
+            plan = self.plan(
+                id, version, spec=spec, message=message, user=user, created=created
+            )
+            if content is None:
+                content = version.content_source
+        obj = self.get_object(id)
+        return commit_plan(fsys, obj, plan, content or _NO_CONTENT)
 
     def object_paths(self, *, strict: bool = False) -> Iterator[str]:
         """Walk the hierarchy and yield paths to all OCFL objects.
@@ -258,6 +293,16 @@ class StorageRoot:
             return obj
 
         yield from bounded_map(_load, obj_paths, max_workers=max_workers)
+
+
+class _NoContent:
+    """ContentSource for a plan committed without one."""
+
+    def get_content(self, digest: str) -> tuple[FS, str]:
+        raise ContentNotFound(f"no content source for {digest}")
+
+
+_NO_CONTENT = _NoContent()
 
 
 def _detect_spec(fsys: FileWalker, path: str) -> Spec:

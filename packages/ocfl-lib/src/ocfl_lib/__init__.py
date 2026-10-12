@@ -1,5 +1,6 @@
 """OCFL library — Oxford Common File Layout implementation."""
 
+from ocfl_lib._commit_plan import CommitPlan
 from ocfl_lib._digest import DigestAlgorithm, bytes_digest, file_digest
 from ocfl_lib._digest_map import DigestMap, PathMap, to_path_map
 from ocfl_lib._errors import (
@@ -53,11 +54,9 @@ from ocfl_lib._sources import ContentSource, FixitySource
 from ocfl_lib._spec import Namaste, Spec, VNum
 from ocfl_lib._update_plan import (
     UpdatePlan,
-    deserialize_plan,
     execute_plan,
     prepare_steps,
     revert_plan,
-    serialize_plan,
 )
 from ocfl_lib._version_state import VersionState, scan_dir
 from ocfl_lib.fs import FS, CopyFS, FileWalker, LocalFS, WriteFS
@@ -68,6 +67,7 @@ from ocfl_lib.validation._root import validate_root
 __all__ = [
     "DEFAULT_LAYOUTS",
     "FS",
+    "CommitPlan",
     "ContentNotFound",
     "ContentSource",
     "CopyFS",
@@ -132,7 +132,6 @@ __all__ = [
     "WriteFS",
     "apply_update_plan",
     "bytes_digest",
-    "deserialize_plan",
     "execute_plan",
     "file_digest",
     "get_layout",
@@ -140,7 +139,6 @@ __all__ = [
     "prepare_steps",
     "revert_plan",
     "scan_dir",
-    "serialize_plan",
     "to_path_map",
     "update_object",
     "validate_object",

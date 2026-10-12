@@ -59,7 +59,7 @@ from ocfl_cli.stage.state import (
     with_lock,
 )
 from ocfl_cli.stage.store import StagingStore
-from ocfl_lib import DigestAlgorithm, deserialize_plan, serialize_plan
+from ocfl_lib import DigestAlgorithm
 
 if TYPE_CHECKING:
     from ocfl_cli._appctx import BtcRpcFactory, SpClientFactory
@@ -1051,16 +1051,14 @@ def commit(
     root_path = resolved.root_path
     staging_dir = resolved.staging_dir
 
-    obj = sr.get_object(object_id)
-
     # OTS commit path: ots.json makes this an OTS staging even when the
     # deferred inventory plan is missing or stale.
     if has_ots(staging_dir):
         try:
             service.commit_ots(
                 store=store,
+                sr=sr,
                 fs=fs,
-                obj_dir=obj.path,
                 root_path=root_path,
                 object_id=object_id,
                 staging_dir=staging_dir,
@@ -1094,7 +1092,6 @@ def commit(
             store=store,
             sr=sr,
             fs=fs,
-            obj_dir=obj.path,
             root_path=root_path,
             object_id=object_id,
             staging_dir=staging_dir,
@@ -2048,12 +2045,11 @@ def _drive_commit_batch(ctx: typer.Context, batch_id: str) -> None:
                 ),
             )
             continue
-        obj = sr.get_object(object_id)
         try:
             service.commit_ots(
                 store=store,
+                sr=sr,
                 fs=fs,
-                obj_dir=obj.path,
                 root_path=batch.root_path,
                 object_id=object_id,
                 staging_dir=staging_dir,
@@ -2242,7 +2238,7 @@ def _prepare_batch_object(
                 ),
             )
             if prepared.plan is not None:
-                plan_path(staging_dir).write_bytes(serialize_plan(prepared.plan))
+                plan_path(staging_dir).write_bytes(prepared.plan.to_json())
             return batch_state.BatchObject(
                 object_id=object_id, status="prepared", digests=(prepared.digest,)
             )
@@ -3365,11 +3361,10 @@ def _inventory_plan_matches_submission(
     proof = state.inventory_proof
     if proof is None or proof.digest not in row.digests:
         return False
-    path = plan_path(staging_dir)
-    if not path.is_file():
+    prior_plan = service.load_plan(staging_dir)
+    if prior_plan is None:
         return False
-    prior_plan = deserialize_plan(path.read_bytes())
-    prior_inv = prior_plan.new_inv.inventory
+    prior_inv = prior_plan.inventory.inventory
     prior_created = prior_inv.versions[prior_inv.head].created
     metadata = store.load_metadata(batch.root_path, row.object_id)
     plan, _content_source = service.build_inventory_plan(
@@ -3381,9 +3376,9 @@ def _inventory_plan_matches_submission(
         user=service._version_user_from_staged(metadata),
         created=prior_created,
     )
-    if plan.new_inv.digest != proof.digest:
+    if plan.inventory.digest != proof.digest:
         return False
-    path.write_bytes(serialize_plan(plan))
+    plan_path(staging_dir).write_bytes(plan.to_json())
     return True
 
 

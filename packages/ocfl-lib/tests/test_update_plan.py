@@ -1,15 +1,11 @@
 """Tests for update_plan module."""
 
-import base64
 import shutil
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import msgspec
 import pytest
-from hypothesis import given
-from hypothesis import strategies as st
 
 from ocfl_lib._digest import DigestAlgorithm, bytes_digest
 from ocfl_lib._errors import RevertCompletedError, StaleHeadError
@@ -23,11 +19,9 @@ from ocfl_lib._update_plan import (
     PlanStep,
     RevertError,
     UpdatePlan,
-    deserialize_plan,
     execute_plan,
     prepare_steps,
     revert_plan,
-    serialize_plan,
 )
 from ocfl_lib.validation._object import validate_object
 
@@ -128,145 +122,6 @@ class TestUpdatePlan:
         assert plan.old_inv is old_inv
         assert plan.new_inv is new_inv
         assert len(plan.steps) == 2
-
-
-class TestSerialization:
-    def test_round_trip_no_old_inv(self):
-        new_inv = _make_stored_inventory()
-        steps = [
-            PlanStep(name="object-root"),
-            PlanStep(name="declaration"),
-            PlanStep(name="copy-file", content_digest="abc123", is_async=True),
-        ]
-        plan = UpdatePlan(steps=steps, new_inv=new_inv, old_inv=None)
-
-        data = serialize_plan(plan)
-        assert isinstance(data, bytes)
-
-        restored = deserialize_plan(data)
-        assert len(restored.steps) == 3
-        assert restored.steps[0].name == "object-root"
-        assert restored.steps[2].content_digest == "abc123"
-        assert restored.steps[2].is_async is True
-        # Callables not restored
-        assert restored.steps[0].run is None
-        assert restored.steps[0].revert is None
-        assert restored.old_inv is None
-
-    def test_round_trip_with_old_inv(self):
-        old_inv = _make_stored_inventory(obj_id="test:old")
-        new_inv = _make_stored_inventory(obj_id="test:new")
-        plan = UpdatePlan(
-            steps=[PlanStep(name="s1", completed=True, size=512)],
-            new_inv=new_inv,
-            old_inv=old_inv,
-        )
-
-        data = serialize_plan(plan)
-        restored = deserialize_plan(data)
-        assert restored.old_inv is not None
-        assert restored.old_inv.inventory.id == "test:old"
-        assert restored.new_inv.inventory.id == "test:new"
-        assert restored.steps[0].completed is True
-        assert restored.steps[0].size == 512
-
-    def test_extension_files_round_trip(self):
-        """extension_files (incl. non-UTF-8 bytes) survive round-trip."""
-        files = {
-            "extensions/ext-a/config.json": b'{"k": 1}',
-            "extensions/ext-b/blob.bin": b"\x00\xff\xfe",
-        }
-        plan = UpdatePlan(
-            steps=[],
-            new_inv=_make_stored_inventory(),
-            old_inv=None,
-            extension_files=files,
-        )
-
-        restored = deserialize_plan(serialize_plan(plan))
-        assert restored.extension_files == files
-
-    def test_inventory_bytes_preserved(self):
-        """Exact raw_bytes must survive serialization round-trip."""
-        new_inv = _make_stored_inventory()
-        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
-
-        data = serialize_plan(plan)
-        restored = deserialize_plan(data)
-        assert restored.new_inv.raw_bytes == new_inv.raw_bytes
-        assert restored.new_inv.digest == new_inv.digest
-
-    def test_inventory_bytes_preserved_with_old(self):
-        old_inv = _make_stored_inventory(obj_id="test:old")
-        new_inv = _make_stored_inventory(obj_id="test:new")
-        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=old_inv)
-
-        data = serialize_plan(plan)
-        restored = deserialize_plan(data)
-        assert restored.old_inv is not None
-        assert restored.old_inv.raw_bytes == old_inv.raw_bytes
-        assert restored.new_inv.raw_bytes == new_inv.raw_bytes
-
-    def test_revert_inv_round_trip(self):
-        """revert_inv survives serialization round-trip."""
-        revert_inv = _make_stored_inventory(obj_id="test:revert")
-        old_inv = _make_stored_inventory(obj_id="test:migrated")
-        new_inv = _make_stored_inventory(obj_id="test:new")
-        plan = UpdatePlan(
-            steps=[],
-            new_inv=new_inv,
-            old_inv=old_inv,
-            revert_inv=revert_inv,
-        )
-
-        data = serialize_plan(plan)
-        restored = deserialize_plan(data)
-        assert restored.revert_inv is not None
-        assert restored.revert_inv.raw_bytes == revert_inv.raw_bytes
-        assert restored.revert_inv.digest == revert_inv.digest
-
-    def test_revert_inv_none_by_default(self):
-        """revert_inv is None when not set."""
-        plan = UpdatePlan(
-            steps=[],
-            new_inv=_make_stored_inventory(),
-            old_inv=None,
-        )
-        data = serialize_plan(plan)
-        restored = deserialize_plan(data)
-        assert restored.revert_inv is None
-
-    def test_expected_root_sidecar_round_trip(self):
-        """Expected root sidecar digest survives serialization round-trip."""
-        old_inv = _make_stored_inventory(obj_id="test:old")
-        new_inv = _make_stored_inventory(obj_id="test:new", head="v2")
-        plan = UpdatePlan(
-            steps=[],
-            new_inv=new_inv,
-            old_inv=old_inv,
-            expected_root_sidecar_digest="a" * 128,
-            expected_root_sidecar_algorithm="sha512",
-        )
-
-        restored = deserialize_plan(serialize_plan(plan))
-
-        assert restored.expected_root_sidecar_digest == "a" * 128
-        assert restored.expected_root_sidecar_algorithm == "sha512"
-
-    def test_step_error_fields_preserved(self):
-        steps = [
-            PlanStep(name="failed", error="disk full", completed=True),
-            PlanStep(name="reverted", revert_error="cleanup failed"),
-        ]
-        plan = UpdatePlan(
-            steps=steps,
-            new_inv=_make_stored_inventory(),
-            old_inv=None,
-        )
-        data = serialize_plan(plan)
-        restored = deserialize_plan(data)
-        assert restored.steps[0].error == "disk full"
-        assert restored.steps[1].revert_error == "cleanup failed"
 
 
 class _DictContentSource:
@@ -925,102 +780,6 @@ class TestRevertPlan:
         assert result.is_valid, result.errors
 
 
-class TestPlanResume:
-    """prepare_steps preserves completed state on resume."""
-
-    def test_resume_skips_completed_steps(self, tmp_path: Path):
-        """Serialize mid-execution plan, deserialize, prepare, execute
-        → only incomplete steps run."""
-        new_inv = _build_v1_inventory()
-        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
-        fsys = LocalFS(tmp_path)
-        source = _DictContentSource({"aabbcc": b"hello"})
-
-        prepare_steps(plan, fsys, "obj1", source)
-
-        # Execute first 3 steps (object-root, declaration, version-dir)
-        for step in plan.steps[:3]:
-            assert step.run is not None
-            step.run()
-            step.completed = True
-
-        # Serialize and deserialize (simulates process restart)
-        data = serialize_plan(plan)
-        restored = deserialize_plan(data)
-
-        # Re-prepare with callables
-        prepare_steps(restored, fsys, "obj1", source)
-
-        # Completed flags preserved
-        for step in restored.steps[:3]:
-            assert step.completed
-
-        # Execute remaining
-        execute_plan(restored)
-
-        # All steps completed, object valid on disk
-        for step in restored.steps:
-            assert step.completed
-        obj_dir = tmp_path / "obj1"
-        assert (obj_dir / "inventory.json").read_bytes() == new_inv.raw_bytes
-        assert (obj_dir / "v1" / "content" / "file.txt").read_bytes() == b"hello"
-
-    def test_resume_mismatch_raises(self, tmp_path: Path):
-        """prepare_steps raises if existing steps don't match new steps."""
-        inv1 = _build_v1_inventory(files={"a.txt": "d1"})
-        inv2 = _build_v1_inventory(files={"a.txt": "d1", "b.txt": "d2"})
-
-        # Build plan with inv1's steps
-        plan = UpdatePlan(steps=[], new_inv=inv1, old_inv=None)
-        fsys = LocalFS(tmp_path)
-        source = _DictContentSource({"d1": b"aaa", "d2": b"bbb"})
-        prepare_steps(plan, fsys, "obj1", source)
-
-        # Swap inventory to inv2 (different step count)
-        plan.new_inv = inv2
-
-        with pytest.raises(ValueError, match="mismatch"):
-            prepare_steps(plan, fsys, "obj1", source)
-
-    def test_resume_digest_mismatch_raises(self, tmp_path: Path):
-        """prepare_steps raises if content digests don't match."""
-        inv1 = _build_v1_inventory(files={"a.txt": "d1"})
-        inv2 = _build_v1_inventory(files={"a.txt": "d2"})
-
-        plan = UpdatePlan(steps=[], new_inv=inv1, old_inv=None)
-        fsys = LocalFS(tmp_path)
-        source = _DictContentSource({"d1": b"aaa", "d2": b"bbb"})
-        prepare_steps(plan, fsys, "obj1", source)
-
-        # Swap inventory (same step count, different content digest)
-        plan.new_inv = inv2
-
-        with pytest.raises(ValueError, match="mismatch"):
-            prepare_steps(plan, fsys, "obj1", source)
-
-    def test_resume_full_execution_idempotent(self, tmp_path: Path):
-        """Resuming a fully completed plan is a no-op."""
-        new_inv = _build_v1_inventory()
-        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
-        fsys = LocalFS(tmp_path)
-        source = _DictContentSource({"aabbcc": b"hello"})
-
-        prepare_steps(plan, fsys, "obj1", source)
-        execute_plan(plan)
-
-        # Serialize/deserialize fully completed plan
-        data = serialize_plan(plan)
-        restored = deserialize_plan(data)
-        prepare_steps(restored, fsys, "obj1", source)
-
-        # All steps already completed
-        assert all(s.completed for s in restored.steps)
-
-        # Execute again — should be a no-op
-        execute_plan(restored)
-        assert (tmp_path / "obj1" / "inventory.json").read_bytes() == new_inv.raw_bytes
-
-
 class TestExhaustiveFaultTolerance:
     """ocfl-go style: fail at every step index, verify revert + clean state."""
 
@@ -1132,10 +891,6 @@ class TestExhaustiveFaultTolerance:
             with pytest.raises(RuntimeError, match="disk full"):
                 execute_plan(plan)
 
-            # Verify serialization round-trips mid-failure state
-            data = serialize_plan(plan)
-            deserialize_plan(data)  # validates no crash on partial state
-
             # Revert the failed attempt
             revert_plan(plan)
 
@@ -1198,33 +953,6 @@ class TestExhaustiveFaultTolerance:
             assert not (obj_dir / "obj1").exists(), (
                 f"obj dir remains after KeyboardInterrupt at step {fail_idx}"
             )
-
-
-class TestPlanWireVersion:
-    def test_roundtrip_includes_version(self):
-        import json
-
-        from ocfl_lib._update_plan import deserialize_plan, serialize_plan
-
-        plan = _make_plan()
-        data = serialize_plan(plan)
-        decoded = json.loads(data)
-        assert decoded.get("version") == 1
-        deserialize_plan(data)  # roundtrip ok
-
-    def test_bumped_version_raises(self):
-        import json
-
-        import pytest
-
-        from ocfl_lib._update_plan import deserialize_plan, serialize_plan
-
-        plan = _make_plan()
-        data = serialize_plan(plan)
-        decoded = json.loads(data)
-        decoded["version"] = 999
-        with pytest.raises(ValueError, match="wire version"):
-            deserialize_plan(json.dumps(decoded).encode())
 
 
 def _make_plan():
@@ -1388,100 +1116,3 @@ class TestExtensionFilesSteps:
         assert not written.exists()
 
 
-class TestExtensionFilesWireFormat:
-    def test_serialize_includes_extension_files_as_base64(self):
-        new_inv = _build_v1_inventory()
-        proof = b"PROOF_BYTES"
-        plan = UpdatePlan(
-            steps=[PlanStep(name="object-root")],
-            new_inv=new_inv,
-            old_inv=None,
-            extension_files={
-                "extensions/NNNN-ots-timestamps/inventory.json.v1.ots": proof,
-            },
-        )
-
-        data = serialize_plan(plan)
-
-        assert base64.b64encode(proof) in data
-
-    def test_deserialize_missing_extension_files_defaults_to_empty(self):
-        new_inv = _build_v1_inventory()
-        plan = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
-        decoded = msgspec.json.decode(serialize_plan(plan))
-        del decoded["extension_files_b64"]
-
-        restored = deserialize_plan(msgspec.json.encode(decoded))
-
-        assert restored.extension_files == {}
-
-    def test_wire_version_unchanged(self):
-        new_inv = _build_v1_inventory()
-        plain = UpdatePlan(steps=[], new_inv=new_inv, old_inv=None)
-        populated = UpdatePlan(
-            steps=[],
-            new_inv=new_inv,
-            old_inv=None,
-            extension_files={
-                "extensions/NNNN-ots-timestamps/inventory.json.v1.ots": b"x",
-            },
-        )
-        for plan in (plain, populated):
-            data = serialize_plan(plan)
-            decoded = msgspec.json.decode(data)
-            assert decoded["version"] == 1
-
-
-class TestExtensionFilesProperty:
-    @given(
-        step_names=st.lists(
-            st.sampled_from(
-                [
-                    "object-root",
-                    "declaration",
-                    "version-dir",
-                    "content-copy",
-                    "version-inv",
-                    "version-sidecar",
-                    "root-inv",
-                    "root-sidecar",
-                ]
-            ),
-            max_size=8,
-        ),
-        with_old_inv=st.booleans(),
-        with_extension_files=st.booleans(),
-    )
-    def test_deserialize_serialize_roundtrip(
-        self,
-        step_names: list[str],
-        with_old_inv: bool,
-        with_extension_files: bool,
-    ):
-        new_inv = _build_v1_inventory(obj_id="test:new")
-        old_inv = _build_v1_inventory(obj_id="test:old") if with_old_inv else None
-        extension_files: dict[str, bytes] = (
-            {"extensions/NNNN-ots-timestamps/inventory.json.v1.ots": b"proof"}
-            if with_extension_files
-            else {}
-        )
-        steps = [PlanStep(name=n) for n in step_names]
-        plan = UpdatePlan(
-            steps=steps,
-            new_inv=new_inv,
-            old_inv=old_inv,
-            extension_files=extension_files,
-        )
-
-        restored = deserialize_plan(serialize_plan(plan))
-
-        def _project(p: UpdatePlan) -> tuple:
-            return (
-                len(p.steps),
-                [s.name for s in p.steps],
-                p.new_inv.digest,
-                p.old_inv is None,
-                p.extension_files,
-            )
-
-        assert _project(restored) == _project(plan)
