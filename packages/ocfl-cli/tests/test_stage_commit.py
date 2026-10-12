@@ -58,7 +58,7 @@ class TestStageCommit:
 
         # Verify object exists in storage root
         fs = LocalFS(storage_root)
-        sr = StorageRoot(fs)
+        sr = StorageRoot.open(fs)
         obj = sr.get_object("obj:committed")
         assert obj.exists
         assert obj.head.number == 1
@@ -85,7 +85,7 @@ class TestStageCommit:
         assert result.exit_code == 0, result.output
 
         fs = LocalFS(storage_root)
-        sr = StorageRoot(fs)
+        sr = StorageRoot.open(fs)
         obj = sr.get_object("obj:test")
         assert obj.head.number == 3  # was v2, now v3
 
@@ -142,7 +142,7 @@ class TestStageCommit:
         assert result.exit_code == 0, result.output
 
         fs = LocalFS(storage_root)
-        sr = StorageRoot(fs)
+        sr = StorageRoot.open(fs)
         obj = sr.get_object("obj:user")
         vi = obj.version_info(obj.head)
         assert vi.user is not None
@@ -175,7 +175,7 @@ class TestStageCommit:
         )
 
         assert result.exit_code == 0, result.output
-        obj = StorageRoot(LocalFS(storage_root)).get_object("obj:metadata-command")
+        obj = StorageRoot.open(LocalFS(storage_root)).get_object("obj:metadata-command")
         vi = obj.version_info(obj.head)
         assert vi.message == "reviewed metadata"
         assert vi.user is not None
@@ -314,7 +314,7 @@ class TestSignalHandling:
 
         # Object should not exist (new object, fully reverted)
         fs = LocalFS(storage_root)
-        sr = StorageRoot(fs)
+        sr = StorageRoot.open(fs)
         assert not sr.get_object("obj:clean").exists
 
     def test_retry_after_interrupt(self, runner, storage_root, tmp_path):
@@ -337,7 +337,7 @@ class TestSignalHandling:
         assert result.exit_code == 0, result.output
 
         fs = LocalFS(storage_root)
-        sr = StorageRoot(fs)
+        sr = StorageRoot.open(fs)
         obj = sr.get_object("obj:retried")
         assert obj.exists
         assert obj.head.number == 1
@@ -375,7 +375,7 @@ class TestCrashRecovery:
         assert store.exists(root_path, oid)
 
         fs = LocalFS(storage_root)
-        sr = StorageRoot(fs)
+        sr = StorageRoot.open(fs)
         assert not sr.get_object(oid).exists
 
         result = _invoke(runner, storage_root, staging, "commit", oid)

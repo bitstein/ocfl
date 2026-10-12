@@ -58,7 +58,7 @@ class TestValidateRoot:
     ):
         from ocfl_lib import LocalFS, StorageRoot
 
-        root = StorageRoot(LocalFS(storage_root))
+        root = StorageRoot.open(LocalFS(storage_root))
         obj_path = storage_root / root.object_path("obj:test")
         inv_path = obj_path / "inventory.json"
         inv = json.loads(inv_path.read_text())
@@ -75,7 +75,7 @@ class TestValidateRoot:
         """Root validation must fail when a discovered object is invalid."""
         from ocfl_lib import LocalFS, StorageRoot
 
-        root = StorageRoot(LocalFS(storage_root))
+        root = StorageRoot.open(LocalFS(storage_root))
         obj_path = storage_root / root.object_path("obj:test")
         inv_path = obj_path / "inventory.json"
         inv = json.loads(inv_path.read_text())
@@ -93,7 +93,7 @@ class TestValidateRoot:
     ):
         from ocfl_lib import LocalFS, StorageRoot
 
-        root = StorageRoot(LocalFS(storage_root))
+        root = StorageRoot.open(LocalFS(storage_root))
         obj_path = storage_root / root.object_path("obj:test")
         (obj_path / "inventory.json").write_text("{")
 

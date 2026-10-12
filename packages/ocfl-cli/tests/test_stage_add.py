@@ -246,7 +246,7 @@ class TestStageAdd:
         fs = LocalFS(storage_root)
         from ocfl_lib import StorageRoot
 
-        sr = StorageRoot(fs)
+        sr = StorageRoot.open(fs)
         obj = sr.get_object("obj:test")
         # Get digest of file1.txt from head version
         head_state = obj.inventory.inventory.versions[

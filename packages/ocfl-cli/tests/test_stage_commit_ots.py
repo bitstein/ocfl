@@ -243,7 +243,7 @@ class TestStageCommitOtsHappyPath:
         assert r.exit_code == 0, r.output
 
         # Storage object exists at v1.
-        sr = StorageRoot(LocalFS(empty_sha256_root))
+        sr = StorageRoot.open(LocalFS(empty_sha256_root))
         obj = sr.get_object("obj:commit-ok")
         assert obj.exists
         assert obj.head.number == 1
@@ -377,7 +377,7 @@ class TestStageCommitOtsAfterMetadataInvalidation:
         store = StagingStore(staging)
         root_path = str(empty_sha256_root.resolve())
         assert store.exists(root_path, "obj:commit-invalidated")
-        sr = StorageRoot(LocalFS(empty_sha256_root))
+        sr = StorageRoot.open(LocalFS(empty_sha256_root))
         assert not sr.get_object("obj:commit-invalidated").exists
 
 
@@ -455,7 +455,7 @@ class TestStageCommitOtsMetadataGate:
         )
 
         assert r.exit_code == 0, r.output
-        sr = StorageRoot(LocalFS(empty_sha256_root))
+        sr = StorageRoot.open(LocalFS(empty_sha256_root))
         obj = sr.get_object("obj:commit-missing-metadata-allowed")
         assert obj.exists
         inv = obj.inventory.inventory
@@ -535,7 +535,7 @@ class TestStageCommitOtsCorruptedCache:
         store = StagingStore(staging)
         root_path = str(empty_sha256_root.resolve())
         assert store.exists(root_path, "obj:commit-plan-mismatch")
-        sr = StorageRoot(LocalFS(empty_sha256_root))
+        sr = StorageRoot.open(LocalFS(empty_sha256_root))
         assert not sr.get_object("obj:commit-plan-mismatch").exists
 
     def test_commit_halts_with_re_run_hint_on_commitment_mismatch(
@@ -683,7 +683,7 @@ class TestStageCommitOtsPreExecuteErrors:
         assert "changed" in r.output.lower()
         assert store.exists(root_path, "obj:commit-changed-source")
         assert (
-            not StorageRoot(LocalFS(empty_sha256_root))
+            not StorageRoot.open(LocalFS(empty_sha256_root))
             .get_object("obj:commit-changed-source")
             .exists
         )
@@ -731,7 +731,7 @@ class TestStageCommitOtsPreExecuteErrors:
         assert "missing" in r.output.lower()
         assert store.exists(root_path, "obj:commit-missing-source")
         assert (
-            not StorageRoot(LocalFS(empty_sha256_root))
+            not StorageRoot.open(LocalFS(empty_sha256_root))
             .get_object("obj:commit-missing-source")
             .exists
         )
@@ -778,7 +778,7 @@ class TestStageCommitOtsPreExecuteErrors:
         store = StagingStore(staging)
         assert store.exists(root_path, "obj:commit-lock-timeout")
         assert (
-            not StorageRoot(LocalFS(empty_sha256_root))
+            not StorageRoot.open(LocalFS(empty_sha256_root))
             .get_object("obj:commit-lock-timeout")
             .exists
         )
@@ -903,7 +903,7 @@ class TestStageCommitOtsCrashRecovery:
         )
         assert r2.exit_code == 0, r2.output
 
-        sr = StorageRoot(LocalFS(empty_sha256_root))
+        sr = StorageRoot.open(LocalFS(empty_sha256_root))
         obj = sr.get_object("obj:commit-crash")
         assert obj.exists
         assert obj.head.number == 1
@@ -976,7 +976,7 @@ class TestStageCommitNonOtsRegression:
         )
         assert result.exit_code == 0, result.output
 
-        sr = StorageRoot(LocalFS(storage_root))
+        sr = StorageRoot.open(LocalFS(storage_root))
         obj = sr.get_object("obj:committed")
         assert obj.exists
         assert obj.head.number == 1

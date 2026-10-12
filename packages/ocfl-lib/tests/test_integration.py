@@ -612,7 +612,7 @@ class TestEdgeCases:
         )
 
         # Reopen root from disk
-        root2 = StorageRoot(fsys)
+        root2 = StorageRoot.open(fsys)
         assert root2.layout is not None
 
         # Add v2 via reopened root
@@ -713,7 +713,7 @@ class TestEdgeCases:
         StorageRoot.init(fsys, fsys, layout=layout)
 
         # Reopen and verify config persisted
-        root2 = StorageRoot(fsys)
+        root2 = StorageRoot.open(fsys)
         assert root2.layout is not None
         cfg = root2.layout.config
         assert cfg is not None
@@ -774,7 +774,7 @@ class TestEdgeCases:
         root.commit(fsys, "cold-obj", stage, created="2024-01-01T00:00:00Z")
 
         # Fresh root instance, pure read path
-        root2 = StorageRoot(fsys)
+        root2 = StorageRoot.open(fsys)
         obj = root2.get_object("cold-obj")
         assert obj.id == "cold-obj"
         with obj.open_logical_path(VNum(1), "file.txt") as f:

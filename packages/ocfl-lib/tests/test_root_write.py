@@ -97,7 +97,7 @@ class TestStorageRootInit:
         StorageRoot.init(fsys, fsys, layout=layout)
 
         # Re-open from disk
-        root2 = StorageRoot(fsys)
+        root2 = StorageRoot.open(fsys)
         assert root2.spec == Spec.V1_1
         assert root2.layout is not None
         assert root2.layout.name == "0004-hashed-n-tuple-storage-layout"

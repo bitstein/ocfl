@@ -47,6 +47,7 @@ from ocfl_lib.layout import (
     get_layout,
 )
 from ocfl_lib.object import Object
+from ocfl_lib.object_update import apply_update_plan, plan_update, update_object
 from ocfl_lib.root import StorageRoot
 from ocfl_lib.sources import ContentSource, FixitySource
 from ocfl_lib.spec import Namaste, Spec, VNum
@@ -116,12 +117,15 @@ __all__ = [
     "VersionNotFound",
     "VersionState",
     "WriteFS",
+    "apply_update_plan",
     "bytes_digest",
     "execute_plan",
     "file_digest",
     "get_layout",
+    "plan_update",
     "revert_plan",
     "scan_dir",
+    "update_object",
     "validate_object",
     "validate_root",
 ]

@@ -58,7 +58,7 @@ def open_root(root: str | None) -> tuple[StorageRoot, Any]:
     location = resolve_root(root)
     try:
         fs = make_fs(location)
-        sr = StorageRoot(fs)
+        sr = StorageRoot.open(fs)
         return sr, fs
     except (OcflError, OSError) as e:
         exit_for_error(e)

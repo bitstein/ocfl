@@ -25,7 +25,7 @@ class TestInit:
         """Initialized root can be reopened."""
         runner.invoke(app, ["--root", str(tmp_path), "init"])
         fs = LocalFS(tmp_path)
-        root = StorageRoot(fs)
+        root = StorageRoot.open(fs)
         assert root.layout is not None
         assert root.layout.name == "0004-hashed-n-tuple-storage-layout"
 

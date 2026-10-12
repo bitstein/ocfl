@@ -871,7 +871,7 @@ class TestTwoWatchersSerializeSafely:
         def _run(tag: str) -> None:
             try:
                 store = StagingStore(staging)
-                sr = StorageRoot(LocalFS(empty_sha256_root))
+                sr = StorageRoot.open(LocalFS(empty_sha256_root))
                 barrier.wait(timeout=10)
                 results[tag] = stage_watch._watch_loop(
                     cfg,

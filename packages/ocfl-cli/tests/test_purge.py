@@ -17,7 +17,7 @@ class TestPurge:
         assert result.exit_code == 0
         # Object should be gone
         fs = LocalFS(storage_root)
-        root = StorageRoot(fs)
+        root = StorageRoot.open(fs)
         assert not root.get_object("obj:test").exists
 
     def test_purge_confirm_yes(self, runner: CliRunner, storage_root: Path):
@@ -28,7 +28,7 @@ class TestPurge:
         )
         assert result.exit_code == 0
         fs = LocalFS(storage_root)
-        root = StorageRoot(fs)
+        root = StorageRoot.open(fs)
         assert not root.get_object("obj:test").exists
 
     def test_purge_confirm_no(self, runner: CliRunner, storage_root: Path):
@@ -41,7 +41,7 @@ class TestPurge:
         assert "Aborted" in result.output
         # Object should still exist
         fs = LocalFS(storage_root)
-        root = StorageRoot(fs)
+        root = StorageRoot.open(fs)
         assert root.get_object("obj:test").exists
 
     def test_purge_nonexistent(self, runner: CliRunner, storage_root: Path):

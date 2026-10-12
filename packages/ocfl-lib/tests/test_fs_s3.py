@@ -7,6 +7,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
+from ocfl_lib import apply_update_plan, plan_update
 from ocfl_lib.fs import CopyFS
 
 if TYPE_CHECKING:
@@ -242,13 +243,13 @@ class TestRemoveAll:
         obj_path = root.object_path("obj:stale")
         obj_a = Object(s3fs, obj_path)
         obj_b = Object(s3fs, obj_path)
-        plan_a = obj_a.new_update_plan(stage_a, created="2024-02-01T00:00:00Z")
-        plan_b = obj_b.new_update_plan(stage_b, created="2024-02-01T00:00:01Z")
+        plan_a = plan_update(obj_a, stage_a, created="2024-02-01T00:00:00Z")
+        plan_b = plan_update(obj_b, stage_b, created="2024-02-01T00:00:01Z")
 
-        obj_a.apply_update_plan(s3fs, plan_a, stage_a.content_source)
+        obj_a = apply_update_plan(s3fs, obj_a, plan_a, stage_a.content_source)
 
         with pytest.raises(StaleHeadError):
-            obj_b.apply_update_plan(s3fs, plan_b, stage_b.content_source)
+            obj_b = apply_update_plan(s3fs, obj_b, plan_b, stage_b.content_source)
 
         assert Object(s3fs, obj_path).head == VNum(2)
 

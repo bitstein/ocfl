@@ -100,33 +100,33 @@ class TestStorageRootOpen:
     def test_spec_from_namaste(self, tmp_path: Path):
         _make_root(tmp_path, spec="1.1")
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         assert root.spec == Spec.V1_1
 
     def test_spec_1_0(self, tmp_path: Path):
         _make_root(tmp_path, spec="1.0")
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         assert root.spec == Spec.V1_0
 
     def test_no_namaste_raises(self, tmp_path: Path):
         fsys = LocalFS(tmp_path)
         with pytest.raises(NotAnOcflRoot, match="no OCFL root declaration"):
-            StorageRoot(fsys)
+            StorageRoot.open(fsys)
 
     def test_multiple_namaste_raises(self, tmp_path: Path):
         (tmp_path / "0=ocfl_1.0").write_text("ocfl_1.0\n")
         (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
         fsys = LocalFS(tmp_path)
         with pytest.raises(MultipleRootDeclarations, match="multiple"):
-            StorageRoot(fsys)
+            StorageRoot.open(fsys)
 
 
 class TestStorageRootFs:
     def test_fs_exposes_underlying_filewalker(self, tmp_path: Path):
         _make_root(tmp_path)
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         assert root.fs is fsys
 
 
@@ -134,7 +134,7 @@ class TestStorageRootLayout:
     def test_no_layout(self, tmp_path: Path):
         _make_root(tmp_path)
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         assert root.layout is None
 
     def test_flat_direct_layout(self, tmp_path: Path):
@@ -143,7 +143,7 @@ class TestStorageRootLayout:
         ext_dir.mkdir(parents=True)
         (ext_dir / "config.json").write_text("{}")
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         assert root.layout is not None
         assert root.layout.name == "0002-flat-direct-storage-layout"
 
@@ -151,7 +151,7 @@ class TestStorageRootLayout:
         _make_root(tmp_path, layout_ext="9999-nonexistent")
         fsys = LocalFS(tmp_path)
         with pytest.raises(KeyError, match="unknown layout"):
-            StorageRoot(fsys)
+            StorageRoot.open(fsys)
 
 
 class TestStorageRootObjectPath:
@@ -161,13 +161,13 @@ class TestStorageRootObjectPath:
         ext_dir.mkdir(parents=True)
         (ext_dir / "config.json").write_text("{}")
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         assert root.object_path("my-object") == "my-object"
 
     def test_object_path_no_layout_raises(self, tmp_path: Path):
         _make_root(tmp_path)
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         with pytest.raises(LayoutNotConfigured, match="no layout"):
             root.object_path("some-id")
 
@@ -180,7 +180,7 @@ class TestStorageRootGetObject:
         (ext_dir / "config.json").write_text("{}")
         _make_object(tmp_path, "my-obj", "my-obj")
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         obj = root.get_object("my-obj")
         assert isinstance(obj, Object)
         assert obj.id == "my-obj"
@@ -188,7 +188,7 @@ class TestStorageRootGetObject:
     def test_get_object_no_layout_raises(self, tmp_path: Path):
         _make_root(tmp_path)
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         with pytest.raises(LayoutNotConfigured, match="no layout"):
             root.get_object("some-id")
 
@@ -197,7 +197,7 @@ class TestStorageRootObjectPaths:
     def test_object_paths_empty_root(self, tmp_path: Path):
         _make_root(tmp_path)
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         assert list(root.object_paths()) == []
 
     def test_object_paths_finds_objects(self, tmp_path: Path):
@@ -205,7 +205,7 @@ class TestStorageRootObjectPaths:
         _make_object(tmp_path, "obj-a", "http://example.org/a")
         _make_object(tmp_path, "obj-b", "http://example.org/b")
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         paths = sorted(root.object_paths())
         assert paths == ["obj-a", "obj-b"]
 
@@ -213,7 +213,7 @@ class TestStorageRootObjectPaths:
         _make_root(tmp_path)
         _make_object(tmp_path, "abc/def/obj1", "http://example.org/1")
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         paths = list(root.object_paths())
         assert paths == ["abc/def/obj1"]
 
@@ -223,7 +223,7 @@ class TestStorageRootObjectPaths:
         _make_root(tmp_path)
         _make_object(tmp_path, "obj-a", "http://example.org/a")
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
 
         def torn_walk(_name: str) -> Iterator[FileRef]:
             yield FileRef(path="obj-a/0=ocfl_object_1.1", size=0)
@@ -239,7 +239,7 @@ class TestStorageRootObjectPaths:
         _make_root(tmp_path)
         _make_object(tmp_path, "obj-a", "http://example.org/a")
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
 
         def torn_walk(_name: str) -> Iterator[FileRef]:
             yield FileRef(path="obj-a/0=ocfl_object_1.1", size=0)
@@ -257,7 +257,7 @@ class TestStorageRootObjects:
         _make_object(tmp_path, "obj-a", "http://example.org/a")
         _make_object(tmp_path, "obj-b", "http://example.org/b")
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         objs = sorted(root.objects(), key=lambda o: o.id)
         assert len(objs) == 2
         assert objs[0].id == "http://example.org/a"
@@ -266,7 +266,7 @@ class TestStorageRootObjects:
     def test_objects_empty_root(self, tmp_path: Path):
         _make_root(tmp_path)
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         assert list(root.objects()) == []
 
 
@@ -277,7 +277,7 @@ class TestStorageRootObjectsBatch:
         _make_object(tmp_path, "obj-b", "http://example.org/b")
         _make_object(tmp_path, "obj-c", "http://example.org/c")
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         serial_ids = sorted(o.id for o in root.objects())
         batch_ids = sorted(o.id for o in root.objects_batch())
         assert serial_ids == batch_ids
@@ -285,7 +285,7 @@ class TestStorageRootObjectsBatch:
     def test_objects_batch_empty_root(self, tmp_path: Path):
         _make_root(tmp_path)
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         assert list(root.objects_batch()) == []
 
     def test_objects_batch_with_max_workers(self, tmp_path: Path):
@@ -293,7 +293,7 @@ class TestStorageRootObjectsBatch:
         _make_object(tmp_path, "obj-a", "http://example.org/a")
         _make_object(tmp_path, "obj-b", "http://example.org/b")
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         objs = sorted(root.objects_batch(max_workers=2), key=lambda o: o.id)
         assert len(objs) == 2
         assert objs[0].id == "http://example.org/a"
@@ -309,7 +309,7 @@ class TestStorageRootObjectsBatch:
             content={"hello.txt": b"hello"},
         )
         fsys = LocalFS(tmp_path)
-        root = StorageRoot(fsys)
+        root = StorageRoot.open(fsys)
         objs = list(root.objects_batch())
         assert len(objs) == 1
         assert objs[0].id == "http://example.org/x"

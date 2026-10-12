@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ocfl_lib import apply_update_plan, plan_update, update_object
 from ocfl_lib.digest import DigestAlgorithm
 from ocfl_lib.errors import StaleHeadError
 from ocfl_lib.fs.local import LocalFS
@@ -31,7 +32,7 @@ def _make_src_dir(tmp_path: Path, files: dict[str, str]) -> Path:
 
 
 class TestObjectUpdate:
-    """Object.update() — full write path."""
+    """update_object() — full write path."""
 
     def test_create_new_object(self, tmp_path: Path):
         """Create a new v1 object from a staged directory."""
@@ -46,8 +47,9 @@ class TestObjectUpdate:
         obj = Object(obj_fs, "")
         assert not obj.exists
 
-        obj.update(
+        obj = update_object(
             obj_fs,
+            obj,
             stage,
             id="http://example.org/obj1",
             spec=Spec.V1_1,
@@ -77,8 +79,9 @@ class TestObjectUpdate:
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
-        obj.update(
+        obj = update_object(
             obj_fs,
+            obj,
             stage,
             id="test:1",
             spec=Spec.V1_1,
@@ -99,8 +102,9 @@ class TestObjectUpdate:
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
-        obj.update(
+        obj = update_object(
             obj_fs,
+            obj,
             stage1,
             id="test:1",
             spec=Spec.V1_1,
@@ -116,8 +120,9 @@ class TestObjectUpdate:
         src2_fs = LocalFS(tmp_path)
         stage2 = scan_dir(src2_fs, "src2", DigestAlgorithm.SHA512)
 
-        obj.update(
+        obj = update_object(
             obj_fs,
+            obj,
             stage2,
             message="second version",
             created="2024-06-01T00:00:00Z",
@@ -141,8 +146,9 @@ class TestObjectUpdate:
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
-        obj.update(
+        obj = update_object(
             obj_fs,
+            obj,
             stage1,
             id="test:1",
             spec=Spec.V1_1,
@@ -156,7 +162,7 @@ class TestObjectUpdate:
         (src2 / "b.txt").write_text("new")
 
         stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
-        obj.update(obj_fs, stage2, created="2024-06-01T00:00:00Z")
+        obj = update_object(obj_fs, obj, stage2, created="2024-06-01T00:00:00Z")
 
         # v2 content dir should only have b.txt (a.txt deduplicated)
         inv = obj.inventory.inventory
@@ -178,7 +184,7 @@ class TestObjectUpdate:
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
         with pytest.raises(ValueError, match="id"):
-            obj.update(obj_fs, stage, created="2024-01-01T00:00:00Z")
+            obj = update_object(obj_fs, obj, stage, created="2024-01-01T00:00:00Z")
 
     def test_create_with_fixity(self, tmp_path: Path):
         """Fixity from stage is included in inventory."""
@@ -194,8 +200,9 @@ class TestObjectUpdate:
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
-        obj.update(
+        obj = update_object(
             obj_fs,
+            obj,
             stage,
             id="test:1",
             spec=Spec.V1_1,
@@ -229,8 +236,9 @@ class TestObjectUpdate:
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
         with pytest.raises(OSError, match="disk full"):
-            obj.update(
+            obj = update_object(
                 obj_fs,
+                obj,
                 stage,
                 id="test:1",
                 spec=Spec.V1_1,
@@ -262,8 +270,9 @@ class TestObjectUpdate:
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
         with pytest.raises(KeyboardInterrupt):
-            obj.update(
+            obj = update_object(
                 obj_fs,
+                obj,
                 stage,
                 id="test:1",
                 spec=Spec.V1_1,
@@ -285,8 +294,9 @@ class TestObjectUpdate:
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
-        obj.update(
+        obj = update_object(
             obj_fs,
+            obj,
             stage,
             id="test:1",
             spec=Spec.V1_1,
@@ -308,8 +318,9 @@ class TestObjectUpdate:
 
         obj2 = Object(obj_fs, "")
         with pytest.raises(KeyboardInterrupt):
-            obj2.update(
+            obj2 = update_object(
                 obj_fs,
+                obj2,
                 bad_stage,
                 message="v2",
                 created="2024-01-02T00:00:00Z",
@@ -329,8 +340,9 @@ class TestObjectUpdate:
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
-        obj.update(
+        obj = update_object(
             obj_fs,
+            obj,
             stage,
             id="test:1",
             spec=Spec.V1_1,
@@ -359,8 +371,9 @@ class TestObjectUpdate:
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
-        obj.update(
+        obj = update_object(
             obj_fs,
+            obj,
             stage,
             id="test:1",
             spec=Spec.V1_1,
@@ -387,8 +400,9 @@ class TestObjectUpdate:
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
-        obj.update(
+        obj = update_object(
             obj_fs,
+            obj,
             stage,
             id="test:1",
             spec=Spec.V1_1,
@@ -415,8 +429,9 @@ class TestObjectUpdate:
 
         obj_fs = LocalFS(obj_dir)
         obj1 = Object(obj_fs, "")
-        obj1.update(
+        obj1 = update_object(
             obj_fs,
+            obj1,
             stage1,
             id="test:1",
             spec=Spec.V1_1,
@@ -432,7 +447,7 @@ class TestObjectUpdate:
         (src2 / "file.txt").write_text("v2")
         stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
 
-        obj2.update(obj_fs, stage2, created="2024-06-01T00:00:00Z")
+        obj2 = update_object(obj_fs, obj2, stage2, created="2024-06-01T00:00:00Z")
         assert obj2.head == VNum(2)  # NOT v1
 
         result = ValidationResult()
@@ -441,7 +456,7 @@ class TestObjectUpdate:
 
 
 class TestTwoStepWrite:
-    """Object.new_update_plan() / apply_update_plan()."""
+    """plan_update() / apply_update_plan()."""
 
     def test_create_via_two_step(self, tmp_path: Path):
         """Create object via plan + apply."""
@@ -455,7 +470,7 @@ class TestTwoStepWrite:
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
 
-        plan = obj.new_update_plan(
+        plan = plan_update(obj,
             stage,
             id="test:1",
             spec=Spec.V1_1,
@@ -464,7 +479,7 @@ class TestTwoStepWrite:
         # Plan created but object not yet written
         assert not obj.exists
 
-        obj.apply_update_plan(obj_fs, plan, stage.content_source)
+        obj = apply_update_plan(obj_fs, obj, plan, stage.content_source)
         assert obj.exists
         assert obj.head == VNum(1)
 
@@ -484,7 +499,7 @@ class TestTwoStepWrite:
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
 
-        plan = obj.new_update_plan(
+        plan = plan_update(obj,
             stage,
             id="test:1",
             spec=Spec.V1_1,
@@ -496,7 +511,7 @@ class TestTwoStepWrite:
         plan2 = deserialize(data)
 
         # Apply deserialized plan
-        obj.apply_update_plan(obj_fs, plan2, stage.content_source)
+        obj = apply_update_plan(obj_fs, obj, plan2, stage.content_source)
         assert obj.exists
 
         result = ValidationResult()
@@ -521,7 +536,7 @@ class TestTwoStepWrite:
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
 
-        plan = obj.new_update_plan(
+        plan = plan_update(obj,
             stage,
             id="test:1",
             spec=Spec.V1_1,
@@ -529,7 +544,7 @@ class TestTwoStepWrite:
         )
 
         with pytest.raises(OSError, match="fail"):
-            obj.apply_update_plan(obj_fs, plan, stage.content_source)
+            obj = apply_update_plan(obj_fs, obj, plan, stage.content_source)
 
         # Some steps completed (declaration, version-dir) but NOT reverted
         completed = [s for s in plan.steps if s.completed]
@@ -546,8 +561,9 @@ class TestTwoStepWrite:
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
-        obj.update(
+        obj = update_object(
             obj_fs,
+            obj,
             stage1,
             id="test:1",
             spec=Spec.V1_1,
@@ -560,8 +576,8 @@ class TestTwoStepWrite:
         (src2 / "file.txt").write_text("v2")
 
         stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
-        plan = obj.new_update_plan(stage2, created="2024-06-01T00:00:00Z")
-        obj.apply_update_plan(obj_fs, plan, stage2.content_source)
+        plan = plan_update(obj, stage2, created="2024-06-01T00:00:00Z")
+        obj = apply_update_plan(obj_fs, obj, plan, stage2.content_source)
 
         assert obj.head == VNum(2)
         result = ValidationResult()
@@ -576,8 +592,9 @@ class TestTwoStepWrite:
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
-        obj.update(
+        obj = update_object(
             obj_fs,
+            obj,
             scan_dir(LocalFS(src1.parent), "src", DigestAlgorithm.SHA512),
             id="test:stale",
             spec=Spec.V1_1,
@@ -596,13 +613,13 @@ class TestTwoStepWrite:
 
         obj_a = Object(obj_fs, "")
         obj_b = Object(obj_fs, "")
-        plan_a = obj_a.new_update_plan(stage_a, created="2024-02-01T00:00:00Z")
-        plan_b = obj_b.new_update_plan(stage_b, created="2024-02-01T00:00:01Z")
+        plan_a = plan_update(obj_a, stage_a, created="2024-02-01T00:00:00Z")
+        plan_b = plan_update(obj_b, stage_b, created="2024-02-01T00:00:01Z")
 
-        obj_a.apply_update_plan(obj_fs, plan_a, stage_a.content_source)
+        obj_a = apply_update_plan(obj_fs, obj_a, plan_a, stage_a.content_source)
 
         with pytest.raises(StaleHeadError):
-            obj_b.apply_update_plan(obj_fs, plan_b, stage_b.content_source)
+            obj_b = apply_update_plan(obj_fs, obj_b, plan_b, stage_b.content_source)
 
         assert Object(obj_fs, "").head == VNum(2)
         result = ValidationResult()
@@ -617,8 +634,9 @@ class TestTwoStepWrite:
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
-        obj.update(
+        obj = update_object(
             obj_fs,
+            obj,
             scan_dir(LocalFS(src1.parent), "src", DigestAlgorithm.SHA512),
             id="test:stale-revert",
             spec=Spec.V1_1,
@@ -630,16 +648,17 @@ class TestTwoStepWrite:
         (src2 / "new.txt").write_text("new content")
         stage = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
 
-        plan = Object(obj_fs, "").new_update_plan(stage, created="2024-02-01T00:00:00Z")
+        good_sidecar = obj.inventory.sidecar_content
+        plan = plan_update(Object(obj_fs, ""), stage, created="2024-02-01T00:00:00Z")
         (obj_dir / "inventory.json.sha512").write_text("0" * 128 + " inventory.json\n")
 
         with pytest.raises(StaleHeadError):
-            Object(obj_fs, "").apply_update_plan(obj_fs, plan, stage.content_source)
+            apply_update_plan(obj_fs, Object(obj_fs, ""), plan, stage.content_source)
 
         revert_plan(plan)
 
         assert not (obj_dir / "v2").exists()
-        (obj_dir / "inventory.json.sha512").write_text(obj.inventory.sidecar_content)
+        (obj_dir / "inventory.json.sha512").write_text(good_sidecar)
         result = ValidationResult()
         validate_object(obj_fs, "", result)
         assert result.is_valid, f"errors: {[e.message for e in result.errors]}"

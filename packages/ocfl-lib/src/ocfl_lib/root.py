@@ -21,7 +21,8 @@ from ocfl_lib.layout.config import (
     write_ocfl_layout,
 )
 from ocfl_lib.object import Object
-from ocfl_lib.spec import Namaste, Spec
+from ocfl_lib.object_update import update_object
+from ocfl_lib.spec import DEFAULT_SPEC, Namaste, Spec
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -37,7 +38,8 @@ class StorageRoot:
     """Interface to an OCFL storage root.
 
     Requires a FileWalker FS (walking is fundamental to root operations).
-    Layout is loaded eagerly in the constructor (fail fast on bad config).
+    The constructor does no I/O; `open` reads an existing root's spec and
+    layout (fail fast on bad config).
     """
 
     def __init__(
@@ -45,13 +47,30 @@ class StorageRoot:
         fsys: FileWalker,
         path: str = "",
         *,
-        layouts: LayoutRegistry = DEFAULT_LAYOUTS,
+        spec: Spec = DEFAULT_SPEC,
+        layout: Layout | None = None,
     ) -> None:
         self._fsys = fsys
         self._path = path
-        self._layouts = layouts
-        self._spec = self._detect_spec()
-        self._layout = self._load_layout()
+        self._spec = spec
+        self._layout = layout
+
+    @classmethod
+    def open(
+        cls,
+        fsys: FileWalker,
+        path: str = "",
+        *,
+        layouts: LayoutRegistry = DEFAULT_LAYOUTS,
+    ) -> StorageRoot:
+        """Open an existing storage root.
+
+        Raises NotAnOcflRoot / MultipleRootDeclarations on a bad declaration
+        and UnknownLayout if the declared layout is not in `layouts`.
+        """
+        spec = _detect_spec(fsys, path)
+        layout = _load_layout(fsys, path, layouts)
+        return cls(fsys, path, spec=spec, layout=layout)
 
     @classmethod
     def init(
@@ -89,7 +108,7 @@ class StorageRoot:
             if cfg is not None:
                 write_layout_config(fsys, layout.name, cfg, root=path)
 
-        return cls(walker, path)
+        return cls(walker, path, spec=spec, layout=layout)
 
     @property
     def fs(self) -> FileWalker:
@@ -167,7 +186,7 @@ class StorageRoot:
     ) -> Object:
         """Add or update an object in the storage root.
 
-        Resolves id to path via layout, then delegates to Object.update().
+        Resolves id to path via layout, then delegates to update_object().
         For new objects, spec defaults to root's spec.
         Raises LayoutNotConfigured if no layout is configured.
         """
@@ -184,8 +203,9 @@ class StorageRoot:
                 f"storage root spec {self._spec}"
             )
 
-        obj.update(
+        return update_object(
             fsys,
+            obj,
             version_state,
             id=id,
             spec=obj_spec,
@@ -193,7 +213,6 @@ class StorageRoot:
             user=user,
             created=created,
         )
-        return obj
 
     def object_paths(self, *, strict: bool = False) -> Iterator[str]:
         """Walk the hierarchy and yield paths to all OCFL objects.
@@ -240,30 +259,32 @@ class StorageRoot:
 
         yield from bounded_map(_load, obj_paths, max_workers=max_workers)
 
-    def _detect_spec(self) -> Spec:
-        """Find and parse the root NAMASTE declaration."""
-        try:
-            entries = list(self._fsys.read_dir(self._path))
-        except OSError as e:
-            raise NotAnOcflRoot("no OCFL root declaration found") from e
 
-        decls = []
-        for entry in entries:
-            n = Namaste.parse(entry.name)
-            if n is not None and n.kind == "root":
-                decls.append(n)
+def _detect_spec(fsys: FileWalker, path: str) -> Spec:
+    """Find and parse the root NAMASTE declaration."""
+    try:
+        entries = list(fsys.read_dir(path))
+    except OSError as e:
+        raise NotAnOcflRoot("no OCFL root declaration found") from e
 
-        if not decls:
-            raise NotAnOcflRoot("no OCFL root declaration found")
-        if len(decls) > 1:
-            raise MultipleRootDeclarations([d.filename for d in decls])
-        return decls[0].spec
+    decls = []
+    for entry in entries:
+        n = Namaste.parse(entry.name)
+        if n is not None and n.kind == "root":
+            decls.append(n)
 
-    def _load_layout(self) -> Layout | None:
-        """Load the declared layout with its extension config, or None."""
-        info = read_ocfl_layout(self._fsys, root=self._path)
-        if info is None:
-            return None
-        ext_name, _description = info
-        config = read_layout_config(self._fsys, ext_name, root=self._path)
-        return get_layout(ext_name, config=config, layouts=self._layouts)
+    if not decls:
+        raise NotAnOcflRoot("no OCFL root declaration found")
+    if len(decls) > 1:
+        raise MultipleRootDeclarations([d.filename for d in decls])
+    return decls[0].spec
+
+
+def _load_layout(fsys: FileWalker, path: str, layouts: LayoutRegistry) -> Layout | None:
+    """Load the declared layout with its extension config, or None."""
+    info = read_ocfl_layout(fsys, root=path)
+    if info is None:
+        return None
+    ext_name, _description = info
+    config = read_layout_config(fsys, ext_name, root=path)
+    return get_layout(ext_name, config=config, layouts=layouts)

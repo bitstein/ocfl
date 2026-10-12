@@ -9,7 +9,7 @@ and Django's ``atomic()``.
 
 ``BaseException`` (including ``KeyboardInterrupt``, ``SystemExit``,
 ``MemoryError``) propagates without cleanup. Callers that want to revert
-on Ctrl-C must use the explicit form (``new_update_plan`` + ``prepare_steps``
+on Ctrl-C must use the explicit form (``plan_update`` + ``prepare_steps``
 + ``execute_plan`` + ``revert_plan``) and handle the interrupt themselves.
 The CLI does this in ``ocfl_cli/commands/stage.py:commit``.
 

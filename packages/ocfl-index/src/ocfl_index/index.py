@@ -98,7 +98,7 @@ class Index:
         conn = db.connect(db_path)
         try:
             root_path = _open_root_path(conn, db_path, root)
-            storage_root = StorageRoot(LocalFS(Path(root_path)))
+            storage_root = StorageRoot.open(LocalFS(Path(root_path)))
             return cls(conn, storage_root, root_path)
         except BaseException:
             conn.close()

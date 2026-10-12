@@ -305,7 +305,7 @@ def _emit(ctx: typer.Context, msg: str) -> None:
 
 def _object_ids_by_path(fs: FS) -> dict[str, str]:
     try:
-        root = StorageRoot(cast("FileWalker", fs))
+        root = StorageRoot.open(cast("FileWalker", fs))
     except Exception:
         return {}
 

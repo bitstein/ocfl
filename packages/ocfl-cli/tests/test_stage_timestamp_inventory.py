@@ -4,7 +4,7 @@ Pins the build-submit-serialize contract from `OTS workflow contract`:
 
 - Precondition: phase ``content-upgraded`` (else ``PhaseError`` ⇒ exit 3
   with a next-step hint).
-- Build the staged inventory via ``Object.new_update_plan`` (same path as
+- Build the staged inventory via ``plan_update`` (same path as
   ``stage commit``); the inventory's manifest now contains the ``<file>.ots``
   companion content files ingested by the prior ``--upgrade`` pass.
 - Compute ``plan.new_inv.digest`` and write an ``InventoryProof`` intent

@@ -58,6 +58,7 @@ from ocfl_cli.stage.state import (
     save_ots,
     with_lock,
 )
+from ocfl_lib import plan_update
 from ocfl_lib.errors import OtsParseError
 from ocfl_lib.inventory import UserInfo, VersionInfo
 from ocfl_lib.ots import parse as parse_ots
@@ -558,7 +559,7 @@ def build_inventory_plan(
     object_id: str,
     *,
     message: str | None = None,
-    user: object | None = None,
+    user: UserInfo | None = None,
     created: str | None = None,
 ) -> tuple[UpdatePlan, ContentSource]:
     """Build an UpdatePlan from the staged inventory + content map.
@@ -582,7 +583,8 @@ def build_inventory_plan(
         content_source=content_source,
     )
     obj = sr.get_object(object_id)
-    plan = obj.new_update_plan(
+    plan = plan_update(
+        obj,
         stage_obj,
         id=object_id if not obj.exists else None,
         spec=sr.spec if not obj.exists else None,

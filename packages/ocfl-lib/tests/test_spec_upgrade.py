@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ocfl_lib import plan_update
 from ocfl_lib.digest import DigestAlgorithm
 from ocfl_lib.errors import SpecVersionError
 from ocfl_lib.fs.local import LocalFS
@@ -117,7 +118,7 @@ class TestNamasteSwap:
         )
         obj = Object(fsys, "obj")
         stage = _stage(tmp_path, "b")
-        plan = obj.new_update_plan(stage, spec=Spec.V1_1, created=_CREATED)
+        plan = plan_update(obj, stage, spec=Spec.V1_1, created=_CREATED)
         prepare_steps(plan, fsys, "obj", stage.content_source)
 
         # Crash right after publishing the root inventory.
@@ -142,7 +143,7 @@ class TestNamasteSwap:
         )
         obj = Object(fsys, "obj")
         stage = _stage(tmp_path, "b")
-        plan = obj.new_update_plan(stage, spec=Spec.V1_1, created=_CREATED)
+        plan = plan_update(obj, stage, spec=Spec.V1_1, created=_CREATED)
         prepare_steps(plan, fsys, "obj", stage.content_source)
 
         names = [s.name for s in plan.steps]

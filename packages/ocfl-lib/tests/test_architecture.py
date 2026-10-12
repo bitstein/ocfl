@@ -1,10 +1,15 @@
 """Architecture guards for the lib cleanup (docs/roadmap.md §2)."""
 
+import annotationlib
 import ast
+import dataclasses
 import importlib
+import inspect
 import pkgutil
 import re
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[3]
 LIB_SRC = REPO / "packages/ocfl-lib/src/ocfl_lib"
@@ -29,7 +34,7 @@ def _lib_module_name(p: Path) -> str:
     return ".".join(parts)
 
 
-# ------------------------------------------------------------ 1. errors
+# --- 1. errors
 
 
 class TestErrors:
@@ -129,7 +134,43 @@ class TestErrors:
         assert issubclass(ocfl_lib.VersionNotFound, LookupError)
 
 
-# ------------------------------------------------------------ 4. Stage -> VersionState
+# --- 3. Object reads; StorageRoot.open
+
+
+class _BoomFS:
+    def __getattr__(self, name):
+        raise AssertionError(f"I/O in constructor: {name}")
+
+
+class TestReadOnlyObjectAndOpen:
+    def test_object_has_no_write_methods(self):
+        from ocfl_lib import Object
+
+        for name in ("update", "new_update_plan", "apply_update_plan"):
+            assert not hasattr(Object, name), name
+        for name, fn in inspect.getmembers(Object, inspect.isfunction):
+            sig = inspect.signature(fn, annotation_format=annotationlib.Format.STRING)
+            assert "WriteFS" not in str(sig), name
+
+    def test_constructors_do_no_io(self):
+        from ocfl_lib import Object, StorageRoot
+
+        StorageRoot(_BoomFS())  # ty: ignore[invalid-argument-type]
+        Object(_BoomFS(), "x")  # ty: ignore[invalid-argument-type]
+
+    def test_open(self, tmp_path):
+        from ocfl_lib import LocalFS, NotAnOcflRoot, Spec, StorageRoot
+
+        with pytest.raises(NotAnOcflRoot):
+            StorageRoot.open(LocalFS(tmp_path))
+        fs = LocalFS(tmp_path)
+        StorageRoot.init(fs, fs, spec=Spec.V1_0)
+        root = StorageRoot.open(fs)
+        assert root.spec is Spec.V1_0
+        assert root.layout is None
+
+
+# --- 4. Stage -> VersionState
 
 
 class TestVersionState:
@@ -166,7 +207,50 @@ class TestVersionState:
         assert cs.__module__ != ocfl_lib.UpdatePlan.__module__
 
 
-# ------------------------------------------------------------ 8. duplicates
+# --- 7. layout registry
+
+
+class TestLayoutRegistry:
+    def test_default_frozen(self):
+        from ocfl_lib import DEFAULT_LAYOUTS, LayoutRegistry
+
+        assert not hasattr(LayoutRegistry, "register")
+        with pytest.raises(
+            (AttributeError, TypeError, dataclasses.FrozenInstanceError)
+        ):
+            DEFAULT_LAYOUTS.foo = 1  # type: ignore[attr-defined]
+
+    def test_custom_registry_passed_explicitly(self, tmp_path):
+        from ocfl_lib import (
+            DEFAULT_LAYOUTS,
+            FlatDirectLayout,
+            LocalFS,
+            OcflError,
+            StorageRoot,
+        )
+
+        name = "9999-custom-layout"
+
+        class Custom(FlatDirectLayout):
+            @property
+            def name(self):
+                return name
+
+            @property
+            def config(self):
+                return None
+
+        custom = DEFAULT_LAYOUTS.with_layout(name, lambda cfg: Custom())
+        fs = LocalFS(tmp_path)
+        StorageRoot.init(fs, fs, layout=Custom())
+        with pytest.raises(OcflError):
+            StorageRoot.open(fs)
+        root = StorageRoot.open(fs, layouts=custom)
+        assert root.layout is not None and root.layout.name == name
+        assert name not in DEFAULT_LAYOUTS
+
+
+# --- 8. duplicates
 
 
 class TestNoDuplicates:

@@ -1061,7 +1061,7 @@ def commit(
             service.commit_ots(
                 store=store,
                 fs=fs,
-                obj_dir=obj._path,
+                obj_dir=obj.path,
                 root_path=root_path,
                 object_id=object_id,
                 staging_dir=staging_dir,
@@ -1095,7 +1095,7 @@ def commit(
             store=store,
             sr=sr,
             fs=fs,
-            obj_dir=obj._path,
+            obj_dir=obj.path,
             root_path=root_path,
             object_id=object_id,
             staging_dir=staging_dir,
@@ -2054,7 +2054,7 @@ def _drive_commit_batch(ctx: typer.Context, batch_id: str) -> None:
             service.commit_ots(
                 store=store,
                 fs=fs,
-                obj_dir=obj._path,
+                obj_dir=obj.path,
                 root_path=batch.root_path,
                 object_id=object_id,
                 staging_dir=staging_dir,
