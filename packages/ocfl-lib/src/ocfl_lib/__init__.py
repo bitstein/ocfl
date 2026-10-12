@@ -5,6 +5,7 @@ from ocfl_lib._digest import DigestAlgorithm, bytes_digest, file_digest
 from ocfl_lib._digest_map import DigestMap, PathMap, to_path_map
 from ocfl_lib._errors import (
     ClaimLostError,
+    ContentDigestMismatch,
     ContentNotFound,
     DigestAlgorithmMismatch,
     ErrorClass,
@@ -79,6 +80,7 @@ __all__ = [
     "CommitState",
     "CommitStatus",
     "ConditionalFS",
+    "ContentDigestMismatch",
     "ContentNotFound",
     "ContentSource",
     "CopyFS",

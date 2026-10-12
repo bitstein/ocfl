@@ -368,3 +368,59 @@ class TestS3:
         fs.check_conditional_writes("probe")
         assert not fs.exists("probe")
         fs.write("w", BytesIO(b"x"))
+
+
+class _Swapped:
+    """A content source that hands over the wrong bytes for every digest."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        (tmp_path / "wrong").write_bytes(b"not what the manifest says")
+        self.fs = LocalFS(tmp_path)
+
+    def get_content(self, digest):
+        return self.fs, "wrong"
+
+
+class TestContentDigests:
+    def test_local_wrong_bytes_never_reach_the_object(self, tmp_path):
+        from ocfl_lib import ContentDigestMismatch
+
+        d = tmp_path / "root"
+        d.mkdir()
+        fs = LocalFS(d)
+        root = _root(fs)
+        root.commit(fs, OID, _stage(tmp_path, "s0", {"x": b"x"}))
+        before = sorted(p for p in d.rglob("*") if p.is_file())
+        plan = root.plan(OID, _stage(tmp_path, "s", {"a.txt": b"a"}))
+        with pytest.raises(ContentDigestMismatch):
+            root.commit(fs, OID, plan, content=_Swapped(tmp_path))
+        assert sorted(p for p in d.rglob("*") if p.is_file()) == before
+
+    def test_local_server_side_copy_is_checked(self, tmp_path):
+        from ocfl_lib import ContentDigestMismatch
+
+        fs = LocalFS(tmp_path)
+        root = _root(fs)
+        (tmp_path / "wrong").write_bytes(b"nope")
+        plan = root.plan(OID, _stage(tmp_path, "s", {"a.txt": b"a"}))
+
+        class SameFs:
+            def get_content(self, digest):
+                return fs, "wrong"
+
+        with pytest.raises(ContentDigestMismatch):
+            root.commit(fs, OID, plan, content=SameFs())
+        assert not root.get_object(OID).exists
+
+    def test_s3_wrong_bytes_are_reverted(self, s3, tmp_path):
+        from ocfl_lib import ContentDigestMismatch
+        from ocfl_lib.fs.s3 import S3FS
+
+        fs = S3FS(BUCKET, client=s3)
+        root = _root(fs)
+        root.commit(fs, OID, _stage(tmp_path, "s0", {"x": b"x"}))
+        before = sorted(r.path for r in fs.walk_files(""))
+        plan = root.plan(OID, _stage(tmp_path, "s", {"a.txt": b"a"}))
+        with pytest.raises(ContentDigestMismatch):
+            root.commit(fs, OID, plan, content=_Swapped(tmp_path))
+        assert sorted(r.path for r in fs.walk_files("")) == before

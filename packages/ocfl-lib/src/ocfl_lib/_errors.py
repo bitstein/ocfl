@@ -70,6 +70,13 @@ class LogicalPathNotFound(OcflNotFoundError, KeyError):
         return str(self.args[0]) if self.args else ""
 
 
+class ContentDigestMismatch(OcflError):
+    """Content from a content source does not match its manifest digest."""
+
+    code = "content_digest_mismatch"
+    error_class = ErrorClass.INVALID
+
+
 class ContentNotFound(OcflNotFoundError, KeyError):
     """No content source can supply a digest."""
 

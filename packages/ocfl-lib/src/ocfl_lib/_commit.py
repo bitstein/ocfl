@@ -19,12 +19,13 @@ import errno
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO
 
 from ocfl_lib._concurrent import bounded_map
-from ocfl_lib._digest import DigestAlgorithm, bytes_digest
+from ocfl_lib._digest import DigestAlgorithm, bytes_digest, stream_digest
 from ocfl_lib._errors import (
     ClaimLostError,
+    ContentDigestMismatch,
     ObjectLockedError,
     PlanMismatchError,
     RecoveryRequiredError,
@@ -36,7 +37,7 @@ from ocfl_lib._inventory import StoredInventory
 from ocfl_lib._path import join_path
 from ocfl_lib._spec import INVENTORY_FILENAME, Namaste, Spec
 from ocfl_lib.fs import _utils as fs_utils
-from ocfl_lib.fs._protocols import ClaimFS, ConditionalFS
+from ocfl_lib.fs._protocols import ClaimFS, ConditionalFS, CopyFS
 from ocfl_lib.validation._extension_ots import EXTENSION_NAME as OTS_EXTENSION
 
 if TYPE_CHECKING:
@@ -188,7 +189,8 @@ def _build(t: Target, fsys: ClaimFS, content: ContentSource) -> None:
             return join_path(t.build, rel)
         return join_path(t.build, rel.removeprefix(f"{t.vn}/"))
 
-    copy_content(fsys, content, [(d, dest(p)) for d, p in content_items(plan)])
+    items = [(d, dest(p)) for d, p in content_items(plan)]
+    copy_content(fsys, content, items, plan.inventory.digest_algorithm)
     files = version_files(plan)
     if plan.is_new_object:
         files |= new_object_files(plan) | root_files(plan)
@@ -267,7 +269,7 @@ def fill_claim(t: Target, content: ContentSource) -> None:
     missing = [
         (d, t.obj(p)) for d, p in content_items(plan) if not fsys.exists(t.obj(p))
     ]
-    copy_content(fsys, content, missing)
+    copy_content(fsys, content, missing, plan.inventory.digest_algorithm)
     _write_missing(t, version_files(plan))
 
 
@@ -539,18 +541,56 @@ def namaste_swap(
 
 
 def copy_content(
-    fsys: WriteFS, content: ContentSource, items: list[tuple[str, str]]
+    fsys: WriteFS,
+    content: ContentSource,
+    items: list[tuple[str, str]],
+    alg: DigestAlgorithm,
 ) -> None:
-    def _copy(item: tuple[str, str]) -> int:
+    """Copy each (digest, dst) from `content`, checking the bytes on the way.
+
+    A copy whose bytes do not match its manifest digest is removed and
+    raises ContentDigestMismatch, before anything is published.
+    """
+
+    def _copy(item: tuple[str, str]) -> None:
         digest, dst = item
         parent = dst.rpartition("/")[0]
         if parent:
             fsys.mkdir(parent)
         src_fs, src_path = content.get_content(digest)
-        return fs_utils.copy(src_fs, src_path, fsys, dst)
+        if src_fs is fsys and isinstance(fsys, CopyFS):
+            fsys.copy(src_path, dst)  # server-side; check what landed
+            with fsys.open_file(dst) as f:
+                actual = stream_digest(f, alg)
+        else:
+            with src_fs.open_file(src_path) as f:
+                reader = _HashingReader(f, alg)
+                fsys.write(dst, reader)  # ty: ignore[invalid-argument-type]
+            actual = reader.hexdigest()
+        if actual.lower() != digest.lower():
+            remove_if_exists(fsys, dst)
+            raise ContentDigestMismatch(
+                f"content for {digest} from {src_path} has digest {actual}"
+            )
 
     for _ in bounded_map(_copy, items):
         pass
+
+
+class _HashingReader:
+    """Digests a stream as it is read."""
+
+    def __init__(self, f: BinaryIO, alg: DigestAlgorithm) -> None:
+        self._f = f
+        self._h = alg.new_hasher()
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = self._f.read(size)
+        self._h.update(chunk)
+        return chunk
+
+    def hexdigest(self) -> str:
+        return self._h.hexdigest()
 
 
 # --- small helpers
