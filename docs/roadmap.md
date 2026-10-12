@@ -11,12 +11,13 @@ Target architecture from the 2026-10-11 design session. Terms: [CONTEXT.md](../C
 
 ## 1. Bug fixes
 
-- [ ] `UpdatePlan.extension_files` is lost by `serialize`/`deserialize` (`update_plan.py` `_PlanState`)
-- [ ] `_resolve_root_path` calls `Path.resolve()` on `s3://` roots and corrupts the staging key (`stage/commands.py`)
-- [ ] An unregistered storage-root extension dir is reported as W901. Use the spec code W016 instead (`validation/root.py:124`).
-- [ ] A non-directory entry in the root `extensions/` is reported as E086, which does not exist in OCFL 1.1. Use E112 (`validation/root.py:122`).
-- [ ] L001/L002 (NUL bytes, length limits) are reported as errors, which makes objects that are valid under the spec invalid. Lower them to info. Validity is decided by E/W codes only.
-- [ ] Writing a 1.1 object into a `0=ocfl_1.0` root must be refused (E081). When a 1.1 version is added to a 1.0 object, swap the NAMASTE so exactly one remains (E003, E038).
+- [x] `UpdatePlan.extension_files` is lost by `serialize`/`deserialize` (`update_plan.py` `_PlanState`)
+- [x] `_resolve_root_path` calls `Path.resolve()` on `s3://` roots and corrupts the staging key (`stage/commands.py`)
+- [x] An unregistered storage-root extension dir is reported as W901. Use the spec code W016 instead (`validation/root.py:124`).
+- [x] A non-directory entry in the root `extensions/` is reported as E086, which does not exist in OCFL 1.1. Use E112 (`validation/root.py:122`).
+- [x] L001/L002 (NUL bytes, length limits) are reported as errors, which makes objects that are valid under the spec invalid. Lower them to info. Validity is decided by E/W codes only.
+- [x] Writing a 1.1 object into a `0=ocfl_1.0` root must be refused (E081). When a 1.1 version is added to a 1.0 object, swap the NAMASTE so exactly one remains (E003, E038).
+- [x] Found on the way: the validator checked E103 against the root instead of the preceding version, so valid 1.0→1.1 upgrades failed. It also had no E081 check.
 
 ## 2. Lib cleanup
 
@@ -25,7 +26,7 @@ Target architecture from the 2026-10-11 design session. Terms: [CONTEXT.md](../C
 - [ ] `Object` only reads. Opening a root uses `StorageRoot.open(fs)`, and its constructor does no I/O.
 - [ ] Rename `Stage` → `VersionState`. Move `ContentSource` and `FixitySource` to their own module.
 - [ ] Validators accept a recursive `JsonValue` type and narrowing helpers instead of `dict[str, Any]`.
-- [ ] A frozen `ValidationReport` holds `Finding(code, severity, object_id, path, detail)`. Messages are rendered only for display.
+- [ ] A frozen `ValidationReport` holds `Finding(code, severity, object_id, path, detail)`. Messages are rendered only for display. Root validation must keep every object's findings: it now drops the warnings of valid objects (`validation/root.py` `_walk_and_validate`).
 - [ ] The default layout registry is frozen, and custom registries are passed explicitly.
 - [ ] Remove duplicates: `_join` ×6, the version-number regex ×3, the supported-version sets, the layout-config helpers in `StorageRoot`, the multi-digest copies, and `fs_utils.exists`.
 
