@@ -537,6 +537,13 @@ def _validate_and_build_content_source(
     return _StagingContentSource(content_map)
 
 
+def staged_content_source(
+    store: StagingStore, root_path: str, object_id: str
+) -> ContentSource:
+    """Content source over the object's staged files (checked unchanged)."""
+    return _validate_and_build_content_source(store, root_path, object_id)
+
+
 def build_inventory_plan(
     store: StagingStore,
     sr,

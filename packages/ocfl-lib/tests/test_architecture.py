@@ -730,3 +730,25 @@ class TestPurgeGuards:
             body.index("for name in namastes"),
         ]
         assert order == sorted(order)
+
+
+# --- 3.6 ocfl recover OBJ --resume|--revert|--remove-stray VN
+
+
+class TestRecoverCommand:
+    def test_registered_with_its_actions(self):
+        import typer.main
+
+        from ocfl_cli.main import app
+
+        group = typer.main.get_group(app)
+        cmd = group.commands["recover"]
+        opts = {o for p in cmd.params for o in getattr(p, "opts", [])}
+        assert {"--resume", "--revert", "--remove-stray"} <= opts
+
+    def test_uses_the_lib_recovery(self):
+        tree = _tree(CLI_SRC / "archive/recover.py")
+        attrs = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+        assert "recover" in attrs
+        names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        assert "RecoveryAction" in names

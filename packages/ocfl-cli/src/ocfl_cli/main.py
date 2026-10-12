@@ -18,6 +18,7 @@ from ocfl_cli.archive.init import init
 from ocfl_cli.archive.log import log
 from ocfl_cli.archive.ls import ls
 from ocfl_cli.archive.purge import purge
+from ocfl_cli.archive.recover import recover
 from ocfl_cli.archive.show import show
 from ocfl_cli.archive.validate import validate
 from ocfl_cli.config import ConfigError, load_config
@@ -79,6 +80,7 @@ app.command(rich_help_panel=STORAGE_ADMIN_PANEL)(init)
 app.command(rich_help_panel=ARCHIVE_PANEL)(log)
 app.command(rich_help_panel=ARCHIVE_PANEL)(ls)
 app.command(rich_help_panel=STORAGE_ADMIN_PANEL)(purge)
+app.command(rich_help_panel=STORAGE_ADMIN_PANEL)(recover)
 app.command(rich_help_panel=ARCHIVE_PANEL)(show)
 app.command(rich_help_panel=STORAGE_ADMIN_PANEL)(validate)
 app.add_typer(stage_app, rich_help_panel=STAGING_PANEL)
