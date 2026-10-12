@@ -112,8 +112,14 @@ class DigestOption(StrEnum):
 
 
 def _resolve_root_path(ctx: typer.Context) -> str:
-    """Resolve absolute root path string for staging path hashing."""
-    return str(Path(appctx.root(ctx) or Path.cwd()).resolve())
+    """Resolve absolute root path string for staging path hashing.
+
+    S3 URIs are returned as-is: ``Path.resolve`` would prefix the cwd.
+    """
+    root = appctx.root(ctx)
+    if root is not None and root.startswith("s3://"):
+        return root
+    return str(Path(root or Path.cwd()).resolve())
 
 
 def _stage_store(ctx: typer.Context) -> StagingStore:
