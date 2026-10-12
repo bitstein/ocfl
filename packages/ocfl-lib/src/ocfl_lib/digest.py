@@ -108,12 +108,8 @@ def multi_digest(
     path: Path, algs: Sequence[DigestAlgorithm]
 ) -> dict[DigestAlgorithm, str]:
     """Compute multiple digests in a single pass through the file."""
-    hashers = {alg: alg.new_hasher() for alg in algs}
     with open(path, "rb") as f:
-        while chunk := f.read(_CHUNK_SIZE):
-            for h in hashers.values():
-                h.update(chunk)
-    return {alg: h.hexdigest() for alg, h in hashers.items()}
+        return stream_multi_digest(f, algs)
 
 
 def digest_files(
@@ -126,24 +122,8 @@ def digest_files(
 
     Raises ``ExceptionGroup`` when any files fail.
     """
-    from ocfl_lib._concurrent import bounded_map
-
-    path_list = list(paths)
-    if not path_list:
-        return {}
-
-    def _safe(p: Path) -> str | Exception:
-        try:
-            return file_digest(p, alg)
-        except Exception as exc:
-            exc.add_note(f"while digesting {p}")
-            return exc
-
-    results = list(bounded_map(_safe, path_list, max_workers=max_workers))
-    errors = [r for r in results if isinstance(r, Exception)]
-    if errors:
-        raise ExceptionGroup("digest computation failed", errors)
-    return dict(zip(path_list, cast("list[str]", results), strict=True))
+    results = digest_files_multi(paths, [alg], max_workers=max_workers)
+    return {p: digests[alg] for p, digests in results.items()}
 
 
 def digest_files_multi(

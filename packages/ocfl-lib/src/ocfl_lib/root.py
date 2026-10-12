@@ -3,8 +3,7 @@
 import posixpath
 from typing import TYPE_CHECKING
 
-import msgspec
-
+from ocfl_lib._path import join_path
 from ocfl_lib.errors import (
     LayoutNotConfigured,
     MultipleRootDeclarations,
@@ -15,6 +14,12 @@ from ocfl_lib.errors import (
 )
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.layout import get_layout
+from ocfl_lib.layout.config import (
+    read_layout_config,
+    read_ocfl_layout,
+    write_layout_config,
+    write_ocfl_layout,
+)
 from ocfl_lib.object import Object
 from ocfl_lib.spec import Namaste, Spec
 
@@ -53,34 +58,28 @@ class StorageRoot:
     ) -> StorageRoot:
         """Create a new OCFL storage root on disk.
 
-        Writes NAMASTE declaration, ocfl_layout.json (if layout), and
+        Writes NAMASTE declaration, the layout declaration (if layout), and
         extension config (if layout.config is not None).
         """
         for existing_spec in Spec:
-            existing = _join(path, Namaste.for_root(existing_spec).filename)
+            existing = join_path(path, Namaste.for_root(existing_spec).filename)
             if fsys.exists(existing):
                 raise RootExistsError("OCFL storage root already initialized")
 
         namaste = Namaste.for_root(spec)
-        namaste_path = _join(path, namaste.filename)
+        namaste_path = join_path(path, namaste.filename)
         fs_utils.write_bytes(fsys, namaste_path, namaste.content.encode())
 
         if layout is not None:
-            ocfl_layout = {"extension": layout.name, "description": layout_description}
-            fs_utils.write_bytes(
+            write_ocfl_layout(
                 fsys,
-                _join(path, "ocfl_layout.json"),
-                msgspec.json.encode(ocfl_layout),
+                extension=layout.name,
+                description=layout_description,
+                root=path,
             )
             cfg = layout.config
             if cfg is not None:
-                ext_dir = _join(path, f"extensions/{layout.name}")
-                fsys.mkdir(ext_dir)
-                fs_utils.write_bytes(
-                    fsys,
-                    _join(ext_dir, "config.json"),
-                    msgspec.json.encode(cfg),
-                )
+                write_layout_config(fsys, layout.name, cfg, root=path)
 
         return cls(walker, path)
 
@@ -111,7 +110,7 @@ class StorageRoot:
         Raises LayoutNotConfigured if no layout is configured.
         """
         obj_path = self.object_path(object_id)
-        full_path = _join(self._path, obj_path)
+        full_path = join_path(self._path, obj_path)
         return Object(self._fsys, full_path)
 
     def purge(self, fsys: WriteFS, object_id: str) -> None:
@@ -132,13 +131,13 @@ class StorageRoot:
             raise ObjectNotFound(object_id)
 
         obj_path = self.object_path(object_id)
-        full_path = _join(self._path, obj_path)
+        full_path = join_path(self._path, obj_path)
         fsys.remove_all(full_path)
 
         # Clean empty parent directories up to (but not including) root
         parts = obj_path.split("/")
         for i in range(len(parts) - 1, 0, -1):
-            parent = _join(self._path, "/".join(parts[:i]))
+            parent = join_path(self._path, "/".join(parts[:i]))
             try:
                 entries = list(self._fsys.read_dir(parent))
             except OSError:
@@ -165,7 +164,7 @@ class StorageRoot:
         Raises LayoutNotConfigured if no layout is configured.
         """
         obj_path = self.object_path(id)
-        full_path = _join(self._path, obj_path)
+        full_path = join_path(self._path, obj_path)
         obj = Object(self._fsys, full_path)
 
         # Default spec to root's spec for new objects
@@ -253,28 +252,10 @@ class StorageRoot:
         return decls[0].spec
 
     def _load_layout(self) -> Layout | None:
-        """Load layout from ocfl_layout.json + extension config, or None."""
-        import msgspec
-
-        layout_file = _join(self._path, "ocfl_layout.json")
-        try:
-            data = fs_utils.read_all(self._fsys, layout_file)
-        except FileNotFoundError:
+        """Load the declared layout with its extension config, or None."""
+        info = read_ocfl_layout(self._fsys, root=self._path)
+        if info is None:
             return None
-        layout_info = msgspec.json.decode(data)
-        ext_name = layout_info["extension"]
-
-        config_file = _join(self._path, f"extensions/{ext_name}/config.json")
-        try:
-            config_data = fs_utils.read_all(self._fsys, config_file)
-            config = msgspec.json.decode(config_data)
-        except FileNotFoundError:
-            config = None
+        ext_name, _description = info
+        config = read_layout_config(self._fsys, ext_name, root=self._path)
         return get_layout(ext_name, config=config)
-
-
-def _join(base: str, name: str) -> str:
-    """Join path components with '/' separator, handling empty base."""
-    if not base:
-        return name
-    return f"{base}/{name}"

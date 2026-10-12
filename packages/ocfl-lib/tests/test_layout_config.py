@@ -26,8 +26,7 @@ class TestLayoutConfigIO:
         assert result == config
 
     def test_read_layout_config_not_found(self, fs):
-        with pytest.raises(FileNotFoundError):
-            read_layout_config(fs, "nonexistent-layout")
+        assert read_layout_config(fs, "nonexistent-layout") is None
 
     def test_write_creates_extension_dir(self, fs, tmp_path):
         config = {"extensionName": "0002-flat-direct-storage-layout"}

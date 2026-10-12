@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Protocol
 
 import msgspec
 
+from ocfl_lib._path import join_path
 from ocfl_lib.digest import DigestAlgorithm, bytes_digest
 from ocfl_lib.errors import (
     PlanMismatchError,
@@ -228,10 +229,6 @@ def deserialize(data: bytes) -> UpdatePlan:
 # --- Step construction ---
 
 
-def _join(base: str, name: str) -> str:
-    if not base:
-        return name
-    return f"{base}/{name}"
 
 
 def _noop_run() -> int:
@@ -252,8 +249,9 @@ def _read_sidecar_digest(fsys: FS, path: str) -> str | None:
 
 def _expected_root_sidecar_path(plan: UpdatePlan, obj_dir: str) -> str:
     if plan.expected_root_sidecar_algorithm:
-        return _join(obj_dir, f"inventory.json.{plan.expected_root_sidecar_algorithm}")
-    return _join(obj_dir, plan.new_inv.sidecar_filename)
+        alg = plan.expected_root_sidecar_algorithm
+        return join_path(obj_dir, f"inventory.json.{alg}")
+    return join_path(obj_dir, plan.new_inv.sidecar_filename)
 
 
 def _head_matches_expected(plan: UpdatePlan, fsys: FS, obj_dir: str) -> bool:
@@ -265,14 +263,14 @@ def _head_matches_expected(plan: UpdatePlan, fsys: FS, obj_dir: str) -> bool:
 
 def _head_matches_plan(plan: UpdatePlan, fsys: FS, obj_dir: str) -> bool:
     return (
-        _read_sidecar_digest(fsys, _join(obj_dir, plan.new_inv.sidecar_filename))
+        _read_sidecar_digest(fsys, join_path(obj_dir, plan.new_inv.sidecar_filename))
         == plan.new_inv.digest
     )
 
 
 def _read_root_inventory_digest(plan: UpdatePlan, fsys: FS, obj_dir: str) -> str | None:
     try:
-        data = fs_utils.read_all(fsys, _join(obj_dir, "inventory.json"))
+        data = fs_utils.read_all(fsys, join_path(obj_dir, "inventory.json"))
     except FileNotFoundError:
         return None
     return bytes_digest(data, plan.new_inv.digest_algorithm)
@@ -301,11 +299,11 @@ def _check_stale_head(
 ) -> None:
     expected = plan.expected_root_sidecar_digest
     if expected is None:
-        inv_path = _join(obj_dir, "inventory.json")
-        sidecar_path = _join(obj_dir, plan.new_inv.sidecar_filename)
+        inv_path = join_path(obj_dir, "inventory.json")
+        sidecar_path = join_path(obj_dir, plan.new_inv.sidecar_filename)
         if (
-            not allow_planned_root_inventory and fs_utils.exists(fsys, inv_path)
-        ) or fs_utils.exists(fsys, sidecar_path):
+            not allow_planned_root_inventory and fsys.exists(inv_path)
+        ) or fsys.exists(sidecar_path):
             raise StaleHeadError(
                 object_path=obj_dir,
                 expected_digest=None,
@@ -344,7 +342,7 @@ def prepare_steps(
     spec = Spec.from_inventory_type(inv.type)
     vnum = VNum.parse(inv.head)
     vnum_str = str(vnum)
-    version_dir = _join(obj_dir, vnum_str)
+    version_dir = join_path(obj_dir, vnum_str)
     is_new = old_inv is None
 
     old_manifest = old_inv.inventory.manifest if old_inv else {}
@@ -368,7 +366,7 @@ def prepare_steps(
 
     # 2. Declaration
     namaste = Namaste.for_object(spec)
-    namaste_path = _join(obj_dir, namaste.filename)
+    namaste_path = join_path(obj_dir, namaste.filename)
     namaste_bytes = namaste.content.encode()
 
     def _write_declaration() -> int:
@@ -420,7 +418,7 @@ def prepare_steps(
         if digest in old_manifest:
             continue
         content_path = content_paths[0]
-        dest = _join(obj_dir, content_path)
+        dest = join_path(obj_dir, content_path)
 
         def _make_copy(d: str = digest, dst: str = dest) -> int:
             # Ensure parent directory exists
@@ -445,7 +443,7 @@ def prepare_steps(
         )
 
     # 5. Version inventory.json
-    vinv_path = _join(version_dir, "inventory.json")
+    vinv_path = join_path(version_dir, "inventory.json")
     steps.append(
         PlanStep(
             name="version-inv",
@@ -455,7 +453,7 @@ def prepare_steps(
     )
 
     # 6. Version sidecar
-    vsidecar_path = _join(version_dir, new_inv.sidecar_filename)
+    vsidecar_path = join_path(version_dir, new_inv.sidecar_filename)
     vsidecar_bytes = new_inv.sidecar_content.encode()
     steps.append(
         PlanStep(
@@ -467,7 +465,7 @@ def prepare_steps(
 
     # 7. Extension files
     for rel_path, content_bytes in plan.extension_files.items():
-        dest = _join(obj_dir, rel_path)
+        dest = join_path(obj_dir, rel_path)
 
         def _make_ext_write(dst: str = dest, data: bytes = content_bytes) -> int:
             parent = dst.rsplit("/", 1)[0] if "/" in dst else ""
@@ -489,7 +487,7 @@ def prepare_steps(
     # 7b. Declaration swap (spec upgrade only)
     if old_spec is not None and is_upgrade:
         old_namaste = Namaste.for_object(old_spec)
-        old_namaste_path = _join(obj_dir, old_namaste.filename)
+        old_namaste_path = join_path(obj_dir, old_namaste.filename)
         old_namaste_bytes = old_namaste.content.encode()
 
         def _swap_declaration() -> int:
@@ -510,15 +508,17 @@ def prepare_steps(
         )
 
     # 8. Root inventory.json
-    rinv_path = _join(obj_dir, "inventory.json")
+    rinv_path = join_path(obj_dir, "inventory.json")
     if revert_src is not None:
         revert_rinv_bytes = revert_src.raw_bytes
-        revert_sidecar_path_for_root_inv = _join(obj_dir, revert_src.sidecar_filename)
+        revert_sidecar_path_for_root_inv = join_path(
+            obj_dir, revert_src.sidecar_filename
+        )
         revert_sidecar_bytes_for_root_inv = revert_src.sidecar_content.encode()
 
         def _revert_root_inv() -> None:
             if _head_matches_plan(plan, fsys, obj_dir):
-                _try_remove(fsys, _join(obj_dir, plan.new_inv.sidecar_filename))
+                _try_remove(fsys, join_path(obj_dir, plan.new_inv.sidecar_filename))
                 fs_utils.write_bytes(
                     fsys,
                     revert_sidecar_path_for_root_inv,
@@ -531,7 +531,7 @@ def prepare_steps(
 
         def _revert_root_inv() -> None:
             if _head_matches_plan(plan, fsys, obj_dir):
-                _try_remove(fsys, _join(obj_dir, plan.new_inv.sidecar_filename))
+                _try_remove(fsys, join_path(obj_dir, plan.new_inv.sidecar_filename))
                 _try_remove(fsys, rinv_path)
             elif _head_matches_expected(plan, fsys, obj_dir):
                 _try_remove(fsys, rinv_path)
@@ -545,10 +545,10 @@ def prepare_steps(
     )
 
     # 9. Root sidecar (last step — marks completion)
-    rsidecar_path = _join(obj_dir, new_inv.sidecar_filename)
+    rsidecar_path = join_path(obj_dir, new_inv.sidecar_filename)
     rsidecar_bytes = new_inv.sidecar_content.encode()
     if revert_src is not None:
-        revert_sidecar_path = _join(obj_dir, revert_src.sidecar_filename)
+        revert_sidecar_path = join_path(obj_dir, revert_src.sidecar_filename)
         revert_sidecar_bytes = revert_src.sidecar_content.encode()
 
         def _revert_root_sidecar() -> None:
@@ -571,7 +571,9 @@ def prepare_steps(
 
     # 10. Remove old root sidecar on algorithm migration
     if plan.old_sidecar_alg:
-        migrated_sidecar_path = _join(obj_dir, f"inventory.json.{plan.old_sidecar_alg}")
+        migrated_sidecar_path = join_path(
+            obj_dir, f"inventory.json.{plan.old_sidecar_alg}"
+        )
 
         def _remove_old_sidecar() -> int:
             with contextlib.suppress(FileNotFoundError):

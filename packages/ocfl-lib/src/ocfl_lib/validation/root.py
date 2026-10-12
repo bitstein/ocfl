@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
+from ocfl_lib._path import join_path
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.spec import Namaste, Spec
 from ocfl_lib.validation.object import validate_object
@@ -27,7 +28,6 @@ _KNOWN_ROOT_EXTENSIONS = frozenset(
 )
 
 _OBJ_DECL_RE = re.compile(r"^0=ocfl_object_(\d+\.\d+)$")
-_SUPPORTED_VERSIONS = frozenset(v.value for v in Spec)
 
 
 @dataclass
@@ -88,7 +88,7 @@ def validate_root(
         # Validate contents
         decl = root_decls[0]
         root_spec = decl.spec
-        decl_path = _join(path, decl.filename)
+        decl_path = join_path(path, decl.filename)
         try:
             content = fs_utils.read_text(fsys, decl_path)
             if content != decl.content:
@@ -97,7 +97,7 @@ def validate_root(
             pass
 
     # 2. ocfl_layout.json
-    layout_path = _join(path, "ocfl_layout.json")
+    layout_path = join_path(path, "ocfl_layout.json")
     try:
         layout_bytes = fs_utils.read_all(fsys, layout_path)
         try:
@@ -116,7 +116,7 @@ def validate_root(
         pass  # ocfl_layout.json is optional
 
     # 3. extensions/ directory
-    ext_path = _join(path, "extensions")
+    ext_path = join_path(path, "extensions")
     try:
         ext_entries = list(fsys.read_dir(ext_path))
         for entry in ext_entries:
@@ -212,7 +212,7 @@ def _walk_hierarchy(
                 m = _OBJ_DECL_RE.match(zero_eqs[0].name)
                 if m:
                     version = m.group(1)
-                    if version in _SUPPORTED_VERSIONS:
+                    if version in Spec:
                         obj_paths.append(dir_path)
                         if root_spec is not None and Spec(version).is_newer_than(
                             root_spec
@@ -249,11 +249,6 @@ def _walk_hierarchy(
                 result.error("E072", path=dir_path)
 
         for d in sub_dirs:
-            queue.append(_join(dir_path, d.name))
+            queue.append(join_path(dir_path, d.name))
 
     return obj_paths
-
-
-def _join(*parts: str) -> str:
-    """Join path parts with /, filtering empty parts."""
-    return "/".join(p for p in parts if p)

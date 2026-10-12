@@ -4,6 +4,7 @@ import hashlib
 from typing import TYPE_CHECKING, Any
 
 from ocfl_lib import ots
+from ocfl_lib._path import join_path
 from ocfl_lib.errors import OtsParseError
 from ocfl_lib.fs import utils as fs_utils
 
@@ -28,8 +29,8 @@ def validate_ots_extension(
 
     Activated by presence of ``extensions/NNNN-ots-timestamps/config.json``.
     """
-    ext_root = _join(obj_path, "extensions", EXTENSION_NAME)
-    if not fsys.exists(_join(ext_root, "config.json")):
+    ext_root = join_path(obj_path, "extensions", EXTENSION_NAME)
+    if not fsys.exists(join_path(ext_root, "config.json")):
         return
 
     if alg.ocfl_name == "sha512":
@@ -42,7 +43,7 @@ def validate_ots_extension(
     for vkey in sorted(inv_versions):
         _validate_version_state(vkey, versions.get(vkey), result)
         vots_rel = f"inventory.json.{vkey}.ots"
-        if not fsys.exists(_join(ext_root, vots_rel)):
+        if not fsys.exists(join_path(ext_root, vots_rel)):
             result.error("E904", where=vkey, path=vots_rel)
         else:
             _check_inventory_proof(fsys, obj_path, vkey, vots_rel, result)
@@ -87,10 +88,11 @@ def _check_inventory_proof(
     vots_rel: str,
     result: ValidationResult,
 ) -> None:
-    ext_root = _join(obj_path, "extensions", EXTENSION_NAME)
+    ext_root = join_path(obj_path, "extensions", EXTENSION_NAME)
     try:
-        ots_bytes = fs_utils.read_all(fsys, _join(ext_root, vots_rel))
-        vinv_bytes = fs_utils.read_all(fsys, _join(obj_path, vkey, "inventory.json"))
+        ots_bytes = fs_utils.read_all(fsys, join_path(ext_root, vots_rel))
+        vinv_path = join_path(obj_path, vkey, "inventory.json")
+        vinv_bytes = fs_utils.read_all(fsys, vinv_path)
     except OSError:
         return
 
@@ -136,7 +138,7 @@ def _check_embedded_digests(
             continue
 
         try:
-            ots_bytes = fs_utils.read_all(fsys, _join(obj_path, ots_path))
+            ots_bytes = fs_utils.read_all(fsys, join_path(obj_path, ots_path))
         except OSError:
             continue
 
@@ -164,7 +166,3 @@ def _check_embedded_digests(
 
         if parsed.block_height is None:
             result.warning("W902", path=ots_path)
-
-
-def _join(*parts: str) -> str:
-    return "/".join(p for p in parts if p)

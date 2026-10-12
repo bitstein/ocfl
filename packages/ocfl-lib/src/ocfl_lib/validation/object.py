@@ -5,9 +5,10 @@ import json
 import re
 from typing import TYPE_CHECKING, Any
 
+from ocfl_lib._path import join_path
 from ocfl_lib.digest import DigestAlgorithm, bytes_digest, stream_digest
 from ocfl_lib.fs import utils as fs_utils
-from ocfl_lib.spec import Namaste
+from ocfl_lib.spec import VERSION_DIR_RE, Namaste
 from ocfl_lib.validation.extension_ots import validate_ots_extension
 from ocfl_lib.validation.inventory import (
     validate_inventory,
@@ -18,7 +19,6 @@ if TYPE_CHECKING:
     from ocfl_lib.fs.protocols import FS, FileWalker
     from ocfl_lib.validation.result import ValidationResult
 
-_VNUM_RE = re.compile(r"^v\d+$")
 _SIDECAR_RE = re.compile(r"^inventory\.json\.(\S+)$")
 
 # Known OCFL community extensions
@@ -88,7 +88,7 @@ def validate_object(
 
     # Validate declaration contents
     if namaste is not None:
-        decl_path = _join(path, namaste.filename)
+        decl_path = join_path(path, namaste.filename)
         try:
             content = fs_utils.read_text(fsys, decl_path)
             if content != namaste.content:
@@ -97,7 +97,7 @@ def validate_object(
             pass
 
     # 3. Read and validate root inventory.json
-    inv_path = _join(path, "inventory.json")
+    inv_path = join_path(path, "inventory.json")
     try:
         inv_bytes = fs_utils.read_all(fsys, inv_path)
     except OSError:
@@ -126,7 +126,7 @@ def validate_object(
         return
 
     sidecar_name = f"inventory.json.{alg.ocfl_name}"
-    sidecar_path = _join(path, sidecar_name)
+    sidecar_path = join_path(path, sidecar_name)
     _validate_sidecar(fsys, sidecar_path, inv_bytes, alg, result, where="root")
 
     # 5. Determine content directory and version list
@@ -135,7 +135,7 @@ def validate_object(
     # Parse version numbers from inventory
     inv_versions: dict[str, int] = {}
     for vkey in inv_data.get("versions", {}):
-        m = _VNUM_RE.match(vkey)
+        m = VERSION_DIR_RE.match(vkey)
         if m:
             inv_versions[vkey] = int(vkey[1:])
 
@@ -156,7 +156,7 @@ def validate_object(
             continue
         if Namaste.parse(entry.name) is not None:
             continue
-        if entry.is_dir and _VNUM_RE.match(entry.name):
+        if entry.is_dir and VERSION_DIR_RE.match(entry.name):
             if entry.name not in inv_versions:
                 result.error("E046b", dir=entry.name)
             continue
@@ -168,7 +168,7 @@ def validate_object(
             result.error("E001c", entry=entry.name)
 
     # 7. Check extensions directory
-    ext_path = _join(path, "extensions")
+    ext_path = join_path(path, "extensions")
     try:
         ext_entries = list(fsys.read_dir(ext_path))
         for entry in ext_entries:
@@ -185,7 +185,7 @@ def validate_object(
     # the same as or later than the preceding version's; root is the last.
     prev_spec: tuple[str, str] | None = None  # (version dir, spec version)
     for vkey, _vnum in sorted(inv_versions.items(), key=lambda x: x[1]):
-        vdir = _join(path, vkey)
+        vdir = join_path(path, vkey)
         vspec = _validate_version_dir(
             fsys,
             vdir,
@@ -211,7 +211,7 @@ def validate_object(
     actual_files: set[str] = set()
     prefix_len = len(path) + 1 if path else 0
     for vkey in inv_versions:
-        content_path = _join(path, vkey, content_dir)
+        content_path = join_path(path, vkey, content_dir)
         try:
             for ref in fsys.walk_files(content_path):
                 # Strip object path prefix to get manifest-relative path
@@ -283,7 +283,7 @@ def _validate_version_dir(
             result.error("E015", where=vkey, entry=entry.name)
 
     # W003: empty content directory
-    content_path = _join(vdir, content_dir)
+    content_path = join_path(vdir, content_dir)
     try:
         content_entries = list(fsys.read_dir(content_path))
         if not content_entries:
@@ -292,7 +292,7 @@ def _validate_version_dir(
         pass
 
     # Check version inventory
-    vinv_path = _join(vdir, "inventory.json")
+    vinv_path = join_path(vdir, "inventory.json")
     try:
         vinv_bytes = fs_utils.read_all(fsys, vinv_path)
     except OSError:
@@ -301,7 +301,7 @@ def _validate_version_dir(
 
     # Validate version inventory sidecar (use detected alg or root alg)
     sidecar_alg = version_sidecar_alg or root_alg
-    vsidecar_path = _join(vdir, f"inventory.json.{sidecar_alg.ocfl_name}")
+    vsidecar_path = join_path(vdir, f"inventory.json.{sidecar_alg.ocfl_name}")
     _validate_sidecar(fsys, vsidecar_path, vinv_bytes, sidecar_alg, result, where=vkey)
 
     # For head version: must be byte-identical to root
@@ -414,7 +414,7 @@ def _check_version_dir_sequence(entries: list[Any], result: ValidationResult) ->
     for entry in entries:
         if not entry.is_dir:
             continue
-        if _VNUM_RE.match(entry.name):
+        if VERSION_DIR_RE.match(entry.name):
             vnums.append(int(entry.name[1:]))
 
     if not vnums:
@@ -439,7 +439,7 @@ def _check_first_version_content_dir(
         return
 
     first_vkey = min(inv_versions.items(), key=lambda item: item[1])[0]
-    vinv_path = _join(path, first_vkey, "inventory.json")
+    vinv_path = join_path(path, first_vkey, "inventory.json")
     try:
         vinv_bytes = fs_utils.read_all(fsys, vinv_path)
         vinv_data = json.loads(vinv_bytes)
@@ -547,7 +547,7 @@ def _verify_digests(
         for content_path in paths:
             if not isinstance(content_path, str):
                 continue
-            full_path = _join(obj_path, content_path)
+            full_path = join_path(obj_path, content_path)
             try:
                 with fsys.open_file(full_path) as f:
                     actual = stream_digest(f, alg)
@@ -586,7 +586,7 @@ def _verify_fixity_digests(
             for content_path in paths:
                 if not isinstance(content_path, str):
                     continue
-                full_path = _join(obj_path, content_path)
+                full_path = join_path(obj_path, content_path)
                 try:
                     with fsys.open_file(full_path) as f:
                         actual = stream_digest(f, alg)
@@ -609,8 +609,3 @@ def _verify_fixity_digests(
                     )
                 except ValueError:
                     pass
-
-
-def _join(*parts: str) -> str:
-    """Join path parts with /, filtering empty parts."""
-    return "/".join(p for p in parts if p)

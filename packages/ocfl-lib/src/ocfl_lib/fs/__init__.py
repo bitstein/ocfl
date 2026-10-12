@@ -9,7 +9,7 @@ from ocfl_lib.fs.protocols import (
     FsEntry,
     WriteFS,
 )
-from ocfl_lib.fs.utils import copy, exists, read_all, read_text, write_bytes
+from ocfl_lib.fs.utils import copy, read_all, read_text, write_bytes
 
 __all__ = [
     "FS",
@@ -20,7 +20,6 @@ __all__ = [
     "LocalFS",
     "WriteFS",
     "copy",
-    "exists",
     "read_all",
     "read_text",
     "write_bytes",

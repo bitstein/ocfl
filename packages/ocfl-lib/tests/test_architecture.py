@@ -1,6 +1,8 @@
 """Architecture guards for the lib cleanup (docs/roadmap.md §2)."""
 
 import ast
+import importlib
+import pkgutil
 import re
 from pathlib import Path
 
@@ -125,3 +127,69 @@ class TestErrors:
 
         assert issubclass(ocfl_lib.ObjectNotFound, LookupError)
         assert issubclass(ocfl_lib.VersionNotFound, LookupError)
+
+
+# ------------------------------------------------------------ 8. duplicates
+
+
+class TestNoDuplicates:
+    def _lib_trees(self):
+        return [(p, _tree(p)) for p in _py_files(LIB_SRC)]
+
+    def test_one_join_helper(self):
+        defs = [
+            f"{p.name}:{n.name}"
+            for p, t in self._lib_trees()
+            for n in ast.walk(t)
+            if isinstance(n, ast.FunctionDef)
+            and n.name.lstrip("_") in ("join", "join_path")
+        ]
+        assert len(defs) == 1, defs
+
+    def test_one_version_regex(self):
+        hits = [
+            f"{p.name}:{n.lineno}"
+            for p, t in self._lib_trees()
+            for n in ast.walk(t)
+            if isinstance(n, ast.Constant)
+            and isinstance(n.value, str)
+            and n.value.startswith("^v")
+            and "\\d" in n.value
+        ]
+        assert len(hits) == 1, hits
+
+    def test_no_supported_version_sets(self):
+        bad = []
+        for p, t in self._lib_trees():
+            for n in ast.walk(t):
+                if isinstance(n, ast.Name) and "SUPPORTED" in n.id:
+                    bad.append(f"{p.name}:{n.lineno} {n.id}")
+                if isinstance(n, (ast.Set, ast.List, ast.Tuple)) and any(
+                    isinstance(e, ast.Constant) and e.value in ("1.0", "1.1")
+                    for e in n.elts
+                ):
+                    bad.append(f"{p.name}:{n.lineno} literal version set")
+        assert not bad, bad
+
+    def test_root_uses_layout_config_helpers(self):
+        root_py = next(
+            p for p in _py_files(LIB_SRC) if p.name in ("root.py", "_root.py")
+        )
+        text = root_py.read_text()
+        assert "ocfl_layout.json" not in text
+        assert "config.json" not in text
+        assert "msgspec" not in text
+
+    def test_one_multi_digest_loop(self):
+        hits = 0
+        for p in _py_files(LIB_SRC):
+            hits += p.read_text().count(".new_hasher() for ")
+        assert hits == 1, hits
+
+    def test_no_fs_utils_exists(self):
+        fs = importlib.import_module("ocfl_lib.fs")
+        for m in pkgutil.iter_modules(fs.__path__, "ocfl_lib.fs."):
+            if "util" in m.name:
+                mod = importlib.import_module(m.name)
+                assert not hasattr(mod, "exists"), m.name
+        assert not hasattr(fs, "exists")

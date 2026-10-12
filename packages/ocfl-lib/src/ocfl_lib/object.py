@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, BinaryIO, Literal
 
+from ocfl_lib._path import join_path
 from ocfl_lib.digest import DigestAlgorithm, stream_digest
 from ocfl_lib.digest_map import DigestMap, to_path_map
 from ocfl_lib.errors import (
@@ -49,7 +50,7 @@ def _migrate_algorithm(
     # Re-digest each unique content file with new algorithm
     old_to_new: dict[str, str] = {}
     for old_digest, content_paths in prev.manifest.items():
-        full_path = _join(obj_path, content_paths[0])
+        full_path = join_path(obj_path, content_paths[0])
         with fsys.open_file(full_path) as f:
             old_to_new[old_digest] = stream_digest(f, new_alg)
 
@@ -205,7 +206,7 @@ class Object:
         cp = self.content_path(digest)
         if cp is None:
             raise ContentNotFound(f"digest {digest[:16]}... not found in manifest")
-        full_path = _join(self._path, cp)
+        full_path = join_path(self._path, cp)
         return self._fsys.open_file(full_path)
 
     def diff_versions(self, v1: VNum, v2: VNum) -> Sequence[DiffEntry]:
@@ -290,9 +291,9 @@ class Object:
 
     def version_inventory(self, v: VNum) -> StoredInventory | None:
         """Load inventory from a specific version directory, or None if absent."""
-        vdir = _join(self._path, str(v))
-        inv_path = _join(vdir, INVENTORY_FILENAME)
-        if not fs_utils.exists(self._fsys, inv_path):
+        vdir = join_path(self._path, str(v))
+        inv_path = join_path(vdir, INVENTORY_FILENAME)
+        if not self._fsys.exists(inv_path):
             return None
         return self._load_inventory(vdir)
 
@@ -428,7 +429,7 @@ class Object:
 
     def _load_inventory(self, dir_path: str) -> StoredInventory:
         """Read inventory.json + sidecar, validate digest, return StoredInventory."""
-        inv_path = _join(dir_path, INVENTORY_FILENAME)
+        inv_path = join_path(dir_path, INVENTORY_FILENAME)
         inv_bytes = fs_utils.read_all(self._fsys, inv_path)
 
         # Determine algorithm from inventory JSON
@@ -438,7 +439,7 @@ class Object:
 
         # Validate sidecar digest
         sidecar_name = f"{INVENTORY_FILENAME}.{alg.ocfl_name}"
-        sidecar_path = _join(dir_path, sidecar_name)
+        sidecar_path = join_path(dir_path, sidecar_name)
         sidecar_text = fs_utils.read_text(self._fsys, sidecar_path)
         expected_digest = sidecar_text.strip().split()[0]
 
@@ -465,12 +466,5 @@ class _ObjectContentSource(ContentSource):
         paths = self._manifest.get(digest)
         if not paths:
             raise ContentNotFound(f"digest {digest!r} not in manifest")
-        full = _join(self._obj_path, paths[0])
+        full = join_path(self._obj_path, paths[0])
         return self._fsys, full
-
-
-def _join(base: str, name: str) -> str:
-    """Join path components with '/' separator, handling empty base."""
-    if not base:
-        return name
-    return f"{base}/{name}"

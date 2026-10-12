@@ -25,15 +25,6 @@ def write_bytes(fsys: WriteFS, name: str, data: bytes) -> int:
     return fsys.write(name, BytesIO(data))
 
 
-def exists(fsys: FS, name: str) -> bool:
-    """Check if a file exists by attempting to open it."""
-    try:
-        with fsys.open_file(name):
-            return True
-    except FileNotFoundError:
-        return False
-
-
 def copy(src_fs: FS, src_name: str, dst_fs: WriteFS, dst_name: str) -> int:
     """Copy a file between filesystems.
 

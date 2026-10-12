@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ocfl_lib.fs.local import LocalFS
-from ocfl_lib.fs.utils import copy, exists, read_all, read_text, write_bytes
+from ocfl_lib.fs.utils import copy, read_all, read_text, write_bytes
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -65,14 +65,6 @@ class TestWriteBytes:
         n = write_bytes(fs, "empty.txt", b"")
         assert n == 0
         assert (fs_dir / "empty.txt").read_bytes() == b""
-
-
-class TestExists:
-    def test_exists_true(self, fs: LocalFS):
-        assert exists(fs, "hello.txt") is True
-
-    def test_exists_false(self, fs: LocalFS):
-        assert exists(fs, "nope.txt") is False
 
 
 class TestCopy:

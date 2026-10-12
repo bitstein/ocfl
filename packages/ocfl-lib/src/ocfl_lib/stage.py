@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from ocfl_lib.digest import DigestAlgorithm, stream_digest, stream_multi_digest
+from ocfl_lib.digest import DigestAlgorithm, stream_multi_digest
 from ocfl_lib.errors import ContentNotFound, DigestAlgorithmMismatch
 from ocfl_lib.update_plan import ContentSource
 
@@ -157,16 +157,10 @@ def stage_dir(
     ) -> tuple[str, str, str, dict[DigestAlgorithm, str]]:
         """Return (state_path, walk_path, primary_digest, fixity_digests)."""
         state_path = walk_path.removeprefix(dir_prefix)
-        if compute_fixity:
-            with fsys.open_file(walk_path) as f:
-                digests = stream_multi_digest(f, all_algs)
-            primary = digests[alg]
-            fixity = {a: digests[a] for a in fixity_algs}
-            return state_path, walk_path, primary, fixity
-        else:
-            with fsys.open_file(walk_path) as f:
-                primary = stream_digest(f, alg)
-            return state_path, walk_path, primary, {}
+        with fsys.open_file(walk_path) as f:
+            digests = stream_multi_digest(f, all_algs)
+        fixity = {a: digests[a] for a in fixity_algs}
+        return state_path, walk_path, digests[alg], fixity
 
     # Parallel digest computation
     results = list(bounded_map(lambda fr: _digest_file(fr.path), files))

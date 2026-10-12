@@ -41,7 +41,8 @@ INVENTORY_FILENAME: str = "inventory.json"
 DEFAULT_CONTENT_DIRECTORY: str = "content"
 DEFAULT_DIGEST_ALGORITHM: str = "sha512"
 
-_VNUM_RE = re.compile(r"^v(0*[1-9]\d*)$")
+# Version directory name syntax. VNum.parse also requires a number >= 1.
+VERSION_DIR_RE = re.compile(r"^v(\d+)$")
 
 
 @functools.total_ordering
@@ -88,8 +89,8 @@ class VNum:
     @classmethod
     def parse(cls, s: str) -> VNum:
         """Parse 'v1' → VNum(1, 0), 'v001' → VNum(1, 3)."""
-        m = _VNUM_RE.match(s)
-        if not m:
+        m = VERSION_DIR_RE.match(s)
+        if not m or not int(m.group(1)):
             raise InvalidVersionNumber(f"invalid version number: {s!r}")
         digits = m.group(1)
         padding = len(digits) if digits[0] == "0" else 0
@@ -122,7 +123,9 @@ class VNum:
         return hash(self.number)
 
 
-_NAMASTE_RE = re.compile(r"^0=(ocfl(?:_object)?)_(1\.[01])$")
+_NAMASTE_RE = re.compile(
+    rf"^0=(ocfl(?:_object)?)_({'|'.join(re.escape(s) for s in Spec)})$"
+)
 
 _NAMASTE_PREFIX = {"root": "ocfl", "object": "ocfl_object"}
 

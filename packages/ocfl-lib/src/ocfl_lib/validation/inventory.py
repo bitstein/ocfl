@@ -7,6 +7,7 @@ import msgspec
 
 from ocfl_lib.digest import DigestAlgorithm
 from ocfl_lib.inventory import Inventory
+from ocfl_lib.spec import VERSION_DIR_RE, Spec
 from ocfl_lib.validation.limits import (
     MAX_MESSAGE,
     MAX_OBJECT_ID,
@@ -34,12 +35,10 @@ _KNOWN_KEYS = frozenset(
 _ALLOWED_ALGORITHMS = frozenset({"sha512", "sha256"})
 
 _TYPE_RE = re.compile(r"^https://ocfl\.io/(\d+\.\d+)/spec/#inventory$")
-_SUPPORTED_VERSIONS = frozenset({"1.0", "1.1"})
 
 # Simple URI check: has a scheme followed by :
 _URI_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*:")
 
-_VNUM_RE = re.compile(r"^v\d+$")
 
 
 def validate_inventory(
@@ -131,7 +130,7 @@ def _validate_structure(
             result.error("E038b", where=where, got=type_val, assumed_spec_version="1.1")
         else:
             ver = m.group(1)
-            if ver not in _SUPPORTED_VERSIONS:
+            if ver not in Spec:
                 result.error(
                     "E038c", where=where, got=type_val, assumed_spec_version="1.1"
                 )
@@ -257,7 +256,7 @@ def _validate_manifest(
                 result.error("E042a", where=where, path=path)
                 continue
 
-            if not _VNUM_RE.match(segments[0]):
+            if not VERSION_DIR_RE.match(segments[0]):
                 result.error("E042b", where=where, path=path)
                 continue
 
@@ -295,7 +294,7 @@ def _validate_versions(
     vnums: list[tuple[int, str]] = []  # (number, key)
     pad_lengths: set[int] = set()  # 0 = unpadded, >0 = padded width
     for vkey in versions:
-        m = _VNUM_RE.match(vkey)
+        m = VERSION_DIR_RE.match(vkey)
         if not m:
             result.error("E046b", dir=vkey)
             continue
