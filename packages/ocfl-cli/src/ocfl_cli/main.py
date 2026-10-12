@@ -10,7 +10,7 @@ import typer
 
 from ocfl_cli import _style
 from ocfl_cli._appctx import install_app_ctx
-from ocfl_cli._exit import exit_for_error
+from ocfl_cli._exit import OcflGroup
 from ocfl_cli.archive.diff import diff
 from ocfl_cli.archive.export import export
 from ocfl_cli.archive.info import info
@@ -21,7 +21,7 @@ from ocfl_cli.archive.purge import purge
 from ocfl_cli.archive.recover import recover
 from ocfl_cli.archive.show import show
 from ocfl_cli.archive.validate import validate
-from ocfl_cli.config import ConfigError, load_config
+from ocfl_cli.config import load_config
 from ocfl_cli.exit_codes import format_exit_code_help
 from ocfl_cli.ots.bitcoin import default_btc_factory
 from ocfl_cli.ots.simpleproof import default_sp_factory
@@ -67,6 +67,7 @@ def _configure_logging(json_mode: bool, verbose: bool, quiet: bool) -> None:
 
 
 app = typer.Typer(
+    cls=OcflGroup,
     name="ocfl",
     help="CLI for managing an OCFL archive.",
     epilog=format_exit_code_help(),
@@ -126,10 +127,7 @@ def main(
     )
     ctx.ensure_object(dict)
 
-    try:
-        config = load_config()
-    except ConfigError as e:
-        exit_for_error(e)
+    config = load_config()
 
     # Resolve `-r` through config: alias → archive root. Precedence:
     # flag > OCFL_ROOT env > implicit-single-archive default.

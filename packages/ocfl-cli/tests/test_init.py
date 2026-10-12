@@ -60,7 +60,8 @@ class TestInit:
                 "0002-flat-direct-storage-layout",
             ],
         )
-        assert result.exit_code == 1
+        # RootExistsError is ErrorClass.STATE -> exit 3 (ocfl-rs ADR 0004).
+        assert result.exit_code == 3
         assert "already initialized" in result.output
 
         data = json.loads((tmp_path / "ocfl_layout.json").read_text())

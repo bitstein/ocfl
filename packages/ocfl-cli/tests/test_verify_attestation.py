@@ -38,7 +38,6 @@ from fakes import FakeBitcoinRPC
 
 from ocfl_cli.errors import (
     AttestationMismatchError,
-    BitcoinBlockMissingError,
     ReorgDetectedError,
 )
 from ocfl_cli.ots.bitcoin import (
@@ -47,6 +46,7 @@ from ocfl_cli.ots.bitcoin import (
     VerifiedAttestation,
     verify_attestation,
 )
+from ocfl_lib import BitcoinNoBlockError
 from tests.helpers.ots import build_attestation, build_committed_attestation
 
 # ---------------------------------------------------------------------------
@@ -229,7 +229,7 @@ class TestPending:
     ) -> None:
         class MissingBlockRPC(FakeBitcoinRPC):
             def getblockhash(self, height: int) -> str:
-                raise BitcoinBlockMissingError(f"height {height} out of range")
+                raise BitcoinNoBlockError(f"height {height} out of range")
 
         ots = build_attestation(DIGEST, block_height=HEIGHT)
         rpc = MissingBlockRPC()

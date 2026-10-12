@@ -22,8 +22,9 @@ from msgspec.structs import replace
 
 from ocfl_cli.errors import (
     AttestationMismatchError,
-    BitcoinError,
+    CommitClaimLostError,
     CommitFailedError,
+    CommitInterruptedError,
     InventoryProofMissingError,
     LockTimeoutError,
     MissingStagedMetadataError,
@@ -59,6 +60,7 @@ from ocfl_cli.stage.state import (
     with_lock,
 )
 from ocfl_lib import (
+    BitcoinRpcError,
     ClaimLostError,
     CommitPlan,
     ObjectLockedError,
@@ -771,7 +773,7 @@ def _build_bitcoin_section(
         return None
     try:
         info = btc_factory(cfg).getblockchaininfo()
-    except BitcoinError as e:
+    except BitcoinRpcError as e:
         logger.warning("bitcoin RPC unreachable, omitting bitcoin section: %s", e)
         return None
     return {
@@ -2219,13 +2221,11 @@ def _commit_plan(
     try:
         sr.commit(fs, plan.object_id, plan, content=content_source)
     except ClaimLostError as exc:
-        raise CommitFailedError(str(exc), claim_lost=True) from exc
+        raise CommitClaimLostError(str(exc)) from exc
     except ObjectLockedError as exc:
         raise LockTimeoutError(f"object commit lock busy: {exc}") from exc
     except KeyboardInterrupt:
-        raise CommitFailedError(
-            "commit interrupted, reverting...", interrupted=True
-        ) from None
+        raise CommitInterruptedError("commit interrupted, reverting...") from None
     except Exception as exc:
         raise CommitFailedError(str(exc)) from exc
 

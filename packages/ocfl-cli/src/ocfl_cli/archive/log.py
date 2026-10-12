@@ -8,8 +8,7 @@ from rich.text import Text
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import open_root, output_json
-from ocfl_cli._exit import exit_for_error
-from ocfl_lib import ObjectNotFound, OcflError
+from ocfl_lib import ObjectNotFound
 
 
 def log(
@@ -26,12 +25,9 @@ def log(
     as_json = appctx.json_mode(ctx)
     root, _fs = open_root(appctx.root(ctx))
 
-    try:
-        obj = root.get_object(object_id)
-        if not obj.exists:
-            raise ObjectNotFound(object_id)
-    except OcflError as e:
-        exit_for_error(e)
+    obj = root.get_object(object_id)
+    if not obj.exists:
+        raise ObjectNotFound(object_id)
 
     versions = obj.versions()
     if not reverse:

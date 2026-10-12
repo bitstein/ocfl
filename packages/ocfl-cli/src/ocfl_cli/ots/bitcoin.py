@@ -1,13 +1,12 @@
 """Bitcoin for the CLI workflows: the lib's RPC client, ZMQ, ``verify_attestation``.
 
-The RPC client and the attestation check live in ``ocfl_lib`` (ADR-0002).
-Here the client raises the CLI's Bitcoin errors, ``block_source`` adapts any
-``BitcoinRPC`` to a ``BlockHeaderSource``, and ``verify_attestation`` maps the
-lib's check onto the staging workflow's results. ZMQ stays in the CLI.
+The RPC client, its errors and the attestation check live in ``ocfl_lib``
+(ADR-0002). Here ``block_source`` adapts any ``BitcoinRPC`` to a
+``BlockHeaderSource``, and ``verify_attestation`` maps the lib's check onto
+the staging workflow's results. ZMQ stays in the CLI.
 """
 
 import contextlib
-import time
 from base64 import b64encode
 from dataclasses import dataclass
 from enum import StrEnum
@@ -16,20 +15,8 @@ from typing import TYPE_CHECKING, Protocol
 import httpx2 as httpx
 import zmq
 
-from ocfl_cli.errors import (
-    AttestationMismatchError,
-    BitcoinAuthError,
-    BitcoinBlockMissingError,
-    BitcoinError,
-    BitcoinRPCTransient,
-    ReorgDetectedError,
-)
-from ocfl_lib import (
-    BitcoinNoBlockError,
-    BitcoinRpcAuthError,
-    BitcoinRpcError,
-    BitcoinRpcTransientError,
-)
+from ocfl_cli.errors import AttestationMismatchError, ReorgDetectedError
+from ocfl_lib import BitcoinNoBlockError
 from ocfl_lib.bitcoin import BitcoinRpcClient, BlockchainInfo, BlockHeader
 from ocfl_lib.ots import (
     AttestationStatus,
@@ -39,14 +26,11 @@ from ocfl_lib.ots import (
 from ocfl_lib.ots import parse as parse_ots
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
-
     from ocfl_cli.config import Config
     from ocfl_lib.ots import BlockHeaderSource
 
 __all__ = [
     "BitcoinRPC",
-    "BitcoinRPCClient",
     "BitcoinZmqSubscriber",
     "BlockHeader",
     "BlockchainInfo",
@@ -94,58 +78,6 @@ class HashBlockStream(Protocol):
     def wait_for_block(self, timeout_ms: int) -> bytes | None: ...
 
 
-_CLI_ERRORS: tuple[tuple[type[BitcoinRpcError], type[BitcoinError]], ...] = (
-    (BitcoinRpcAuthError, BitcoinAuthError),
-    (BitcoinNoBlockError, BitcoinBlockMissingError),
-    (BitcoinRpcTransientError, BitcoinRPCTransient),
-    (BitcoinRpcError, BitcoinError),
-)
-
-
-@contextlib.contextmanager
-def _cli_errors() -> Iterator[None]:
-    try:
-        yield
-    except BitcoinRpcError as e:
-        cls = next(cli for lib, cli in _CLI_ERRORS if isinstance(e, lib))
-        raise cls(str(e)) from e
-
-
-class BitcoinRPCClient:
-    """The lib's ``BitcoinRpcClient``, raising ``ocfl_cli.errors`` Bitcoin errors.
-
-    Callers inject a fully-configured ``httpx2.Client`` (auth + timeout) so
-    tests can swap in ``MockTransport``.
-    """
-
-    def __init__(
-        self,
-        rpc_url: str,
-        *,
-        client: httpx.Client,
-        sleep: Callable[[float], None] = time.sleep,
-        attempts: int = 3,
-    ) -> None:
-        self._rpc = BitcoinRpcClient(
-            rpc_url, client=client, sleep=sleep, attempts=attempts
-        )
-
-    def close(self) -> None:
-        self._rpc.close()
-
-    def getblockchaininfo(self) -> BlockchainInfo:
-        with _cli_errors():
-            return self._rpc.getblockchaininfo()
-
-    def getblockheader(self, block_hash: str) -> BlockHeader:
-        with _cli_errors():
-            return self._rpc.getblockheader(block_hash)
-
-    def getblockhash(self, height: int) -> str:
-        with _cli_errors():
-            return self._rpc.getblockhash(height)
-
-
 class _RpcBlocks:
     def __init__(self, rpc: BitcoinRPC) -> None:
         self._rpc = rpc
@@ -153,7 +85,7 @@ class _RpcBlocks:
     def block_at(self, height: int) -> ChainBlock | None:
         try:
             block_hash = self._rpc.getblockhash(height)
-        except BitcoinBlockMissingError:
+        except BitcoinNoBlockError:
             return None
         header = self._rpc.getblockheader(block_hash)
         return ChainBlock.from_rpc(
@@ -274,7 +206,7 @@ def verify_attestation(
 
 
 def default_btc_factory(cfg: Config) -> BitcoinRPC:
-    """Construct the production `BitcoinRPCClient` from `cfg`.
+    """Construct the production `BitcoinRpcClient` from `cfg`.
 
     Registered on `ctx.obj["btc_rpc_factory"]` by `main` so service
     callers (and tests via `runner.invoke(obj=...)`) share one entry
@@ -287,4 +219,4 @@ def default_btc_factory(cfg: Config) -> BitcoinRPC:
     creds = f"{btc_cfg.rpc_user}:{btc_cfg.rpc_password.get_secret_value()}"
     headers = {"Authorization": "Basic " + b64encode(creds.encode()).decode()}
     client = httpx.Client(timeout=btc_cfg.rpc_timeout_s, headers=headers)
-    return BitcoinRPCClient(btc_cfg.rpc_url, client=client)
+    return BitcoinRpcClient(btc_cfg.rpc_url, client=client)

@@ -5,8 +5,10 @@ import pytest
 import typer
 from pydantic import SecretStr
 
+from ocfl_cli._exit import error_class_of
 from ocfl_cli.config import BitcoinConfig, Config, SimpleProofConfig
-from ocfl_cli.exit_codes import ExitCode
+from ocfl_cli.errors import CLIError
+from ocfl_cli.exit_codes import ExitCode, exit_code_for_class
 from ocfl_cli.stage.commands import (
     StagingResolved,
     TimestampPreflight,
@@ -53,9 +55,9 @@ def _inventory(object_id: str = "obj:test") -> Inventory:
     ],
 )
 def test_validate_timestamp_flags_rejects_retry_combinations(
-    upgrade: bool, watch: bool, retry: bool, expected: str, capsys
+    upgrade: bool, watch: bool, retry: bool, expected: str
 ) -> None:
-    with pytest.raises(typer.Exit) as exc_info:
+    with pytest.raises(CLIError) as exc_info:
         validate_timestamp_flags(
             _ctx({}, command_parts=("stage", "timestamp", "content")),
             upgrade=upgrade,
@@ -63,13 +65,12 @@ def test_validate_timestamp_flags_rejects_retry_combinations(
             retry=retry,
         )
 
-    captured = capsys.readouterr()
-    assert exc_info.value.exit_code == int(ExitCode.USAGE)
-    assert expected in captured.err
+    assert exit_code_for_class(error_class_of(exc_info.value)) is ExitCode.USAGE
+    assert expected in str(exc_info.value)
 
 
 def test_validate_timestamp_flags_rejects_watch_without_upgrade(capsys) -> None:
-    with pytest.raises(typer.Exit) as exc_info:
+    with pytest.raises(CLIError) as exc_info:
         validate_timestamp_flags(
             _ctx({}, command_parts=("stage", "timestamp", "inventory")),
             upgrade=False,
@@ -77,31 +78,28 @@ def test_validate_timestamp_flags_rejects_watch_without_upgrade(capsys) -> None:
             retry=False,
         )
 
-    captured = capsys.readouterr()
-    assert exc_info.value.exit_code == int(ExitCode.USAGE)
-    assert "requires --upgrade" in captured.err
+    assert exit_code_for_class(error_class_of(exc_info.value)) is ExitCode.USAGE
+    assert "requires --upgrade" in str(exc_info.value)
 
 
 def test_require_simpleproof_rejects_missing_section(capsys) -> None:
     ctx = _ctx({}, command_parts=("stage", "timestamp", "content"))
 
-    with pytest.raises(typer.Exit) as exc_info:
+    with pytest.raises(CLIError) as exc_info:
         require_simpleproof(ctx, Config())
 
-    captured = capsys.readouterr()
-    assert exc_info.value.exit_code == int(ExitCode.CONFIG)
-    assert "'stage timestamp content' requires [simpleproof]" in captured.err
+    assert exit_code_for_class(error_class_of(exc_info.value)) is ExitCode.CONFIG
+    assert "'stage timestamp content' requires [simpleproof]" in str(exc_info.value)
 
 
 def test_require_bitcoin_rejects_missing_section(capsys) -> None:
     ctx = _ctx({}, command_parts=("stage", "timestamp", "content"))
 
-    with pytest.raises(typer.Exit) as exc_info:
+    with pytest.raises(CLIError) as exc_info:
         require_bitcoin(ctx, Config())
 
-    captured = capsys.readouterr()
-    assert exc_info.value.exit_code == int(ExitCode.CONFIG)
-    assert "'stage timestamp content' requires [bitcoin]" in captured.err
+    assert exit_code_for_class(error_class_of(exc_info.value)) is ExitCode.CONFIG
+    assert "'stage timestamp content' requires [bitcoin]" in str(exc_info.value)
 
 
 def test_require_existing_staging_returns_typed_resolution(tmp_path) -> None:
@@ -118,28 +116,26 @@ def test_require_existing_staging_returns_typed_resolution(tmp_path) -> None:
     assert resolved.staging_dir == store.staging_path(root_path, "obj:test")
 
 
-def test_require_existing_staging_includes_optional_hint(tmp_path, capsys) -> None:
+def test_require_existing_staging_includes_optional_hint(tmp_path) -> None:
     store = StagingStore(tmp_path / "staging")
     ctx = _ctx({"staging": store, "root": str(tmp_path / "root")})
 
-    with pytest.raises(typer.Exit) as exc_info:
+    with pytest.raises(CLIError) as exc_info:
         require_existing_staging(ctx, "obj:missing", hint="run 'stage new' first")
 
-    captured = capsys.readouterr()
-    assert exc_info.value.exit_code == int(ExitCode.GENERIC)
-    assert "run 'stage new' first" in captured.err
+    assert exit_code_for_class(error_class_of(exc_info.value)) is ExitCode.GENERIC
+    assert "run 'stage new' first" in str(exc_info.value)
 
 
-def test_require_ots_staging_rejects_non_ots_staging(tmp_path, capsys) -> None:
+def test_require_ots_staging_rejects_non_ots_staging(tmp_path) -> None:
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir()
 
-    with pytest.raises(typer.Exit) as exc_info:
+    with pytest.raises(CLIError) as exc_info:
         require_ots_staging(staging_dir, "obj:test")
 
-    captured = capsys.readouterr()
-    assert exc_info.value.exit_code == int(ExitCode.GENERIC)
-    assert "is not an OTS staging" in captured.err
+    assert exit_code_for_class(error_class_of(exc_info.value)) is ExitCode.GENERIC
+    assert "is not an OTS staging" in str(exc_info.value)
 
 
 def test_require_ots_staging_accepts_ots_state(tmp_path) -> None:

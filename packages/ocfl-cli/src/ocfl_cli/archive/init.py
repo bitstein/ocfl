@@ -7,7 +7,7 @@ import typer
 
 from ocfl_cli import _appctx as appctx
 from ocfl_cli._common import resolve_root
-from ocfl_cli._exit import exit_for_error
+from ocfl_cli.errors import CLIError
 from ocfl_lib import Spec, StorageRoot, get_layout
 from ocfl_lib.fs import open_fs
 
@@ -38,21 +38,15 @@ def init(
         try:
             config = json.loads(layout_config)
         except json.JSONDecodeError as e:
-            exit_for_error(e, message=f"invalid layout config JSON: {e}")
+            raise CLIError(f"invalid layout config JSON: {e}") from e
 
-    try:
-        layout_obj = get_layout(layout, config=config)
-    except (KeyError, ValueError) as e:
-        exit_for_error(e)
+    layout_obj = get_layout(layout, config=config)
 
-    try:
-        fs = open_fs(root_path)
-        StorageRoot.init(
-            fs,
-            fs,
-            spec=spec,
-            layout=layout_obj,
-            layout_description=layout_description,
-        )
-    except (ValueError, OSError) as e:
-        exit_for_error(e)
+    fs = open_fs(root_path)
+    StorageRoot.init(
+        fs,
+        fs,
+        spec=spec,
+        layout=layout_obj,
+        layout_description=layout_description,
+    )

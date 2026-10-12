@@ -16,7 +16,6 @@ from typer.testing import CliRunner
 
 from ocfl_cli.errors import (
     AttestationMismatchError,
-    BitcoinRPCTransient,
     ReorgDetectedError,
     SimpleProofTransient,
 )
@@ -52,7 +51,13 @@ from ocfl_cli.stage.state import (
     save_ots,
 )
 from ocfl_cli.stage.store import StagingStore
-from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
+from ocfl_lib import (
+    BitcoinRpcTransientError,
+    LocalFS,
+    Spec,
+    StorageRoot,
+    get_layout,
+)
 from tests.helpers.ots import build_attestation
 
 _SP_OK = """\
@@ -169,7 +174,7 @@ class MismatchDownloadFake(FakeSimpleProof):
 
 class TransientBitcoinRPC(FakeBitcoinRPC):
     def getblockchaininfo(self):
-        raise BitcoinRPCTransient("Bitcoin RPC timeout")
+        raise BitcoinRpcTransientError("Bitcoin RPC timeout")
 
 
 class SecondSubmitTransientFake(FakeSimpleProof):
@@ -936,7 +941,7 @@ def test_batch_content_competing_batch_driver_refuses_live_lease(
     first_code, first_output = _process_result(first, first_out)
 
     assert first_code == 0, first_output
-    assert second_code == 1
+    assert second_code == 4  # LockTimeoutError: ErrorClass.BUSY
     assert "driver lease is held" in second_output
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.submissions[0].status == "submitted"
@@ -2413,9 +2418,11 @@ def test_batch_status_missing_file_exits_2(
     )
 
     assert result.exit_code == 2
-    data = json.loads(result.output)
-    assert data["reason"] == "batch_file_missing"
-    assert "stage timestamp content/inventory" in data["next"]
+    assert result.stdout == ""
+    error = json.loads(result.stderr)["error"]
+    assert error["code"] == "batch_file_missing"
+    assert error["exit"] == 2
+    assert "stage timestamp content/inventory" in error["message"]
 
 
 def test_batch_status_corrupt_existing_file_is_not_missing(

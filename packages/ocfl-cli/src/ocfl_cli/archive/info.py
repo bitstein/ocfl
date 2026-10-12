@@ -8,8 +8,7 @@ from rich.text import Text
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import open_root, output_json
-from ocfl_cli._exit import exit_for_error
-from ocfl_lib import ObjectNotFound, OcflError
+from ocfl_lib import ObjectNotFound
 
 
 def info(
@@ -46,12 +45,9 @@ def _info_root(ctx: typer.Context, json_mode: bool) -> None:
 def _info_object(ctx: typer.Context, object_id: str, json_mode: bool) -> None:
     root, _fs = open_root(appctx.root(ctx))
 
-    try:
-        obj = root.get_object(object_id)
-        if not obj.exists:
-            raise ObjectNotFound(object_id)
-    except OcflError as e:
-        exit_for_error(e)
+    obj = root.get_object(object_id)
+    if not obj.exists:
+        raise ObjectNotFound(object_id)
 
     inv = obj.inventory.inventory
     num_versions = len(inv.versions)

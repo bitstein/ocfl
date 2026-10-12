@@ -26,9 +26,14 @@ from fakes import FakeBitcoinRPC
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
-from ocfl_cli.errors import BitcoinRPCTransient
 from ocfl_cli.main import app
-from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
+from ocfl_lib import (
+    BitcoinRpcTransientError,
+    LocalFS,
+    Spec,
+    StorageRoot,
+    get_layout,
+)
 from tests.helpers.ots import build_attestation
 
 # --------------------------------------------------------------------------- #
@@ -524,7 +529,7 @@ class TestVerifyTimeMismatchE906:
 
         class DownRPC(FakeBitcoinRPC):
             def getblockhash(self, height: int) -> str:
-                raise BitcoinRPCTransient("Bitcoin RPC transport error")
+                raise BitcoinRpcTransientError("Bitcoin RPC transport error")
 
         _write_config(tmp_path, monkeypatch)
         _inject_fake_btc(runner, DownRPC())
@@ -548,7 +553,7 @@ class TestVerifyTimeMismatchE906:
 
         class DownRPC(FakeBitcoinRPC):
             def getblockhash(self, height: int) -> str:
-                raise BitcoinRPCTransient("Bitcoin RPC transport error")
+                raise BitcoinRpcTransientError("Bitcoin RPC transport error")
 
         _write_config(tmp_path, monkeypatch)
         _inject_fake_btc(runner, DownRPC())

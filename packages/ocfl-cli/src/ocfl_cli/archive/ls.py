@@ -8,8 +8,7 @@ from rich.text import Text
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import open_root, output_json, parse_version
-from ocfl_cli._exit import exit_for_error
-from ocfl_lib import ObjectNotFound, OcflError, to_path_map
+from ocfl_lib import ObjectNotFound, to_path_map
 
 if TYPE_CHECKING:
     from ocfl_lib import VNum
@@ -55,14 +54,11 @@ def _ls_object(
 ) -> None:
     root, _fs = open_root(appctx.root(ctx))
 
-    try:
-        obj = root.get_object(object_id)
-        if not obj.exists:
-            raise ObjectNotFound(object_id)
-        v: VNum = parse_version(version_str) if version_str else obj.head
-        state = obj.version_info(v).state
-    except OcflError as e:
-        exit_for_error(e)
+    obj = root.get_object(object_id)
+    if not obj.exists:
+        raise ObjectNotFound(object_id)
+    v: VNum = parse_version(version_str) if version_str else obj.head
+    state = obj.version_info(v).state
 
     path_map = to_path_map(state)  # path → digest
 

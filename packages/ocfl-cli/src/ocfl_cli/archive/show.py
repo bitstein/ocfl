@@ -8,8 +8,7 @@ from rich.text import Text
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import open_root, output_json, parse_version
-from ocfl_cli._exit import exit_for_error
-from ocfl_lib import DiffEntry, ObjectNotFound, OcflError, VNum, to_path_map
+from ocfl_lib import DiffEntry, ObjectNotFound, VNum, to_path_map
 
 _ACTION_SYMBOLS = {"added": "A", "deleted": "D", "modified": "M", "renamed": "R"}
 _SYM_STYLE = {
@@ -31,26 +30,23 @@ def show(
     as_json = appctx.json_mode(ctx)
     root, _fs = open_root(appctx.root(ctx))
 
-    try:
-        obj = root.get_object(object_id)
-        if not obj.exists:
-            raise ObjectNotFound(object_id)
-        v = parse_version(version) if version else obj.head
-        info = obj.version_info(v)
+    obj = root.get_object(object_id)
+    if not obj.exists:
+        raise ObjectNotFound(object_id)
+    v = parse_version(version) if version else obj.head
+    info = obj.version_info(v)
 
-        # Diff: v1 diffs against empty (all added), others diff against previous
-        if v.number == 1:
-            state = obj.version_info(v).state
-            pm = to_path_map(state)
-            changes = [
-                DiffEntry(path=p, action="added", digest_after=d)
-                for p, d in sorted(pm.items())
-            ]
-        else:
-            prev_v = VNum(v.number - 1, v.padding)
-            changes = obj.diff_versions(prev_v, v)
-    except OcflError as e:
-        exit_for_error(e)
+    # Diff: v1 diffs against empty (all added), others diff against previous
+    if v.number == 1:
+        state = obj.version_info(v).state
+        pm = to_path_map(state)
+        changes = [
+            DiffEntry(path=p, action="added", digest_after=d)
+            for p, d in sorted(pm.items())
+        ]
+    else:
+        prev_v = VNum(v.number - 1, v.padding)
+        changes = obj.diff_versions(prev_v, v)
 
     if as_json:
         output_json(

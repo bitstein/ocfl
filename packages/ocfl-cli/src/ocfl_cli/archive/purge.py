@@ -6,8 +6,6 @@ import typer
 
 from ocfl_cli import _appctx as appctx
 from ocfl_cli._common import open_root
-from ocfl_cli._exit import exit_for_error
-from ocfl_lib import OcflError
 
 
 def purge(
@@ -27,7 +25,4 @@ def purge(
             abort=True,
         )
 
-    try:
-        root.purge(fs, object_id)
-    except (OcflError, OSError) as e:
-        exit_for_error(e)
+    root.purge(fs, object_id)

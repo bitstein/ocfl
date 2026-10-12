@@ -20,13 +20,13 @@ from rich.text import Text
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import open_root, output_json
-from ocfl_cli._exit import exit_for_error
-from ocfl_cli._io import err
 from ocfl_cli.archive.config import validate_digest_name
 from ocfl_cli.errors import (
     AttestationMismatchError,
-    BitcoinError,
+    BatchFileMissingError,
+    CLIError,
     ConfigError,
+    ErrorContext,
     LockTimeoutError,
     MissingStagedMetadataError,
     PhaseError,
@@ -35,6 +35,7 @@ from ocfl_cli.errors import (
     SimpleProofError,
     SimpleProofTransient,
     StagingError,
+    UsageError,
 )
 from ocfl_cli.ots.bitcoin import (
     PendingVerification,
@@ -59,7 +60,7 @@ from ocfl_cli.stage.state import (
     with_lock,
 )
 from ocfl_cli.stage.store import StagingStore
-from ocfl_lib import DigestAlgorithm
+from ocfl_lib import BitcoinRpcError, DigestAlgorithm
 
 if TYPE_CHECKING:
     from ocfl_cli._appctx import BtcRpcFactory, SpClientFactory
@@ -137,19 +138,15 @@ def require_config(ctx: typer.Context) -> Config:
 
 def require_simpleproof(ctx: typer.Context, cfg: Config) -> None:
     if cfg.simpleproof is None:
-        exit_for_error(
-            ConfigError(
-                f"{appctx.command_path(ctx)!r} requires [simpleproof] config section"
-            )
+        raise ConfigError(
+            f"{appctx.command_path(ctx)!r} requires [simpleproof] config section"
         )
 
 
 def require_bitcoin(ctx: typer.Context, cfg: Config) -> None:
     if cfg.bitcoin is None:
-        exit_for_error(
-            ConfigError(
-                f"{appctx.command_path(ctx)!r} requires [bitcoin] config section"
-            )
+        raise ConfigError(
+            f"{appctx.command_path(ctx)!r} requires [bitcoin] config section"
         )
 
 
@@ -162,11 +159,11 @@ def validate_timestamp_flags(
     if retry:
         for other_name, other_set in (("--upgrade", upgrade), ("--watch", watch)):
             if other_set:
-                err(f"'{command} --retry' is incompatible with {other_name}")
-                raise typer.Exit(2)
+                raise UsageError(
+                    f"'{command} --retry' is incompatible with {other_name}"
+                )
     if watch and not upgrade:
-        err(f"'{command} --watch' requires --upgrade")
-        raise typer.Exit(2)
+        raise UsageError(f"'{command} --watch' requires --upgrade")
 
 
 def validate_inventory_metadata_flag(
@@ -182,11 +179,10 @@ def validate_inventory_metadata_flag(
         return
     if upgrade or watch or retry:
         command = appctx.command_path(ctx)
-        err(
+        raise UsageError(
             f"'{command} --allow-missing-metadata' is only valid when submitting "
             "an inventory timestamp"
         )
-        raise typer.Exit(2)
 
 
 def require_existing_staging(
@@ -199,16 +195,14 @@ def require_existing_staging(
         message = f"no staging exists for {object_id!r}"
         if hint is not None:
             message = f"{message} ({hint})"
-        exit_for_error(StagingError(message))
+        raise StagingError(message)
     return StagingResolved(store=store, root_path=root_path, staging_dir=staging_dir)
 
 
 def require_ots_staging(staging_dir: Path, object_id: str) -> None:
     if not has_ots(staging_dir):
-        exit_for_error(
-            StagingError(
-                f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)"
-            )
+        raise StagingError(
+            f"{object_id!r} is not an OTS staging (run 'stage new --ots' first)"
         )
 
 
@@ -246,20 +240,19 @@ def _require_ots_config(
 ) -> SimpleProofConfig:
     """Preflight `stage new --ots`. Returns validated [simpleproof] config."""
     if digest is not None and digest is not DigestOption.SHA256:
-        err(
+        raise UsageError(
             f"--ots requires SHA-256 (SimpleProof API constraint); "
             f"got --digest={digest.value!r}"
         )
-        raise typer.Exit(2)
     where = (
         f"in {cfg.path}"
         if cfg is not None and cfg.path is not None
         else "in your ocfl config"
     )
     if cfg is None or cfg.simpleproof is None:
-        exit_for_error(ConfigError(f"--ots requires [simpleproof] section {where}"))
+        raise ConfigError(f"--ots requires [simpleproof] section {where}")
     if cfg.bitcoin is None:
-        exit_for_error(ConfigError(f"--ots requires [bitcoin] section {where}"))
+        raise ConfigError(f"--ots requires [bitcoin] section {where}")
     return cfg.simpleproof
 
 
@@ -267,8 +260,7 @@ def _require_spec_digest(digest_name: str) -> DigestAlgorithm:
     try:
         validate_digest_name(digest_name)
     except ValueError:
-        err("content digest must be sha512 or sha256")
-        raise typer.Exit(2) from None
+        raise UsageError("content digest must be sha512 or sha256") from None
     return DigestAlgorithm.from_ocfl_name(digest_name)
 
 
@@ -279,8 +271,7 @@ def _validate_logical_path(logical_path: str) -> None:
         or logical_path.endswith("/")
         or any(part in ("", ".", "..") for part in logical_path.split("/"))
     ):
-        err(f"invalid logical path: {logical_path!r}")
-        raise typer.Exit(1)
+        raise CLIError(f"invalid logical path: {logical_path!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -361,18 +352,16 @@ def new(
     root_path = _resolve_root_path(ctx)
 
     if store.exists(root_path, object_id):
-        err(f"staging already exists for {object_id!r}")
-        raise typer.Exit(1)
+        raise CLIError(f"staging already exists for {object_id!r}")
 
     obj = sr.get_object(object_id)
     if obj.exists:
         head_inv = obj.inventory.inventory
         if ots and head_inv.digest_algorithm != DigestAlgorithm.SHA256.ocfl_name:
-            err(
+            raise UsageError(
                 "--ots requires existing objects to use SHA-256 "
                 f"(got {head_inv.digest_algorithm})"
             )
-            raise typer.Exit(2)
         builder = InventoryBuilder(head_inv).add_version(
             {}, created="1970-01-01T00:00:00Z"
         )
@@ -467,8 +456,6 @@ def metadata(
             )
     except service.MetadataInputError as e:
         raise typer.BadParameter(str(e)) from None
-    except LockTimeoutError as e:
-        exit_for_error(e)
 
 
 @stage_app.command()
@@ -504,11 +491,9 @@ def add(
     sources = [Path(s) for s in src]
     for p in sources:
         if not p.exists():
-            err(f"source not found: {p}")
-            raise typer.Exit(1)
+            raise CLIError(f"source not found: {p}")
         if not ((p.is_file() and not p.is_symlink()) or p.is_dir()):
-            err(f"unsupported source: {p}")
-            raise typer.Exit(1)
+            raise CLIError(f"unsupported source: {p}")
 
     def _add_file(file_path: Path, logical_path: str) -> None:
         _validate_logical_path(logical_path)
@@ -592,8 +577,7 @@ def mv(
             break
 
     if found_digest is None:
-        err(f"path not found: {src_path!r}")
-        raise typer.Exit(1)
+        raise CLIError(f"path not found: {src_path!r}")
 
     _validate_logical_path(dst_path)
 
@@ -601,15 +585,13 @@ def mv(
         return any(path in paths for paths in state.values())
 
     if dst_path != src_path and _path_exists(dst_path):
-        err(f"path already exists: {dst_path!r}")
-        raise typer.Exit(1)
+        raise CLIError(f"path already exists: {dst_path!r}")
 
     if has_ots(staging_dir) and not src_path.endswith(".ots"):
         src_ots = f"{src_path}.ots"
         dst_ots = f"{dst_path}.ots"
         if src_ots != dst_ots and _path_exists(src_ots) and _path_exists(dst_ots):
-            err(f"path already exists: {dst_ots!r}")
-            raise typer.Exit(1)
+            raise CLIError(f"path already exists: {dst_ots!r}")
 
     state[found_digest].remove(src_path)
     state[found_digest].append(dst_path)
@@ -672,12 +654,10 @@ def rm(
                     removed_paths.append(target)
                     break
             else:
-                err(f"path not found: {target!r}")
-                raise typer.Exit(1)
+                raise CLIError(f"path not found: {target!r}")
 
     if not removed_paths:
-        err("no matching paths found")
-        raise typer.Exit(1)
+        raise CLIError("no matching paths found")
 
     def _finalize() -> None:
         referenced_digests = set(state.keys())
@@ -1033,15 +1013,13 @@ def commit(
 ) -> None:
     """Commit staged changes to the storage root."""
     if (object_id is None) == (batch_id is None):
-        err("exactly one of OBJECT_ID or --batch is required")
-        raise typer.Exit(2)
+        raise UsageError("exactly one of OBJECT_ID or --batch is required")
     if batch_id is not None:
         if allow_missing_metadata:
-            err(
+            raise UsageError(
                 "--allow-missing-metadata is not supported with --batch; "
                 "commit those objects individually"
             )
-            raise typer.Exit(2)
         _drive_commit_batch(ctx, batch_id)
         return
     assert object_id is not None
@@ -1065,48 +1043,25 @@ def commit(
                 allow_missing_metadata=allow_missing_metadata,
             )
         except PhaseError as e:
-            exit_for_error(
+            raise ErrorContext(
                 e,
-                message=(
-                    f"{e}; run 'stage timestamp inventory' and then "
-                    f"'stage timestamp inventory --upgrade' to refresh the "
-                    f"timestamped inventory plan"
+                suffix=(
+                    "; run 'stage timestamp inventory' and then "
+                    "'stage timestamp inventory --upgrade' to refresh the "
+                    "timestamped inventory plan"
                 ),
-            )
-        except AttestationMismatchError as e:
-            exit_for_error(e)
-        except MissingStagedMetadataError as e:
-            exit_for_error(e)
-        except (
-            service.StagingFileMissingError,
-            service.StagingFileChangedError,
-            LockTimeoutError,
-        ) as e:
-            exit_for_error(e)
-        except service.CommitFailedError as e:
-            exit_for_error(e)
+            ) from e
         return
 
-    try:
-        service.commit_bare(
-            store=store,
-            sr=sr,
-            fs=fs,
-            root_path=root_path,
-            object_id=object_id,
-            staging_dir=staging_dir,
-            allow_missing_metadata=allow_missing_metadata,
-        )
-    except (
-        service.StagingFileMissingError,
-        service.StagingFileChangedError,
-        LockTimeoutError,
-    ) as e:
-        exit_for_error(e)
-    except MissingStagedMetadataError as e:
-        exit_for_error(e)
-    except service.CommitFailedError as e:
-        exit_for_error(e)
+    service.commit_bare(
+        store=store,
+        sr=sr,
+        fs=fs,
+        root_path=root_path,
+        object_id=object_id,
+        staging_dir=staging_dir,
+        allow_missing_metadata=allow_missing_metadata,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1401,10 +1356,7 @@ def _batch_to_list_row(batch: batch_state.BatchFile) -> dict:
 def _load_batches_or_exit(staging_root: Path) -> list[batch_state.BatchFile]:
     rows: list[batch_state.BatchFile] = []
     for path in sorted(batch_state.batches_dir(staging_root).glob("*.json")):
-        try:
-            rows.append(batch_state.load_batch(staging_root, path.stem))
-        except StagingError as e:
-            exit_for_error(e)
+        rows.append(batch_state.load_batch(staging_root, path.stem))
     rows.sort(key=lambda batch: batch.updated_at, reverse=True)
     return rows
 
@@ -1412,26 +1364,12 @@ def _load_batches_or_exit(staging_root: Path) -> list[batch_state.BatchFile]:
 def _load_batch_or_usage(
     ctx: typer.Context, staging_root: Path, batch_id: str
 ) -> batch_state.BatchFile:
-    try:
-        path = batch_state.batch_file_path(staging_root, batch_id)
-    except StagingError as e:
-        exit_for_error(e)
+    path = batch_state.batch_file_path(staging_root, batch_id)
     if not path.is_file():
-        if appctx.json_mode(ctx):
-            output_json(
-                {
-                    "batch_id": batch_id,
-                    "reason": _fixed_batch_reason("batch_file_missing"),
-                    "next": _BATCH_MISSING_NEXT,
-                }
-            )
-        else:
-            err(f"batch_file_missing: {batch_id}; {_BATCH_MISSING_NEXT}")
-        raise typer.Exit(2) from None
-    try:
-        return batch_state.load_batch(staging_root, batch_id)
-    except StagingError as e:
-        exit_for_error(e)
+        raise BatchFileMissingError(
+            f"batch_file_missing: {batch_id}; {_BATCH_MISSING_NEXT}"
+        )
+    return batch_state.load_batch(staging_root, batch_id)
 
 
 def _reason_next(reason: str | None, *, batch: batch_state.BatchFile) -> str | None:
@@ -1999,14 +1937,14 @@ def _drive_commit_batch(ctx: typer.Context, batch_id: str) -> None:
     with batch_state.with_batch_lock(staging_root, batch_id):
         batch = _load_batch_or_usage(ctx, staging_root, batch_id)
         if batch.target != "inventory":
-            err(f"commit batches must target inventory; got {batch.target}")
-            raise typer.Exit(2)
+            raise UsageError(
+                f"commit batches must target inventory; got {batch.target}"
+            )
         if batch.root_path != root_path:
-            err(
+            raise UsageError(
                 f"batch {batch.batch_id} belongs to root {batch.root_path}; "
                 f"current root is {root_path}"
             )
-            raise typer.Exit(2)
         snapshot = tuple(
             (row.object_id, row.status, row.skipped_reason) for row in batch.objects
         )
@@ -2574,16 +2512,16 @@ def _drive_batch_retry(
     ctx: typer.Context, *, target: batch_state.BatchTarget, batch_id: str | None
 ) -> None:
     if batch_id is None:
-        err("--retry requires --batch")
-        raise typer.Exit(2)
+        raise UsageError("--retry requires --batch")
     cfg = require_config(ctx)
     require_simpleproof(ctx, cfg)
     store = _stage_store(ctx)
     staging_root = store._root
     batch = _load_batch_or_usage(ctx, staging_root, batch_id)
     if batch.target != target:
-        err(f"batch {batch.batch_id} target is {batch.target!r}, not {target!r}")
-        raise typer.Exit(2)
+        raise UsageError(
+            f"batch {batch.batch_id} target is {batch.target!r}, not {target!r}"
+        )
     with batch_state.with_driver_lease(
         staging_root,
         batch.batch_id,
@@ -3502,7 +3440,7 @@ def _ingest_batch_verify_jobs(
                     last_error=_fixed_batch_reason("reorg_deeper_than_min_conf"),
                 )
                 row_changed = True
-            except BitcoinError:
+            except BitcoinRpcError:
                 new_row = msgspec.structs.replace(
                     row, last_error=_fixed_batch_reason("transient_rpc_error")
                 )
@@ -3576,8 +3514,7 @@ def _drive_batch_upgrade(
     ctx: typer.Context, *, target: batch_state.BatchTarget, batch_id: str | None
 ) -> None:
     if batch_id is None:
-        err("--upgrade requires --batch")
-        raise typer.Exit(2)
+        raise UsageError("--upgrade requires --batch")
     cfg = require_config(ctx)
     require_simpleproof(ctx, cfg)
     require_bitcoin(ctx, cfg)
@@ -3585,8 +3522,9 @@ def _drive_batch_upgrade(
     staging_root = store._root
     batch = _load_batch_or_usage(ctx, staging_root, batch_id)
     if batch.target != target:
-        err(f"batch {batch.batch_id} target is {batch.target!r}, not {target!r}")
-        raise typer.Exit(2)
+        raise UsageError(
+            f"batch {batch.batch_id} target is {batch.target!r}, not {target!r}"
+        )
     sr, _fs = open_root(appctx.root(ctx))
     with batch_state.with_driver_lease(
         staging_root,
@@ -3901,14 +3839,12 @@ def _drive_batch_watch(
     if objects_file is not None:
         selected.extend(_read_objects_file(objects_file))
     if batch_id is not None and (selected or category is not None):
-        err(
+        raise UsageError(
             "--batch is mutually exclusive with --object, --objects-file, "
             "and --category"
         )
-        raise typer.Exit(2)
     if batch_id is None and not selected:
-        err("new batch requires --object or --objects-file")
-        raise typer.Exit(2)
+        raise UsageError("new batch requires --object or --objects-file")
 
     if batch_id is None:
         now = batch_state.now_utc_iso_z()
@@ -3924,8 +3860,9 @@ def _drive_batch_watch(
     else:
         batch = _load_batch_or_usage(ctx, staging_root, batch_id)
         if batch.target != target:
-            err(f"batch {batch.batch_id} target is {batch.target!r}, not {target!r}")
-            raise typer.Exit(2)
+            raise UsageError(
+                f"batch {batch.batch_id} target is {batch.target!r}, not {target!r}"
+            )
         created = False
 
     stream = None
@@ -4077,8 +4014,8 @@ def _drive_batch_watch(
                         return
     except KeyboardInterrupt:
         exit_code = 130
-    except (BitcoinError, ReorgDetectedError) as e:
-        exit_for_error(e, message=f"halt: {e}")
+    except (BitcoinRpcError, ReorgDetectedError) as e:
+        raise ErrorContext(e, prefix="halt: ") from e
     finally:
         if appctx.json_mode(ctx):
             _emit_batch_summary(ctx, batch)
@@ -4151,14 +4088,12 @@ def _drive_batch_submit(
     if objects_file is not None:
         selected.extend(_read_objects_file(objects_file))
     if batch_id is not None and (selected or category is not None):
-        err(
+        raise UsageError(
             "--batch is mutually exclusive with --object, --objects-file, "
             "and --category"
         )
-        raise typer.Exit(2)
     if batch_id is None and not selected:
-        err("new batch requires --object or --objects-file")
-        raise typer.Exit(2)
+        raise UsageError("new batch requires --object or --objects-file")
 
     if batch_id is None:
         now = batch_state.now_utc_iso_z()
@@ -4174,8 +4109,9 @@ def _drive_batch_submit(
     else:
         batch = _load_batch_or_usage(ctx, staging_root, batch_id)
         if batch.target != target:
-            err(f"batch {batch.batch_id} target is {batch.target!r}, not {target!r}")
-            raise typer.Exit(2)
+            raise UsageError(
+                f"batch {batch.batch_id} target is {batch.target!r}, not {target!r}"
+            )
         created = False
 
     with batch_state.with_driver_lease(
@@ -4275,15 +4211,12 @@ def timestamp_batch_content(
 ) -> None:
     """Create or resume a content timestamping batch."""
     if retry and (upgrade or watch_flag):
-        err("--retry is mutually exclusive with --upgrade and --watch")
-        raise typer.Exit(2)
+        raise UsageError("--retry is mutually exclusive with --upgrade and --watch")
     if upgrade and watch_flag:
-        err("--upgrade is mutually exclusive with --watch")
-        raise typer.Exit(2)
+        raise UsageError("--upgrade is mutually exclusive with --watch")
     if retry:
         if object_ids or objects_file is not None or category is not None:
-            err("--retry is only supported with --batch")
-            raise typer.Exit(2)
+            raise UsageError("--retry is only supported with --batch")
         _drive_batch_retry(ctx, target="content", batch_id=batch_id)
         return
     if watch_flag:
@@ -4299,8 +4232,7 @@ def timestamp_batch_content(
         return
     if upgrade:
         if object_ids or objects_file is not None or category is not None:
-            err("--upgrade is only supported with --batch")
-            raise typer.Exit(2)
+            raise UsageError("--upgrade is only supported with --batch")
         _drive_batch_upgrade(ctx, target="content", batch_id=batch_id)
         return
     _drive_batch_submit(
@@ -4358,11 +4290,9 @@ def timestamp_batch_inventory(
 ) -> None:
     """Create or resume an inventory timestamping batch."""
     if retry and (upgrade or watch_flag):
-        err("--retry is mutually exclusive with --upgrade and --watch")
-        raise typer.Exit(2)
+        raise UsageError("--retry is mutually exclusive with --upgrade and --watch")
     if upgrade and watch_flag:
-        err("--upgrade is mutually exclusive with --watch")
-        raise typer.Exit(2)
+        raise UsageError("--upgrade is mutually exclusive with --watch")
     if retry:
         if (
             object_ids
@@ -4370,8 +4300,7 @@ def timestamp_batch_inventory(
             or category is not None
             or allow_missing_metadata
         ):
-            err("--retry is only supported with --batch")
-            raise typer.Exit(2)
+            raise UsageError("--retry is only supported with --batch")
         _drive_batch_retry(ctx, target="inventory", batch_id=batch_id)
         return
     if watch_flag:
@@ -4387,8 +4316,7 @@ def timestamp_batch_inventory(
         return
     if upgrade:
         if object_ids or objects_file is not None or category is not None:
-            err("--upgrade is only supported with --batch")
-            raise typer.Exit(2)
+            raise UsageError("--upgrade is only supported with --batch")
         _drive_batch_upgrade(ctx, target="inventory", batch_id=batch_id)
         return
     _drive_batch_submit(
@@ -4474,11 +4402,10 @@ def timestamp_batch_rm(
         row for row in batch.objects if row.status in {"prepared", "submitted"}
     ]
     if open_rows and not force:
-        err(
+        raise CLIError(
             f"batch {batch_id} has non-terminal rows; use --force to delete "
             "the batch file only"
         )
-        raise typer.Exit(1)
     batch_state.batch_file_path(staging_root, batch_id).unlink()
     typer.echo(f"removed batch {batch_id}")
 
@@ -4541,9 +4468,7 @@ def timestamp_content(
                 ),
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
-            exit_for_error(e, message=f"halt: {e}")
-        except SimpleProofError as e:
-            exit_for_error(e)
+            raise ErrorContext(e, prefix="halt: ") from e
         raise typer.Exit(exit_code)
 
     if upgrade:
@@ -4559,9 +4484,7 @@ def timestamp_content(
                 btc_factory=preflight.btc_factory,
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
-            exit_for_error(e, message=f"halt: {e}")
-        except SimpleProofError as e:
-            exit_for_error(e)
+            raise ErrorContext(e, prefix="halt: ") from e
         _render_content_upgrade_result(object_id, result)
         return
 
@@ -4574,30 +4497,21 @@ def timestamp_content(
                     object_id,
                     sp_factory=preflight.sp_factory,
                 )
-            except PhaseError as e:
-                exit_for_error(e)
-            except SimpleProofError as e:
-                exit_for_error(e)
             except service.NoFailedSubmissionsError as e:
                 typer.echo(str(e))
                 return
         return
 
     with with_lock(resolved.staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
-        try:
-            result = service.submit_content_locked(
-                cfg,
-                resolved.store,
-                sr,
-                resolved.root_path,
-                object_id,
-                resolved.staging_dir,
-                sp_factory=preflight.sp_factory,
-            )
-        except PhaseError as e:
-            exit_for_error(e)
-        except SimpleProofError as e:
-            exit_for_error(e)
+        result = service.submit_content_locked(
+            cfg,
+            resolved.store,
+            sr,
+            resolved.root_path,
+            object_id,
+            resolved.staging_dir,
+            sp_factory=preflight.sp_factory,
+        )
         _render_status_section("Content")
         typer.echo(f"  Object: {object_id}")
         if result.submitted_count:
@@ -4689,11 +4603,7 @@ def timestamp_inventory(
                 ),
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
-            exit_for_error(e, message=f"halt: {e}")
-        except SimpleProofError as e:
-            exit_for_error(e)
-        except PhaseError as e:
-            exit_for_error(e)
+            raise ErrorContext(e, prefix="halt: ") from e
         raise typer.Exit(exit_code)
 
     if upgrade:
@@ -4705,28 +4615,17 @@ def timestamp_inventory(
                 btc_factory=preflight.btc_factory,
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
-            exit_for_error(e, message=f"halt: {e}")
-        except SimpleProofError as e:
-            exit_for_error(e)
-        except PhaseError as e:
-            exit_for_error(e)
+            raise ErrorContext(e, prefix="halt: ") from e
         return
 
     if retry:
         with with_lock(resolved.staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
-            try:
-                service.retry_inventory_locked(
-                    cfg,
-                    resolved.staging_dir,
-                    object_id,
-                    sp_factory=preflight.sp_factory,
-                )
-            except PhaseError as e:
-                exit_for_error(e)
-            except SimpleProofError as e:
-                exit_for_error(e)
-            except service.InventoryProofMissingError as e:
-                exit_for_error(e)
+            service.retry_inventory_locked(
+                cfg,
+                resolved.staging_dir,
+                object_id,
+                sp_factory=preflight.sp_factory,
+            )
         return
 
     with with_lock(resolved.staging_dir, timeout=service._LOCK_TIMEOUT_SECONDS):
@@ -4742,11 +4641,7 @@ def timestamp_inventory(
                 allow_missing_metadata=allow_missing_metadata,
             )
         except PhaseError as e:
-            exit_for_error(e, message=f"{e}; run 'stage timestamp content' first")
-        except MissingStagedMetadataError as e:
-            exit_for_error(e)
-        except SimpleProofError as e:
-            exit_for_error(e)
+            raise ErrorContext(e, suffix="; run 'stage timestamp content' first") from e
 
 
 # ---------------------------------------------------------------------------
@@ -4812,12 +4707,11 @@ def reset(
                     f"'stage timestamp batch status {batch_id}'"
                 )
             if not force:
-                err(
+                raise CLIError(
                     f"reset would discard persisted OTS progress at phase "
                     f"{phase!r} ({summary}){batch_hint}; "
                     f"re-run with --force to proceed"
                 )
-                raise typer.Exit(1)
             logger.warning(
                 "reset --force discarding OTS progress at phase %r: %s",
                 phase,

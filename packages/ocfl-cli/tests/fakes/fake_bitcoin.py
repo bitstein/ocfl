@@ -4,8 +4,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from hashlib import sha256
 
-from ocfl_cli.errors import BitcoinBlockMissingError
 from ocfl_cli.ots.bitcoin import BlockchainInfo, BlockHeader
+from ocfl_lib import BitcoinNoBlockError
 
 
 def _hash_at(height: int, salt: bytes = b"") -> str:
@@ -69,15 +69,13 @@ class FakeBitcoinRPC:
             block_hash=block_hash,
             height=height,
             confirmations=self.tip_height - height + 1,
-            merkle_root=self._merkle_roots.get(
-                height, _merkle_at(height, block_hash)
-            ),
+            merkle_root=self._merkle_roots.get(height, _merkle_at(height, block_hash)),
             time=0,
         )
 
     def getblockhash(self, height: int) -> str:
         if height < 0 or height > self.tip_height:
-            raise BitcoinBlockMissingError(f"height {height} out of range")
+            raise BitcoinNoBlockError(f"height {height} out of range")
         return self._chain[height]
 
 

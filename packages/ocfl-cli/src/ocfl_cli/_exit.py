@@ -1,14 +1,85 @@
-"""Side-effecting CLI error rendering and process exits."""
+"""The one CLI error handler: an error's `ErrorClass` picks its exit code.
 
-from typing import NoReturn
+Commands raise; `OcflGroup.invoke` catches every lib and CLI error (plus
+`OSError` and `KeyboardInterrupt`) once, at the root. Text mode prints
+`Error: <message>` on stderr; `--json` prints
+`{"error": {"code", "message", "exit"}}` on stderr instead.
+"""
+
+import json
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import typer
+from typer.core import TyperGroup
 
-from ocfl_cli._io import err
-from ocfl_cli.exit_codes import exit_code_for
+from ocfl_cli import _style
+from ocfl_cli.errors import CLIError, ErrorContext
+from ocfl_cli.exit_codes import exit_code_for_class
+from ocfl_lib import ErrorClass, OcflError
+
+if TYPE_CHECKING:
+    import click
+    from rich.text import Text
+
+HANDLED = (OcflError, CLIError, OSError, KeyboardInterrupt)
 
 
-def exit_for_error(exc: BaseException, *, message: str | None = None) -> NoReturn:
-    """Render *exc* as a CLI error and exit with the canonical code."""
-    err(str(exc) if message is None else message)
-    raise typer.Exit(int(exit_code_for(exc))) from None
+def error_class_of(exc: BaseException) -> ErrorClass:
+    """How the CLI reacts to `exc`; context wrappers report their cause."""
+    match exc:
+        case ErrorContext():
+            return error_class_of(exc.cause)
+        case OcflError() | CLIError():
+            return exc.error_class
+        case KeyboardInterrupt():
+            return ErrorClass.INTERRUPTED
+        case _:
+            return ErrorClass.INVALID
+
+
+def error_code_of(exc: BaseException) -> str:
+    """The stable snake_case code reported under `--json`."""
+    match exc:
+        case ErrorContext():
+            return error_code_of(exc.cause)
+        case OcflError() | CLIError():
+            return exc.code
+        case KeyboardInterrupt():
+            return "interrupted"
+        case OSError():
+            return "os_error"
+        case _:
+            return "error"
+
+
+def error_line(message: str) -> Text:
+    """An error as the CLI prints it: `Error: <message>`."""
+    return _style.error(f"Error: {message}")
+
+
+def handle_error(exc: BaseException, *, json_mode: bool) -> NoReturn:
+    """Report `exc` on stderr and exit with its class's code."""
+    code = exit_code_for_class(error_class_of(exc))
+    message = str(exc) or ("interrupted" if isinstance(exc, KeyboardInterrupt) else "")
+    if json_mode:
+        payload = {
+            "error": {
+                "code": error_code_of(exc),
+                "message": message,
+                "exit": int(code),
+            }
+        }
+        typer.echo(json.dumps(payload), err=True)
+    else:
+        _style.echo(error_line(message), err=True)
+    raise typer.Exit(int(code))
+
+
+class OcflGroup(TyperGroup):
+    """Root command group that routes every error through `handle_error`."""
+
+    def invoke(self, ctx: click.Context) -> Any:
+        try:
+            return super().invoke(ctx)
+        except HANDLED as exc:
+            handle_error(exc, json_mode=bool(ctx.params.get("json_output")))

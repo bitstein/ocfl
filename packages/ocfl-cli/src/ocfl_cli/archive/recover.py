@@ -9,10 +9,8 @@ from platformdirs import user_state_path
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import open_root, output_json, resolve_root
-from ocfl_cli._exit import exit_for_error
-from ocfl_cli._io import err
-from ocfl_cli.errors import CLIError
-from ocfl_lib import ClaimFS, CommitState, OcflError, RecoveryAction
+from ocfl_cli.errors import UsageError
+from ocfl_lib import ClaimFS, CommitState, RecoveryAction
 
 if TYPE_CHECKING:
     from ocfl_lib import ContentSource
@@ -48,8 +46,9 @@ def recover(
 ) -> None:
     """Finish or undo an object's interrupted commit, read from storage."""
     if resume + revert + (remove_stray is not None) != 1:
-        err("exactly one of --resume, --revert or --remove-stray VN is required")
-        raise typer.Exit(2)
+        raise UsageError(
+            "exactly one of --resume, --revert or --remove-stray VN is required"
+        )
     if resume:
         action = RecoveryAction.RESUME
     elif revert:
@@ -58,18 +57,12 @@ def recover(
         action = RecoveryAction.REMOVE_STRAY
 
     root, fs = open_root(appctx.root(ctx))
-    try:
-        # Only an S3 claim can lack content; a local claim moved a whole vN.
-        content = (
-            _staged_content(ctx, staging_root, object_id)
-            if action is RecoveryAction.RESUME and not isinstance(fs, ClaimFS)
-            else None
-        )
-        status = root.recover(
-            fs, object_id, action, version=remove_stray, content=content
-        )
-    except (OcflError, CLIError, OSError) as e:
-        exit_for_error(e)
+    content = (
+        _staged_content(ctx, staging_root, object_id)
+        if action is RecoveryAction.RESUME and not isinstance(fs, ClaimFS)
+        else None
+    )
+    status = root.recover(fs, object_id, action, version=remove_stray, content=content)
 
     if appctx.json_mode(ctx):
         output_json(

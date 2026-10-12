@@ -8,8 +8,7 @@ from rich.text import Text
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import open_root, output_json, parse_version
-from ocfl_cli._exit import exit_for_error
-from ocfl_lib import ObjectNotFound, OcflError
+from ocfl_lib import ObjectNotFound
 
 _ACTION_SYMBOLS = {"added": "A", "deleted": "D", "modified": "M", "renamed": "R"}
 _SYM_STYLE = {
@@ -30,15 +29,12 @@ def diff(
     as_json = appctx.json_mode(ctx)
     root, _fs = open_root(appctx.root(ctx))
 
-    try:
-        obj = root.get_object(object_id)
-        if not obj.exists:
-            raise ObjectNotFound(object_id)
-        vnum1 = parse_version(v1)
-        vnum2 = parse_version(v2)
-        entries = obj.diff_versions(vnum1, vnum2)
-    except OcflError as e:
-        exit_for_error(e)
+    obj = root.get_object(object_id)
+    if not obj.exists:
+        raise ObjectNotFound(object_id)
+    vnum1 = parse_version(v1)
+    vnum2 = parse_version(v2)
+    entries = obj.diff_versions(vnum1, vnum2)
 
     if as_json:
         output_json(

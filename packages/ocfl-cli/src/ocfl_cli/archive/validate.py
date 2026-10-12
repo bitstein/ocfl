@@ -1,16 +1,15 @@
 """ocfl validate command."""
 
 import json
-from typing import TYPE_CHECKING, Annotated, NoReturn, cast
+from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
 
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import open_root, output_json, resolve_root
-from ocfl_cli._exit import exit_for_error
-from ocfl_cli._io import err
-from ocfl_cli.errors import BitcoinError, ConfigError
+from ocfl_cli._exit import error_line
+from ocfl_cli.errors import ConfigError, ErrorContext
 from ocfl_cli.ots.bitcoin import block_source
 from ocfl_lib import (
     Finding,
@@ -55,15 +54,10 @@ def validate(
     check_digests = not no_check_digests
     suppress = _suppressed_codes(ctx)
 
-    try:
-        if object_id is not None:
-            _validate_object(
-                ctx, object_id, check_digests, as_json, suppress, verify_ots
-            )
-        else:
-            _validate_root(ctx, check_digests, as_json, suppress)
-    except ConfigError as e:
-        exit_for_error(e)
+    if object_id is not None:
+        _validate_object(ctx, object_id, check_digests, as_json, suppress, verify_ots)
+    else:
+        _validate_root(ctx, check_digests, as_json, suppress)
 
 
 def _suppressed_codes(ctx: typer.Context) -> frozenset[str]:
@@ -82,11 +76,7 @@ def _validate_root(
     _emit(ctx, f"Validating OCFL storage root: {path}")
     _emit(ctx, "Checking root structure (NAMASTE, layout, extensions)...")
     _emit(ctx, "Walking object hierarchy...")
-    try:
-        fs = open_fs(path)
-    except (OcflError, OSError) as e:
-        _fail(str(e), json_mode)
-
+    fs = open_fs(path)
     object_ids = _object_ids_by_path(fs) if emit_progress else {}
     if emit_progress:
         _style.echo(_style.dim(f"  Found {len(object_ids)} objects"), err=True)
@@ -108,15 +98,8 @@ def _validate_object(
     suppress: frozenset[str],
     verify_ots: bool,
 ) -> None:
-    try:
-        root, fs = open_root(appctx.root(ctx))
-    except typer.Exit:
-        raise typer.Exit(1) from None
-
-    try:
-        obj_path = root.object_path(object_id)
-    except OcflError as e:
-        _fail(str(e), json_mode)
+    root, fs = open_root(appctx.root(ctx))
+    obj_path = root.object_path(object_id)
 
     _emit(ctx, f"Validating object: {object_id}")
     _emit(ctx, "Checking OCFL structure...")
@@ -134,9 +117,9 @@ def _validate_object(
         report = validate_object(fs, obj_path, check_digests=check_digests, chain=chain)
         if chain is not None and _should_emit_progress(ctx):
             _emit_chain_results(ots.check_object_chain(fs, obj_path, chain))
-    except (BitcoinError, OcflError) as e:
+    except OcflError as e:
         # The chain could not be checked: a failure, not a finding (no E906).
-        exit_for_error(e, message=f"cannot verify OTS attestations: {e}")
+        raise ErrorContext(e, prefix="cannot verify OTS attestations: ") from e
 
     _output_result(report, json_mode, suppress, show_paths=False)
     if not report.is_valid:
@@ -190,15 +173,6 @@ def _emit_chain_results(results: tuple[ots.ProofChainResult, ...]) -> None:
             case _:
                 outcome = "pending"
         _style.echo(f"  {r.proof.version} ({name}): {outcome}", err=True)
-
-
-def _fail(msg: str, json_mode: bool) -> NoReturn:
-    """Report an early failure and exit."""
-    if json_mode:
-        output_json({"valid": False, "errors": [msg], "warnings": []})
-    else:
-        err(msg)
-    raise typer.Exit(1)
 
 
 def _should_emit_progress(ctx: typer.Context) -> bool:
@@ -294,7 +268,7 @@ def _output_result(
         )
     else:
         for e in errors:
-            err(f"[{e.code}] {message(e)}")
+            _style.echo(error_line(f"[{e.code}] {message(e)}"), err=True)
         for w in warnings:
             _style.echo(_style.warning(f"Warning: [{w.code}] {message(w)}"), err=True)
         for i in infos:

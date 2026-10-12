@@ -1,4 +1,5 @@
-"""Layer-2 tests for ``BitcoinRPCClient`` against ``httpx2.MockTransport``.
+"""Layer-2 tests for the CLI's Bitcoin RPC client (the lib's ``BitcoinRpcClient``)
+against ``httpx2.MockTransport``.
 
 The client must accept an injected ``httpx2.Client`` so tests can swap in a
 ``MockTransport``. Production callers build their own ``Client`` with
@@ -11,12 +12,8 @@ from collections.abc import Callable
 import httpx2 as httpx
 import pytest
 
-from ocfl_cli.errors import (
-    BitcoinAuthError,
-    BitcoinBlockMissingError,
-    BitcoinRPCTransient,
-)
-from ocfl_cli.ots.bitcoin import BitcoinRPCClient, BlockchainInfo, BlockHeader
+from ocfl_lib import BitcoinNoBlockError, BitcoinRpcAuthError, BitcoinRpcTransientError
+from ocfl_lib.bitcoin import BitcoinRpcClient, BlockchainInfo, BlockHeader
 
 
 def _rpc_ok(result: object) -> bytes:
@@ -29,10 +26,10 @@ def _make_client(
     auth: httpx.Auth | None = None,
     sleep: Callable[[float], None] | None = None,
     attempts: int = 3,
-) -> BitcoinRPCClient:
+) -> BitcoinRpcClient:
     transport = httpx.MockTransport(handler)
     http = httpx.Client(transport=transport, auth=auth)
-    return BitcoinRPCClient(
+    return BitcoinRpcClient(
         "http://node:8332/",
         client=http,
         sleep=sleep if sleep is not None else (lambda _s: None),
@@ -49,7 +46,7 @@ def test_bitcoin_rpc_client_closes_injected_http_client() -> None:
     http = httpx.Client(
         transport=httpx.MockTransport(lambda _request: httpx.Response(200))
     )
-    client = BitcoinRPCClient("http://node:8332/", client=http)
+    client = BitcoinRpcClient("http://node:8332/", client=http)
 
     client.close()
 
@@ -179,7 +176,7 @@ class TestErrorMapping:
 
         rpc = _make_client(handler)
 
-        with pytest.raises(BitcoinAuthError):
+        with pytest.raises(BitcoinRpcAuthError):
             rpc.getblockchaininfo()
 
     @pytest.mark.parametrize("status", [500, 502, 503, 504])
@@ -189,7 +186,7 @@ class TestErrorMapping:
 
         rpc = _make_client(handler)
 
-        with pytest.raises(BitcoinRPCTransient):
+        with pytest.raises(BitcoinRpcTransientError):
             rpc.getblockchaininfo()
 
     def test_429_retries_with_backoff_then_succeeds(self) -> None:
@@ -232,7 +229,7 @@ class TestErrorMapping:
         sleeps, sleep = _make_sleep()
         rpc = _make_client(handler, sleep=sleep)
 
-        with pytest.raises(BitcoinRPCTransient):
+        with pytest.raises(BitcoinRpcTransientError):
             rpc.getblockchaininfo()
 
         assert calls == 3
@@ -244,7 +241,7 @@ class TestErrorMapping:
 
         rpc = _make_client(handler)
 
-        with pytest.raises(BitcoinRPCTransient):
+        with pytest.raises(BitcoinRpcTransientError):
             rpc.getblockchaininfo()
 
     def test_connect_error_raises_bitcoin_rpc_transient(self) -> None:
@@ -253,7 +250,7 @@ class TestErrorMapping:
 
         rpc = _make_client(handler)
 
-        with pytest.raises(BitcoinRPCTransient):
+        with pytest.raises(BitcoinRpcTransientError):
             rpc.getblockchaininfo()
 
     def test_rpc_loading_error_retries_with_backoff(self) -> None:
@@ -313,7 +310,7 @@ class TestErrorMapping:
         sleeps, sleep = _make_sleep()
         rpc = _make_client(handler, sleep=sleep)
 
-        with pytest.raises(BitcoinBlockMissingError):
+        with pytest.raises(BitcoinNoBlockError):
             rpc.getblockhash(-1)
 
         assert calls == 1
@@ -337,7 +334,7 @@ class TestErrorMapping:
         sleeps, sleep = _make_sleep()
         rpc = _make_client(handler, sleep=sleep)
 
-        with pytest.raises(BitcoinBlockMissingError):
+        with pytest.raises(BitcoinNoBlockError):
             rpc.getblockhash(800_000)
 
         assert calls == 1
@@ -354,7 +351,7 @@ class TestErrorMapping:
         sleeps, sleep = _make_sleep()
         rpc = _make_client(handler, sleep=sleep)
 
-        with pytest.raises(BitcoinRPCTransient):
+        with pytest.raises(BitcoinRpcTransientError):
             rpc.getblockchaininfo()
 
         assert calls == 3
@@ -395,7 +392,7 @@ class TestAuthHeaderScrubbing:
         auth = httpx.BasicAuth(self._USER, self._PASSWORD)
         rpc = _make_client(handler, auth=auth)
 
-        with pytest.raises(BitcoinRPCTransient) as info:
+        with pytest.raises(BitcoinRpcTransientError) as info:
             rpc.getblockchaininfo()
 
         # Sanity: the wire request actually carried Basic auth.
@@ -409,7 +406,7 @@ class TestAuthHeaderScrubbing:
         auth = httpx.BasicAuth(self._USER, self._PASSWORD)
         rpc = _make_client(handler, auth=auth)
 
-        with pytest.raises(BitcoinAuthError) as info:
+        with pytest.raises(BitcoinRpcAuthError) as info:
             rpc.getblockchaininfo()
 
         self._assert_no_plaintext(info.value)

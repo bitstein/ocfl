@@ -7,11 +7,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import typer
-
-from ocfl_cli._exit import exit_for_error
-from ocfl_cli._io import err
-from ocfl_lib import OcflError, StorageRoot, VNum
+from ocfl_cli.errors import CLIError
+from ocfl_lib import StorageRoot, VNum
 from ocfl_lib.fs import open_fs
 
 if TYPE_CHECKING:
@@ -42,14 +39,9 @@ def resolve_root(root: str | None) -> str:
 
 
 def open_root(root: str | None) -> tuple[StorageRoot, Any]:
-    """Open an existing storage root. Exits on error."""
-    location = resolve_root(root)
-    try:
-        fs = open_fs(location)
-        sr = StorageRoot.open(fs)
-        return sr, fs
-    except (OcflError, OSError) as e:
-        exit_for_error(e)
+    """Open an existing storage root."""
+    fs = open_fs(resolve_root(root))
+    return StorageRoot.open(fs), fs
 
 
 def parse_version(v: str) -> VNum:
@@ -59,8 +51,7 @@ def parse_version(v: str) -> VNum:
     try:
         return VNum.parse(v)
     except ValueError:
-        err(f"invalid version: {v!r}")
-        raise typer.Exit(1) from None
+        raise CLIError(f"invalid version: {v!r}") from None
 
 
 def output_json(data: Any) -> None:

@@ -9,10 +9,8 @@ import typer
 
 from ocfl_cli import _appctx as appctx
 from ocfl_cli._common import open_root, parse_version
-from ocfl_cli._exit import exit_for_error
-from ocfl_cli._io import err
 from ocfl_cli.errors import CLIError
-from ocfl_lib import ObjectNotFound, OcflError, to_path_map
+from ocfl_lib import ObjectNotFound, to_path_map
 
 
 def export(
@@ -38,14 +36,11 @@ def export(
     """Export object content to local filesystem or stdout."""
     root, _fs = open_root(appctx.root(ctx))
 
-    try:
-        obj = root.get_object(object_id)
-        if not obj.exists:
-            raise ObjectNotFound(object_id)
-        v = parse_version(version) if version else obj.head
-        state = obj.version_info(v).state
-    except OcflError as e:
-        exit_for_error(e)
+    obj = root.get_object(object_id)
+    if not obj.exists:
+        raise ObjectNotFound(object_id)
+    v = parse_version(version) if version else obj.head
+    state = obj.version_info(v).state
 
     path_map = to_path_map(state)
     paths = sorted(path_map)
@@ -67,11 +62,10 @@ def export(
         try:
             dest = _export_destination(out_dir, logical_path)
         except ValueError as exc:
-            exit_for_error(CLIError(str(exc)))
+            raise CLIError(str(exc)) from exc
 
         if dest.exists() and not replace:
-            err(f"file exists: {dest} (use --replace to overwrite)")
-            raise typer.Exit(1)
+            raise CLIError(f"file exists: {dest} (use --replace to overwrite)")
 
         dest.parent.mkdir(parents=True, exist_ok=True)
         with obj.open_logical_path(v, logical_path) as f:

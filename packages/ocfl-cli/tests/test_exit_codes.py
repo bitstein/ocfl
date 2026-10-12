@@ -1,55 +1,114 @@
-"""Canonical CLI exit-code contract."""
+"""Canonical CLI exit-code contract: one handler, `ErrorClass` -> `ExitCode`."""
 
-import ast
+import json
 from pathlib import Path
 
 import pytest
 import typer
 from typer.testing import CliRunner
 
-from ocfl_cli._exit import exit_for_error
+from ocfl_cli._exit import error_class_of, error_code_of, handle_error
 from ocfl_cli.errors import (
     AttestationMismatchError,
     CLIError,
+    CommitClaimLostError,
     CommitFailedError,
+    CommitInterruptedError,
     ConfigError,
+    ErrorContext,
     InventoryProofMissingError,
     LockTimeoutError,
     PhaseError,
     ReorgDetectedError,
+    UsageError,
 )
-from ocfl_cli.exit_codes import ExitCode, exit_code_for
+from ocfl_cli.exit_codes import ExitCode, exit_code_for_class
 from ocfl_cli.main import app
+from ocfl_lib import (
+    BitcoinRpcAuthError,
+    BitcoinRpcTransientError,
+    ErrorClass,
+    ObjectLockedError,
+    ObjectNotFound,
+)
 
-SRC_ROOT = Path(__file__).resolve().parents[1] / "src" / "ocfl_cli"
+
+@pytest.mark.parametrize(
+    ("error_class", "expected"),
+    [
+        (ErrorClass.USAGE, ExitCode.USAGE),
+        (ErrorClass.NOT_FOUND, ExitCode.GENERIC),
+        (ErrorClass.INVALID, ExitCode.GENERIC),
+        (ErrorClass.SERVICE, ExitCode.GENERIC),
+        (ErrorClass.STATE, ExitCode.PHASE),
+        (ErrorClass.BUSY, ExitCode.LOCK_TIMEOUT),
+        (ErrorClass.HALT, ExitCode.ATTESTATION),
+        (ErrorClass.CONFIG, ExitCode.CONFIG),
+        (ErrorClass.INTERRUPTED, ExitCode.INTERRUPTED),
+    ],
+)
+def test_class_to_exit_code_follows_adr_0004(
+    error_class: ErrorClass, expected: ExitCode
+) -> None:
+    assert exit_code_for_class(error_class) is expected
 
 
 @pytest.mark.parametrize(
     ("exc", "expected"),
     [
         (CLIError("generic"), ExitCode.GENERIC),
+        (UsageError("bad flags"), ExitCode.USAGE),
         (PhaseError("wrong phase"), ExitCode.PHASE),
         (LockTimeoutError("busy"), ExitCode.LOCK_TIMEOUT),
         (AttestationMismatchError("mismatch"), ExitCode.ATTESTATION),
         (ReorgDetectedError("reorg"), ExitCode.ATTESTATION),
         (ConfigError("bad config"), ExitCode.CONFIG),
         (CommitFailedError("failed"), ExitCode.GENERIC),
-        (CommitFailedError("interrupted", interrupted=True), ExitCode.INTERRUPTED),
+        (CommitInterruptedError("interrupted"), ExitCode.INTERRUPTED),
+        (CommitClaimLostError("lost"), ExitCode.PHASE),
         (InventoryProofMissingError("missing proof"), ExitCode.PHASE),
         (KeyboardInterrupt(), ExitCode.INTERRUPTED),
+        (OSError("disk"), ExitCode.GENERIC),
+        (ObjectNotFound("o"), ExitCode.GENERIC),
+        (ObjectLockedError("o"), ExitCode.LOCK_TIMEOUT),
+        (BitcoinRpcTransientError("down"), ExitCode.GENERIC),
+        (BitcoinRpcAuthError("401"), ExitCode.CONFIG),
+        (
+            ErrorContext(ReorgDetectedError("reorg"), prefix="halt: "),
+            ExitCode.ATTESTATION,
+        ),
     ],
 )
-def test_exit_code_mapping_is_canonical(exc: BaseException, expected: ExitCode) -> None:
-    assert exit_code_for(exc) is expected
+def test_error_exit_codes(exc: BaseException, expected: ExitCode) -> None:
+    assert exit_code_for_class(error_class_of(exc)) is expected
 
 
-def test_exit_for_error_renders_and_exits_with_canonical_code(capsys) -> None:
+def test_context_keeps_the_cause_code_and_adds_to_the_message() -> None:
+    exc = ErrorContext(ObjectNotFound("o"), prefix="before: ", suffix="; after")
+    assert error_code_of(exc) == "object_not_found"
+    assert str(exc) == "before: object 'o' not found; after"
+
+
+def test_handle_error_text(capsys) -> None:
     with pytest.raises(typer.Exit) as exc_info:
-        exit_for_error(ConfigError("bad config"))
+        handle_error(ConfigError("bad config"), json_mode=False)
 
     captured = capsys.readouterr()
     assert exc_info.value.exit_code == int(ExitCode.CONFIG)
+    assert captured.out == ""
     assert "Error: bad config" in captured.err
+
+
+def test_handle_error_json(capsys) -> None:
+    with pytest.raises(typer.Exit) as exc_info:
+        handle_error(LockTimeoutError("busy"), json_mode=True)
+
+    captured = capsys.readouterr()
+    assert exc_info.value.exit_code == int(ExitCode.LOCK_TIMEOUT)
+    assert captured.out == ""
+    assert json.loads(captured.err) == {
+        "error": {"code": "lock_timeout", "message": "busy", "exit": 4}
+    }
 
 
 def test_root_config_error_exits_6(
@@ -65,52 +124,38 @@ def test_root_config_error_exits_6(
     assert str(config) in result.output
 
 
-def test_command_handlers_do_not_bypass_canonical_error_exit() -> None:
-    offenders = []
-    for path in SRC_ROOT.rglob("*.py"):
-        if path.name == "_exit.py":
-            continue
-        tree = ast.parse(path.read_text(), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ExceptHandler) or node.name is None:
-                continue
-            for child in ast.walk(node):
-                if isinstance(child, ast.Call) and _is_caught_exception_render(
-                    child, node.name
-                ):
-                    offenders.append(
-                        f"{path.relative_to(SRC_ROOT).as_posix()}:{child.lineno}"
-                    )
+def test_root_config_error_json(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text("not [valid")
+    monkeypatch.setenv("OCFL_CONFIG", str(config))
 
-    assert offenders == []
+    result = runner.invoke(app, ["--json", "validate"])
+
+    assert result.exit_code == 6, result.output
+    assert result.stdout == ""
+    error = json.loads(result.stderr)["error"]
+    assert error["code"] == "config_error" and error["exit"] == 6
+    assert str(config) in error["message"]
 
 
-def _is_caught_exception_render(node: ast.Call, exception_name: str) -> bool:
-    if not isinstance(node.func, ast.Name) or node.func.id != "err":
-        return False
-    if len(node.args) != 1:
-        return False
-    arg = node.args[0]
-    return _is_str_of_name(arg, exception_name) or _contains_formatted_name(
-        arg, exception_name
+def test_missing_object_json_error_on_stderr(runner: CliRunner, tmp_path: Path) -> None:
+    from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
+
+    fs = LocalFS(tmp_path)
+    StorageRoot.init(
+        fs, fs, spec=Spec.V1_1, layout=get_layout("0002-flat-direct-storage-layout")
     )
 
+    result = runner.invoke(app, ["--json", "--root", str(tmp_path), "info", "nope"])
 
-def _is_str_of_name(node: ast.AST, name: str) -> bool:
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "str"
-        and len(node.args) == 1
-        and isinstance(node.args[0], ast.Name)
-        and node.args[0].id == name
-    )
-
-
-def _contains_formatted_name(node: ast.AST, name: str) -> bool:
-    return isinstance(node, ast.JoinedStr) and any(
-        isinstance(value, ast.FormattedValue)
-        and isinstance(value.value, ast.Name)
-        and value.value.id == name
-        for value in node.values
-    )
+    assert result.exit_code == 1, result.output
+    assert result.stdout == ""
+    assert json.loads(result.stderr) == {
+        "error": {
+            "code": "object_not_found",
+            "message": "object 'nope' not found",
+            "exit": 1,
+        }
+    }
