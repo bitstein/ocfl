@@ -17,10 +17,10 @@ The plan holds only intent. How far a commit got is read back from storage.
 import contextlib
 import errno
 import hashlib
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, BinaryIO
 
+from ocfl_lib import ots
 from ocfl_lib._concurrent import bounded_map
 from ocfl_lib._digest import DigestAlgorithm, bytes_digest, stream_digest
 from ocfl_lib._errors import (
@@ -38,7 +38,6 @@ from ocfl_lib._path import join_path
 from ocfl_lib._spec import INVENTORY_FILENAME, Namaste, Spec
 from ocfl_lib.fs import _utils as fs_utils
 from ocfl_lib.fs._protocols import ClaimFS, ConditionalFS, CopyFS
-from ocfl_lib.ots import EXTENSION_NAME as OTS_EXTENSION
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -50,24 +49,7 @@ if TYPE_CHECKING:
 WORK_DIR_EXTENSION = "NNNN-work-dir"
 LOCK_TIMEOUT = 5.0
 
-OTS_DIR = f"extensions/{OTS_EXTENSION}"
-OTS_CONFIG_PATH = f"{OTS_DIR}/config.json"
-OTS_CONFIG_BYTES = json.dumps(
-    {
-        "extensionName": OTS_EXTENSION,
-        "timestampContent": True,
-        "timestampInventory": True,
-    },
-    sort_keys=True,
-    separators=(",", ":"),
-).encode()
-
 _NO_RENAMEAT2 = {errno.EINVAL, errno.ENOSYS, errno.EXDEV, errno.EOPNOTSUPP}
-
-
-def proof_path(version: str) -> str:
-    """Object-relative path of the inventory proof of `version`."""
-    return f"{OTS_DIR}/inventory.json.{version}.ots"
 
 
 def work_dir(root_path: str, object_id: str) -> str:
@@ -275,7 +257,7 @@ def fill_claim(t: Target, content: ContentSource) -> None:
 
 def _write_missing(t: Target, files: dict[str, bytes]) -> None:
     for rel, data in files.items():
-        if rel == proof_path(t.vn):
+        if rel == ots.inventory_proof_path(t.vn):
             continue  # written by write_proof, after the content
         path = t.obj(rel)
         if read_or_none(t.fsys, path) != data:
@@ -317,9 +299,9 @@ def check_base(fsys: FS, t: Target, raw: bytes | None) -> StoredInventory | None
         raise RecoveryRequiredError(
             f"{t.obj_path} has a stray claim on {t.vn}; run recover"
         )
-    if plan.inventory_proof is not None and not fsys.exists(t.obj(OTS_CONFIG_PATH)):
+    if plan.inventory_proof is not None and not fsys.exists(t.obj(ots.CONFIG_PATH)):
         raise PlanMismatchError(
-            f"object {plan.object_id!r} does not use the {OTS_EXTENSION} "
+            f"object {plan.object_id!r} does not use the {ots.EXTENSION_NAME} "
             "extension; an inventory proof can only start a new object"
         )
     return StoredInventory.from_bytes(raw, alg)
@@ -327,7 +309,7 @@ def check_base(fsys: FS, t: Target, raw: bytes | None) -> StoredInventory | None
 
 def write_proof(t: Target) -> None:
     """Write the plan's inventory proof, or remove a stale one for vN."""
-    path = t.obj(proof_path(t.vn))
+    path = t.obj(ots.inventory_proof_path(t.vn))
     if t.plan.inventory_proof is not None:
         if read_or_none(t.fsys, path) != t.plan.inventory_proof:
             fs_utils.write_bytes(t.fsys, path, t.plan.inventory_proof)
@@ -432,7 +414,7 @@ def revert_claimed(t: Target, base: StoredInventory | None) -> None:
         if not fsys.exists(t.obj(old.filename)):
             fs_utils.write_bytes(fsys, t.obj(old.filename), old.content.encode())
         remove_if_exists(fsys, t.obj(new.filename))
-    remove_if_exists(fsys, t.obj(proof_path(t.vn)))
+    remove_if_exists(fsys, t.obj(ots.inventory_proof_path(t.vn)))
     if isinstance(fsys, ConditionalFS) and is_s3(fsys):
         prefix = t.obj_path if t.plan.is_new_object else t.obj(t.vn)
         for ref in list(fsys.walk_files(prefix)):
@@ -514,8 +496,8 @@ def new_object_files(plan: CommitPlan) -> dict[str, bytes]:
     namaste = Namaste.for_object(spec)
     files = {namaste.filename: namaste.content.encode()}
     if plan.inventory_proof is not None:
-        files[OTS_CONFIG_PATH] = OTS_CONFIG_BYTES
-        files[proof_path(plan.version)] = plan.inventory_proof
+        files[ots.CONFIG_PATH] = ots.OtsConfig().to_json()
+        files[ots.inventory_proof_path(plan.version)] = plan.inventory_proof
     return files
 
 

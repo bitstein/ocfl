@@ -32,6 +32,8 @@ No release is published yet, so every entry below is unreleased and may still ch
 - Inventory proofs: one that commits to the wrong digest is E905, also when `timestampInventory` is false; a pending one is W902.
 - The E9xx/W9xx codes are generated from the spec's code table (`packages/ocfl-lib/scripts/gen_ots_codes.py`). Their detail keys are `version`, `path` and `proof`. `Finding.render` appends detail the template does not use, such as `reason`.
 - `ocfl_lib.ots` adds `EXTENSION_NAME`, `OtsConfig` (`from_json`, `to_json`), `split_state` and `ParsedOts.file_hash` / `is_final`. New error: `OtsConfigError`.
+- `ocfl_lib.ots` is the one home of the extension's rules: `EXTENSION_DIR`, `CONFIG_PATH`, `inventory_proof_path`, `read_config` (None when the extension directory is absent), `covered_versions`, and `object_proofs`, the `.ots` walk that lists every content and inventory proof of the covered versions as a `ProofRef(kind, version, path, digest)`. The commit, recovery, validation, ocfl-cli and ocfl-index use them. A new object's `config.json` now also states `proofDigestAlgorithm`.
+- `ocfl_lib.fs.open_fs(location)` opens a local path or an `s3://bucket/prefix` URI (S3 needs the `[s3]` extra).
 
 ### Changed
 

@@ -263,6 +263,7 @@ class TestStageCommitOtsHappyPath:
         config_path = ext_path.parent / "config.json"
         assert json.loads(config_path.read_text()) == {
             "extensionName": "NNNN-ots-timestamps",
+            "proofDigestAlgorithm": "sha256",
             "timestampInventory": True,
             "timestampContent": True,
         }

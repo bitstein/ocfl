@@ -4,6 +4,7 @@ Source of truth: docs/ext/NNNN-ots-timestamps.md. Everything here is pure;
 the base install of ocfl-lib has no network code.
 """
 
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -16,12 +17,25 @@ from opentimestamps.core.serialize import (
 from opentimestamps.core.timestamp import DetachedTimestampFile
 
 from ocfl_lib._errors import OtsConfigError, OtsParseError
+from ocfl_lib._json_value import as_object, object_field, parse_json
+from ocfl_lib._path import join_path
+from ocfl_lib.fs import _utils as fs_utils
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from ocfl_lib.fs._protocols import FS
+
 EXTENSION_NAME = "NNNN-ots-timestamps"
+EXTENSION_DIR = f"extensions/{EXTENSION_NAME}"
+"""The extension's directory, relative to the object root."""
+CONFIG_PATH = f"{EXTENSION_DIR}/config.json"
 PROOF_SUFFIX = ".ots"
+
+
+def inventory_proof_path(version: str) -> str:
+    """Object-relative path of the inventory proof of `version`."""
+    return f"{EXTENSION_DIR}/inventory.json.{version}{PROOF_SUFFIX}"
 
 
 # --- proofs
@@ -142,6 +156,21 @@ class OtsConfig:
         return json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
 
 
+def read_config(fsys: FS, obj_path: str) -> OtsConfig | None:
+    """The object's extension config; None when the extension is not in use.
+
+    The extension is in use when its directory exists, so a directory
+    without a valid `config.json` raises OtsConfigError (E908).
+    """
+    if not fsys.exists(join_path(obj_path, EXTENSION_DIR)):
+        return None
+    try:
+        raw = fs_utils.read_all(fsys, join_path(obj_path, CONFIG_PATH))
+    except FileNotFoundError as e:
+        raise OtsConfigError(f"{obj_path}: {EXTENSION_DIR} has no config.json") from e
+    return OtsConfig.from_json(raw)
+
+
 # --- content proofs
 
 
@@ -158,3 +187,89 @@ def split_state(paths: Iterable[str]) -> tuple[frozenset[str], dict[str, str]]:
         if p.endswith(PROOF_SUFFIX) and p.removesuffix(PROOF_SUFFIX) in path_set
     }
     return frozenset(path_set - proofs.keys()), proofs
+
+
+def covered_versions(cfg: OtsConfig, versions: Iterable[str]) -> list[str]:
+    """The versions from `timestampFrom` on, oldest first.
+
+    Raises OtsConfigError when `timestampFrom` names no version (E908).
+    """
+    ordered = sorted(versions, key=lambda v: int(v[1:]))
+    if cfg.timestamp_from is None:
+        return ordered
+    if cfg.timestamp_from not in ordered:
+        raise OtsConfigError(
+            f"timestampFrom {cfg.timestamp_from!r} names no version of the object"
+        )
+    return ordered[ordered.index(cfg.timestamp_from) :]
+
+
+# --- the proofs of an object
+
+
+@dataclass(frozen=True, slots=True)
+class ProofRef:
+    """One proof of an object and the sha256 hex digest it must commit to.
+
+    `kind` is "content" or "inventory"; `path` is relative to the object
+    root; `version` is the first covered version that holds the proof.
+    """
+
+    kind: str
+    version: str
+    path: str
+    digest: str
+
+
+def object_proofs(fsys: FS, obj_path: str) -> tuple[ProofRef, ...]:
+    """Every proof of the covered versions of the object at `obj_path`.
+
+    Content proofs (when `timestampContent`) come from the root inventory's
+    states, each content file once; inventory proofs are those present for
+    covered versions. Empty when the extension is not in use. Raises
+    OtsConfigError for an invalid config.
+    """
+    cfg = read_config(fsys, obj_path)
+    if cfg is None:
+        return ()
+    inv = as_object(
+        parse_json(fs_utils.read_all(fsys, join_path(obj_path, "inventory.json")))
+    )
+    if inv is None:
+        return ()
+    versions = object_field(inv, "versions")
+    covered = covered_versions(cfg, versions)
+    refs: list[ProofRef] = []
+    if cfg.timestamp_content:
+        first_path = {
+            d: ps[0]
+            for d, ps in object_field(inv, "manifest").items()
+            if isinstance(ps, list) and ps and isinstance(ps[0], str)
+        }
+        seen: set[str] = set()
+        for v in covered:
+            state = object_field(as_object(versions.get(v)) or {}, "state")
+            digest_of = {
+                p: d
+                for d, ps in state.items()
+                if isinstance(ps, list)
+                for p in ps
+                if isinstance(p, str)
+            }
+            _ordinary, proofs = split_state(digest_of)
+            for proof, companion in sorted(proofs.items()):
+                path = first_path.get(digest_of[proof])
+                if path is None or path in seen:
+                    continue
+                seen.add(path)
+                refs.append(ProofRef("content", v, path, digest_of[companion]))
+    for v in covered:
+        path = inventory_proof_path(v)
+        if not fsys.exists(join_path(obj_path, path)):
+            continue
+        try:
+            raw = fs_utils.read_all(fsys, join_path(obj_path, v, "inventory.json"))
+        except FileNotFoundError:
+            continue  # E909
+        refs.append(ProofRef("inventory", v, path, hashlib.sha256(raw).hexdigest()))
+    return tuple(refs)

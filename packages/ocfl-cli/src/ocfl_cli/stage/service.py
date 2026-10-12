@@ -66,6 +66,7 @@ from ocfl_lib import (
     PlanMismatchError,
     UserInfo,
     VersionInfo,
+    ots,
 )
 from ocfl_lib.ots import parse as parse_ots
 
@@ -876,7 +877,7 @@ def status_ots_dict(
 
     return {
         "schema_version": 1,
-        "extension": "NNNN-ots-timestamps",
+        "extension": ots.EXTENSION_NAME,
         "phase": state.phase.value,
         "changes": diff["changes"],
         "metadata": diff["metadata"],

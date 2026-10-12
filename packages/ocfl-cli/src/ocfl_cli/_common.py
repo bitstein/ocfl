@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import sys
-import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -12,7 +11,8 @@ import typer
 
 from ocfl_cli._exit import exit_for_error
 from ocfl_cli._io import err
-from ocfl_lib import LocalFS, OcflError, StorageRoot, VNum
+from ocfl_lib import OcflError, StorageRoot, VNum
+from ocfl_lib.fs import open_fs
 
 if TYPE_CHECKING:
     import httpx2 as httpx
@@ -41,23 +41,11 @@ def resolve_root(root: str | None) -> str:
     return str(Path(raw).resolve())
 
 
-def make_fs(location: str):
-    """Create FS backend for *location* (local path or s3:// URI)."""
-    if location.startswith("s3://"):
-        parsed = urllib.parse.urlparse(location)
-        bucket = parsed.hostname or ""
-        prefix = parsed.path.lstrip("/")
-        from ocfl_lib.fs.s3 import S3FS
-
-        return S3FS(bucket, prefix)
-    return LocalFS(Path(location))
-
-
 def open_root(root: str | None) -> tuple[StorageRoot, Any]:
     """Open an existing storage root. Exits on error."""
     location = resolve_root(root)
     try:
-        fs = make_fs(location)
+        fs = open_fs(location)
         sr = StorageRoot.open(fs)
         return sr, fs
     except (OcflError, OSError) as e:

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import msgspec
 
+from ocfl_lib import ots
 from ocfl_lib._commit import (
     Target,
     check_base,
@@ -23,7 +24,6 @@ from ocfl_lib._commit import (
     finish_sidecar,
     is_s3,
     object_lock,
-    proof_path,
     prune_parents,
     read_or_none,
     remove_if_exists,
@@ -337,7 +337,7 @@ def _stray_version(ctx: _Ctx) -> str:
 def _remove_stray_local(ctx: _Ctx) -> None:
     """Remove the stray `vN/` and its inventory proof."""
     v = _stray_version(ctx)
-    remove_if_exists(ctx.fsys, ctx.obj(proof_path(v)))
+    remove_if_exists(ctx.fsys, ctx.obj(ots.inventory_proof_path(v)))
     if ctx.fsys.exists(ctx.obj(v)):
         ctx.fsys.remove_all(ctx.obj(v))
 
@@ -347,7 +347,7 @@ def _remove_stray_s3(ctx: _Ctx) -> None:
     v = _stray_version(ctx)
     fsys = ctx.fsys
     assert isinstance(fsys, ConditionalFS)
-    remove_if_exists(fsys, ctx.obj(proof_path(v)))
+    remove_if_exists(fsys, ctx.obj(ots.inventory_proof_path(v)))
     claim = ctx.obj(v, INVENTORY_FILENAME)
     for ref in list(fsys.walk_files(ctx.obj(v))):
         if ref.path != claim:

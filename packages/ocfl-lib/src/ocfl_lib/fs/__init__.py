@@ -1,6 +1,7 @@
 """Backend-agnostic filesystem abstraction for OCFL."""
 
 from ocfl_lib.fs._local import LocalFS
+from ocfl_lib.fs._open import open_fs
 from ocfl_lib.fs._protocols import (
     FS,
     ClaimFS,
@@ -24,6 +25,7 @@ __all__ = [
     "LocalFS",
     "WriteFS",
     "copy",
+    "open_fs",
     "read_all",
     "read_text",
     "write_bytes",

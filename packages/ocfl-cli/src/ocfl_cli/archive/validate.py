@@ -1,6 +1,5 @@
 """ocfl validate command."""
 
-import hashlib
 import json
 from typing import TYPE_CHECKING, Annotated, NoReturn, cast
 
@@ -8,7 +7,7 @@ import typer
 
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
-from ocfl_cli._common import make_fs, open_root, output_json, resolve_root
+from ocfl_cli._common import open_root, output_json, resolve_root
 from ocfl_cli._exit import exit_for_error
 from ocfl_cli._io import err
 from ocfl_cli.errors import (
@@ -30,18 +29,17 @@ from ocfl_lib import (
     Severity,
     StorageRoot,
     ValidationReport,
+    ots,
     validate_object,
     validate_root,
 )
 from ocfl_lib import fs as fs_utils
+from ocfl_lib.fs import open_fs
 
 if TYPE_CHECKING:
     from ocfl_cli._appctx import BtcRpcFactory
     from ocfl_cli.config import Config
     from ocfl_lib.fs import FS, FileWalker
-
-
-_OTS_EXT_NAME = "NNNN-ots-timestamps"
 
 
 def validate(
@@ -59,7 +57,7 @@ def validate(
             "--verify-ots/--no-verify-ots",
             help=(
                 "Walk OTS attestation chain to Bitcoin when the "
-                "NNNN-ots-timestamps extension is present (default on)."
+                f"{ots.EXTENSION_NAME} extension is present (default on)."
             ),
         ),
     ] = True,
@@ -97,7 +95,7 @@ def _validate_root(
     _emit(ctx, "Checking root structure (NAMASTE, layout, extensions)...")
     _emit(ctx, "Walking object hierarchy...")
     try:
-        fs = make_fs(path)
+        fs = open_fs(path)
     except (OcflError, OSError) as e:
         _fail(str(e), json_mode)
 
@@ -157,8 +155,7 @@ def _validate_object(
 
 
 def _ots_extension_present(fs: FS, obj_path: str) -> bool:
-    cfg_path = _join(obj_path, "extensions", _OTS_EXT_NAME, "config.json")
-    return fs.exists(cfg_path)
+    return fs.exists(_join(obj_path, ots.EXTENSION_DIR))
 
 
 def _verify_ots_walk(
@@ -198,36 +195,35 @@ def _verify_ots_walk(
             )
         )
 
-    versions = _enumerate_versions(fs, obj_path)
-    if not versions:
+    try:
+        proofs = [p for p in ots.object_proofs(fs, obj_path) if p.kind == "inventory"]
+    except OcflError, OSError, ValueError:
+        return findings  # the local checks report it (E908, E063, E033)
+    if not proofs:
         return findings
 
     rpc = btc_factory(cfg)
     min_confs = cfg.bitcoin.confirmations
-    ext_root = _join(obj_path, "extensions", _OTS_EXT_NAME)
     if emit_progress:
-        version_word = "version" if len(versions) == 1 else "versions"
+        version_word = "version" if len(proofs) == 1 else "versions"
         _style.echo(
             _style.dim(
                 "Verifying OTS attestations "
-                f"({len(versions)} {version_word}, min {min_confs} confirmations)..."
+                f"({len(proofs)} {version_word}, min {min_confs} confirmations)..."
             ),
             err=True,
         )
 
-    for vkey in versions:
-        ots_rel = f"inventory.json.{vkey}.ots"
-        proof = f"extensions/{_OTS_EXT_NAME}/{ots_rel}"
-        ots_path_full = _join(ext_root, ots_rel)
-        vinv_path = _join(obj_path, vkey, "inventory.json")
+    for ref in proofs:
+        vkey, proof = ref.version, ref.path
+        ots_rel = proof.rpartition("/")[2]
         try:
-            ots_bytes = fs_utils.read_all(fs, ots_path_full)
-            vinv_bytes = fs_utils.read_all(fs, vinv_path)
+            ots_bytes = fs_utils.read_all(fs, _join(obj_path, proof))
         except OSError:
             _emit_ots_result(emit_progress, vkey, ots_rel, "skipped (missing files)")
             continue
 
-        expected = hashlib.sha256(vinv_bytes).digest()
+        expected = bytes.fromhex(ref.digest)
 
         try:
             outcome = verify_attestation(
@@ -272,24 +268,6 @@ def _verify_ots_walk(
                 )
                 add("W903", Severity.WARNING, proof=proof, reason=reason.value)
     return findings
-
-
-def _enumerate_versions(fs: FS, obj_path: str) -> list[str]:
-    """Read inventory.json and return the sorted list of version keys."""
-    try:
-        inv_bytes = fs_utils.read_all(fs, _join(obj_path, "inventory.json"))
-    except OSError:
-        return []
-    try:
-        inv_data = json.loads(inv_bytes)
-    except ValueError:
-        return []
-    if not isinstance(inv_data, dict):
-        return []
-    versions = inv_data.get("versions")
-    if not isinstance(versions, dict):
-        return []
-    return sorted(k for k in versions if isinstance(k, str))
 
 
 def _fail(msg: str, json_mode: bool) -> NoReturn:

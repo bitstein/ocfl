@@ -5,6 +5,7 @@ import json
 import re
 from typing import TYPE_CHECKING
 
+from ocfl_lib import ots
 from ocfl_lib._digest import DigestAlgorithm, bytes_digest, stream_digest
 from ocfl_lib._json_value import as_str, object_field, parse_json
 from ocfl_lib._path import join_path
@@ -34,7 +35,7 @@ _KNOWN_EXTENSIONS = frozenset(
         "0005-mutable-head",
         "0006-flat-omit-prefix-storage-layout",
         "0007-n-tuple-omit-prefix-storage-layout",
-        "NNNN-ots-timestamps",
+        ots.EXTENSION_NAME,
     }
 )
 

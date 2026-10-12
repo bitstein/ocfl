@@ -7,7 +7,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ocfl_index import db, ots
-from ocfl_index.constants import OTS_EXTENSION_DIR
 from ocfl_index.mediatype import OCTET_STREAM, sniff
 from ocfl_index.models import ScanReport
 from ocfl_lib import (
@@ -20,6 +19,7 @@ from ocfl_lib import (
     VNum,
 )
 from ocfl_lib import fs as ocfl_fs
+from ocfl_lib import ots as ots_ext
 from ocfl_lib.fs import FS
 
 _SNIFF_PRIMARY_BYTES = 8 * 1024
@@ -267,8 +267,11 @@ def _ingest_ots_companions(
     proof_digest_by_content_digest: dict[str, str] = {}
     for raw_key, version_info in inv.versions.items():
         vnum = VNum.parse(raw_key)
+        _ordinary, proofs = ots_ext.split_state(
+            p for paths in version_info.state.values() for p in paths
+        )
         for digest, logical_paths in version_info.state.items():
-            ots_paths = [p for p in logical_paths if p.endswith(".ots")]
+            ots_paths = [p for p in logical_paths if p in proofs]
             if not ots_paths:
                 continue
             pdigest = proof_digest_by_content_digest.get(digest)
@@ -310,9 +313,8 @@ def _ingest_ots_inventory_proofs(
     object_id: str,
     added_versions: list[tuple[int, str]],
 ) -> None:
-    base = f"{relpath}/extensions/{OTS_EXTENSION_DIR}"
     for vnum, vkey in added_versions:
-        proof_path = f"{base}/inventory.json.{vkey}.ots"
+        proof_path = f"{relpath}/{ots_ext.inventory_proof_path(vkey)}"
         try:
             with fs.open_file(proof_path) as f:
                 proof_bytes = f.read()

@@ -832,3 +832,81 @@ class TestOtsExtensionSpec:
 
         f = Finding("E905", Severity.ERROR, None, "", {"proof": "x", "reason": "r"})
         assert f.render().endswith("(reason: r)")
+
+
+# --- 4.2 the extension rules, the .ots walk and the FS factory live in the lib
+
+OTS_NAME = "NNNN-ots-timestamps"
+
+
+def _non_doc_strings(p: Path) -> list[tuple[int, str]]:
+    tree = _tree(p)
+    docs = set()
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if (
+            isinstance(body, list)
+            and body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+        ):
+            docs.add(id(body[0].value))
+    return [
+        (n.lineno, n.value)
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant)
+        and isinstance(n.value, str)
+        and id(n) not in docs
+    ]
+
+
+class TestOtsRulesInLib:
+    def test_extension_name_defined_once(self):
+        homes = [
+            f"{p.relative_to(REPO)}:{line}"
+            for root in (LIB_SRC, CLI_SRC, INDEX_SRC)
+            for p in _py_files(root)
+            for line, s in _non_doc_strings(p)
+            if OTS_NAME in s
+        ]
+        assert [h.rsplit(":", 1)[0] for h in homes] == [
+            "packages/ocfl-lib/src/ocfl_lib/ots.py"
+        ], homes
+
+    def test_commit_has_no_ots_constants(self):
+        from ocfl_lib import _commit
+
+        for name in ("OTS_DIR", "OTS_CONFIG_PATH", "OTS_CONFIG_BYTES", "proof_path"):
+            assert not hasattr(_commit, name), name
+
+    def test_consumers_build_no_proof_paths(self):
+        """Inventory-proof paths come from ots.inventory_proof_path."""
+        bad = []
+        for root in (CLI_SRC, INDEX_SRC, LIB_SRC):
+            for p in _py_files(root):
+                if p == LIB_SRC / "ots.py":
+                    continue
+                for node in ast.walk(_tree(p)):
+                    if isinstance(node, ast.JoinedStr):
+                        lits = "".join(
+                            str(v.value)
+                            for v in node.values
+                            if isinstance(v, ast.Constant)
+                        )
+                        if lits.startswith("inventory.json.") and lits.endswith(".ots"):
+                            bad.append(f"{p.relative_to(REPO)}:{node.lineno}")
+        assert not bad, bad
+
+    def test_consumers_use_the_lib_fs_factory(self):
+        bad = [
+            str(p.relative_to(REPO))
+            for root in (CLI_SRC, INDEX_SRC)
+            for p in _py_files(root)
+            if "S3FS(" in p.read_text() or "def make_fs" in p.read_text()
+        ]
+        assert not bad, bad
+
+    def test_cli_validate_walks_lib_proofs(self):
+        text = (CLI_SRC / "archive/validate.py").read_text()
+        assert "ots.object_proofs(" in text
+        assert "_enumerate_versions" not in text

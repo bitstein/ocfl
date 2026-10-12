@@ -31,20 +31,20 @@ def validate_ots_extension(
     result: FindingCollector,
 ) -> None:
     """Run the extension's local checks on the object at `obj_path`."""
-    ext_dir = join_path(obj_path, "extensions", ots.EXTENSION_NAME)
+    ext_dir = join_path(obj_path, ots.EXTENSION_DIR)
     if not fsys.exists(ext_dir):
         return
-
-    cfg = _read_config(fsys, ext_dir, result)
+    try:
+        cfg = ots.read_config(fsys, obj_path)
+        covered = ots.covered_versions(cfg, inv_versions) if cfg else []
+    except OtsConfigError as e:
+        result.error("E908", reason=str(e))
+        return
     if cfg is None:
         return
-    if cfg.timestamp_from is not None and cfg.timestamp_from not in inv_versions:
-        result.error("E908", reason=f"timestampFrom {cfg.timestamp_from!r}")
-        return
-
+    if cfg.unknown:
+        result.warning("W904", properties=", ".join(cfg.unknown))
     ordered = sorted(inv_versions, key=inv_versions.__getitem__)
-    start = inv_versions[cfg.timestamp_from] if cfg.timestamp_from else 0
-    covered = [v for v in ordered if inv_versions[v] >= start]
 
     version_inventories = _read_version_inventories(fsys, obj_path, ordered)
     if (
@@ -64,24 +64,6 @@ def validate_ots_extension(
     _check_inventory_proofs(
         fsys, obj_path, cfg, ordered, covered, version_inventories, result
     )
-
-
-def _read_config(
-    fsys: FS, ext_dir: str, result: FindingCollector
-) -> ots.OtsConfig | None:
-    try:
-        raw = fs_utils.read_all(fsys, join_path(ext_dir, "config.json"))
-    except FileNotFoundError:
-        result.error("E908", reason="no config.json")
-        return None
-    try:
-        cfg = ots.OtsConfig.from_json(raw)
-    except OtsConfigError as e:
-        result.error("E908", reason=str(e))
-        return None
-    if cfg.unknown:
-        result.warning("W904", properties=", ".join(cfg.unknown))
-    return cfg
 
 
 def _read_version_inventories(
@@ -152,7 +134,7 @@ def _check_inventory_proofs(
 ) -> None:
     """Inventory-proof rules (E904, E905, W902) and moved timestampFrom (W905)."""
     for v in ordered:
-        proof = f"extensions/{ots.EXTENSION_NAME}/inventory.json.{v}{ots.PROOF_SUFFIX}"
+        proof = ots.inventory_proof_path(v)
         present = fsys.exists(join_path(obj_path, proof))
         if v not in covered:
             if present:
