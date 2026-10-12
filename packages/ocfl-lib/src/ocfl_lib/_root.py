@@ -247,7 +247,8 @@ class StorageRoot:
             if content is None:
                 content = version.content_source
         obj = self.get_object(id)
-        return commit_plan(fsys, obj, plan, content or _NO_CONTENT)
+        commit_plan(fsys, self._path, obj.path, plan, content or _NO_CONTENT)
+        return Object(self._fsys, obj.path)
 
     def object_paths(self, *, strict: bool = False) -> Iterator[str]:
         """Walk the hierarchy and yield paths to all OCFL objects.

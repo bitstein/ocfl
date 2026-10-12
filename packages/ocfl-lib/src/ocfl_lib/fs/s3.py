@@ -13,7 +13,14 @@ from typing import TYPE_CHECKING, BinaryIO, cast
 import boto3
 from botocore.exceptions import ClientError
 
-from ocfl_lib.fs._protocols import CopyFS, FileRef, FileWalker, FsEntry
+from ocfl_lib._errors import UnsupportedBackendError
+from ocfl_lib.fs._protocols import (
+    ConditionalFS,
+    CopyFS,
+    FileRef,
+    FileWalker,
+    FsEntry,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -23,6 +30,12 @@ def _not_found(e: ClientError) -> bool:
     """Return True if the ClientError indicates a missing object or bucket."""
     code = e.response["Error"]["Code"]
     return code in ("404", "NoSuchKey", "NoSuchBucket")
+
+
+def _precondition_failed(e: ClientError) -> bool:
+    """Return True if a conditional write was refused (412 / 409)."""
+    code = e.response["Error"]["Code"]
+    return code in ("412", "PreconditionFailed", "ConditionalRequestConflict")
 
 
 class S3FileReader(io.RawIOBase):
@@ -58,7 +71,7 @@ class _CountingReader:
         return chunk
 
 
-class S3FS(CopyFS, FileWalker):
+class S3FS(ConditionalFS, CopyFS, FileWalker):
     """S3 filesystem implementing WriteFS, CopyFS, and FileWalker."""
 
     def __init__(
@@ -220,6 +233,69 @@ class S3FS(CopyFS, FileWalker):
     def mkdir(self, name: str) -> None:
         """Create directory (no-op for S3)."""
         self._resolve(name)
+
+    # -- ConditionalFS --
+
+    def read_tagged(self, name: str) -> tuple[bytes, str]:
+        """Read a file with its ETag. FileNotFoundError if missing."""
+        key = self._resolve(name)
+        try:
+            resp = self._client.get_object(Bucket=self._bucket, Key=key)
+        except ClientError as e:
+            if _not_found(e):
+                raise FileNotFoundError(f"s3://{self._bucket}/{key}") from e
+            raise
+        return resp["Body"].read(), resp["ETag"]
+
+    def write_new(self, name: str, data: bytes) -> str:
+        """Create a file with If-None-Match: *. FileExistsError if it exists."""
+        key = self._resolve(name)
+        try:
+            resp = self._client.put_object(
+                Bucket=self._bucket, Key=key, Body=data, IfNoneMatch="*"
+            )
+        except ClientError as e:
+            if _precondition_failed(e):
+                raise FileExistsError(f"s3://{self._bucket}/{key}") from e
+            raise
+        return resp["ETag"]
+
+    def write_if_match(self, name: str, data: bytes, tag: str) -> str | None:
+        """Replace a file with If-Match: tag. None if the tag no longer matches."""
+        key = self._resolve(name)
+        try:
+            resp = self._client.put_object(
+                Bucket=self._bucket, Key=key, Body=data, IfMatch=tag
+            )
+        except ClientError as e:
+            if _precondition_failed(e) or _not_found(e):
+                return None
+            raise
+        return resp["ETag"]
+
+    def check_conditional_writes(self, probe: str) -> None:
+        """Raise UnsupportedBackendError if the store ignores the conditions.
+
+        Writes the key `probe` create-only twice and with a wrong If-Match;
+        the store must refuse both, then the probe is removed.
+        """
+        self.write_new(probe, b"probe")
+        try:
+            try:
+                self.write_new(probe, b"probe")
+            except FileExistsError:
+                pass
+            else:
+                raise UnsupportedBackendError(
+                    f"s3://{self._bucket} ignores If-None-Match; "
+                    "it cannot claim versions"
+                )
+            if self.write_if_match(probe, b"probe", f'"{"0" * 32}"') is not None:
+                raise UnsupportedBackendError(
+                    f"s3://{self._bucket} ignores If-Match; it cannot publish safely"
+                )
+        finally:
+            self._client.delete_object(Bucket=self._bucket, Key=self._resolve(probe))
 
     # -- CopyFS --
 

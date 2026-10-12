@@ -68,6 +68,8 @@ def exit_code_for(exc: BaseException) -> ExitCode:
         return ExitCode.LOCK_TIMEOUT
     if isinstance(exc, CommitFailedError) and exc.interrupted:
         return ExitCode.INTERRUPTED
+    if isinstance(exc, CommitFailedError) and exc.claim_lost:
+        return ExitCode.PHASE
     if isinstance(exc, InventoryProofMissingError):
         return ExitCode.PHASE
     if isinstance(exc, PhaseError):

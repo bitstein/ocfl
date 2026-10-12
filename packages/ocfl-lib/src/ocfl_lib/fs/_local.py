@@ -1,13 +1,22 @@
 """Local filesystem backend for OCFL."""
 
+import ctypes
+import ctypes.util
+import errno
+import fcntl
+import functools
 import os
 import shutil
 import stat
+import sys
 import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO
 
 from ocfl_lib.fs._protocols import (
+    ClaimFS,
     CopyFS,
     FileRef,
     FileWalker,
@@ -48,12 +57,60 @@ def _check_entry_type(entry: os.DirEntry[str]) -> tuple[bool, bool]:
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 _CHUNK_SIZE = 32 * 1024
 
+_AT_FDCWD = -100
+_RENAME_NOREPLACE = 1
 
-class LocalFS(CopyFS, FileWalker):
+
+@functools.cache
+def _renameat2() -> Callable[..., int] | None:
+    if sys.platform != "linux":
+        return None
+    try:
+        libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        fn = libc.renameat2
+    except OSError, AttributeError:
+        return None
+    fn.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    fn.restype = ctypes.c_int
+    return fn
+
+
+def _renameat2_noreplace(src: Path, dst: Path) -> None:
+    fn = _renameat2()
+    if fn is None:
+        raise OSError(errno.ENOSYS, "renameat2 is not available on this platform")
+    rc = fn(
+        _AT_FDCWD,
+        os.fsencode(src),
+        _AT_FDCWD,
+        os.fsencode(dst),
+        _RENAME_NOREPLACE,
+    )
+    if rc != 0:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code), str(src), None, str(dst))
+
+
+def _same_inode(path: Path, fd: int) -> bool:
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        return False
+    fst = os.fstat(fd)
+    return (st.st_dev, st.st_ino) == (fst.st_dev, fst.st_ino)
+
+
+class LocalFS(ClaimFS, CopyFS, FileWalker):
     """Local filesystem implementing WriteFS, CopyFS, and FileWalker."""
 
     def __init__(self, root: Path) -> None:
@@ -147,6 +204,56 @@ class LocalFS(CopyFS, FileWalker):
         dst_path = self._resolve(dst)
         shutil.copy2(src_path, dst_path)
         return dst_path.stat().st_size
+
+    # -- ClaimFS --
+
+    def rename_noreplace(self, src: str, dst: str) -> None:
+        """Rename atomically, failing with FileExistsError if `dst` exists.
+
+        Uses Linux renameat2(RENAME_NOREPLACE). Raises OSError with ENOSYS,
+        EINVAL or EXDEV where the platform or filesystem cannot do it.
+        """
+        _renameat2_noreplace(self._resolve(src), self._resolve(dst))
+
+    @contextmanager
+    def lock(self, name: str, *, timeout: float = 0.0) -> Iterator[None]:
+        """Hold an exclusive flock on directory `name`, creating it if missing.
+
+        The directory may be removed while locked; a waiter that then gets the
+        lock on the removed directory retries on the new one. Raises
+        BlockingIOError if the lock is still held after `timeout` seconds.
+        """
+        path = self._resolve(name)
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+                fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+            except FileNotFoundError:
+                continue  # a parent was removed under us
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                os.close(fd)
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.02)
+                continue
+            if _same_inode(path, fd):
+                break
+            os.close(fd)
+        try:
+            yield
+        finally:
+            os.close(fd)
+
+    def remove_empty_dir(self, name: str) -> bool:
+        """Remove directory `name` if it is empty. True if it was removed."""
+        try:
+            os.rmdir(self._resolve(name))
+        except OSError:
+            return False
+        return True
 
     # -- FileWalker --
 

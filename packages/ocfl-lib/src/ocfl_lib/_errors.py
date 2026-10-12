@@ -263,29 +263,52 @@ class OcflFileTypeError(OcflError):
 
 
 class RevertCompletedError(OcflError):
-    """Refused to revert a fully-completed plan.
+    """Refused to revert a version whose root inventory is already published.
 
-    Defensive guard against undoing a successful commit. Mirrors
-    ocfl-go's ``ErrRevertUpdate``.
+    Readers may already see the version. Finish it with a resume instead.
+    Mirrors ocfl-go's ``ErrRevertUpdate``.
     """
 
     code = "revert_completed"
     error_class = ErrorClass.STATE
 
 
-class RevertError(OcflError):
-    """One or more revert steps failed.
+class ClaimLostError(OcflError):
+    """Another writer claimed the version first (ADR-0001).
 
-    `failures` is a tuple of (step_name, error_message) pairs.
+    The loser has written nothing into the object.
     """
 
-    code = "revert_failed"
-    error_class = ErrorClass.HALT
+    code = "claim_lost"
+    error_class = ErrorClass.STATE
 
-    def __init__(self, failures: tuple[tuple[str, str], ...]) -> None:
-        self.failures = failures
-        detail = "; ".join(f"{name}: {err}" for name, err in failures)
-        super().__init__(f"revert failed for {len(failures)} step(s): {detail}")
+
+class RecoveryRequiredError(OcflError):
+    """An unfinished commit or a stray claim blocks the operation.
+
+    Run `recover` on the object first.
+    """
+
+    code = "recovery_required"
+    error_class = ErrorClass.STATE
+
+
+class ObjectLockedError(OcflError):
+    """Another process holds the object's commit lock."""
+
+    code = "object_locked"
+    error_class = ErrorClass.BUSY
+
+
+class UnsupportedBackendError(OcflError):
+    """The filesystem cannot claim a version atomically.
+
+    Local claims need Linux renameat2(RENAME_NOREPLACE); S3 claims need a
+    store that honors If-None-Match and If-Match. There is no fallback.
+    """
+
+    code = "unsupported_backend"
+    error_class = ErrorClass.CONFIG
 
 
 class OtsParseError(OcflError):

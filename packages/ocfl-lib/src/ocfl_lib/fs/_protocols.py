@@ -7,10 +7,13 @@ from ocfl_lib._errors import OcflFileTypeError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from contextlib import AbstractContextManager
 
 
 __all__ = [
     "FS",
+    "ClaimFS",
+    "ConditionalFS",
     "CopyFS",
     "FileRef",
     "FileWalker",
@@ -66,3 +69,53 @@ class FileWalker(FS, Protocol):
     """Filesystem that can recursively walk files."""
 
     def walk_files(self, name: str) -> Iterator[FileRef]: ...
+
+
+@runtime_checkable
+class ClaimFS(WriteFS, Protocol):
+    """Local filesystem that claims a version by a create-only rename (ADR-0001)."""
+
+    def rename_noreplace(self, src: str, dst: str) -> None:
+        """Rename `src` to `dst` atomically; FileExistsError if `dst` exists.
+
+        Raises OSError (EINVAL, ENOSYS, EXDEV) where the platform or
+        filesystem cannot do it.
+        """
+        ...
+
+    def lock(self, name: str, *, timeout: float) -> AbstractContextManager[None]:
+        """Hold an exclusive lock on directory `name`, creating it if missing.
+
+        Raises BlockingIOError if the lock is still held after `timeout` s.
+        """
+        ...
+
+    def remove_empty_dir(self, name: str) -> bool:
+        """Remove directory `name` if it is empty. True if it was removed."""
+        ...
+
+
+@runtime_checkable
+class ConditionalFS(WriteFS, Protocol):
+    """Object store with create-only and compare-and-swap writes (ADR-0001)."""
+
+    def walk_files(self, name: str) -> Iterator[FileRef]: ...
+
+    def read_tagged(self, name: str) -> tuple[bytes, str]:
+        """Read `name` with its entity tag. FileNotFoundError if missing."""
+        ...
+
+    def write_new(self, name: str, data: bytes) -> str:
+        """Create `name`; FileExistsError if it exists. Returns the new tag."""
+        ...
+
+    def write_if_match(self, name: str, data: bytes, tag: str) -> str | None:
+        """Replace `name` only if its tag is still `tag`. None if it is not."""
+        ...
+
+    def check_conditional_writes(self, probe: str) -> None:
+        """Raise UnsupportedBackendError if the store ignores the conditions.
+
+        Writes and then removes the key `probe`.
+        """
+        ...

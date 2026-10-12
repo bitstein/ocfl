@@ -54,11 +54,18 @@ class MissingStagedMetadataError(StagingError):
 
 
 class CommitFailedError(StagingError):
-    """Plan execution failed; staging was preserved for retry."""
+    """The commit failed; staging was preserved for retry.
 
-    def __init__(self, message: str, *, interrupted: bool = False) -> None:
+    `claim_lost` means another writer claimed the version first and this
+    commit wrote nothing into the object.
+    """
+
+    def __init__(
+        self, message: str, *, interrupted: bool = False, claim_lost: bool = False
+    ) -> None:
         super().__init__(message)
         self.interrupted = interrupted
+        self.claim_lost = claim_lost
 
 
 class OTSError(CLIError):

@@ -594,3 +594,57 @@ class TestSingleWriteEntryPoint:
                     if name in _OLD_WRITE_API:
                         bad.append(f"{p}:{getattr(node, 'lineno', '?')} {name}")
         assert not bad, bad
+
+
+# --- 3.2 claim, then publish
+
+
+class TestClaimThenPublish:
+    def test_backends_declare_their_claim(self):
+        from ocfl_lib.fs import ClaimFS, ConditionalFS, LocalFS
+        from ocfl_lib.fs.s3 import S3FS
+
+        assert issubclass(LocalFS, ClaimFS)
+        assert not issubclass(LocalFS, ConditionalFS)
+        assert issubclass(S3FS, ConditionalFS)
+        assert not issubclass(S3FS, ClaimFS)
+
+    def test_local_claim_is_renameat2_noreplace(self):
+        text = (LIB_SRC / "fs/_local.py").read_text()
+        assert "renameat2" in text and "_RENAME_NOREPLACE = 1" in text
+
+    def test_commit_never_renames_or_replaces_directly(self):
+        bad = []
+        for node in ast.walk(_tree(LIB_SRC / "_commit.py")):
+            if isinstance(node, ast.Attribute) and node.attr in (
+                "rename",
+                "replace",
+                "move",
+            ):
+                bad.append(f"_commit.py:{node.lineno} {node.attr}")
+        assert not bad, bad
+
+    def test_no_step_executor(self):
+        bad = [
+            f"{p.name}:{n.name}"
+            for p in _py_files(LIB_SRC)
+            for n in ast.walk(_tree(p))
+            if isinstance(n, (ast.ClassDef, ast.FunctionDef))
+            and n.name in ("PlanStep", "execute_plan", "revert_plan", "prepare_steps")
+        ]
+        assert not bad, bad
+
+    def test_work_dir_is_a_documented_root_extension(self):
+        from ocfl_lib._commit import WORK_DIR_EXTENSION, work_dir
+
+        assert work_dir("r", "x").startswith(f"r/extensions/{WORK_DIR_EXTENSION}/")
+        doc = REPO / f"docs/ext/{WORK_DIR_EXTENSION}.md"
+        assert doc.is_file()
+        assert f"`{WORK_DIR_EXTENSION}`" in doc.read_text()
+
+    def test_work_dir_not_hidden_from_validation(self):
+        """Tool conveniences never weaken the validator: W016 still fires."""
+        from ocfl_lib._commit import WORK_DIR_EXTENSION
+
+        text = (LIB_SRC / "validation/_root.py").read_text()
+        assert WORK_DIR_EXTENSION not in text

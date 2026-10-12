@@ -4,6 +4,7 @@ from ocfl_lib._commit_plan import CommitPlan
 from ocfl_lib._digest import DigestAlgorithm, bytes_digest, file_digest
 from ocfl_lib._digest_map import DigestMap, PathMap, to_path_map
 from ocfl_lib._errors import (
+    ClaimLostError,
     ContentNotFound,
     DigestAlgorithmMismatch,
     ErrorClass,
@@ -16,6 +17,7 @@ from ocfl_lib._errors import (
     LogicalPathNotFound,
     MultipleRootDeclarations,
     NotAnOcflRoot,
+    ObjectLockedError,
     ObjectNotFound,
     OcflError,
     OcflFileTypeError,
@@ -23,14 +25,15 @@ from ocfl_lib._errors import (
     OtsParseError,
     PathCollision,
     PlanMismatchError,
+    RecoveryRequiredError,
     RevertCompletedError,
-    RevertError,
     RootExistsError,
     SpecVersionError,
     StaleHeadError,
     UnknownDigestAlgorithm,
     UnknownInventoryType,
     UnknownLayout,
+    UnsupportedBackendError,
     VersionNotFound,
 )
 from ocfl_lib._inventory import Inventory, StoredInventory, UserInfo, VersionInfo
@@ -52,7 +55,15 @@ from ocfl_lib._root import StorageRoot
 from ocfl_lib._sources import ContentSource, FixitySource
 from ocfl_lib._spec import Namaste, Spec, VNum
 from ocfl_lib._version_state import VersionState, scan_dir
-from ocfl_lib.fs import FS, CopyFS, FileWalker, LocalFS, WriteFS
+from ocfl_lib.fs import (
+    FS,
+    ClaimFS,
+    ConditionalFS,
+    CopyFS,
+    FileWalker,
+    LocalFS,
+    WriteFS,
+)
 from ocfl_lib.validation._object import validate_object
 from ocfl_lib.validation._report import Finding, Severity, ValidationReport
 from ocfl_lib.validation._root import validate_root
@@ -60,7 +71,10 @@ from ocfl_lib.validation._root import validate_root
 __all__ = [
     "DEFAULT_LAYOUTS",
     "FS",
+    "ClaimFS",
+    "ClaimLostError",
     "CommitPlan",
+    "ConditionalFS",
     "ContentNotFound",
     "ContentSource",
     "CopyFS",
@@ -95,6 +109,7 @@ __all__ = [
     "Namaste",
     "NotAnOcflRoot",
     "Object",
+    "ObjectLockedError",
     "ObjectNotFound",
     "OcflError",
     "OcflFileTypeError",
@@ -103,8 +118,8 @@ __all__ = [
     "PathCollision",
     "PathMap",
     "PlanMismatchError",
+    "RecoveryRequiredError",
     "RevertCompletedError",
-    "RevertError",
     "RootExistsError",
     "Severity",
     "Spec",
@@ -115,6 +130,7 @@ __all__ = [
     "UnknownDigestAlgorithm",
     "UnknownInventoryType",
     "UnknownLayout",
+    "UnsupportedBackendError",
     "UserInfo",
     "VNum",
     "ValidationReport",

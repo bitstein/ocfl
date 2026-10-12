@@ -375,6 +375,36 @@ class TestCrashRecovery:
         assert not store.exists(root_path, oid)
 
 
+class TestClaimLost:
+    def test_lost_claim_exits_3_and_keeps_staging(
+        self, runner, storage_root, tmp_path
+    ):
+        """Another writer claims the object mid-commit: exit 3, nothing written."""
+        oid = "obj:race"
+        staging = tmp_path / "staging"
+        src = tmp_path / "file.txt"
+        src.write_text("content")
+        _new_with_metadata(runner, storage_root, staging, oid)
+        _invoke(runner, storage_root, staging, "add", oid, str(src))
+
+        original = service._StagingContentSource.get_content
+
+        def other_writer_claims_first(self, digest):
+            (storage_root / oid).mkdir(exist_ok=True)
+            return original(self, digest)
+
+        with patch.object(
+            service._StagingContentSource, "get_content", other_writer_claims_first
+        ):
+            result = _invoke(runner, storage_root, staging, "commit", oid)
+
+        assert result.exit_code == 3, result.output
+        assert "claimed" in result.output
+        assert not any((storage_root / oid).iterdir())
+        store = StagingStore(staging)
+        assert store.exists(str(storage_root.resolve()), oid)
+
+
 class TestCommitLocking:
     def test_object_commit_lock_timeout_raises(self, tmp_path):
         """A contended object commit lock raises the canonical lock timeout."""

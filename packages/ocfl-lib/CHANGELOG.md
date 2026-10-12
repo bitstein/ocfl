@@ -16,6 +16,9 @@ No release is published yet, so every entry below is unreleased and may still ch
 - `StorageRoot.plan(id, version_state, *, spec, message, user, created)` returns a frozen `CommitPlan` and writes nothing. The plan holds only intent: object, version, base inventory digest, new inventory bytes and an optional `inventory_proof`. It holds no steps or progress.
 - `CommitPlan.to_json()` / `CommitPlan.from_json()` read and write the new `plan.json` format (`planFormat` 1). `from_json` checks the inventory bytes against their digest and raises `PlanMismatchError` on any mismatch.
 - `StorageRoot.commit(fsys, id, version, *, content=None, ...)` takes a `VersionState` or a `CommitPlan` (with `content=`). It refuses a plan whose base is no longer the object's head (`StaleHeadError`), a plan for another object, and an inventory proof that does not commit to the plan's sha256 inventory. A proof starts the `NNNN-ots-timestamps` extension of a new object (config and proof); an existing object must already use the extension. A commit also reverts on `KeyboardInterrupt`.
+- Commits claim, then publish. Local (Linux): lock the object, build the complete `vN/` (or the whole new object) in `extensions/NNNN-work-dir/<sha256(id)>/` under the storage root, claim it with `renameat2(RENAME_NOREPLACE)`, write the inventory proof, then the root inventory, then the root sidecar. S3: claim with a create-only `vN/inventory.json` (`If-None-Match: *`), then content and version sidecar, the proof, the root inventory with `If-Match` on the base ETag, and the root sidecar last. A stale proof for vN is removed before publish. The work dir is a documented local extension (`docs/ext/NNNN-work-dir.md`) and is removed when empty.
+- New errors: `ClaimLostError` (another writer claimed vN; nothing was written into the object), `RecoveryRequiredError` (an unfinished commit or stray claim blocks the commit), `ObjectLockedError` (busy object lock), `UnsupportedBackendError` (no `renameat2(RENAME_NOREPLACE)` on this platform or filesystem, or an S3 store that ignores conditional headers; there is no fallback).
+- `ocfl_lib.fs` adds the `ClaimFS` (`rename_noreplace`, `lock`, `remove_empty_dir`) and `ConditionalFS` (`read_tagged`, `write_new`, `write_if_match`, `check_conditional_writes`) protocols. `LocalFS` implements `ClaimFS`; `S3FS` implements `ConditionalFS`.
 
 ### Changed
 
@@ -34,4 +37,5 @@ No release is published yet, so every entry below is unreleased and may still ch
 - `ValidationResult`, `ValidationError` and `RootValidationSummary` (replaced by `ValidationReport`).
 - `serialize_plan`, `deserialize_plan` and the step-list `plan.json` format (replaced by `CommitPlan.to_json` / `from_json`).
 - `update_object`, `plan_update`, `apply_update_plan`, `prepare_steps`, `execute_plan`, `revert_plan` and `UpdatePlan` (use `StorageRoot.plan` and `StorageRoot.commit`).
+- The step executor and `RevertError`. A failed undo is attached as a note to the original error.
 - `fs.utils.exists` (use `FS.exists`), `LayoutRegistry.register`, and the unused `ExtensionError`, `CompanionMissingError` and `EmbeddedDigestMismatchError`.

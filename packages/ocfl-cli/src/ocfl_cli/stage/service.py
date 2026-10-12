@@ -59,7 +59,9 @@ from ocfl_cli.stage.state import (
     with_lock,
 )
 from ocfl_lib import (
+    ClaimLostError,
     CommitPlan,
+    ObjectLockedError,
     OtsParseError,
     PlanMismatchError,
     UserInfo,
@@ -2208,6 +2210,10 @@ def _commit_plan(
     """Commit `plan`. The lib reverts a failed commit; staging is kept for retry."""
     try:
         sr.commit(fs, plan.object_id, plan, content=content_source)
+    except ClaimLostError as exc:
+        raise CommitFailedError(str(exc), claim_lost=True) from exc
+    except ObjectLockedError as exc:
+        raise LockTimeoutError(f"object commit lock busy: {exc}") from exc
     except KeyboardInterrupt:
         raise CommitFailedError(
             "commit interrupted, reverting...", interrupted=True
