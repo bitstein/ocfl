@@ -990,3 +990,62 @@ class TestBitcoinBoundary:
         cli = "".join(p.read_text() for p in _py_files(CLI_SRC))
         assert '"merkleroot"' not in cli and "[::-1]" not in cli
         assert "verify_attestation" not in (CLI_SRC / "archive/validate.py").read_text()
+
+
+# --- 4.4 StorageRoot.commit refuses a version the extension rejects
+
+
+def _func(path: Path, name: str) -> ast.FunctionDef:
+    return next(
+        n
+        for n in ast.walk(_tree(path))
+        if isinstance(n, ast.FunctionDef) and n.name == name
+    )
+
+
+def _names(node: ast.AST) -> set[str]:
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)} | {
+        n.attr for n in ast.walk(node) if isinstance(n, ast.Attribute)
+    }
+
+
+class TestCommitRefusesUnproved:
+    def test_check_base_checks_the_extension(self):
+        """Before the plan is written, so a refusal writes nothing."""
+        names = _names(_func(LIB_SRC / "_commit.py", "check_base"))
+        assert {"read_config", "check_extension"} <= names
+
+    def test_refusals_name_the_spec_codes(self):
+        fn = _func(LIB_SRC / "_commit.py", "check_extension")
+        raised = {
+            n.exc.func.id
+            for n in ast.walk(fn)
+            if isinstance(n, ast.Raise)
+            and isinstance(n.exc, ast.Call)
+            and isinstance(n.exc.func, ast.Name)
+        }
+        assert {"MissingInventoryProofError", "MissingContentProofError"} <= raised
+        text = ast.unparse(fn)
+        for code in ("E901", "E902", "E904"):
+            assert code in text, code
+
+    def test_refusal_leaves_no_work_dir(self):
+        """The object lock makes the work dir; a refused commit removes it."""
+        body = ast.unparse(_func(LIB_SRC / "_commit.py", "_commit_local"))
+        assert "tidy_work_dir" in body.split("write_bytes(fsys, t.plan_file")[0]
+
+    def test_state_machines_cover_timestamped_objects(self):
+        path = REPO / "packages/ocfl-lib/tests/test_commit_stateful.py"
+        tree = _tree(path)
+        machines = [
+            n.name
+            for n in ast.walk(tree)
+            if isinstance(n, ast.ClassDef)
+            and any(
+                isinstance(b, ast.Name) and b.id == "RuleBasedStateMachine"
+                for b in n.bases
+            )
+        ]
+        assert {"LocalOtsCommitCrash", "S3OtsCommitCrash"} <= set(machines)
+        text = path.read_text()
+        assert "inventory_proof" in text and "MissingInventoryProofError" in text

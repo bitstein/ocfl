@@ -366,3 +366,17 @@ class BitcoinNoBlockError(BitcoinRpcError):
 
     code = "bitcoin_no_block"
     error_class = ErrorClass.NOT_FOUND
+
+
+class MissingInventoryProofError(OcflError, ValueError):
+    """The object's OTS extension requires an inventory proof (E904)."""
+
+    code = "missing_inventory_proof"
+    error_class = ErrorClass.INVALID
+
+
+class MissingContentProofError(OcflError, ValueError):
+    """A path of the new version has no content proof `P.ots` (E902)."""
+
+    code = "missing_content_proof"
+    error_class = ErrorClass.INVALID

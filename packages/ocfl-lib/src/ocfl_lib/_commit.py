@@ -26,6 +26,8 @@ from ocfl_lib._digest import DigestAlgorithm, bytes_digest, stream_digest
 from ocfl_lib._errors import (
     ClaimLostError,
     ContentDigestMismatch,
+    MissingContentProofError,
+    MissingInventoryProofError,
     ObjectLockedError,
     PlanMismatchError,
     RecoveryRequiredError,
@@ -131,7 +133,11 @@ def _commit_local(t: Target, fsys: ClaimFS, content: ContentSource) -> None:
     with object_lock(fsys, t.wd, timeout=LOCK_TIMEOUT):
         if fsys.exists(t.plan_file):
             raise RecoveryRequiredError(_unfinished(t))
-        base = check_base(fsys, t, read_or_none(fsys, t.obj(INVENTORY_FILENAME)))
+        try:
+            base = check_base(fsys, t, read_or_none(fsys, t.obj(INVENTORY_FILENAME)))
+        except Exception:
+            tidy_work_dir(fsys, t.root_path, t.wd)  # the lock made it (W016)
+            raise
         fs_utils.write_bytes(fsys, t.plan_file, t.plan.to_json())
         claimed = False
         try:
@@ -270,8 +276,8 @@ def _write_missing(t: Target, files: dict[str, bytes]) -> None:
 def check_base(fsys: FS, t: Target, raw: bytes | None) -> StoredInventory | None:
     """Check the object is still at the plan's base. Return the base inventory.
 
-    Refuses a stray claim (RecoveryRequiredError) and an inventory proof
-    the object cannot hold.
+    Refuses a stray claim (RecoveryRequiredError), an inventory proof the
+    object cannot hold, and a version its OTS extension would reject.
     """
     plan = t.plan
     if plan.base_digest is None or plan.base_digest_algorithm is None:
@@ -285,6 +291,8 @@ def check_base(fsys: FS, t: Target, raw: bytes | None) -> StoredInventory | None
             raise RecoveryRequiredError(
                 f"{t.obj_path} holds files but no object; run recover"
             )
+        if plan.inventory_proof is not None:
+            check_extension(plan, ots.OtsConfig())
         return None
 
     alg = DigestAlgorithm.from_ocfl_name(plan.base_digest_algorithm)
@@ -299,12 +307,41 @@ def check_base(fsys: FS, t: Target, raw: bytes | None) -> StoredInventory | None
         raise RecoveryRequiredError(
             f"{t.obj_path} has a stray claim on {t.vn}; run recover"
         )
-    if plan.inventory_proof is not None and not fsys.exists(t.obj(ots.CONFIG_PATH)):
+    cfg = ots.read_config(fsys, t.obj_path)
+    if cfg is not None:
+        check_extension(plan, cfg)
+    elif plan.inventory_proof is not None:
         raise PlanMismatchError(
             f"object {plan.object_id!r} does not use the {ots.EXTENSION_NAME} "
             "extension; an inventory proof can only start a new object"
         )
     return StoredInventory.from_bytes(raw, alg)
+
+
+def check_extension(plan: CommitPlan, cfg: ots.OtsConfig) -> None:
+    """Refuse a version that the OTS extension rejects by its inventory alone.
+
+    The commit would otherwise publish an object that is invalid: E901 (not
+    sha256), E904 (no inventory proof) or E902 (a path without its proof).
+    """
+    alg = plan.inventory.digest_algorithm.ocfl_name
+    if alg != "sha256" or cfg.proof_digest_algorithm != "sha256":
+        raise PlanMismatchError(
+            f"the {ots.EXTENSION_NAME} extension needs sha256, not {alg} (E901)"
+        )
+    if cfg.timestamp_inventory and plan.inventory_proof is None:
+        raise MissingInventoryProofError(
+            f"object {plan.object_id!r} requires an inventory proof for "
+            f"{plan.version} (E904)"
+        )
+    if cfg.timestamp_content:
+        state = plan.inventory.inventory.versions[plan.version].state
+        ordinary, proofs = ots.split_state(p for ps in state.values() for p in ps)
+        missing = sorted(p for p in ordinary if p + ots.PROOF_SUFFIX not in proofs)
+        if missing:
+            raise MissingContentProofError(
+                f"{plan.version} has no content proof for {', '.join(missing)} (E902)"
+            )
 
 
 def write_proof(t: Target) -> None:

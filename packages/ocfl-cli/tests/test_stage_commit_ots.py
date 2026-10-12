@@ -149,7 +149,10 @@ def _setup_missing_metadata_inventory_upgraded(
     )
     da = digests["a.txt"]
 
-    ots_src = staging.parent / f"{object_id.replace(':', '_')}.a.txt.ots"
+    # Staged as the content proof `a.txt.ots`: the commit refuses E902.
+    ots_dir = staging.parent / f"{object_id.replace(':', '_')}-ots"
+    ots_dir.mkdir()
+    ots_src = ots_dir / "a.txt.ots"
     ots_src.write_bytes(b"\x00fake-ots-bytes-opaque-to-this-command")
     r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(ots_src)))
     assert r.exit_code == 0, r.output

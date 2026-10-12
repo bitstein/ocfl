@@ -45,7 +45,7 @@ Target architecture from the 2026-10-11 design session. Terms: [CONTEXT.md](../C
 - [x] Implement the revised extension spec [docs/ext/NNNN-ots-timestamps.md](ext/NNNN-ots-timestamps.md): honor the flags, a pending content proof is E907, inventory proofs are checked against their inventory (E905; a missing `vN/inventory.json` is E909), and a standalone `x.ots` needs `x.ots.ots`. E903 is removed. Generate the E9xx/W9xx codes from the spec.
 - [x] Move the extension name, config, sidecar rules, the `.ots` validation walk and the S3 URI → FS factory into the lib.
 - [x] A `BlockHeaderSource` Protocol and a pure attestation check. A Bitcoin RPC client in the `[bitcoin]` extra.
-- [ ] `StorageRoot.commit` refuses to commit a version without an inventory proof when the object's config requires one (else E904).
+- [x] `StorageRoot.commit` refuses to commit a version without an inventory proof when the object's config requires one (else E904). It also refuses a path without its content proof (E902), a non-sha256 inventory (E901) and an unreadable config (E908).
 - [ ] An existing object can start timestamping: the commit that adds the extension writes a config with `timestampFrom` set to the new version. Phase 3 refuses this for now.
 
 ## 5. CLI layers

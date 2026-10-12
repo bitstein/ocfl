@@ -7,11 +7,14 @@ Once recovered, the root validates clean, with no work-dir leftovers.
 Runs on local disk and on moto S3.
 """
 
+import dataclasses
+import hashlib
 import shutil
 import tempfile
 from pathlib import Path
 
 import boto3
+import pytest
 from hypothesis import HealthCheck, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import (
@@ -29,6 +32,7 @@ from ocfl_lib import (
     ContentSource,
     DigestAlgorithm,
     LocalFS,
+    MissingInventoryProofError,
     RecoveryAction,
     RevertCompletedError,
     Spec,
@@ -38,6 +42,7 @@ from ocfl_lib import (
 )
 from ocfl_lib.validation import validate_root
 from tests.helpers.faults import Crash, fail_at
+from tests.helpers.ots import build_attestation
 
 OID = "ark:/1/stateful"
 BUCKET = "commit-stateful"
@@ -85,6 +90,10 @@ class CommitCrashRules:
             f.write_bytes(b)
         return scan_dir(LocalFS(self.tmp), name, DigestAlgorithm.SHA512)
 
+    def _planned(self, files: dict[str, bytes]):
+        vs = self._stage(files)
+        return vs, self.root.plan(OID, vs)
+
     def _root_inventory(self) -> bytes | None:
         obj = self.root.get_object(OID)
         try:
@@ -96,8 +105,7 @@ class CommitCrashRules:
     @precondition(lambda self: self.pending is None)
     @rule(files=FILES, crash_at=CRASH_AT)
     def commit(self, files, crash_at):
-        vs = self._stage(files)
-        plan = self.root.plan(OID, vs)
+        vs, plan = self._planned(files)
         writer, _ = fail_at(self.fs, crash_at)
         try:
             self.root.commit(writer, OID, plan, content=vs.content_source)
@@ -164,6 +172,46 @@ class CommitCrashRules:
         shutil.rmtree(self.tmp, ignore_errors=True)
 
 
+class OtsCommitCrashRules(CommitCrashRules):
+    """Every version is timestamped: sha256, content proofs, inventory proof.
+
+    A commit without an inventory proof is refused before it writes (E904).
+    """
+
+    def _stage(self, files: dict[str, bytes]):
+        proved = dict(files)
+        for p, b in files.items():
+            proved[f"{p}.ots"] = build_attestation(
+                hashlib.sha256(b).digest(), block_height=1
+            )
+        self.n_src += 1
+        name = f"src{self.n_src}"
+        for p, b in proved.items():
+            f = self.tmp / name / p
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(b)
+        return scan_dir(LocalFS(self.tmp), name, DigestAlgorithm.SHA256)
+
+    def _planned(self, files: dict[str, bytes]):
+        vs, plan = super()._planned(files)
+        return vs, with_inventory_proof(plan)
+
+    @precondition(lambda self: self.pending is None and self.published is not None)
+    @rule(files=FILES)
+    def commit_without_proof(self, files):
+        vs, plan = super()._planned(files)
+        with pytest.raises(MissingInventoryProofError):
+            self.root.commit(self.fs, OID, plan, content=vs.content_source)
+        assert self.root.commit_status(OID).state is CommitState.CLEAN
+
+
+def with_inventory_proof(plan: CommitPlan) -> CommitPlan:
+    digest = hashlib.sha256(plan.inventory.raw_bytes).digest()
+    return dataclasses.replace(
+        plan, inventory_proof=build_attestation(digest, block_height=1)
+    )
+
+
 class LocalCommitCrash(CommitCrashRules, RuleBasedStateMachine):
     def make_fs(self):
         d = self.tmp / "root"
@@ -172,6 +220,28 @@ class LocalCommitCrash(CommitCrashRules, RuleBasedStateMachine):
 
 
 class S3CommitCrash(CommitCrashRules, RuleBasedStateMachine):
+    def make_fs(self):
+        from ocfl_lib.fs.s3 import S3FS
+
+        self._mock = mock_aws()
+        self._mock.start()
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket=BUCKET)
+        return S3FS(BUCKET, client=client)
+
+    def teardown(self):
+        self._mock.stop()
+        super().teardown()
+
+
+class LocalOtsCommitCrash(OtsCommitCrashRules, RuleBasedStateMachine):
+    def make_fs(self):
+        d = self.tmp / "root"
+        d.mkdir()
+        return LocalFS(d)
+
+
+class S3OtsCommitCrash(OtsCommitCrashRules, RuleBasedStateMachine):
     def make_fs(self):
         from ocfl_lib.fs.s3 import S3FS
 
@@ -199,3 +269,7 @@ TestLocalCommitCrash = LocalCommitCrash.TestCase
 TestLocalCommitCrash.settings = _settings(40)
 TestS3CommitCrash = S3CommitCrash.TestCase
 TestS3CommitCrash.settings = _settings(12)
+TestLocalOtsCommitCrash = LocalOtsCommitCrash.TestCase
+TestLocalOtsCommitCrash.settings = _settings(30)
+TestS3OtsCommitCrash = S3OtsCommitCrash.TestCase
+TestS3OtsCommitCrash.settings = _settings(10)
