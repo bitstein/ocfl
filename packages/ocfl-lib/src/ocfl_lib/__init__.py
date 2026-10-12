@@ -12,6 +12,7 @@ from ocfl_lib.errors import (
     OcflFileTypeError,
     OcflNotFoundError,
     RevertError,
+    SpecVersionError,
     StaleHeadError,
     VersionNotFound,
 )
@@ -53,6 +54,7 @@ __all__ = [
     "PathMap",
     "RevertError",
     "Spec",
+    "SpecVersionError",
     "Stage",
     "StaleHeadError",
     "StorageRoot",

@@ -51,6 +51,7 @@ def validate_root(
 ) -> RootValidationSummary:
     """Validate an OCFL storage root."""
     summary = RootValidationSummary()
+    root_spec: Spec | None = None
 
     # 1. Root NAMASTE declaration
     try:
@@ -86,6 +87,7 @@ def validate_root(
     else:
         # Validate contents
         decl = root_decls[0]
+        root_spec = decl.spec
         decl_path = _join(path, decl.filename)
         try:
             content = fs_utils.read_text(fsys, decl_path)
@@ -134,6 +136,7 @@ def validate_root(
             summary,
             check_digests=check_digests,
             max_errors=max_errors,
+            root_spec=root_spec,
         )
 
     return summary
@@ -147,11 +150,12 @@ def _walk_and_validate(
     *,
     check_digests: bool,
     max_errors: int,
+    root_spec: Spec | None,
 ) -> None:
     """Walk storage root hierarchy, find objects, validate them."""
     from ocfl_lib.validation.result import ValidationResult as VR
 
-    obj_paths = _walk_hierarchy(fsys, root_path, result)
+    obj_paths = _walk_hierarchy(fsys, root_path, result, root_spec)
 
     for obj_path in obj_paths:
         summary.num_objects += 1
@@ -178,6 +182,7 @@ def _walk_hierarchy(
     fsys: FileWalker,
     root_path: str,
     result: ValidationResult,
+    root_spec: Spec | None,
 ) -> list[str]:
     """Walk root hierarchy via read_dir. Emit E073 (empty dirs) and E072
     (non-object dirs with files). Return discovered object root paths.
@@ -209,6 +214,15 @@ def _walk_hierarchy(
                     version = m.group(1)
                     if version in _SUPPORTED_VERSIONS:
                         obj_paths.append(dir_path)
+                        if root_spec is not None and Spec(version).is_newer_than(
+                            root_spec
+                        ):
+                            result.error(
+                                "E081",
+                                path=dir_path,
+                                object_spec_version=version,
+                                root_spec_version=str(root_spec),
+                            )
                     else:
                         result.error("E004a", path=dir_path, version=version)
                 else:

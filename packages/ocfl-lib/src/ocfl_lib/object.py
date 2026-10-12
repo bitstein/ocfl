@@ -6,7 +6,11 @@ from typing import TYPE_CHECKING, BinaryIO, Literal
 
 from ocfl_lib.digest import DigestAlgorithm, stream_digest
 from ocfl_lib.digest_map import DigestMap, to_path_map
-from ocfl_lib.errors import InventorySidecarMismatch, VersionNotFound
+from ocfl_lib.errors import (
+    InventorySidecarMismatch,
+    SpecVersionError,
+    VersionNotFound,
+)
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.inventory import Inventory, StoredInventory, UserInfo, VersionInfo
 from ocfl_lib.inventory_builder import InventoryBuilder
@@ -344,6 +348,13 @@ class Object:
         """
         old_stored = self.inventory if self.exists else None
         prev = old_stored.inventory if old_stored else None
+
+        if prev is not None and spec is not None:
+            prev_spec = Spec.from_inventory_type(prev.type)
+            if prev_spec.is_newer_than(spec):
+                raise SpecVersionError(
+                    f"E103: cannot downgrade object from spec {prev_spec} to {spec}"
+                )
 
         expected_root_sidecar_digest = old_stored.digest if old_stored else None
         expected_root_sidecar_algorithm = (

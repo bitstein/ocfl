@@ -41,6 +41,14 @@ class MultipleRootDeclarations(OcflError):
         super().__init__(f"multiple OCFL root declarations: {', '.join(filenames)}")
 
 
+class SpecVersionError(OcflError):
+    """Requested object spec version breaks a spec version rule.
+
+    E081: an object must not be newer than its storage root.
+    E103: a version must not use an older spec than the previous one.
+    """
+
+
 class LayoutNotConfigured(OcflError):
     """Storage root has no layout extension configured."""
 

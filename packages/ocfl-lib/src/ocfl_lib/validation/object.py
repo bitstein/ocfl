@@ -346,7 +346,6 @@ def _validate_version_dir(
     if vinv_head != vkey:
         result.error("E040", where=vkey, got=vinv_head, expected=vkey)
 
-
     # E092: non-head version inventories must describe their content correctly.
     # Under check_digests, verify every non-head version. Always verify when the
     # version alg differs from root, even in lax mode, so a mismatched non-head

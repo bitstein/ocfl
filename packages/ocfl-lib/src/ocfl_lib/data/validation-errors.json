@@ -645,6 +645,14 @@
     ],
     "description": "OCFL Storage Root hierarchy contains an empty directory: {path}"
   },
+  "E081": {
+    "params": [
+      "path",
+      "object_spec_version",
+      "root_spec_version"
+    ],
+    "description": "OCFL Object {path} conforms to specification version {object_spec_version} which is later than the OCFL Storage Root specification version {root_spec_version}"
+  },
   "E091": {
     "params": [
       "where",

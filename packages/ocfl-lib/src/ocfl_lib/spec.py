@@ -17,6 +17,14 @@ class Spec(enum.StrEnum):
     def inventory_type_url(self) -> str:
         return f"https://ocfl.io/{self.value}/spec/#inventory"
 
+    def is_newer_than(self, other: Spec) -> bool:
+        """Numeric version comparison (not string order)."""
+
+        def key(s: Spec) -> tuple[int, ...]:
+            return tuple(int(p) for p in s.value.split("."))
+
+        return key(self) > key(other)
+
     @classmethod
     def from_inventory_type(cls, url: str) -> Spec:
         """Parse 'https://ocfl.io/1.1/spec/#inventory' → Spec.V1_1."""

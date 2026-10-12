@@ -378,13 +378,19 @@ def prepare_steps(
     else:
         _revert_declaration = _noop_revert
 
-    steps.append(
-        PlanStep(
-            name="declaration",
-            run=_write_declaration,
-            revert=_revert_declaration,
+    # Spec upgrade: the declaration is swapped just before root-inv (step 7b)
+    # so the object keeps exactly one NAMASTE (E003) matching its root
+    # inventory type (E038) for as long as possible.
+    old_spec = Spec.from_inventory_type(old_inv.inventory.type) if old_inv else None
+    is_upgrade = old_spec is not None and old_spec != spec
+    if not is_upgrade:
+        steps.append(
+            PlanStep(
+                name="declaration",
+                run=_write_declaration,
+                revert=_revert_declaration,
+            )
         )
-    )
 
     # 3. Version directory
     def _make_version_dir() -> int:
@@ -472,6 +478,29 @@ def prepare_steps(
                 name="extension-file",
                 run=_make_ext_write,
                 revert=_make_ext_revert,
+            )
+        )
+
+    # 7b. Declaration swap (spec upgrade only)
+    if old_spec is not None and is_upgrade:
+        old_namaste = Namaste.for_object(old_spec)
+        old_namaste_path = _join(obj_dir, old_namaste.filename)
+        old_namaste_bytes = old_namaste.content.encode()
+
+        def _swap_declaration() -> int:
+            n = fs_utils.write_bytes(fsys, namaste_path, namaste_bytes)
+            fsys.remove(old_namaste_path)
+            return n
+
+        def _revert_swap_declaration() -> None:
+            fs_utils.write_bytes(fsys, old_namaste_path, old_namaste_bytes)
+            _try_remove(fsys, namaste_path)
+
+        steps.append(
+            PlanStep(
+                name="declaration-swap",
+                run=_swap_declaration,
+                revert=_revert_swap_declaration,
             )
         )
 

@@ -10,6 +10,7 @@ from ocfl_lib.errors import (
     MultipleRootDeclarations,
     NotAnOcflRoot,
     ObjectNotFound,
+    SpecVersionError,
 )
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.layout import get_layout
@@ -168,6 +169,12 @@ class StorageRoot:
 
         # Default spec to root's spec for new objects
         obj_spec = spec if spec is not None else (None if obj.exists else self._spec)
+        effective = obj_spec if obj_spec is not None else obj.spec
+        if effective.is_newer_than(self._spec):
+            raise SpecVersionError(
+                f"E081: object spec {effective} is newer than "
+                f"storage root spec {self._spec}"
+            )
 
         obj.update(
             fsys,
