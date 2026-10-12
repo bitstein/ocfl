@@ -47,6 +47,7 @@ Target architecture from the 2026-10-11 design session. Terms: [CONTEXT.md](../C
 - [x] A `BlockHeaderSource` Protocol and a pure attestation check. A Bitcoin RPC client in the `[bitcoin]` extra.
 - [x] `StorageRoot.commit` refuses to commit a version without an inventory proof when the object's config requires one (else E904). It also refuses a path without its content proof (E902), a non-sha256 inventory (E901) and an unreadable config (E908).
 - [x] An existing object can start timestamping: the commit that adds the extension writes a config with `timestampFrom` set to the new version, after the claim and before the inventory proof. Revert and remove-stray remove a config that their version started.
+- [x] `StorageRoot.commit` refuses a content proof that is invalid (E905) or pending (E907) before it writes anything: a proof must be final before its version is committed. New proofs are read from the content source, carried-forward ones from the object.
 
 ## 5. CLI layers
 

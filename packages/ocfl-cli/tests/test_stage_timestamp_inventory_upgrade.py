@@ -232,7 +232,12 @@ def _setup_at_inventory_pending(
     da = digests["a.txt"]
 
     ots_src = staging.parent / "a.txt.ots"
-    ots_src.write_bytes(b"\x00fake-ots-bytes-opaque-to-this-command")
+    # A final proof of a.txt: the commit refuses an invalid or pending one.
+    ots_src.write_bytes(
+        build_attestation(
+            hashlib.sha256(b"alpha").digest(), block_height=DIGEST_BLOCK_HEIGHT
+        )
+    )
     r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(ots_src)))
     assert r.exit_code == 0, r.output
 
@@ -521,9 +526,7 @@ class TestInventoryUpgradeExpired:
             inventory_proof=replace(state.inventory_proof, job_id=dead_id),
             verify_jobs=(
                 *state.verify_jobs,
-                VerifyJob(
-                    job_id=dead_id, digests=(inv_digest,), status="EXPIRED"
-                ),
+                VerifyJob(job_id=dead_id, digests=(inv_digest,), status="EXPIRED"),
             ),
         )
         save_ots(sd, state)

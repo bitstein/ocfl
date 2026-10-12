@@ -27,10 +27,12 @@ from ocfl_lib._digest import DigestAlgorithm, bytes_digest, stream_digest
 from ocfl_lib._errors import (
     ClaimLostError,
     ContentDigestMismatch,
+    InvalidProofError,
     MissingContentProofError,
     MissingInventoryProofError,
     ObjectLockedError,
     OtsConfigError,
+    PendingProofError,
     PlanMismatchError,
     RecoveryRequiredError,
     RevertCompletedError,
@@ -136,7 +138,8 @@ def _commit_local(t: Target, fsys: ClaimFS, content: ContentSource) -> None:
         if fsys.exists(t.plan_file):
             raise RecoveryRequiredError(_unfinished(t))
         try:
-            base = check_base(fsys, t, read_or_none(fsys, t.obj(INVENTORY_FILENAME)))
+            raw = read_or_none(fsys, t.obj(INVENTORY_FILENAME))
+            base = check_base(fsys, t, raw, content)
         except Exception:
             tidy_work_dir(fsys, t.root_path, t.wd)  # the lock made it (W016)
             raise
@@ -226,7 +229,7 @@ def _commit_s3(t: Target, fsys: ConditionalFS, content: ContentSource) -> None:
         raw, tag = fsys.read_tagged(t.obj(INVENTORY_FILENAME))
     except FileNotFoundError:
         raw, tag = None, None
-    base = check_base(fsys, t, raw)
+    base = check_base(fsys, t, raw, content)
     fsys.check_conditional_writes(join_path(t.wd, "probe"))
     try:
         fsys.write_new(t.plan_file, t.plan.to_json())
@@ -275,11 +278,14 @@ def _write_missing(t: Target, files: dict[str, bytes]) -> None:
 # --- shared steps
 
 
-def check_base(fsys: FS, t: Target, raw: bytes | None) -> StoredInventory | None:
+def check_base(
+    fsys: FS, t: Target, raw: bytes | None, content: ContentSource | None = None
+) -> StoredInventory | None:
     """Check the object is still at the plan's base. Return the base inventory.
 
     Refuses a stray claim (RecoveryRequiredError), an inventory proof the
-    object cannot hold, and a version its OTS extension would reject.
+    object cannot hold, and a version its OTS extension would reject. With
+    `content`, the content proofs of the version are checked too.
     """
     plan = t.plan
     if plan.base_digest is None or plan.base_digest_algorithm is None:
@@ -294,7 +300,8 @@ def check_base(fsys: FS, t: Target, raw: bytes | None) -> StoredInventory | None
                 f"{t.obj_path} holds files but no object; run recover"
             )
         if plan.inventory_proof is not None:
-            check_extension(plan, ots.OtsConfig())
+            check_extension(plan, start_config(plan))
+            _check_content_proofs(t, start_config(plan), content)
         return None
 
     alg = DigestAlgorithm.from_ocfl_name(plan.base_digest_algorithm)
@@ -311,11 +318,12 @@ def check_base(fsys: FS, t: Target, raw: bytes | None) -> StoredInventory | None
         )
     base = StoredInventory.from_bytes(raw, alg)
     cfg = ots.read_config(fsys, t.obj_path)
+    if cfg is None and plan.inventory_proof is not None:
+        _check_all_sha256(fsys, t, base)
+        cfg = start_config(plan)
     if cfg is not None:
         check_extension(plan, cfg)
-    elif plan.inventory_proof is not None:
-        _check_all_sha256(fsys, t, base)
-        check_extension(plan, start_config(plan))
+        _check_content_proofs(t, cfg, content)
     return base
 
 
@@ -365,6 +373,53 @@ def check_extension(plan: CommitPlan, cfg: ots.OtsConfig) -> None:
             raise MissingContentProofError(
                 f"{plan.version} has no content proof for {', '.join(missing)} (E902)"
             )
+
+
+def _check_content_proofs(
+    t: Target, cfg: ots.OtsConfig, content: ContentSource | None
+) -> None:
+    """Refuse a content proof that is invalid (E905) or pending (E907).
+
+    A proof must be final before its version is committed. New proofs are
+    read from `content`, carried-forward ones from the object.
+    """
+    if content is None or not cfg.timestamp_content:
+        return
+    plan = t.plan
+    inv = plan.inventory.inventory
+    digest_of = {p: d for d, ps in inv.versions[plan.version].state.items() for p in ps}
+    _ordinary, proofs = ots.split_state(digest_of)
+    seen: set[tuple[str, str]] = set()
+    for proof, companion in sorted(proofs.items()):
+        key = (digest_of[proof], digest_of[companion])
+        if key in seen:
+            continue
+        seen.add(key)
+        raw = _content_bytes(t, content, key[0])
+        try:
+            parsed = ots.verify_proof(raw, key[1])
+        except InvalidProofError as e:
+            raise InvalidProofError(
+                f"{plan.version} content proof {proof}: {e} (E905)"
+            ) from e
+        if not parsed.is_final:
+            raise PendingProofError(
+                f"{plan.version} content proof {proof} is pending (E907)"
+            )
+
+
+def _content_bytes(t: Target, content: ContentSource, digest: str) -> bytes:
+    """The bytes of `digest`: new in vN from `content`, else from the object."""
+    path = t.plan.inventory.inventory.manifest[digest][0]
+    if path.startswith(f"{t.vn}/"):
+        src_fs, src_path = content.get_content(digest)
+        raw = fs_utils.read_all(src_fs, src_path)
+    else:
+        raw = fs_utils.read_all(t.fsys, t.obj(path))
+    actual = bytes_digest(raw, t.plan.inventory.digest_algorithm)
+    if actual != digest.lower():
+        raise ContentDigestMismatch(f"content for {digest} has digest {actual}")
+    return raw
 
 
 def write_proof(t: Target) -> None:

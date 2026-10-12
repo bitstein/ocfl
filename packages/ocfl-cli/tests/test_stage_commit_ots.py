@@ -27,6 +27,7 @@ KeyError-style failures probing for the cached extension bytes in the
 committed object directory.
 """
 
+import hashlib
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -153,7 +154,12 @@ def _setup_missing_metadata_inventory_upgraded(
     ots_dir = staging.parent / f"{object_id.replace(':', '_')}-ots"
     ots_dir.mkdir()
     ots_src = ots_dir / "a.txt.ots"
-    ots_src.write_bytes(b"\x00fake-ots-bytes-opaque-to-this-command")
+    # A final proof of a.txt: the commit refuses an invalid or pending one.
+    ots_src.write_bytes(
+        build_attestation(
+            hashlib.sha256(b"alpha").digest(), block_height=DIGEST_BLOCK_HEIGHT
+        )
+    )
     r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(ots_src)))
     assert r.exit_code == 0, r.output
 

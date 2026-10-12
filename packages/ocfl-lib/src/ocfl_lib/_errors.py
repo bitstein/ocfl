@@ -380,3 +380,18 @@ class MissingContentProofError(OcflError, ValueError):
 
     code = "missing_content_proof"
     error_class = ErrorClass.INVALID
+
+
+class InvalidProofError(OcflError, ValueError):
+    """A proof does not parse, has no sha256 file hash, or commits to
+    another digest (E905)."""
+
+    code = "invalid_proof"
+    error_class = ErrorClass.INVALID
+
+
+class PendingProofError(OcflError, ValueError):
+    """A content proof holds no Bitcoin attestation yet (E907)."""
+
+    code = "pending_proof"
+    error_class = ErrorClass.STATE

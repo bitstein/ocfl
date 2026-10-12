@@ -8,7 +8,7 @@ import hashlib
 from typing import TYPE_CHECKING
 
 from ocfl_lib import ots
-from ocfl_lib._errors import OtsConfigError, OtsParseError
+from ocfl_lib._errors import InvalidProofError, OtsConfigError
 from ocfl_lib._json_value import as_object, object_field, parse_json
 from ocfl_lib._path import join_path
 from ocfl_lib.fs import _utils as fs_utils
@@ -171,21 +171,10 @@ def _check_proof(
     except FileNotFoundError:
         return None  # a missing content file is E092
     try:
-        parsed = ots.parse(raw)
-    except OtsParseError as e:
+        return ots.verify_proof(raw, expected_hex)
+    except InvalidProofError as e:
         result.error("E905", proof=proof, reason=str(e))
         return None
-    if parsed.file_hash != _SHA256:
-        result.error("E905", proof=proof, reason=f"file hash {parsed.file_hash}")
-        return None
-    if parsed.commitment_digest.hex() != expected_hex.lower():
-        result.error(
-            "E905",
-            proof=proof,
-            reason=(f"commits to {parsed.commitment_digest.hex()}, not {expected_hex}"),
-        )
-        return None
-    return parsed
 
 
 def _content_paths(manifest: JsonObject) -> dict[str, str]:

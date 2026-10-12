@@ -11,10 +11,12 @@ from moto import mock_aws
 from ocfl_lib import (
     CommitState,
     DigestAlgorithm,
+    InvalidProofError,
     LocalFS,
     MissingContentProofError,
     MissingInventoryProofError,
     OtsConfigError,
+    PendingProofError,
     PlanMismatchError,
     RecoveryAction,
     RevertCompletedError,
@@ -240,3 +242,63 @@ def test_start_crash_at_every_write(root, action):
         pytest.fail("commit never finished")
     assert (CommitState.CLAIMED, True, False) in seen  # config, no proof yet
     assert (CommitState.CLAIMED, True, True) in seen  # config and proof
+
+
+# --- content proofs are final and correct before their version is committed
+
+
+def _refused(root: Root, files: dict[str, bytes], exc: type[Exception], code: str):
+    before = root.read("inventory.json")
+    with pytest.raises(exc, match=code):
+        root.commit(files, proof=True)
+    assert root.read("inventory.json") == before
+    assert root.read("v2/inventory.json") is None
+    root.assert_clean()
+
+
+def test_refuses_pending_content_proof(root):
+    root.commit(proved(FILES), proof=True)
+    v2 = proved({**FILES, "c": b"c"})
+    v2["c.ots"] = build_attestation(hashlib.sha256(b"c").digest(), pending_uri="x")
+    _refused(root, v2, PendingProofError, "E907")
+
+
+def test_refuses_proof_of_other_bytes(root):
+    root.commit(proved(FILES), proof=True)
+    v2 = proved({**FILES, "c": b"c"})
+    v2["c.ots"] = build_attestation(hashlib.sha256(b"x").digest(), block_height=1)
+    _refused(root, v2, InvalidProofError, "E905")
+
+
+def test_refuses_unparsable_proof(root):
+    root.commit(proved(FILES), proof=True)
+    v2 = proved({**FILES, "c": b"c"})
+    v2["c.ots"] = b"not a proof"
+    _refused(root, v2, InvalidProofError, "E905")
+
+
+def test_new_object_checks_its_proofs(root):
+    v1 = proved(FILES)
+    v1["a.txt.ots"] = b"junk"
+    with pytest.raises(InvalidProofError):
+        root.commit(v1, proof=True)
+    assert root.read("inventory.json") is None
+    root.assert_clean()
+
+
+def test_start_checks_carried_forward_proofs(root):
+    """A `.ots` already in the object becomes a content proof when its
+    version starts the extension; it is read from the object."""
+    root.commit({**FILES, "a.txt.ots": b"historical junk"}, proof=False)
+    v2 = proved(FILES)
+    v2["a.txt.ots"] = b"historical junk"
+    with pytest.raises(InvalidProofError, match=r"a\.txt\.ots"):
+        root.commit(v2, proof=True)
+    assert root.read(ots.CONFIG_PATH) is None
+    root.assert_clean()
+
+
+def test_carried_forward_valid_proofs_pass(root):
+    root.commit(proved(FILES), proof=False)
+    root.commit(proved(FILES), proof=True)
+    root.assert_clean()

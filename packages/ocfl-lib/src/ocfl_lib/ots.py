@@ -17,7 +17,7 @@ from opentimestamps.core.serialize import (
 )
 from opentimestamps.core.timestamp import DetachedTimestampFile
 
-from ocfl_lib._errors import OtsConfigError, OtsParseError
+from ocfl_lib._errors import InvalidProofError, OtsConfigError, OtsParseError
 from ocfl_lib._json_value import as_object, object_field, parse_json
 from ocfl_lib._path import join_path
 from ocfl_lib.fs import _utils as fs_utils
@@ -101,6 +101,26 @@ def parse(ots_bytes: bytes) -> ParsedOts:
         file_hash=detached.file_hash_op.TAG_NAME,
         attestations=attestations,
     )
+
+
+def verify_proof(raw: bytes, expected_hex: str) -> ParsedOts:
+    """Parse a proof and check it commits to `expected_hex` with a sha256 file hash.
+
+    Raises InvalidProofError (E905) for a proof that does not parse, uses
+    another file-hash operation, or commits to another digest. A pending
+    proof passes; check `is_final` for that.
+    """
+    try:
+        parsed = parse(raw)
+    except OtsParseError as e:
+        raise InvalidProofError(str(e)) from e
+    if parsed.file_hash != "sha256":
+        raise InvalidProofError(f"file hash {parsed.file_hash}")
+    if parsed.commitment_digest.hex() != expected_hex.lower():
+        raise InvalidProofError(
+            f"commits to {parsed.commitment_digest.hex()}, not {expected_hex}"
+        )
+    return parsed
 
 
 # --- Bitcoin checks (spec "Bitcoin Checks")

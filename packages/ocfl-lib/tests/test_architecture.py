@@ -1077,3 +1077,29 @@ class TestStartTimestamping:
         text = path.read_text()
         assert "def start_timestamping" in text
         assert "LocalStartTimestamping" in text and "S3StartTimestamping" in text
+
+
+# --- 4.6 a commit checks its content proofs (E905, E907)
+
+
+class TestCommitChecksContentProofs:
+    def test_check_base_checks_content_proofs(self):
+        """Before the plan is written, on both backends."""
+        assert "_check_content_proofs" in _names(
+            _func(LIB_SRC / "_commit.py", "check_base")
+        )
+        for fn in ("_commit_local", "_commit_s3"):
+            body = ast.unparse(_func(LIB_SRC / "_commit.py", fn))
+            assert "check_base(fsys, t, raw, content)" in body, fn
+
+    def test_refusals_name_the_spec_codes(self):
+        body = ast.unparse(_func(LIB_SRC / "_commit.py", "_check_content_proofs"))
+        assert "PendingProofError" in body and "E907" in body
+        assert "InvalidProofError" in body and "E905" in body
+
+    def test_validation_and_commit_share_one_proof_check(self):
+        for path, fn in (
+            (LIB_SRC / "_commit.py", "_check_content_proofs"),
+            (LIB_SRC / "validation/_extension_ots.py", "_check_proof"),
+        ):
+            assert "verify_proof" in _names(_func(path, fn)), path
