@@ -19,6 +19,7 @@ from ocfl_cli._appctx import (
     sp_client_factory,
     verbose,
 )
+from ocfl_cli._style import make_console
 from ocfl_cli.config import ArchiveConfig, Config
 
 
@@ -29,6 +30,7 @@ def _factory(_cfg: Config) -> object:
 def test_app_ctx_builds_typed_view_from_ctx_obj() -> None:
     archive = ArchiveConfig(name="main", root="/archive")
     cfg = Config(archives={"main": archive})
+    out, err = make_console(), make_console(stderr=True)
     ctx = typer.Context(
         click.Command("probe"),
         obj={
@@ -41,6 +43,8 @@ def test_app_ctx_builds_typed_view_from_ctx_obj() -> None:
             "no_color": False,
             "sp_client_factory": _factory,
             "btc_rpc_factory": _factory,
+            "console": out,
+            "err_console": err,
         },
     )
 
@@ -55,6 +59,8 @@ def test_app_ctx_builds_typed_view_from_ctx_obj() -> None:
     assert typed.no_color is False
     assert typed.sp_client_factory is _factory
     assert typed.btc_rpc_factory is _factory
+    assert typed.console is out
+    assert typed.err_console is err
 
 
 def test_app_ctx_reports_missing_required_keys() -> None:

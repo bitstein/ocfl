@@ -131,3 +131,42 @@ class TestOneErrorHandler:
         text = (CLI_SRC / "ots/bitcoin.py").read_text()
         assert "_cli_errors" not in text and "class BitcoinRPCClient" not in text
         assert "return BitcoinRpcClient(" in text
+
+
+# --- 5.5 consoles per command run, in AppCtx, not _style globals
+
+
+class TestConsolesPerRun:
+    def test_style_holds_no_console(self):
+        tree = _tree(CLI_SRC / "_style.py")
+        assert not [n for n in ast.walk(tree) if isinstance(n, ast.Global)]
+        for node in tree.body:
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                assert "Console(" not in ast.unparse(node), ast.unparse(node)
+
+    def test_only_appctx_and_the_handler_make_consoles(self):
+        homes = {
+            _rel(p)
+            for p in _py_files(CLI_SRC)
+            if "make_console(" in p.read_text() or "Console(" in p.read_text()
+        }
+        assert homes <= {"_style.py", "_appctx.py", "_exit.py"}, homes
+
+    def test_no_color_does_not_leak_into_the_next_run(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from ocfl_cli.main import app
+        from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
+
+        fs = LocalFS(tmp_path)
+        layout = get_layout("0002-flat-direct-storage-layout")
+        StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        runner = CliRunner()
+        env = {"FORCE_COLOR": "1"}
+        args = ["-r", str(tmp_path), "info"]
+        plain = runner.invoke(app, ["--no-color", *args], env=env)
+        coloured = runner.invoke(app, args, env=env)
+        assert plain.exit_code == coloured.exit_code == 0
+        assert "\x1b[" not in plain.stdout
+        assert "\x1b[" in coloured.stdout

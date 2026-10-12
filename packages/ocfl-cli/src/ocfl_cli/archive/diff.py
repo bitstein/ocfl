@@ -55,4 +55,4 @@ def diff(
             parts: list = [styled_sym, "  ", e.path]
             if e.renamed_from:
                 parts.append(f"  (from {e.renamed_from})")
-            _style.echo(Text.assemble(*parts))
+            appctx.console(ctx).print(Text.assemble(*parts))

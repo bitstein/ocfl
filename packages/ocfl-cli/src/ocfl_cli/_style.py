@@ -1,4 +1,9 @@
-"""Centralized output styling. Honors NO_COLOR, --no-color, and TTY detection."""
+"""Centralized output styling. Honors NO_COLOR, --no-color, and TTY detection.
+
+Holds no consoles: each command run makes its own pair with `make_console`
+(see `AppCtx.console` / `AppCtx.err_console`), so one run's `--no-color` or
+environment never leaks into the next.
+"""
 
 import os
 import sys
@@ -36,44 +41,23 @@ def _should_color(stream: Any) -> bool:
         return False
 
 
-def _make_console(stream: IO, *, stderr: bool = False) -> Console:
-    if _should_color(stream):
+def make_console(*, stderr: bool = False, no_color: bool = False) -> Console:
+    """A console for stdout (or stderr), coloured per flag, env and TTY now."""
+    stream: IO = sys.stderr if stderr else sys.stdout
+    if not no_color and _should_color(stream):
         return Console(
             color_system="truecolor",
             highlight=False,
+            soft_wrap=True,
             stderr=stderr,
             force_terminal=True,
         )
-    return Console(color_system=None, highlight=False, stderr=stderr)
-
-
-_stdout_console = _make_console(sys.stdout)
-_stderr_console = _make_console(sys.stderr, stderr=True)
-
-
-def set_no_color() -> None:
-    """Explicit --no-color override: force both consoles to plain output."""
-    global _stdout_console, _stderr_console
-    _stdout_console = Console(color_system=None, highlight=False)
-    _stderr_console = Console(color_system=None, highlight=False, stderr=True)
-
-
-def reinit_from_env() -> None:
-    """Re-detect TTY + env vars. Mainly for tests that mutate os.environ."""
-    global _stdout_console, _stderr_console
-    _stdout_console = _make_console(sys.stdout)
-    _stderr_console = _make_console(sys.stderr, stderr=True)
+    return Console(color_system=None, highlight=False, soft_wrap=True, stderr=stderr)
 
 
 def style(category: str, text: str) -> Text:
     """Return a rich Text with the named semantic style applied."""
     return Text(text, style=_STYLES.get(category, ""))
-
-
-def echo(text: str | Text, *, err: bool = False) -> None:
-    """Print to stdout or stderr via rich console (handles styling + TTY)."""
-    console = _stderr_console if err else _stdout_console
-    console.print(text, soft_wrap=True)
 
 
 # Convenience helpers for high-frequency call sites.

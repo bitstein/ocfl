@@ -71,6 +71,8 @@ def _ls_object(
     else:
         for path, digest in sorted(path_map.items()):
             if digests:
-                _style.echo(Text.assemble(_style.digest(digest), "  ", path))
+                appctx.console(ctx).print(
+                    Text.assemble(_style.digest(digest), "  ", path)
+                )
             else:
                 typer.echo(path)

@@ -2,19 +2,10 @@
 
 import io
 
-import pytest
 from rich.console import Console
 from rich.text import Text
 
 from ocfl_cli import _style
-
-
-@pytest.fixture(autouse=True)
-def _restore_style_state():
-    """Reset console state before and after each test for isolation."""
-    _style.reinit_from_env()
-    yield
-    _style.reinit_from_env()
 
 
 def _render(text: Text, *, color: bool) -> str:
@@ -67,8 +58,7 @@ def test_convenience_helpers():
 def test_no_color_env_disables_color(monkeypatch, capsys):
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.delenv("FORCE_COLOR", raising=False)
-    _style.reinit_from_env()
-    _style.echo(_style.added("hello"))
+    _style.make_console().print(_style.added("hello"))
     out = capsys.readouterr().out
     assert "\x1b[" not in out
     assert "hello" in out
@@ -77,29 +67,38 @@ def test_no_color_env_disables_color(monkeypatch, capsys):
 def test_force_color_env_enables_color(monkeypatch, capsys):
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setenv("FORCE_COLOR", "1")
-    _style.reinit_from_env()
-    _style.echo(_style.added("hello"))
+    _style.make_console().print(_style.added("hello"))
     out = capsys.readouterr().out
     assert "\x1b[" in out
     assert "hello" in out
 
 
-def test_set_no_color_disables(monkeypatch, capsys):
+def test_no_color_flag_disables(monkeypatch, capsys):
     monkeypatch.setenv("FORCE_COLOR", "1")
-    _style.reinit_from_env()
-    _style.set_no_color()
-    _style.echo(_style.added("plain"))
+    _style.make_console(no_color=True).print(_style.added("plain"))
     out = capsys.readouterr().out
     assert "\x1b[" not in out
     assert "plain" in out
+
+
+def test_each_console_reads_the_env_when_made(monkeypatch, capsys):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    plain = _style.make_console()
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    coloured = _style.make_console()
+    plain.print(_style.added("a"))
+    coloured.print(_style.added("b"))
+    out = capsys.readouterr().out
+    assert out.startswith("a\n")
+    assert "\x1b[" in out.split("a\n", 1)[1]
 
 
 def test_non_tty_no_color(monkeypatch, capsys):
     # capsys replaces stdout with a non-TTY stream by default.
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("FORCE_COLOR", raising=False)
-    _style.reinit_from_env()
-    _style.echo(_style.added("notty"))
+    _style.make_console().print(_style.added("notty"))
     out = capsys.readouterr().out
     assert "\x1b[" not in out
     assert "notty" in out
@@ -129,20 +128,18 @@ def test_should_color_handles_closed_stream(monkeypatch):
     assert _style._should_color(stream) is False
 
 
-def test_echo_err_routes_to_stderr(monkeypatch, capsys):
+def test_stderr_console_routes_to_stderr(monkeypatch, capsys):
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("FORCE_COLOR", raising=False)
-    _style.reinit_from_env()
-    _style.echo(_style.error("oops"), err=True)
+    _style.make_console(stderr=True).print(_style.error("oops"))
     captured = capsys.readouterr()
     assert "oops" in captured.err
     assert "oops" not in captured.out
 
 
-def test_echo_plain_string(monkeypatch, capsys):
+def test_print_plain_string(monkeypatch, capsys):
     monkeypatch.setenv("NO_COLOR", "1")
-    _style.reinit_from_env()
-    _style.echo("plain string")
+    _style.make_console().print("plain string")
     out = capsys.readouterr().out
     assert "plain string" in out
     assert "\x1b[" not in out

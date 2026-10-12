@@ -43,6 +43,7 @@ from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
+from ocfl_cli._style import make_console
 from ocfl_cli.errors import AttestationMismatchError
 from ocfl_cli.main import app
 from ocfl_cli.ots.simpleproof import CalendarAttestation as WireCalendarAttestation
@@ -292,7 +293,9 @@ class TestProgressRendering:
             ),
         )
 
-        stage_commands._render_content_upgrade_result("obj:render", result)
+        stage_commands._render_content_upgrade_result(
+            make_console(), "obj:render", result
+        )
 
         out = capsys.readouterr().out
         assert "Content:" in out
@@ -354,6 +357,7 @@ class TestProgressRendering:
         )
 
         stage_commands._render_watch_progress(
+            make_console(),
             "block",
             {
                 "height": 920150,
@@ -380,6 +384,7 @@ class TestProgressRendering:
 
     def test_watch_start_renders_submit_mismatch_warning_once(self, capsys):
         stage_commands._render_watch_start(
+            make_console(),
             "obj:watch",
             (
                 service.JobProgress(
@@ -1239,8 +1244,12 @@ class TestReorgMerkleMismatch:
         r = runner.invoke(
             app,
             _stage_args(
-                empty_sha256_root, staging, "timestamp", "content",
-                "obj:reorg-mm", "--upgrade",
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:reorg-mm",
+                "--upgrade",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1257,8 +1266,12 @@ class TestReorgMerkleMismatch:
         r = runner.invoke(
             app,
             _stage_args(
-                empty_sha256_root, staging, "timestamp", "content",
-                "obj:reorg-mm", "--upgrade",
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "content",
+                "obj:reorg-mm",
+                "--upgrade",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1267,8 +1280,7 @@ class TestReorgMerkleMismatch:
         assert state.content_proofs[d].verified is False
         # A fresh verify job was queued to re-anchor the reset digest.
         assert any(
-            d in j.digests and j.status == "IN_PROGRESS"
-            for j in state.verify_jobs
+            d in j.digests and j.status == "IN_PROGRESS" for j in state.verify_jobs
         )
 
 
@@ -1301,9 +1313,7 @@ class TestContentUpgradeExpired:
         sp_fake.expire_job(dead_id)
         state = replace(
             load_ots(sd),
-            verify_jobs=(
-                VerifyJob(job_id=dead_id, digests=(d,), status="EXPIRED"),
-            ),
+            verify_jobs=(VerifyJob(job_id=dead_id, digests=(d,), status="EXPIRED"),),
         )
         save_ots(sd, state)
         assert len(sp_fake._jobs) == 1
@@ -1324,8 +1334,7 @@ class TestContentUpgradeExpired:
         assert len(sp_fake._jobs) == 2
         state = load_ots(sd)
         assert any(
-            d in j.digests
-            and j.status not in {"FAILED", "EXPIRED", "COMPLETED"}
+            d in j.digests and j.status not in {"FAILED", "EXPIRED", "COMPLETED"}
             for j in state.verify_jobs
         )
 

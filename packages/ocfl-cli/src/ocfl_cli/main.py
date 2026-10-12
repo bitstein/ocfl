@@ -8,7 +8,6 @@ from typing import Annotated
 
 import typer
 
-from ocfl_cli import _style
 from ocfl_cli._appctx import install_app_ctx
 from ocfl_cli._exit import OcflGroup
 from ocfl_cli.archive.diff import diff
@@ -118,8 +117,6 @@ def main(
     ] = False,
 ) -> None:
     """CLI for managing an OCFL archive."""
-    if no_color:
-        _style.set_no_color()
     _configure_logging(
         json_mode=log_json or os.environ.get("OCFL_LOG_JSON") == "1",
         verbose=verbose,

@@ -63,6 +63,8 @@ from ocfl_cli.stage.store import StagingStore
 from ocfl_lib import BitcoinRpcError, DigestAlgorithm
 
 if TYPE_CHECKING:
+    from rich.console import Console
+
     from ocfl_cli._appctx import BtcRpcFactory, SpClientFactory
     from ocfl_cli.config import Config, SimpleProofConfig
     from ocfl_cli.ots.bitcoin import HashBlockStream
@@ -710,7 +712,7 @@ def ls_cmd(
     else:
         for p, d in entries:
             if digests:
-                _style.echo(Text.assemble(_style.digest(d), "  ", p))
+                appctx.console(ctx).print(Text.assemble(_style.digest(d), "  ", p))
             else:
                 typer.echo(p)
 
@@ -720,7 +722,7 @@ def ls_cmd(
 # ---------------------------------------------------------------------------
 
 
-def _render_status_diff(data: dict) -> None:
+def _render_status_diff(out: Console, data: dict) -> None:
     action_prefix = {"added": "A", "deleted": "D", "modified": "M", "renamed": "R"}
     sym_style = {
         "A": _style.added,
@@ -735,19 +737,21 @@ def _render_status_diff(data: dict) -> None:
         parts: list = [styled_sym, " ", c["path"]]
         if c.get("renamed_from"):
             parts.append(f" (from {c['renamed_from']})")
-        _style.echo(Text.assemble(*parts))
+        out.print(Text.assemble(*parts))
 
 
-def _render_status_section(title: str, *, leading_blank: bool = False) -> None:
+def _render_status_section(
+    out: Console, title: str, *, leading_blank: bool = False
+) -> None:
     if leading_blank:
         typer.echo()
-    _style.echo(_style.key(f"{title}:"))
+    out.print(_style.key(f"{title}:"))
 
 
 def _render_metadata_status(
-    data: dict[str, str | None], *, leading_blank: bool = False
+    out: Console, data: dict[str, str | None], *, leading_blank: bool = False
 ) -> None:
-    _render_status_section("Metadata", leading_blank=leading_blank)
+    _render_status_section(out, "Metadata", leading_blank=leading_blank)
     for field in ("message", "user.name", "user.address"):
         value = data[field] if data[field] is not None else "missing"
         typer.echo(f"  {field}: {value}")
@@ -758,12 +762,13 @@ def _plural(n: int, singular: str, plural: str | None = None) -> str:
 
 
 def _render_watch_start(
+    out: Console,
     object_id: str,
     jobs: tuple[service.JobProgress, ...] = (),
     *,
     waiting: bool = True,
 ) -> None:
-    _render_status_section("Watch")
+    _render_status_section(out, "Watch")
     typer.echo(f"  Object: {object_id}")
     _render_sp_submit_warning(jobs)
     if waiting:
@@ -857,14 +862,16 @@ def _render_sp_submit_warning(jobs: tuple[service.JobProgress, ...]) -> None:
             return
 
 
-def _render_watch_progress(kind: str, data: dict, *, next_action: str) -> None:
+def _render_watch_progress(
+    out: Console, kind: str, data: dict, *, next_action: str
+) -> None:
     if kind == "already_advanced":
-        _render_status_section("Workflow", leading_blank=True)
+        _render_status_section(out, "Workflow", leading_blank=True)
         typer.echo(f"  Phase: {data['phase']}")
         typer.echo(f"  Next: {next_action}")
         return
     if kind == "block":
-        _render_status_section("Block", leading_blank=True)
+        _render_status_section(out, "Block", leading_blank=True)
         typer.echo(f"  Height: {data['height']}")
         typer.echo("  Checking SimpleProof jobs")
         typer.echo(f"  Phase: {data['phase']}")
@@ -873,15 +880,15 @@ def _render_watch_progress(kind: str, data: dict, *, next_action: str) -> None:
             typer.echo("  Rechecking cached proofs after chain movement")
         return
     if kind == "advanced":
-        _render_status_section("Workflow", leading_blank=True)
+        _render_status_section(out, "Workflow", leading_blank=True)
         typer.echo(f"  Phase: {data['previous_phase']} -> {data['phase']}")
         typer.echo(f"  Next: {next_action}")
 
 
 def _render_content_upgrade_result(
-    object_id: str, result: service.UpgradeContentResult
+    out: Console, object_id: str, result: service.UpgradeContentResult
 ) -> None:
-    _render_status_section("Content")
+    _render_status_section(out, "Content")
     typer.echo(f"  Object: {object_id}")
     typer.echo("  Checked SimpleProof jobs")
     _render_sp_submit_warning(result.jobs)
@@ -893,7 +900,7 @@ def _render_content_upgrade_result(
         count = result.orphan_count
         typer.echo(f"  Held by {count} orphan {_plural(count, 'digest')}")
 
-    _render_status_section("Workflow", leading_blank=True)
+    _render_status_section(out, "Workflow", leading_blank=True)
     if result.previous_phase is result.phase:
         typer.echo(f"  Phase: {result.phase.value}")
     else:
@@ -906,16 +913,16 @@ def _render_content_upgrade_result(
     typer.echo(f"  Next: {next_action}")
 
 
-def _render_status_ots(data: dict) -> None:
-    _render_status_section("Object")
+def _render_status_ots(out: Console, data: dict) -> None:
+    _render_status_section(out, "Object")
     if data["changes"]:
-        _render_status_diff({"changes": data["changes"]})
+        _render_status_diff(out, {"changes": data["changes"]})
     else:
         typer.echo("  no staged changes")
 
-    _render_metadata_status(data["metadata"], leading_blank=True)
+    _render_metadata_status(out, data["metadata"], leading_blank=True)
 
-    _render_status_section("Workflow", leading_blank=True)
+    _render_status_section(out, "Workflow", leading_blank=True)
     counts = data["counts"]
     parts = [
         f"  Phase: {data['phase']} ({counts['upgraded']} of {counts['total']} upgraded"
@@ -938,7 +945,7 @@ def _render_status_ots(data: dict) -> None:
             )
     typer.echo(f"  Next: {data['next_action']}")
 
-    _render_status_section("Network", leading_blank=True)
+    _render_status_section(out, "Network", leading_blank=True)
     bitcoin = data["bitcoin"]
     if bitcoin is not None:
         sync_str = "node in sync" if bitcoin["in_sync"] else "node not in sync"
@@ -959,6 +966,7 @@ def status(
     object_id: Annotated[str, typer.Argument(help="Object ID.")],
 ) -> None:
     """Show changes in staged version vs committed head (OTS-aware)."""
+    out = appctx.console(ctx)
     resolved = require_existing_staging(ctx, object_id)
     store = resolved.store
     root_path = resolved.root_path
@@ -978,15 +986,15 @@ def status(
         if json_mode:
             output_json(data)
         else:
-            _render_status_ots(data)
+            _render_status_ots(out, data)
     else:
         data = service.status_diff_dict(store, root_path, object_id)
         if json_mode:
             output_json(data)
         else:
-            _render_status_diff(data)
+            _render_status_diff(out, data)
             _render_metadata_status(
-                data["metadata"], leading_blank=bool(data["changes"])
+                out, data["metadata"], leading_blank=bool(data["changes"])
             )
 
 
@@ -4358,18 +4366,19 @@ def timestamp_batch_status(
     ] = False,
 ) -> None:
     """Show local per-object status for a batch."""
+    out = appctx.console(ctx)
     staging_root = _stage_store(ctx)._root
     batch = _load_batch_or_usage(ctx, staging_root, batch_id)
     data = _batch_status_dict(staging_root, batch, verbose=verbose)
     if appctx.json_mode(ctx):
         output_json(data)
         return
-    _render_status_section("Batch")
+    _render_status_section(out, "Batch")
     typer.echo(f"  ID: {batch.batch_id}")
     typer.echo(f"  Target: {batch.target}")
     typer.echo(f"  Category: {batch.category_id}")
     typer.echo(f"  Updated: {batch.updated_at}")
-    _render_status_section("Objects", leading_blank=True)
+    _render_status_section(out, "Objects", leading_blank=True)
     for row in data["objects"]:
         typer.echo(
             f"  {row['object_id']}  {row['batch_status']}  "
@@ -4434,6 +4443,7 @@ def timestamp_content(
     ] = False,
 ) -> None:
     """Submit staged content digests to SimpleProof."""
+    out = appctx.console(ctx)
     preflight = require_timestamp_preflight(
         ctx,
         object_id,
@@ -4449,6 +4459,7 @@ def timestamp_content(
     if watch_flag:
         state = load_ots(resolved.staging_dir)
         _render_watch_start(
+            out,
             object_id,
             service.compute_job_progress(state),
             waiting=state.phase is not Phase.CONTENT_UPGRADED,
@@ -4464,7 +4475,7 @@ def timestamp_content(
                 sp_factory=preflight.sp_factory,
                 btc_factory=preflight.btc_factory,
                 progress=lambda kind, data: _render_watch_progress(
-                    kind, data, next_action="stage timestamp inventory"
+                    out, kind, data, next_action="stage timestamp inventory"
                 ),
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
@@ -4485,7 +4496,7 @@ def timestamp_content(
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             raise ErrorContext(e, prefix="halt: ") from e
-        _render_content_upgrade_result(object_id, result)
+        _render_content_upgrade_result(out, object_id, result)
         return
 
     if retry:
@@ -4512,7 +4523,7 @@ def timestamp_content(
             resolved.staging_dir,
             sp_factory=preflight.sp_factory,
         )
-        _render_status_section("Content")
+        _render_status_section(out, "Content")
         typer.echo(f"  Object: {object_id}")
         if result.submitted_count:
             typer.echo(
@@ -4522,7 +4533,7 @@ def timestamp_content(
         else:
             typer.echo("  Nothing to timestamp")
 
-        _render_status_section("Workflow", leading_blank=True)
+        _render_status_section(out, "Workflow", leading_blank=True)
         if result.previous_phase is result.phase:
             typer.echo(f"  Phase: {result.phase.value}")
         else:
@@ -4566,6 +4577,7 @@ def timestamp_inventory(
     ] = False,
 ) -> None:
     """Build inventory, submit its digest to SimpleProof, serialize plan."""
+    out = appctx.console(ctx)
     preflight = require_timestamp_preflight(
         ctx,
         object_id,
@@ -4588,6 +4600,7 @@ def timestamp_inventory(
     if watch_flag:
         state = load_ots(resolved.staging_dir)
         _render_watch_start(
+            out,
             object_id,
             service.compute_job_progress(state),
             waiting=state.phase is not Phase.INVENTORY_UPGRADED,
@@ -4599,7 +4612,7 @@ def timestamp_inventory(
                 sp_factory=preflight.sp_factory,
                 btc_factory=preflight.btc_factory,
                 progress=lambda kind, data: _render_watch_progress(
-                    kind, data, next_action="stage commit"
+                    out, kind, data, next_action="stage commit"
                 ),
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:

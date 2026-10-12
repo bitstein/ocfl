@@ -7,7 +7,6 @@ import typer
 from platformdirs import user_state_path
 
 from ocfl_cli import _appctx as appctx
-from ocfl_cli import _style
 from ocfl_cli._common import open_root, output_json, resolve_root
 from ocfl_cli.errors import UsageError
 from ocfl_lib import ClaimFS, CommitState, RecoveryAction
@@ -74,9 +73,9 @@ def recover(
             }
         )
     elif status.state is CommitState.CLEAN:
-        _style.echo(f"{object_id}: no unfinished commit")
+        appctx.console(ctx).print(f"{object_id}: no unfinished commit")
     else:
-        _style.echo(
+        appctx.console(ctx).print(
             f"{object_id}: {status.state.value} {status.version}: "
             f"{action.value.replace('_', '-')} done"
         )

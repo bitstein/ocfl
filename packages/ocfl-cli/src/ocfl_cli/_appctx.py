@@ -5,14 +5,15 @@ factory injection. Command bodies should consume this typed view instead of
 reading string keys directly.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, cast
 
+from ocfl_cli._style import make_console
+
 if TYPE_CHECKING:
     import typer
+    from rich.console import Console
 
     from ocfl_cli.config import ArchiveConfig, Config
     from ocfl_cli.ots.bitcoin import BitcoinRPC
@@ -38,6 +39,8 @@ class AppCtx:
     no_color: bool
     sp_client_factory: SpClientFactory
     btc_rpc_factory: BtcRpcFactory
+    console: Console
+    err_console: Console
 
 
 _SP_FACTORY_SOURCE = "_sp_client_factory_source"
@@ -136,6 +139,9 @@ def install_app_ctx(
     obj["quiet"] = quiet
     obj["verbose"] = verbose
     obj["no_color"] = no_color
+    # Fresh consoles per run: colour follows this run's flag, env and TTY.
+    obj["console"] = make_console(no_color=no_color)
+    obj["err_console"] = make_console(stderr=True, no_color=no_color)
     # Factory sources intentionally preserve runner.invoke(obj=...) test overrides.
     sp_source = _factory_source(
         obj,
@@ -177,6 +183,8 @@ def app_ctx(ctx: typer.Context) -> AppCtx:
         no_color=cast("bool", _required(ctx, "no_color")),
         sp_client_factory=cast("SpClientFactory", _required(ctx, "sp_client_factory")),
         btc_rpc_factory=cast("BtcRpcFactory", _required(ctx, "btc_rpc_factory")),
+        console=console(ctx),
+        err_console=err_console(ctx),
     )
 
 
@@ -214,3 +222,13 @@ def sp_client_factory(ctx: typer.Context) -> SpClientFactory:
 
 def btc_rpc_factory(ctx: typer.Context) -> BtcRpcFactory:
     return cast("BtcRpcFactory", _required(ctx, "btc_rpc_factory"))
+
+
+def console(ctx: typer.Context) -> Console:
+    """This run's stdout console."""
+    return cast("Console", _required(ctx, "console"))
+
+
+def err_console(ctx: typer.Context) -> Console:
+    """This run's stderr console."""
+    return cast("Console", _required(ctx, "err_console"))

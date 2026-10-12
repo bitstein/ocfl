@@ -19,6 +19,7 @@ from ocfl_lib import ErrorClass, OcflError
 
 if TYPE_CHECKING:
     import click
+    from rich.console import Console
     from rich.text import Text
 
 HANDLED = (OcflError, CLIError, OSError, KeyboardInterrupt)
@@ -57,8 +58,10 @@ def error_line(message: str) -> Text:
     return _style.error(f"Error: {message}")
 
 
-def handle_error(exc: BaseException, *, json_mode: bool) -> NoReturn:
-    """Report `exc` on stderr and exit with its class's code."""
+def handle_error(
+    exc: BaseException, *, json_mode: bool, console: Console | None = None
+) -> NoReturn:
+    """Report `exc` on stderr (this run's `console`) and exit with its code."""
     code = exit_code_for_class(error_class_of(exc))
     message = str(exc) or ("interrupted" if isinstance(exc, KeyboardInterrupt) else "")
     if json_mode:
@@ -71,7 +74,9 @@ def handle_error(exc: BaseException, *, json_mode: bool) -> NoReturn:
         }
         typer.echo(json.dumps(payload), err=True)
     else:
-        _style.echo(error_line(message), err=True)
+        if console is None:
+            console = _style.make_console(stderr=True)
+        console.print(error_line(message))
     raise typer.Exit(int(code))
 
 
@@ -82,4 +87,11 @@ class OcflGroup(TyperGroup):
         try:
             return super().invoke(ctx)
         except HANDLED as exc:
-            handle_error(exc, json_mode=bool(ctx.params.get("json_output")))
+            obj = ctx.obj if isinstance(ctx.obj, dict) else {}
+            console = obj.get("err_console")
+            if console is None:
+                no_color = bool(ctx.params.get("no_color"))
+                console = _style.make_console(stderr=True, no_color=no_color)
+            handle_error(
+                exc, json_mode=bool(ctx.params.get("json_output")), console=console
+            )

@@ -52,7 +52,7 @@ def log(
     else:
         for v in versions:
             info = obj.version_info(v)
-            _style.echo(
+            appctx.console(ctx).print(
                 Text.assemble(_style.version(str(v)), "  ", _style.date(info.created))
             )
             if info.message:

@@ -55,7 +55,7 @@ Target architecture from the 2026-10-11 design session. Terms: [CONTEXT.md](../C
 - [ ] Move the batch engine out of `commands.py` into the use cases.
 - [ ] Ports for Clock, Sleeper and BlockStream (ZMQ). Fakes replace the monkeypatching of module internals.
 - [x] One error handler: `ErrorClass` → `ExitCode` with an exhaustive `match`, and JSON errors on stderr under `--json`.
-- [ ] Create consoles per command run, in `AppCtx`, instead of `_style` globals.
+- [x] Create consoles per command run, in `AppCtx`, instead of `_style` globals.
 
 ## 6. Merged timestamp workflow
 

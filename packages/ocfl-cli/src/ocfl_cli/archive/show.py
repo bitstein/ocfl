@@ -66,7 +66,7 @@ def show(
             }
         )
     else:
-        _style.echo(
+        appctx.console(ctx).print(
             Text.assemble(_style.version(str(v)), "  ", _style.date(info.created))
         )
         if info.message:
@@ -84,4 +84,4 @@ def show(
             parts: list = ["  ", styled_sym, "  ", c.path]
             if c.renamed_from:
                 parts.append(f"  (from {c.renamed_from})")
-            _style.echo(Text.assemble(*parts))
+            appctx.console(ctx).print(Text.assemble(*parts))

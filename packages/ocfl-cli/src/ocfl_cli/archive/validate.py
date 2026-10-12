@@ -24,6 +24,8 @@ from ocfl_lib import fs as fs_utils
 from ocfl_lib.fs import open_fs
 
 if TYPE_CHECKING:
+    from rich.console import Console
+
     from ocfl_cli._appctx import BtcRpcFactory
     from ocfl_cli.config import Config
     from ocfl_lib.fs import FS, FileWalker
@@ -79,13 +81,22 @@ def _validate_root(
     fs = open_fs(path)
     object_ids = _object_ids_by_path(fs) if emit_progress else {}
     if emit_progress:
-        _style.echo(_style.dim(f"  Found {len(object_ids)} objects"), err=True)
+        appctx.err_console(ctx).print(_style.dim(f"  Found {len(object_ids)} objects"))
     digest_status = "content digests enabled" if check_digests else "digests skipped"
     _emit(ctx, f"Validating objects ({digest_status})...")
 
     report = validate_root(fs, "", check_digests=check_digests)
-    _emit_root_object_results(emit_progress, fs, object_ids, report)
-    _output_result(report, json_mode, suppress, show_paths=True)
+    _emit_root_object_results(
+        appctx.err_console(ctx), emit_progress, fs, object_ids, report
+    )
+    _output_result(
+        appctx.console(ctx),
+        appctx.err_console(ctx),
+        report,
+        json_mode,
+        suppress,
+        show_paths=True,
+    )
     if not report.is_valid:
         raise typer.Exit(1)
 
@@ -116,12 +127,21 @@ def _validate_object(
     try:
         report = validate_object(fs, obj_path, check_digests=check_digests, chain=chain)
         if chain is not None and _should_emit_progress(ctx):
-            _emit_chain_results(ots.check_object_chain(fs, obj_path, chain))
+            _emit_chain_results(
+                appctx.err_console(ctx), ots.check_object_chain(fs, obj_path, chain)
+            )
     except OcflError as e:
         # The chain could not be checked: a failure, not a finding (no E906).
         raise ErrorContext(e, prefix="cannot verify OTS attestations: ") from e
 
-    _output_result(report, json_mode, suppress, show_paths=False)
+    _output_result(
+        appctx.console(ctx),
+        appctx.err_console(ctx),
+        report,
+        json_mode,
+        suppress,
+        show_paths=False,
+    )
     if not report.is_valid:
         raise typer.Exit(1)
 
@@ -156,7 +176,9 @@ class _CachedBlocks:
         return self._blocks[height]
 
 
-def _emit_chain_results(results: tuple[ots.ProofChainResult, ...]) -> None:
+def _emit_chain_results(
+    err_out: Console, results: tuple[ots.ProofChainResult, ...]
+) -> None:
     for r in results:
         name = r.proof.path.rpartition("/")[2]
         verified = r.verified
@@ -172,7 +194,7 @@ def _emit_chain_results(results: tuple[ots.ProofChainResult, ...]) -> None:
                 outcome = "shallow"
             case _:
                 outcome = "pending"
-        _style.echo(f"  {r.proof.version} ({name}): {outcome}", err=True)
+        err_out.print(f"  {r.proof.version} ({name}): {outcome}")
 
 
 def _should_emit_progress(ctx: typer.Context) -> bool:
@@ -184,7 +206,7 @@ def _should_emit_progress(ctx: typer.Context) -> bool:
 
 def _emit(ctx: typer.Context, msg: str) -> None:
     if _should_emit_progress(ctx):
-        _style.echo(_style.dim(msg), err=True)
+        appctx.err_console(ctx).print(_style.dim(msg))
 
 
 def _object_ids_by_path(fs: FS) -> dict[str, str]:
@@ -212,6 +234,7 @@ def _read_object_id(fs: FS, obj_path: str) -> str:
 
 
 def _emit_root_object_results(
+    err_out: Console,
     emit_progress: bool,
     fs: FS,
     object_ids: dict[str, str],
@@ -227,22 +250,22 @@ def _emit_root_object_results(
         count = errors_by_path.get(obj_path)
         if count is None:
             if report.truncated:
-                _style.echo(
-                    f"  {object_id}: not validated (max errors reached)", err=True
-                )
+                err_out.print(f"  {object_id}: not validated (max errors reached)")
                 continue
-            _style.echo(f"  {object_id}: ok", err=True)
+            err_out.print(f"  {object_id}: ok")
             continue
         suffix = "error" if count == 1 else "errors"
-        _style.echo(f"  {object_id}: {count} {suffix}", err=True)
+        err_out.print(f"  {object_id}: {count} {suffix}")
     for obj_path, count in errors_by_path.items():
         if obj_path in object_ids:
             continue
         suffix = "error" if count == 1 else "errors"
-        _style.echo(f"  {_read_object_id(fs, obj_path)}: {count} {suffix}", err=True)
+        err_out.print(f"  {_read_object_id(fs, obj_path)}: {count} {suffix}")
 
 
 def _output_result(
+    out: Console,
+    err_out: Console,
     report: ValidationReport,
     json_mode: bool,
     suppress: frozenset[str],
@@ -268,13 +291,13 @@ def _output_result(
         )
     else:
         for e in errors:
-            _style.echo(error_line(f"[{e.code}] {message(e)}"), err=True)
+            err_out.print(error_line(f"[{e.code}] {message(e)}"))
         for w in warnings:
-            _style.echo(_style.warning(f"Warning: [{w.code}] {message(w)}"), err=True)
+            err_out.print(_style.warning(f"Warning: [{w.code}] {message(w)}"))
         for i in infos:
-            _style.echo(_style.dim(f"Info: [{i.code}] {message(i)}"), err=True)
+            err_out.print(_style.dim(f"Info: [{i.code}] {message(i)}"))
         if report.is_valid:
-            _style.echo(
+            out.print(
                 _style.valid(
                     "Valid" + (f" ({len(warnings)} warnings)" if warnings else "")
                 )

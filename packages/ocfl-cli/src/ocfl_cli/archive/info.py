@@ -38,8 +38,10 @@ def _info_root(ctx: typer.Context, json_mode: bool) -> None:
         }
         output_json(data)
     else:
-        _style.echo(Text.assemble(_style.key("Spec:   "), str(root.spec)))
-        _style.echo(Text.assemble(_style.key("Layout: "), layout_name or "(none)"))
+        appctx.console(ctx).print(Text.assemble(_style.key("Spec:   "), str(root.spec)))
+        appctx.console(ctx).print(
+            Text.assemble(_style.key("Layout: "), layout_name or "(none)")
+        )
 
 
 def _info_object(ctx: typer.Context, object_id: str, json_mode: bool) -> None:
@@ -63,8 +65,14 @@ def _info_object(ctx: typer.Context, object_id: str, json_mode: bool) -> None:
             }
         )
     else:
-        _style.echo(Text.assemble(_style.key("ID:        "), inv.id))
-        _style.echo(Text.assemble(_style.key("Spec:      "), str(obj.spec)))
-        _style.echo(Text.assemble(_style.key("Algorithm: "), inv.digest_algorithm))
-        _style.echo(Text.assemble(_style.key("Head:      "), inv.head))
-        _style.echo(Text.assemble(_style.key("Versions:  "), str(num_versions)))
+        appctx.console(ctx).print(Text.assemble(_style.key("ID:        "), inv.id))
+        appctx.console(ctx).print(
+            Text.assemble(_style.key("Spec:      "), str(obj.spec))
+        )
+        appctx.console(ctx).print(
+            Text.assemble(_style.key("Algorithm: "), inv.digest_algorithm)
+        )
+        appctx.console(ctx).print(Text.assemble(_style.key("Head:      "), inv.head))
+        appctx.console(ctx).print(
+            Text.assemble(_style.key("Versions:  "), str(num_versions))
+        )

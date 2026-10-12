@@ -5,6 +5,10 @@ No release is published yet, so every entry below is unreleased and may still ch
 
 ## [Unreleased]
 
+### Output
+
+- Each command run makes its own stdout and stderr consoles (`AppCtx.console`, `AppCtx.err_console`), coloured from that run's `--no-color`, `NO_COLOR`, `FORCE_COLOR` and TTY. `_style` keeps no consoles: `--no-color` no longer leaks into later runs in the same process, and `FORCE_COLOR`/`NO_COLOR` are read per run instead of at import. Removed `_style.echo`, `set_no_color` and `reinit_from_env`; use `_style.make_console`.
+
 ### Errors and exit codes (docs/roadmap.md §5)
 
 - One error handler at the root command group. Commands raise; the handler prints the error and exits. Every CLI error carries an `ErrorClass` and a stable snake_case `code`, like the lib's errors, and `exit_codes.exit_code_for_class` maps the class to the exit code with one exhaustive `match` (ocfl-rs ADR 0004): `NOT_FOUND`, `INVALID`, `SERVICE` → 1; `USAGE` → 2; `STATE` → 3; `BUSY` → 4; `HALT` → 5; `CONFIG` → 6; `INTERRUPTED` → 130. The documented exit codes are unchanged.
