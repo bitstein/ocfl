@@ -40,7 +40,7 @@ class Object:
     """Read-only interface to an OCFL object. The constructor does no I/O.
 
     The root inventory is read lazily and cached. Write new versions with
-    `update_object` or `plan_update` + `apply_update_plan`.
+    `StorageRoot.commit`.
     """
 
     def __init__(self, fsys: FS, path: str) -> None:

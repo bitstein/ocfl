@@ -4,14 +4,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ocfl_lib import plan_update
 from ocfl_lib._digest import DigestAlgorithm
 from ocfl_lib._errors import SpecVersionError
 from ocfl_lib._layout import FlatDirectLayout
-from ocfl_lib._object import Object
 from ocfl_lib._root import StorageRoot
 from ocfl_lib._spec import Spec
-from ocfl_lib._update_plan import prepare_steps, revert_plan
 from ocfl_lib._version_state import VersionState, scan_dir
 from ocfl_lib.fs._local import LocalFS
 from ocfl_lib.validation._object import validate_object
@@ -108,44 +105,62 @@ class TestNamasteSwap:
         assert _object_namastes(tmp_path / "root" / "obj") == ["0=ocfl_object_1.0"]
         _assert_valid_object(fsys, "obj")
 
-    def test_revert_after_swap_restores_old_namaste(self, tmp_path: Path):
+    def test_failed_publish_after_swap_restores_old_namaste(self, tmp_path: Path):
         fsys, root = _root(tmp_path, Spec.V1_1)
         root.commit(
             fsys, "obj", _stage(tmp_path, "a"), spec=Spec.V1_0, created=_CREATED
         )
-        obj = Object(fsys, "obj")
-        stage = _stage(tmp_path, "b")
-        plan = plan_update(obj, stage, spec=Spec.V1_1, created=_CREATED)
-        prepare_steps(plan, fsys, "obj", stage.content_source)
 
-        # Crash right after publishing the root inventory.
-        for step in plan.steps:
-            assert step.run is not None
-            step.run()
-            step.completed = True
-            if step.name == "root-inv":
-                break
+        class FailRootInventory(LocalFS):
+            def write(self, name, data):
+                if name == "obj/inventory.json":
+                    raise RuntimeError("injected")
+                return super().write(name, data)
+
+        with pytest.raises(RuntimeError, match="injected"):
+            root.commit(
+                FailRootInventory(tmp_path / "root"),
+                "obj",
+                _stage(tmp_path, "b"),
+                spec=Spec.V1_1,
+                created=_CREATED,
+            )
+
         obj_dir = tmp_path / "root" / "obj"
-        assert _object_namastes(obj_dir) == ["0=ocfl_object_1.1"]
-
-        revert_plan(plan)
-
         assert _object_namastes(obj_dir) == ["0=ocfl_object_1.0"]
+        assert not (obj_dir / "v2").exists()
         _assert_valid_object(fsys, "obj")
 
-    def test_swap_step_runs_just_before_root_inv(self, tmp_path: Path):
+    def test_swap_runs_just_before_root_inventory(self, tmp_path: Path):
         fsys, root = _root(tmp_path, Spec.V1_1)
         root.commit(
             fsys, "obj", _stage(tmp_path, "a"), spec=Spec.V1_0, created=_CREATED
         )
-        obj = Object(fsys, "obj")
-        stage = _stage(tmp_path, "b")
-        plan = plan_update(obj, stage, spec=Spec.V1_1, created=_CREATED)
-        prepare_steps(plan, fsys, "obj", stage.content_source)
+        ops: list[tuple[str, str]] = []
 
-        names = [s.name for s in plan.steps]
-        assert "declaration" not in names
-        assert names[names.index("declaration-swap") + 1] == "root-inv"
+        class Recorder(LocalFS):
+            def write(self, name, data):
+                ops.append(("write", name))
+                return super().write(name, data)
+
+            def remove(self, name):
+                ops.append(("remove", name))
+                return super().remove(name)
+
+        root.commit(
+            Recorder(tmp_path / "root"),
+            "obj",
+            _stage(tmp_path, "b"),
+            spec=Spec.V1_1,
+            created=_CREATED,
+        )
+        top = [op for op in ops if op[1].count("/") == 1 and op[1].startswith("obj/")]
+        assert top[-4:] == [
+            ("write", "obj/0=ocfl_object_1.1"),
+            ("remove", "obj/0=ocfl_object_1.0"),
+            ("write", "obj/inventory.json"),
+            ("write", "obj/inventory.json.sha512"),
+        ]
 
 
 class TestE081Validation:

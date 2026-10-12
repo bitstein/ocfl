@@ -48,16 +48,9 @@ from ocfl_lib._layout import (
     get_layout,
 )
 from ocfl_lib._object import DiffEntry, Object
-from ocfl_lib._object_update import apply_update_plan, plan_update, update_object
 from ocfl_lib._root import StorageRoot
 from ocfl_lib._sources import ContentSource, FixitySource
 from ocfl_lib._spec import Namaste, Spec, VNum
-from ocfl_lib._update_plan import (
-    UpdatePlan,
-    execute_plan,
-    prepare_steps,
-    revert_plan,
-)
 from ocfl_lib._version_state import VersionState, scan_dir
 from ocfl_lib.fs import FS, CopyFS, FileWalker, LocalFS, WriteFS
 from ocfl_lib.validation._object import validate_object
@@ -122,7 +115,6 @@ __all__ = [
     "UnknownDigestAlgorithm",
     "UnknownInventoryType",
     "UnknownLayout",
-    "UpdatePlan",
     "UserInfo",
     "VNum",
     "ValidationReport",
@@ -130,17 +122,11 @@ __all__ = [
     "VersionNotFound",
     "VersionState",
     "WriteFS",
-    "apply_update_plan",
     "bytes_digest",
-    "execute_plan",
     "file_digest",
     "get_layout",
-    "plan_update",
-    "prepare_steps",
-    "revert_plan",
     "scan_dir",
     "to_path_map",
-    "update_object",
     "validate_object",
     "validate_root",
 ]

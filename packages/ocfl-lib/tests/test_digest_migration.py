@@ -4,14 +4,19 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ocfl_lib import apply_update_plan, plan_update, update_object
-from ocfl_lib._digest import DigestAlgorithm, bytes_digest
-from ocfl_lib._object import Object
-from ocfl_lib._spec import Spec, VNum
-from ocfl_lib._update_plan import execute_plan, prepare_steps, revert_plan
-from ocfl_lib._version_state import VersionState, scan_dir
-from ocfl_lib.fs._local import LocalFS
-from ocfl_lib.validation._object import validate_object
+from ocfl_lib import (
+    DigestAlgorithm,
+    LocalFS,
+    Object,
+    Spec,
+    StorageRoot,
+    VersionState,
+    VNum,
+    bytes_digest,
+    get_layout,
+    scan_dir,
+)
+from ocfl_lib.validation import validate_object
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -28,6 +33,21 @@ def _make_src_dir(tmp_path: Path, files: dict[str, str]) -> Path:
     return src
 
 
+# Flat-direct layout: object "obj" lives at tmp_path / "obj".
+OID = "obj"
+
+
+def _init_root(tmp_path: Path) -> LocalFS:
+    fs = LocalFS(tmp_path)
+    layout = get_layout("0002-flat-direct-storage-layout")
+    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
+    return fs
+
+
+def _commit(fs: LocalFS, stage: VersionState, **kw) -> Object:
+    return StorageRoot.open(fs).commit(fs, OID, stage, **kw)
+
+
 def _create_v1(
     tmp_path: Path,
     files: dict[str, str],
@@ -35,23 +55,10 @@ def _create_v1(
 ) -> tuple[Object, LocalFS]:
     """Helper: create v1 object with given files and algorithm."""
     src = _make_src_dir(tmp_path, files)
-    obj_dir = tmp_path / "obj"
-    obj_dir.mkdir()
-
-    src_fs = LocalFS(src.parent)
-    stage = scan_dir(src_fs, "src", alg)
-
-    obj_fs = LocalFS(obj_dir)
-    obj = Object(obj_fs, "")
-    obj = update_object(
-        obj_fs,
-        obj,
-        stage,
-        id="test:migration",
-        spec=Spec.V1_1,
-        created="2024-01-01T00:00:00Z",
-    )
-    return obj, obj_fs
+    stage = scan_dir(LocalFS(src.parent), "src", alg)
+    fs = _init_root(tmp_path)
+    obj = _commit(fs, stage, spec=Spec.V1_1, created="2024-01-01T00:00:00Z")
+    return obj, fs
 
 
 class TestAlgorithmMigration:
@@ -68,14 +75,14 @@ class TestAlgorithmMigration:
         (src2 / "new.txt").write_text("world")
 
         stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
-        obj = update_object(obj_fs, obj, stage2, created="2024-06-01T00:00:00Z")
+        obj = _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         inv = obj.inventory.inventory
         assert inv.digest_algorithm == "sha512"
         assert inv.fixity is not None
         assert "sha256" in inv.fixity
 
-        result = validate_object(obj_fs, "")
+        result = validate_object(obj_fs, OID)
         assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
 
     def test_version_states_remapped(self, tmp_path: Path):
@@ -87,7 +94,7 @@ class TestAlgorithmMigration:
         (src2 / "a.txt").write_text("bbb")
 
         stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
-        obj = update_object(obj_fs, obj, stage2, created="2024-06-01T00:00:00Z")
+        obj = _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         inv = obj.inventory.inventory
         for digest in inv.versions["v1"].state:
@@ -114,7 +121,7 @@ class TestAlgorithmMigration:
         (src2 / "extra.txt").write_text("extra")
 
         stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
-        obj = update_object(obj_fs, obj, stage2, created="2024-06-01T00:00:00Z")
+        obj = _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         for cp, content in v1_contents.items():
             assert (obj_dir / cp).read_bytes() == content
@@ -129,7 +136,7 @@ class TestAlgorithmMigration:
         (src2 / "new.txt").write_text("world")
 
         stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
-        obj = update_object(obj_fs, obj, stage2, created="2024-06-01T00:00:00Z")
+        obj = _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         with obj.open_logical_path(VNum(1), "file.txt") as f:
             assert f.read() == b"hello"
@@ -140,7 +147,7 @@ class TestAlgorithmMigration:
 
     def test_old_root_sidecar_removed(self, tmp_path: Path):
         """Old root sidecar removed after migration."""
-        obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
+        _obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
         obj_dir = tmp_path / "obj"
         assert (obj_dir / "inventory.json.sha256").exists()
 
@@ -149,7 +156,7 @@ class TestAlgorithmMigration:
         (src2 / "file.txt").write_text("hello")
 
         stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
-        obj = update_object(obj_fs, obj, stage2, created="2024-06-01T00:00:00Z")
+        _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         assert not (obj_dir / "inventory.json.sha256").exists()
         assert (obj_dir / "inventory.json.sha512").exists()
@@ -164,7 +171,7 @@ class TestAlgorithmMigration:
         (src2 / "file.txt").write_text("hello")
 
         stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
-        obj = update_object(obj_fs, obj, stage2, created="2024-06-01T00:00:00Z")
+        obj = _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         inv = obj.inventory.inventory
         assert inv.fixity is not None
@@ -182,7 +189,7 @@ class TestAlgorithmMigration:
         (src2 / "file.txt").write_text("same content")
 
         stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
-        obj = update_object(obj_fs, obj, stage2, created="2024-06-01T00:00:00Z")
+        obj = _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         inv = obj.inventory.inventory
         v2_paths = [
@@ -200,35 +207,26 @@ class TestAlgorithmMigration:
         (src2 / "new.txt").write_text("world")
 
         stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
-        plan = plan_update(obj, stage2, created="2024-06-01T00:00:00Z")
-        obj = apply_update_plan(obj_fs, obj, plan, stage2.content_source)
+        root = StorageRoot.open(obj_fs)
+        plan = root.plan(OID, stage2, created="2024-06-01T00:00:00Z")
+        obj = root.commit(obj_fs, OID, plan, content=stage2.content_source)
 
         assert obj.inventory.inventory.digest_algorithm == "sha512"
 
-        result = validate_object(obj_fs, "")
+        result = validate_object(obj_fs, OID)
         assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
 
     def test_existing_fixity_preserved(self, tmp_path: Path):
         """Pre-existing fixity (e.g. md5) preserved through migration."""
         src = _make_src_dir(tmp_path, {"file.txt": "hello"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        src_fs = LocalFS(src.parent)
         stage1 = scan_dir(
-            src_fs, "src", DigestAlgorithm.SHA256, fixity_algs=[DigestAlgorithm.MD5]
+            LocalFS(src.parent),
+            "src",
+            DigestAlgorithm.SHA256,
+            fixity_algs=[DigestAlgorithm.MD5],
         )
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-        obj = update_object(
-            obj_fs,
-            obj,
-            stage1,
-            id="test:migration",
-            spec=Spec.V1_1,
-            created="2024-01-01T00:00:00Z",
-        )
+        obj_fs = _init_root(tmp_path)
+        obj = _commit(obj_fs, stage1, spec=Spec.V1_1, created="2024-01-01T00:00:00Z")
 
         assert obj.inventory.inventory.fixity is not None
         assert "md5" in obj.inventory.inventory.fixity
@@ -239,19 +237,19 @@ class TestAlgorithmMigration:
         (src2 / "file.txt").write_text("hello")
 
         stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
-        obj = update_object(obj_fs, obj, stage2, created="2024-06-01T00:00:00Z")
+        obj = _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         inv = obj.inventory.inventory
         assert inv.fixity is not None
         assert "md5" in inv.fixity  # preserved
         assert "sha256" in inv.fixity  # added from migration
 
-        result = validate_object(obj_fs, "")
+        result = validate_object(obj_fs, OID)
         assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
 
     def test_migration_error_reverts(self, tmp_path: Path):
-        """update() auto-reverts on error during migration write."""
-        obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
+        """commit auto-reverts on error during migration write."""
+        _obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
 
         new_digest = bytes_digest(b"brand_new", DigestAlgorithm.SHA512)
 
@@ -270,7 +268,7 @@ class TestAlgorithmMigration:
         )
 
         with pytest.raises(OSError, match="disk full"):
-            obj = update_object(obj_fs, obj, stage, created="2024-06-01T00:00:00Z")
+            _commit(obj_fs, stage, created="2024-06-01T00:00:00Z")
 
         # v2 directory should be cleaned up by revert
         obj_dir = tmp_path / "obj"
@@ -286,41 +284,32 @@ class TestAlgorithmMigration:
         assert not (obj_dir / "inventory.json.sha512").exists()
 
         # Object should still validate
-        result = validate_object(obj_fs, "")
+        result = validate_object(obj_fs, OID)
         assert result.is_valid, result.errors
 
     def test_migration_revert_restores_original_inventory(self, tmp_path: Path):
-        """Revert after late-step failure restores original-algorithm inventory."""
-        obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
-
-        # Save original on-disk inventory bytes (SHA256)
+        """A failed root inventory write restores the original inventory."""
+        _obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
         obj_dir = tmp_path / "obj"
         orig_inv_bytes = (obj_dir / "inventory.json").read_bytes()
 
-        # Build migration stage (SHA256 → SHA512)
-        src2 = _make_src_dir(tmp_path, {"file.txt": "hello"})
-        stage = scan_dir(LocalFS(src2.parent), src2.name, DigestAlgorithm.SHA512)
+        src2 = tmp_path / "src2"
+        src2.mkdir()
+        (src2 / "file.txt").write_text("hello")
+        stage = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
 
-        # Use two-step API to inject failure at root-sidecar step
-        plan = plan_update(obj, stage, created="2024-06-01T00:00:00Z")
-        prepare_steps(plan, obj_fs, "", stage.content_source)
-
-        # Find and replace root-sidecar run with failure
-        def _fail() -> int:
-            raise RuntimeError("injected")
-
-        for step in plan.steps:
-            if step.name == "root-sidecar":
-                step.run = _fail
+        class FailRootInventory(LocalFS):
+            def write(self, name, data):
+                if name == f"{OID}/inventory.json":
+                    raise RuntimeError("injected")
+                return super().write(name, data)
 
         with pytest.raises(RuntimeError, match="injected"):
-            execute_plan(plan)
+            StorageRoot.open(obj_fs).commit(
+                FailRootInventory(tmp_path), OID, stage, created="2024-06-01T00:00:00Z"
+            )
 
-        revert_plan(plan)
-
-        # Root inventory must be original SHA256 bytes
         assert (obj_dir / "inventory.json").read_bytes() == orig_inv_bytes
-        # Original SHA256 sidecar must be restored
         assert (obj_dir / "inventory.json.sha256").is_file()
-        # New SHA512 sidecar must not exist
         assert not (obj_dir / "inventory.json.sha512").exists()
+        assert not (obj_dir / "v2").exists()

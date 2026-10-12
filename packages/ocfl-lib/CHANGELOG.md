@@ -8,7 +8,8 @@ No release is published yet, so every entry below is unreleased and may still ch
 ### Public API
 
 - Public modules are `ocfl_lib`, `ocfl_lib.fs`, `ocfl_lib.fs.s3`, `ocfl_lib.ots` and `ocfl_lib.validation`. Every other module is private (`_`-prefixed). Import from the public modules only.
-- `ocfl_lib` exports every error class, `DiffEntry`, `to_path_map`, `prepare_steps` and `CommitPlan`.
+- `ocfl_lib` exports every error class, `DiffEntry`, `to_path_map` and `CommitPlan`.
+- `StorageRoot.commit` is the only way to write a version. No public function takes a `WriteFS` except the `StorageRoot` methods `init`, `commit` and `purge`.
 
 ### Commit protocol (ADR-0001)
 
@@ -19,7 +20,7 @@ No release is published yet, so every entry below is unreleased and may still ch
 ### Changed
 
 - Errors: every lib error subclasses `OcflError` and carries `error_class` (`ErrorClass`) and a stable snake_case `code`. Errors that replace a builtin raise keep that base (`ValueError`, `KeyError`). New: `ContentNotFound`, `LogicalPathNotFound`, `UnknownLayout`, `RootExistsError`, `UnknownInventoryType`, `InvalidVersionNumber`, `UnknownDigestAlgorithm`, `DigestAlgorithmMismatch`, `InvalidPath`, `PathCollision`, `InvalidLayoutConfig`, `InventoryBuildError`, `PlanMismatchError`.
-- `Object` only reads. `Object.update`, `new_update_plan` and `apply_update_plan` become `update_object`, `plan_update` and `apply_update_plan`, which return a fresh `Object`. `Object.path` and `Object.fs` are public.
+- `Object` only reads. `Object.update`, `new_update_plan` and `apply_update_plan` are gone; write with `StorageRoot.commit`. `Object.path` and `Object.fs` are public.
 - `Object.version_state(v)` returns a `VersionState`. Use `Object.version_info(v).state` for the digest map.
 - `StorageRoot(fs, path, *, spec, layout)` does no I/O. Use `StorageRoot.open(fs, path, *, layouts=...)` to open an existing root.
 - `Stage` is renamed `VersionState`, and `stage_dir` is renamed `scan_dir`. `ContentSource` and `FixitySource` live in their own module.
@@ -32,4 +33,5 @@ No release is published yet, so every entry below is unreleased and may still ch
 
 - `ValidationResult`, `ValidationError` and `RootValidationSummary` (replaced by `ValidationReport`).
 - `serialize_plan`, `deserialize_plan` and the step-list `plan.json` format (replaced by `CommitPlan.to_json` / `from_json`).
+- `update_object`, `plan_update`, `apply_update_plan`, `prepare_steps`, `execute_plan`, `revert_plan` and `UpdatePlan` (use `StorageRoot.plan` and `StorageRoot.commit`).
 - `fs.utils.exists` (use `FS.exists`), `LayoutRegistry.register`, and the unused `ExtensionError`, `CompanionMissingError` and `EmbeddedDigestMismatchError`.

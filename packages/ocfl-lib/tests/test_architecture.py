@@ -274,7 +274,7 @@ class TestVersionState:
         cs, fx = ocfl_lib.ContentSource, ocfl_lib.FixitySource
         assert cs.__module__ == fx.__module__
         assert cs.__module__ != ocfl_lib.VersionState.__module__
-        assert cs.__module__ != ocfl_lib.UpdatePlan.__module__
+        assert cs.__module__ != ocfl_lib.CommitPlan.__module__
 
 
 # --- 5. JsonValue
@@ -528,4 +528,69 @@ class TestPlanIntent:
             if isinstance(node, ast.ClassDef)
             and node.name in ("_StepState", "_PlanState")
         ]
+        assert not bad, bad
+
+
+# --- 3.4 StorageRoot.commit is the only write entry point
+
+_OLD_WRITE_API = (
+    "update_object",
+    "plan_update",
+    "apply_update_plan",
+    "prepare_steps",
+    "execute_plan",
+    "revert_plan",
+    "serialize_plan",
+    "deserialize_plan",
+    "UpdatePlan",
+)
+
+
+def _sig(fn) -> str:
+    return str(inspect.signature(fn, annotation_format=annotationlib.Format.STRING))
+
+
+class TestSingleWriteEntryPoint:
+    def test_old_write_api_gone_from_public_modules(self):
+        for mod_name in sorted(PUBLIC_MODULES):
+            mod = importlib.import_module(mod_name)
+            for name in _OLD_WRITE_API:
+                assert not hasattr(mod, name), (mod_name, name)
+
+    def test_no_public_function_takes_writefs(self):
+        import ocfl_lib
+
+        bad = [
+            name
+            for name in ocfl_lib.__all__
+            if inspect.isfunction(getattr(ocfl_lib, name))
+            and "WriteFS" in _sig(getattr(ocfl_lib, name))
+        ]
+        assert not bad, bad
+
+    def test_only_storage_root_methods_write(self):
+        from ocfl_lib import StorageRoot
+
+        writers = {
+            name
+            for name, fn in inspect.getmembers(StorageRoot)
+            if not name.startswith("_") and callable(fn) and "WriteFS" in _sig(fn)
+        }
+        assert writers <= {"init", "commit", "purge", "recover"}, writers
+        assert "commit" in writers
+
+    def test_consumers_do_not_name_old_write_api(self):
+        bad = []
+        for root in (CLI_SRC, INDEX_SRC):
+            for p in _py_files(root):
+                for node in ast.walk(_tree(p)):
+                    name = None
+                    if isinstance(node, ast.Name):
+                        name = node.id
+                    elif isinstance(node, ast.Attribute):
+                        name = node.attr
+                    elif isinstance(node, ast.alias):
+                        name = node.name.split(".")[-1]
+                    if name in _OLD_WRITE_API:
+                        bad.append(f"{p}:{getattr(node, 'lineno', '?')} {name}")
         assert not bad, bad

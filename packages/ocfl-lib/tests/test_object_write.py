@@ -1,410 +1,197 @@
-"""Tests for OCFL Object write operations."""
+"""Tests for writing object versions through StorageRoot.commit."""
 
 from typing import TYPE_CHECKING
 
 import pytest
 
-from ocfl_lib import apply_update_plan, plan_update, update_object
-from ocfl_lib._commit import commit
-from ocfl_lib._commit_plan import CommitPlan, build_plan
-from ocfl_lib._digest import DigestAlgorithm
-from ocfl_lib._errors import StaleHeadError
-from ocfl_lib._inventory import UserInfo
-from ocfl_lib._object import Object
-from ocfl_lib._spec import Spec, VNum
-from ocfl_lib._update_plan import revert_plan
-from ocfl_lib._version_state import VersionState, scan_dir
-from ocfl_lib.fs._local import LocalFS
-from ocfl_lib.validation._object import validate_object
+from ocfl_lib import (
+    CommitPlan,
+    DigestAlgorithm,
+    LocalFS,
+    Object,
+    PlanMismatchError,
+    Spec,
+    StaleHeadError,
+    StorageRoot,
+    UserInfo,
+    VersionState,
+    VNum,
+    get_layout,
+    scan_dir,
+)
+from ocfl_lib.validation import validate_object
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+OID = "test:1"
 
-def _make_src_dir(tmp_path: Path, files: dict[str, str]) -> Path:
+
+def _make_src_dir(tmp_path: Path, files: dict[str, str], name: str = "src") -> Path:
     """Create a source directory with given files."""
-    src = tmp_path / "src"
+    src = tmp_path / name
     src.mkdir()
-    for name, content in files.items():
-        p = src / name
+    for path, content in files.items():
+        p = src / path
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
     return src
 
 
-class TestObjectUpdate:
-    """update_object() — full write path."""
+def _stage(tmp_path: Path, files: dict[str, str], name: str = "src") -> VersionState:
+    src = _make_src_dir(tmp_path, files, name)
+    return scan_dir(LocalFS(src.parent), src.name, DigestAlgorithm.SHA512)
+
+
+def _root(tmp_path: Path) -> tuple[LocalFS, StorageRoot]:
+    d = tmp_path / "root"
+    d.mkdir()
+    fs = LocalFS(d)
+    layout = get_layout("0002-flat-direct-storage-layout")
+    return fs, StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
+
+
+def _valid(fs: LocalFS, obj: Object) -> None:
+    result = validate_object(fs, obj.path)
+    assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
+
+
+class _FailingSource:
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+
+    def get_content(self, digest: str) -> tuple:
+        raise self.exc
+
+
+class TestCommit:
+    """StorageRoot.commit with a VersionState."""
 
     def test_create_new_object(self, tmp_path: Path):
-        """Create a new v1 object from a staged directory."""
-        src = _make_src_dir(tmp_path, {"file.txt": "hello"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        src_fs = LocalFS(src.parent)
-        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-        assert not obj.exists
-
-        obj = update_object(
-            obj_fs,
-            obj,
-            stage,
-            id="http://example.org/obj1",
-            spec=Spec.V1_1,
+        fs, root = _root(tmp_path)
+        assert not root.get_object(OID).exists
+        obj = root.commit(
+            fs,
+            OID,
+            _stage(tmp_path, {"file.txt": "hello"}),
             message="initial commit",
             user=UserInfo(name="Test User"),
             created="2024-01-01T00:00:00Z",
         )
-
         assert obj.exists
-        assert obj.id == "http://example.org/obj1"
+        assert obj.id == OID
         assert obj.head == VNum(1)
         assert obj.spec == Spec.V1_1
-
-        # Validate the created object
-        result = validate_object(obj_fs, "")
-        assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
+        _valid(fs, obj)
 
     def test_create_object_reads_back_content(self, tmp_path: Path):
-        """Content is accessible after creation."""
-        src = _make_src_dir(tmp_path, {"file.txt": "hello world"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        src_fs = LocalFS(src.parent)
-        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-        obj = update_object(
-            obj_fs,
-            obj,
-            stage,
-            id="test:1",
-            spec=Spec.V1_1,
-            created="2024-01-01T00:00:00Z",
-        )
-
+        fs, root = _root(tmp_path)
+        obj = root.commit(fs, OID, _stage(tmp_path, {"file.txt": "hello world"}))
         with obj.open_logical_path(VNum(1), "file.txt") as f:
             assert f.read() == b"hello world"
 
     def test_add_version_to_existing(self, tmp_path: Path):
-        """Add v2 to an existing object."""
-        src1 = _make_src_dir(tmp_path, {"file.txt": "v1 content"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        src_fs = LocalFS(src1.parent)
-        stage1 = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-        obj = update_object(
-            obj_fs,
-            obj,
-            stage1,
-            id="test:1",
-            spec=Spec.V1_1,
-            created="2024-01-01T00:00:00Z",
+        fs, root = _root(tmp_path)
+        root.commit(fs, OID, _stage(tmp_path, {"file.txt": "v1 content"}))
+        stage2 = _stage(
+            tmp_path, {"file.txt": "v2 content", "new.txt": "brand new"}, "src2"
         )
-
-        # Create v2 with new content
-        src2_dir = tmp_path / "src2"
-        src2_dir.mkdir()
-        (src2_dir / "file.txt").write_text("v2 content")
-        (src2_dir / "new.txt").write_text("brand new")
-
-        src2_fs = LocalFS(tmp_path)
-        stage2 = scan_dir(src2_fs, "src2", DigestAlgorithm.SHA512)
-
-        obj = update_object(
-            obj_fs,
-            obj,
-            stage2,
-            message="second version",
-            created="2024-06-01T00:00:00Z",
-        )
-
+        obj = root.commit(fs, OID, stage2, message="second version")
         assert obj.head == VNum(2)
         assert len(obj.versions()) == 2
-
-        result = validate_object(obj_fs, "")
-        assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
+        _valid(fs, obj)
 
     def test_forward_delta_dedup(self, tmp_path: Path):
         """Unchanged files reuse v1 content paths (no duplication)."""
-        src1 = _make_src_dir(tmp_path, {"a.txt": "same", "b.txt": "old"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        src_fs = LocalFS(src1.parent)
-        stage1 = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-        obj = update_object(
-            obj_fs,
-            obj,
-            stage1,
-            id="test:1",
-            spec=Spec.V1_1,
-            created="2024-01-01T00:00:00Z",
-        )
-
-        # v2: a.txt unchanged, b.txt modified
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        (src2 / "a.txt").write_text("same")
-        (src2 / "b.txt").write_text("new")
-
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
-        obj = update_object(obj_fs, obj, stage2, created="2024-06-01T00:00:00Z")
-
-        # v2 content dir should only have b.txt (a.txt deduplicated)
+        fs, root = _root(tmp_path)
+        root.commit(fs, OID, _stage(tmp_path, {"a.txt": "same", "b.txt": "old"}))
+        stage2 = _stage(tmp_path, {"a.txt": "same", "b.txt": "new"}, "src2")
+        obj = root.commit(fs, OID, stage2)
         inv = obj.inventory.inventory
         v2_content_paths = [
-            p for d, ps in inv.manifest.items() for p in ps if p.startswith("v2/")
+            p for _d, ps in inv.manifest.items() for p in ps if p.startswith("v2/")
         ]
         assert len(v2_content_paths) == 1
         assert "b.txt" in v2_content_paths[0]
 
-    def test_create_requires_id(self, tmp_path: Path):
-        """Creating new object without id raises."""
-        src = _make_src_dir(tmp_path, {"file.txt": "x"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        src_fs = LocalFS(src.parent)
-        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-        with pytest.raises(ValueError, match="id"):
-            obj = update_object(obj_fs, obj, stage, created="2024-01-01T00:00:00Z")
-
     def test_create_with_fixity(self, tmp_path: Path):
-        """Fixity from stage is included in inventory."""
+        fs, root = _root(tmp_path)
         src = _make_src_dir(tmp_path, {"file.txt": "hello"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        src_fs = LocalFS(src.parent)
         stage = scan_dir(
-            src_fs, "src", DigestAlgorithm.SHA512, fixity_algs=[DigestAlgorithm.MD5]
+            LocalFS(src.parent),
+            "src",
+            DigestAlgorithm.SHA512,
+            fixity_algs=[DigestAlgorithm.MD5],
         )
-        assert stage.fixity_source is not None
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-        obj = update_object(
-            obj_fs,
-            obj,
-            stage,
-            id="test:1",
-            spec=Spec.V1_1,
-            created="2024-01-01T00:00:00Z",
-        )
-
+        obj = root.commit(fs, OID, stage)
         inv = obj.inventory.inventory
         assert inv.fixity is not None
         assert "md5" in inv.fixity
-
-        result = validate_object(obj_fs, "")
-        assert result.is_valid
+        _valid(fs, obj)
 
     def test_error_reverts_on_failure(self, tmp_path: Path):
-        """On write failure, completed steps are reverted."""
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        # Create a stage with a content source that will fail
-        class FailingContentSource:
-            def get_content(self, digest: str) -> tuple:
-                raise OSError("disk full")
-
+        fs, root = _root(tmp_path)
         stage = VersionState(
             state={"abc123": ["file.txt"]},
             digest_algorithm=DigestAlgorithm.SHA512,
-            content_source=FailingContentSource(),
+            content_source=_FailingSource(OSError("disk full")),
         )
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
         with pytest.raises(OSError, match="disk full"):
-            obj = update_object(
-                obj_fs,
-                obj,
-                stage,
-                id="test:1",
-                spec=Spec.V1_1,
-                created="2024-01-01T00:00:00Z",
-            )
-
-        # Object dir should be cleaned up (v1 revert removes all)
-        assert not obj_dir.exists() or not any(obj_dir.iterdir())
+            root.commit(fs, OID, stage)
+        assert not (tmp_path / "root" / OID).exists()
 
     def test_keyboard_interrupt_reverts_then_propagates(self, tmp_path: Path):
-        """KeyboardInterrupt reverts the partial version, then propagates."""
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        class InterruptingContentSource:
-            def get_content(self, digest: str) -> tuple:
-                raise KeyboardInterrupt
-
+        fs, root = _root(tmp_path)
         stage = VersionState(
             state={"abc123": ["file.txt"]},
             digest_algorithm=DigestAlgorithm.SHA512,
-            content_source=InterruptingContentSource(),
+            content_source=_FailingSource(KeyboardInterrupt()),
         )
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
         with pytest.raises(KeyboardInterrupt):
-            obj = update_object(
-                obj_fs,
-                obj,
-                stage,
-                id="test:1",
-                spec=Spec.V1_1,
-                created="2024-01-01T00:00:00Z",
-            )
-        assert not obj_dir.exists() or not any(obj_dir.iterdir())
+            root.commit(fs, OID, stage)
+        assert not (tmp_path / "root" / OID).exists()
 
     def test_keyboard_interrupt_v2_preserves_root_inventory(self, tmp_path: Path):
-        """KeyboardInterrupt during v2 → v1 root inventory still intact.
-
-        Root inventory swap is the final step; KI before then leaves v1's
-        root inventory untouched.
-        """
-        src = _make_src_dir(tmp_path, {"file.txt": "v1-content"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        src_fs = LocalFS(src.parent)
-        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-        obj = update_object(
-            obj_fs,
-            obj,
-            stage,
-            id="test:1",
-            spec=Spec.V1_1,
-            created="2024-01-01T00:00:00Z",
-        )
-
+        fs, root = _root(tmp_path)
+        root.commit(fs, OID, _stage(tmp_path, {"file.txt": "v1-content"}))
+        obj_dir = tmp_path / "root" / OID
         v1_inv_bytes = (obj_dir / "inventory.json").read_bytes()
         v1_sidecar_bytes = (obj_dir / "inventory.json.sha512").read_bytes()
-
-        class InterruptingContentSource:
-            def get_content(self, digest: str) -> tuple:
-                raise KeyboardInterrupt
 
         bad_stage = VersionState(
             state={"deadbeef": ["new.txt"]},
             digest_algorithm=DigestAlgorithm.SHA512,
-            content_source=InterruptingContentSource(),
+            content_source=_FailingSource(KeyboardInterrupt()),
         )
-
-        obj2 = Object(obj_fs, "")
         with pytest.raises(KeyboardInterrupt):
-            obj2 = update_object(
-                obj_fs,
-                obj2,
-                bad_stage,
-                message="v2",
-                created="2024-01-02T00:00:00Z",
-            )
+            root.commit(fs, OID, bad_stage, message="v2")
 
         assert (obj_dir / "inventory.json").read_bytes() == v1_inv_bytes
         assert (obj_dir / "inventory.json.sha512").read_bytes() == v1_sidecar_bytes
-
-    def test_update_caches_new_inventory(self, tmp_path: Path):
-        """After update(), inventory property reflects new version."""
-        src = _make_src_dir(tmp_path, {"file.txt": "hello"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        src_fs = LocalFS(src.parent)
-        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-        obj = update_object(
-            obj_fs,
-            obj,
-            stage,
-            id="test:1",
-            spec=Spec.V1_1,
-            created="2024-01-01T00:00:00Z",
-        )
-
-        # inventory should be cached with new data
-        assert obj.inventory.inventory.head == "v1"
-        assert obj.inventory.inventory.id == "test:1"
+        assert not (obj_dir / "v2").exists()
 
     def test_multiple_files(self, tmp_path: Path):
-        """Object with multiple files in nested dirs."""
-        src = _make_src_dir(
-            tmp_path,
-            {
-                "a.txt": "aaa",
-                "dir/b.txt": "bbb",
-                "dir/sub/c.txt": "ccc",
-            },
+        fs, root = _root(tmp_path)
+        stage = _stage(
+            tmp_path, {"a.txt": "aaa", "dir/b.txt": "bbb", "dir/sub/c.txt": "ccc"}
         )
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        src_fs = LocalFS(src.parent)
-        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-        obj = update_object(
-            obj_fs,
-            obj,
-            stage,
-            id="test:1",
-            spec=Spec.V1_1,
-            created="2024-01-01T00:00:00Z",
-        )
-
+        obj = root.commit(fs, OID, stage)
         state = obj.version_info(VNum(1)).state
         all_paths = sorted(p for ps in state.values() for p in ps)
         assert all_paths == ["a.txt", "dir/b.txt", "dir/sub/c.txt"]
-
-        result = validate_object(obj_fs, "")
-        assert result.is_valid
+        _valid(fs, obj)
 
     def test_version_info_preserved(self, tmp_path: Path):
-        """Message and user preserved in version info."""
-        src = _make_src_dir(tmp_path, {"file.txt": "hello"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        src_fs = LocalFS(src.parent)
-        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        fs, root = _root(tmp_path)
         user = UserInfo(name="Alice", address="mailto:alice@example.org")
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-        obj = update_object(
-            obj_fs,
-            obj,
-            stage,
-            id="test:1",
-            spec=Spec.V1_1,
+        obj = root.commit(
+            fs,
+            OID,
+            _stage(tmp_path, {"file.txt": "hello"}),
             message="test msg",
             user=user,
             created="2024-01-01T00:00:00Z",
         )
-
         info = obj.version_info(VNum(1))
         assert info.message == "test msg"
         assert info.user is not None
@@ -412,239 +199,93 @@ class TestObjectUpdate:
         assert info.user.address == "mailto:alice@example.org"
         assert info.created == "2024-01-01T00:00:00Z"
 
-    def test_update_fresh_instance_on_existing_object(self, tmp_path: Path):
-        """Fresh Object instance on existing dir loads inventory before update."""
-        src1 = _make_src_dir(tmp_path, {"file.txt": "v1"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        src_fs = LocalFS(src1.parent)
-        stage1 = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
-
-        obj_fs = LocalFS(obj_dir)
-        obj1 = Object(obj_fs, "")
-        obj1 = update_object(
-            obj_fs,
-            obj1,
-            stage1,
-            id="test:1",
-            spec=Spec.V1_1,
-            created="2024-01-01T00:00:00Z",
-        )
-
-        # Create entirely new Object instance (inventory not cached)
-        obj2 = Object(obj_fs, "")
-        assert obj2.exists
-
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        (src2 / "file.txt").write_text("v2")
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
-
-        obj2 = update_object(obj_fs, obj2, stage2, created="2024-06-01T00:00:00Z")
-        assert obj2.head == VNum(2)  # NOT v1
-
-        result = validate_object(obj_fs, "")
-        assert result.is_valid
-
-
-class TestTwoStepWrite:
-    """plan_update() / apply_update_plan()."""
-
-    def test_create_via_two_step(self, tmp_path: Path):
-        """Create object via plan + apply."""
-        src = _make_src_dir(tmp_path, {"file.txt": "hello"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        src_fs = LocalFS(src.parent)
-        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-
-        plan = plan_update(obj,
-            stage,
-            id="test:1",
-            spec=Spec.V1_1,
-            created="2024-01-01T00:00:00Z",
-        )
-        # Plan created but object not yet written
-        assert not obj.exists
-
-        obj = apply_update_plan(obj_fs, obj, plan, stage.content_source)
-        assert obj.exists
+    def test_returns_fresh_object(self, tmp_path: Path):
+        fs, root = _root(tmp_path)
+        obj = root.commit(fs, OID, _stage(tmp_path, {"file.txt": "v1"}))
         assert obj.head == VNum(1)
+        obj = root.commit(fs, OID, _stage(tmp_path, {"file.txt": "v2"}, "src2"))
+        assert obj.head == VNum(2)
+        assert obj.inventory.inventory.head == "v2"
+        _valid(fs, obj)
 
-        result = validate_object(obj_fs, "")
-        assert result.is_valid
 
-    def test_plan_serializable(self, tmp_path: Path):
-        """A CommitPlan survives plan.json and can be committed."""
-        src = _make_src_dir(tmp_path, {"file.txt": "hello"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
+class TestPlanThenCommit:
+    """StorageRoot.plan, then StorageRoot.commit of the CommitPlan."""
 
-        src_fs = LocalFS(src.parent)
-        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
+    def test_plan_writes_nothing(self, tmp_path: Path):
+        _fs, root = _root(tmp_path)
+        plan = root.plan(OID, _stage(tmp_path, {"file.txt": "hello"}))
+        assert plan.version == "v1"
+        assert not root.get_object(OID).exists
 
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
+    def test_create_via_plan(self, tmp_path: Path):
+        fs, root = _root(tmp_path)
+        stage = _stage(tmp_path, {"file.txt": "hello"})
+        plan = root.plan(OID, stage, created="2024-01-01T00:00:00Z")
+        obj = root.commit(fs, OID, plan, content=stage.content_source)
+        assert obj.head == VNum(1)
+        _valid(fs, obj)
 
-        plan = build_plan(
-            obj,
-            stage,
-            object_id="test:1",
-            spec=Spec.V1_1,
-            created="2024-01-01T00:00:00Z",
-        )
+    def test_plan_survives_json(self, tmp_path: Path):
+        fs, root = _root(tmp_path)
+        stage = _stage(tmp_path, {"file.txt": "hello"})
+        plan = root.plan(OID, stage, created="2024-01-01T00:00:00Z")
         plan2 = CommitPlan.from_json(plan.to_json())
         assert plan2 == plan
+        obj = root.commit(fs, OID, plan2, content=stage.content_source)
+        _valid(fs, obj)
 
-        obj = commit(obj_fs, obj, plan2, stage.content_source)
-        assert obj.exists
-
-        result = validate_object(obj_fs, "")
-        assert result.is_valid
-
-    def test_no_auto_revert(self, tmp_path: Path):
-        """apply_update_plan does NOT auto-revert — caller decides."""
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        class FailingSource:
-            def get_content(self, digest: str) -> tuple:
-                raise OSError("fail")
-
-        stage = VersionState(
-            state={"abc123": ["file.txt"]},
-            digest_algorithm=DigestAlgorithm.SHA512,
-            content_source=FailingSource(),
-        )
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-
-        plan = plan_update(obj,
-            stage,
-            id="test:1",
-            spec=Spec.V1_1,
-            created="2024-01-01T00:00:00Z",
-        )
-
-        with pytest.raises(OSError, match="fail"):
-            obj = apply_update_plan(obj_fs, obj, plan, stage.content_source)
-
-        # Some steps completed (declaration, version-dir) but NOT reverted
-        completed = [s for s in plan.steps if s.completed]
-        assert len(completed) > 0
-
-    def test_v2_via_two_step(self, tmp_path: Path):
-        """Add v2 via two-step API on existing object."""
-        src1 = _make_src_dir(tmp_path, {"file.txt": "v1"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        src_fs = LocalFS(src1.parent)
-        stage1 = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-        obj = update_object(
-            obj_fs,
-            obj,
-            stage1,
-            id="test:1",
-            spec=Spec.V1_1,
-            created="2024-01-01T00:00:00Z",
-        )
-
-        # v2 via two-step
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        (src2 / "file.txt").write_text("v2")
-
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
-        plan = plan_update(obj, stage2, created="2024-06-01T00:00:00Z")
-        obj = apply_update_plan(obj_fs, obj, plan, stage2.content_source)
-
+    def test_v2_via_plan(self, tmp_path: Path):
+        fs, root = _root(tmp_path)
+        root.commit(fs, OID, _stage(tmp_path, {"file.txt": "v1"}))
+        stage2 = _stage(tmp_path, {"file.txt": "v2"}, "src2")
+        plan = root.plan(OID, stage2, created="2024-06-01T00:00:00Z")
+        obj = root.commit(fs, OID, plan, content=stage2.content_source)
         assert obj.head == VNum(2)
-        result = validate_object(obj_fs, "")
-        assert result.is_valid
+        _valid(fs, obj)
+
+    def test_metadata_belongs_to_plan(self, tmp_path: Path):
+        fs, root = _root(tmp_path)
+        stage = _stage(tmp_path, {"file.txt": "hello"})
+        plan = root.plan(OID, stage)
+        with pytest.raises(PlanMismatchError):
+            root.commit(fs, OID, plan, content=stage.content_source, message="m")
+
+    def test_dropping_paths_needs_no_content(self, tmp_path: Path):
+        """A version that only drops paths reads no content."""
+        fs, root = _root(tmp_path)
+        obj = root.commit(fs, OID, _stage(tmp_path, {"a.txt": "a", "b.txt": "b"}))
+        v1 = obj.version_state(VNum(1))
+        keep = {d: ps for d, ps in v1.state.items() if "a.txt" in ps}
+        stage2 = VersionState(
+            state=keep,
+            digest_algorithm=DigestAlgorithm.SHA512,
+            content_source=_FailingSource(AssertionError("no content needed")),
+        )
+        obj = root.commit(fs, OID, root.plan(OID, stage2))
+        assert obj.head == VNum(2)
+        _valid(fs, obj)
 
     def test_independently_built_stale_plan_cannot_publish(self, tmp_path: Path):
         """Two v2 plans built from the same v1 head cannot both publish."""
-        src1 = _make_src_dir(tmp_path, {"base.txt": "v1"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
+        fs, root = _root(tmp_path)
+        root.commit(fs, OID, _stage(tmp_path, {"base.txt": "v1"}))
+        stage_a = _stage(tmp_path, {"a.txt": "writer a"}, "src2a")
+        stage_b = _stage(tmp_path, {"b.txt": "writer b"}, "src2b")
+        plan_a = root.plan(OID, stage_a, created="2024-02-01T00:00:00Z")
+        plan_b = root.plan(OID, stage_b, created="2024-02-01T00:00:01Z")
 
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-        obj = update_object(
-            obj_fs,
-            obj,
-            scan_dir(LocalFS(src1.parent), "src", DigestAlgorithm.SHA512),
-            id="test:stale",
-            spec=Spec.V1_1,
-            created="2024-01-01T00:00:00Z",
-        )
-
-        src2a = tmp_path / "src2a"
-        src2a.mkdir()
-        (src2a / "a.txt").write_text("writer a")
-        src2b = tmp_path / "src2b"
-        src2b.mkdir()
-        (src2b / "b.txt").write_text("writer b")
-
-        stage_a = scan_dir(LocalFS(tmp_path), "src2a", DigestAlgorithm.SHA512)
-        stage_b = scan_dir(LocalFS(tmp_path), "src2b", DigestAlgorithm.SHA512)
-
-        obj_a = Object(obj_fs, "")
-        obj_b = Object(obj_fs, "")
-        plan_a = plan_update(obj_a, stage_a, created="2024-02-01T00:00:00Z")
-        plan_b = plan_update(obj_b, stage_b, created="2024-02-01T00:00:01Z")
-
-        obj_a = apply_update_plan(obj_fs, obj_a, plan_a, stage_a.content_source)
-
+        root.commit(fs, OID, plan_a, content=stage_a.content_source)
         with pytest.raises(StaleHeadError):
-            obj_b = apply_update_plan(obj_fs, obj_b, plan_b, stage_b.content_source)
+            root.commit(fs, OID, plan_b, content=stage_b.content_source)
 
-        assert Object(obj_fs, "").head == VNum(2)
-        result = validate_object(obj_fs, "")
-        assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
+        obj = root.get_object(OID)
+        assert obj.head == VNum(2)
+        _valid(fs, obj)
 
-    def test_stale_plan_revert_removes_copied_content(self, tmp_path: Path):
-        """A stale plan can be reverted without leaving unmanifested content."""
-        src1 = _make_src_dir(tmp_path, {"base.txt": "v1"})
-        obj_dir = tmp_path / "obj"
-        obj_dir.mkdir()
-
-        obj_fs = LocalFS(obj_dir)
-        obj = Object(obj_fs, "")
-        obj = update_object(
-            obj_fs,
-            obj,
-            scan_dir(LocalFS(src1.parent), "src", DigestAlgorithm.SHA512),
-            id="test:stale-revert",
-            spec=Spec.V1_1,
-            created="2024-01-01T00:00:00Z",
-        )
-
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        (src2 / "new.txt").write_text("new content")
-        stage = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
-
-        good_sidecar = obj.inventory.sidecar_content
-        plan = plan_update(Object(obj_fs, ""), stage, created="2024-02-01T00:00:00Z")
-        (obj_dir / "inventory.json.sha512").write_text("0" * 128 + " inventory.json\n")
-
-        with pytest.raises(StaleHeadError):
-            apply_update_plan(obj_fs, Object(obj_fs, ""), plan, stage.content_source)
-
-        revert_plan(plan)
-
-        assert not (obj_dir / "v2").exists()
-        (obj_dir / "inventory.json.sha512").write_text(good_sidecar)
-        result = validate_object(obj_fs, "")
-        assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
+    def test_object_id_must_match_inventory(self, tmp_path: Path):
+        fs, root = _root(tmp_path)
+        root.commit(fs, OID, _stage(tmp_path, {"file.txt": "x"}))
+        (tmp_path / "root" / OID).rename(tmp_path / "root" / "other")
+        with pytest.raises(PlanMismatchError):
+            root.plan("other", _stage(tmp_path, {"f": "y"}, "s2"))
