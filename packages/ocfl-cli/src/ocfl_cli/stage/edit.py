@@ -119,6 +119,7 @@ def metadata(
             clear_message=clear_message,
             clear_name=clear_name,
             clear_address=clear_address,
+            runtime=appctx.runtime(ctx),
         )
     except wf_staging.MetadataInputError as e:
         raise typer.BadParameter(str(e)) from None
@@ -141,6 +142,7 @@ def add(
         [Path(s) for s in src],
         as_path=as_path,
         command=f"stage add {' '.join(src)}",
+        runtime=appctx.runtime(ctx),
     )
 
 
@@ -152,7 +154,9 @@ def mv(
 ) -> None:
     """Rename a logical path in the staged version."""
     resolved = require_existing_staging(ctx, object_id)
-    wf_staging.move_path(resolved, object_id, src_path, dst_path)
+    wf_staging.move_path(
+        resolved, object_id, src_path, dst_path, runtime=appctx.runtime(ctx)
+    )
 
 
 def rm(
@@ -165,7 +169,9 @@ def rm(
 ) -> None:
     """Remove logical paths from the staged version."""
     resolved = require_existing_staging(ctx, object_id)
-    wf_staging.remove_paths(resolved, object_id, paths, recursive=recursive)
+    wf_staging.remove_paths(
+        resolved, object_id, paths, recursive=recursive, runtime=appctx.runtime(ctx)
+    )
 
 
 def ls_cmd(

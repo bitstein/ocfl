@@ -7,10 +7,10 @@ with that exact value.
 """
 
 import logging
-import time
 from typing import TYPE_CHECKING
 
 from ocfl_cli.errors import Transient
+from ocfl_cli.system import SYSTEM_SLEEPER
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -23,7 +23,7 @@ def retry[T](
     *,
     attempts: int = 3,
     backoff: tuple[float, ...] | None = None,
-    sleep: Callable[[float], None] = time.sleep,
+    sleep: Callable[[float], None] = SYSTEM_SLEEPER.sleep,
 ) -> T:
     if attempts < 1:
         raise ValueError("attempts must be >= 1")

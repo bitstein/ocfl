@@ -5,6 +5,7 @@ from typing import cast
 import click
 import pytest
 import typer
+from fakes import InMemoryHashBlockStream
 
 from ocfl_cli._appctx import (
     AppCtxError,
@@ -20,6 +21,7 @@ from ocfl_cli._appctx import (
 from ocfl_cli._style import make_console
 from ocfl_cli.config import ArchiveConfig, Config
 from ocfl_cli.ports import BtcRpcFactory, SpClientFactory
+from ocfl_cli.system import SYSTEM_CLOCK, SYSTEM_SLEEPER
 
 
 def _factory(_cfg: Config) -> object:
@@ -42,6 +44,10 @@ def test_app_ctx_builds_typed_view_from_ctx_obj() -> None:
             "no_color": False,
             "sp_client_factory": _factory,
             "btc_rpc_factory": _factory,
+            "clock": SYSTEM_CLOCK,
+            "sleeper": SYSTEM_SLEEPER,
+            "block_stream_factory": _factory,
+            "lock_timeout": 30.0,
             "console": out,
             "err_console": err,
         },
@@ -58,6 +64,10 @@ def test_app_ctx_builds_typed_view_from_ctx_obj() -> None:
     assert typed.no_color is False
     assert typed.sp_client_factory is _factory
     assert typed.btc_rpc_factory is _factory
+    assert typed.clock is SYSTEM_CLOCK
+    assert typed.sleeper is SYSTEM_SLEEPER
+    assert typed.block_stream_factory is _factory
+    assert typed.lock_timeout == 30.0
     assert typed.console is out
     assert typed.err_console is err
 
@@ -135,6 +145,9 @@ def test_install_app_ctx_caches_and_closes_clients_per_invocation() -> None:
         no_color=False,
         sp_client_factory=cast("SpClientFactory", factory),
         btc_rpc_factory=cast("BtcRpcFactory", factory),
+        clock=SYSTEM_CLOCK,
+        sleeper=SYSTEM_SLEEPER,
+        block_stream_factory=lambda cfg: InMemoryHashBlockStream(),
     )
 
     sp_factory = sp_client_factory(ctx)
@@ -168,6 +181,9 @@ def test_install_app_ctx_accepts_fakes_without_close_method() -> None:
         no_color=False,
         sp_client_factory=cast("SpClientFactory", factory),
         btc_rpc_factory=cast("BtcRpcFactory", factory),
+        clock=SYSTEM_CLOCK,
+        sleeper=SYSTEM_SLEEPER,
+        block_stream_factory=lambda cfg: InMemoryHashBlockStream(),
     )
 
     assert sp_client_factory(ctx)(cfg) is client
@@ -198,6 +214,9 @@ def test_install_app_ctx_reuses_injected_factory_source_across_invocations() -> 
             no_color=False,
             sp_client_factory=cast("SpClientFactory", factory),
             btc_rpc_factory=cast("BtcRpcFactory", factory),
+            clock=SYSTEM_CLOCK,
+            sleeper=SYSTEM_SLEEPER,
+            block_stream_factory=lambda cfg: InMemoryHashBlockStream(),
         )
 
         sp_factory = sp_client_factory(ctx)

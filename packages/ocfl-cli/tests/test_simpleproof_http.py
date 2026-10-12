@@ -111,12 +111,12 @@ SUBMIT_PATH = "/api/proof/timestamp/hashes"
 VERIFY_PATH = "/api/v2/proofs/verify-batches"
 
 
-def test_simpleproof_chunk_sizes_are_shared_from_client_module() -> None:
-    from ocfl_cli.workflow import content as wf_content
+def test_simpleproof_chunk_sizes_come_from_the_client() -> None:
+    from ocfl_cli.ots.simpleproof import SimpleProofHttpClient
 
     assert SUBMIT_CHUNK_SIZE == 1000
     assert VERIFY_BATCH_CHUNK_SIZE == 1000
-    assert wf_content.SUBMIT_CHUNK_SIZE is SUBMIT_CHUNK_SIZE
+    assert SimpleProofHttpClient.submit_chunk_size == SUBMIT_CHUNK_SIZE
 
 
 def _digest(i: int) -> str:

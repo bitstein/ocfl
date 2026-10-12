@@ -65,6 +65,7 @@ def commit(
                 object_id=object_id,
                 staging_dir=staging_dir,
                 allow_missing_metadata=allow_missing_metadata,
+                runtime=appctx.runtime(ctx),
             )
         except PhaseError as e:
             raise ErrorContext(
@@ -85,4 +86,5 @@ def commit(
         object_id=object_id,
         staging_dir=staging_dir,
         allow_missing_metadata=allow_missing_metadata,
+        runtime=appctx.runtime(ctx),
     )

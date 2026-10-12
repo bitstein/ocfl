@@ -17,18 +17,19 @@ from ocfl_cli.store.ots_state import (
     save_ots,
     with_lock,
 )
-from ocfl_cli.workflow import common as wf_common
-from ocfl_cli.workflow import content as wf_content
 from ocfl_cli.workflow.batch.reasons import (
     fixed_batch_reason,
 )
 
 if TYPE_CHECKING:
     from ocfl_cli.model.ots_state import OtsState, Submission
+    from ocfl_cli.ports import Runtime
     from ocfl_cli.store.staging import StagingStore
 
 
-def ensure_submit_chunks(batch: batch_model.BatchFile) -> batch_model.BatchFile:
+def ensure_submit_chunks(
+    batch: batch_model.BatchFile, *, chunk_size: int, runtime: Runtime
+) -> batch_model.BatchFile:
     if batch.submissions:
         return batch
     digests = sorted(
@@ -36,14 +37,14 @@ def ensure_submit_chunks(batch: batch_model.BatchFile) -> batch_model.BatchFile:
     )
     chunks = tuple(
         batch_model.BatchSubmission(
-            chunk_index=i // wf_content.SUBMIT_CHUNK_SIZE,
-            digests=tuple(digests[i : i + wf_content.SUBMIT_CHUNK_SIZE]),
+            chunk_index=i // chunk_size,
+            digests=tuple(digests[i : i + chunk_size]),
             status="pending",
         )
-        for i in range(0, len(digests), wf_content.SUBMIT_CHUNK_SIZE)
+        for i in range(0, len(digests), chunk_size)
     )
     return msgspec.structs.replace(
-        batch, submissions=chunks, updated_at=batch_state.now_utc_iso_z()
+        batch, submissions=chunks, updated_at=batch_state.utc_iso_z(runtime.clock.now())
     )
 
 
@@ -72,9 +73,10 @@ def mirror_chunk_to_object(
     batch: batch_model.BatchFile,
     object_id: str,
     ids_by_digest: dict[str, str],
+    runtime: Runtime,
 ) -> bool:
     staging_dir = store.staging_path(root_path, object_id)
-    with with_lock(staging_dir, timeout=wf_common.LOCK_TIMEOUT_SECONDS):
+    with with_lock(staging_dir, timeout=runtime.lock_timeout):
         state = load_ots(staging_dir)
         if target == "content":
             changed: list[Submission] = []
@@ -130,8 +132,11 @@ def submit_batch(
     staging_root: Path,
     batch: batch_model.BatchFile,
     sp_factory,
+    runtime: Runtime,
 ) -> batch_model.BatchFile:
-    batch = ensure_submit_chunks(batch)
+    batch = ensure_submit_chunks(
+        batch, chunk_size=sp_factory(cfg).submit_chunk_size, runtime=runtime
+    )
     with batch_state.with_batch_lock(staging_root, batch.batch_id):
         batch_state.save_batch(staging_root, batch)
     sp = sp_factory(cfg)
@@ -149,6 +154,7 @@ def submit_batch(
                 batch=batch,
                 chunk=chunk,
                 rows=rows,
+                runtime=runtime,
             )
             if not object_ids:
                 submissions[index] = msgspec.structs.replace(
@@ -157,7 +163,7 @@ def submit_batch(
                     record_ids=(),
                 )
                 batch = save_batch_submit_progress(
-                    staging_root, batch, rows, submissions
+                    staging_root, batch, rows, submissions, runtime=runtime
                 )
                 continue
             try:
@@ -175,7 +181,7 @@ def submit_batch(
                         last_error=fixed_batch_reason("transient_sp_error"),
                     )
                 return save_batch_submit_progress(
-                    staging_root, batch, rows, submissions
+                    staging_root, batch, rows, submissions, runtime=runtime
                 )
             if len(result.record_ids) != len(chunk.digests):
                 failed = msgspec.structs.replace(
@@ -196,14 +202,14 @@ def submit_batch(
                 chunk,
                 status="submitted",
                 record_ids=result.record_ids,
-                submitted_at=batch_state.now_utc_iso_z(),
+                submitted_at=batch_state.utc_iso_z(runtime.clock.now()),
                 attempts=chunk.attempts + 1,
             )
             batch = msgspec.structs.replace(
                 batch,
                 objects=tuple(rows.values()),
                 submissions=tuple(submissions),
-                updated_at=batch_state.now_utc_iso_z(),
+                updated_at=batch_state.utc_iso_z(runtime.clock.now()),
             )
             with batch_state.with_batch_lock(staging_root, batch.batch_id):
                 batch_state.save_batch(staging_root, batch)
@@ -217,11 +223,14 @@ def submit_batch(
                 batch=batch,
                 object_id=object_id,
                 ids_by_digest=ids_by_digest,
+                runtime=runtime,
             ):
                 rows[object_id] = msgspec.structs.replace(
                     rows[object_id], status="submitted", last_error=None
                 )
-    return save_batch_submit_progress(staging_root, batch, rows, submissions)
+    return save_batch_submit_progress(
+        staging_root, batch, rows, submissions, runtime=runtime
+    )
 
 
 def save_batch_submit_progress(
@@ -229,12 +238,14 @@ def save_batch_submit_progress(
     batch: batch_model.BatchFile,
     rows: dict[str, batch_model.BatchObject],
     submissions: list[batch_model.BatchSubmission],
+    *,
+    runtime: Runtime,
 ) -> batch_model.BatchFile:
     batch = msgspec.structs.replace(
         batch,
         objects=tuple(rows.values()),
         submissions=tuple(submissions),
-        updated_at=batch_state.now_utc_iso_z(),
+        updated_at=batch_state.utc_iso_z(runtime.clock.now()),
     )
     with batch_state.with_batch_lock(staging_root, batch.batch_id):
         batch_state.save_batch(staging_root, batch)
@@ -248,6 +259,7 @@ def revalidate_submit_chunk(
     batch: batch_model.BatchFile,
     chunk: batch_model.BatchSubmission,
     rows: dict[str, batch_model.BatchObject],
+    runtime: Runtime,
 ) -> tuple[
     batch_model.BatchSubmission,
     dict[str, batch_model.BatchObject],
@@ -257,7 +269,7 @@ def revalidate_submit_chunk(
     valid_object_ids: list[str] = []
     for object_id in chunk_object_ids(batch, chunk):
         staging_dir = store.staging_path(batch.root_path, object_id)
-        with with_lock(staging_dir, timeout=wf_common.LOCK_TIMEOUT_SECONDS):
+        with with_lock(staging_dir, timeout=runtime.lock_timeout):
             state = load_ots(staging_dir)
             if state.category_id != batch.category_id:
                 rows[object_id] = msgspec.structs.replace(

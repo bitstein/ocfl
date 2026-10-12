@@ -26,7 +26,6 @@ from ocfl_cli.store.ots_state import (
 )
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow.common import (
-    lock_timeout,
     log_phase,
     require_verified_content_before_inventory,
 )
@@ -42,6 +41,7 @@ from ocfl_lib import (
 from ocfl_lib.ots import parse as parse_ots
 
 if TYPE_CHECKING:
+    from ocfl_cli.ports import Runtime
     from ocfl_lib import ContentSource, StorageRoot
     from ocfl_lib.fs import FS, WriteFS
 
@@ -195,11 +195,12 @@ def commit_bare(
     object_id: str,
     staging_dir: Path,
     allow_missing_metadata: bool,
+    runtime: Runtime,
 ) -> None:
     """`stage commit` (non-OTS path): build the plan, commit it, purge staging."""
     with (
-        object_commit_lock(root_path, object_id, timeout=lock_timeout()),
-        with_lock(staging_dir, timeout=lock_timeout()),
+        object_commit_lock(root_path, object_id, timeout=runtime.lock_timeout),
+        with_lock(staging_dir, timeout=runtime.lock_timeout),
     ):
         metadata = store.load_metadata(root_path, object_id)
         require_staged_metadata(metadata, allow_missing_metadata=allow_missing_metadata)
@@ -240,6 +241,7 @@ def commit_ots(
     object_id: str,
     staging_dir: Path,
     allow_missing_metadata: bool,
+    runtime: Runtime,
 ) -> None:
     """Attach the cached inventory proof to the timestamped plan and commit it.
 
@@ -248,8 +250,8 @@ def commit_ots(
     writes the OCFL object, not staging, so a concurrent `--upgrade --watch`
     can keep running.
     """
-    with object_commit_lock(root_path, object_id, timeout=lock_timeout()):
-        with with_lock(staging_dir, timeout=lock_timeout()):
+    with object_commit_lock(root_path, object_id, timeout=runtime.lock_timeout):
+        with with_lock(staging_dir, timeout=runtime.lock_timeout):
             state = load_ots(staging_dir)
             target_phase = check_transition(state.phase, "commit (ots path)")
             require_verified_content_before_inventory(state)

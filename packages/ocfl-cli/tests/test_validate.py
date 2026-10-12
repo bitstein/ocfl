@@ -1,8 +1,10 @@
 """Tests for ocfl validate command."""
 
 import hashlib
+import io
 import json
 from pathlib import Path
+from typing import cast
 
 from typer.testing import CliRunner
 
@@ -105,21 +107,26 @@ class TestValidateRoot:
         assert any(e["code"] == "E033" for e in data["errors"])
 
     def test_root_marks_unvalidated_objects_when_truncated_by_default(
-        self, runner: CliRunner, storage_root: Path, monkeypatch
+        self, storage_root: Path
     ):
+        """A truncated report (max errors reached) leaves the rest unvalidated."""
+        from rich.console import Console
+
         from ocfl_cli.archive import validate as validate_module
-        from ocfl_lib import ValidationReport
+        from ocfl_lib import LocalFS, StorageRoot, ValidationReport
 
-        def fake_validate_root(*args, **kwargs):
-            return ValidationReport(objects_checked=1, truncated=True)
+        fs = LocalFS(storage_root)
+        obj_path = StorageRoot.open(fs).object_path("obj:test")
+        report = ValidationReport(objects_checked=1, truncated=True)
+        out = Console(file=io.StringIO(), color_system=None)
 
-        monkeypatch.setattr(validate_module, "validate_root", fake_validate_root)
+        validate_module._emit_root_object_results(
+            out, True, fs, {obj_path: "obj:test"}, report
+        )
 
-        result = runner.invoke(app, ["--root", str(storage_root), "validate"])
-
-        assert result.exit_code == 0
-        assert "  obj:test: not validated (max errors reached)" in result.stderr
-        assert "  obj:test: ok" not in result.stderr
+        text = cast("io.StringIO", out.file).getvalue()
+        assert "  obj:test: not validated (max errors reached)" in text
+        assert "  obj:test: ok" not in text
 
 
 class TestValidateObject:

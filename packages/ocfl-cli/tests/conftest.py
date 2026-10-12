@@ -7,9 +7,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from fakes import FakeBitcoinRPC, FakeSimpleProof, InMemoryHashBlockStream
+from fakes import (
+    FakeBitcoinRPC,
+    FakeSimpleProof,
+    InMemoryHashBlockStream,
+    RecordingSleeper,
+)
 from typer.testing import CliRunner
 
+from ocfl_cli.ports import Runtime
+from ocfl_cli.system import SYSTEM_CLOCK
 from ocfl_lib import (
     DigestAlgorithm,
     LocalFS,
@@ -132,6 +139,21 @@ def sp_fake() -> FakeSimpleProof:
 @pytest.fixture
 def btc_fake() -> BtcFake:
     return BtcFake(rpc=FakeBitcoinRPC(), stream=InMemoryHashBlockStream())
+
+
+@pytest.fixture
+def sleeper() -> RecordingSleeper:
+    return RecordingSleeper()
+
+
+@pytest.fixture
+def runtime(sleeper: RecordingSleeper) -> Runtime:
+    """The ports for calling use cases directly: real clock, no real sleeps."""
+    return Runtime(
+        clock=SYSTEM_CLOCK,
+        sleeper=sleeper,
+        block_streams=lambda cfg: InMemoryHashBlockStream(),
+    )
 
 
 @pytest.fixture

@@ -88,6 +88,7 @@ def status(
             object_id,
             staging_dir,
             btc_factory=appctx.btc_rpc_factory(ctx),
+            runtime=appctx.runtime(ctx),
         )
         if json_mode:
             output_json(data)

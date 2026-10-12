@@ -1,7 +1,7 @@
 """Status use cases: what is staged, where the OTS workflow is, what to do next."""
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from ocfl_cli.model.metadata import NextActionKind
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     )
     from ocfl_cli.ports import (
         BtcRpcFactory,
+        Runtime,
     )
     from ocfl_cli.store.staging import StagingStore
 
@@ -77,11 +78,6 @@ def humanize_age(seconds: int) -> str:
     if seconds < 86400:
         return f"{seconds // 3600}h ago"
     return f"{seconds // 86400}d ago"
-
-
-def _status_now() -> datetime:
-    """Indirection seam so tests can pin `now` for age math."""
-    return datetime.now(UTC)
 
 
 def _submission_age_seconds(submitted_at: str, now: datetime) -> int:
@@ -244,6 +240,7 @@ def status_ots_dict(
     staging_dir: Path,
     *,
     btc_factory: BtcRpcFactory,
+    runtime: Runtime,
 ) -> dict[str, Any]:
     """Build the JSON-shaped OTS status payload (commands.py renders human form)."""
     state = load_ots(staging_dir)
@@ -264,7 +261,7 @@ def status_ots_dict(
         "changes": diff["changes"],
         "metadata": diff["metadata"],
         "counts": counts,
-        "outstanding_jobs": _build_outstanding_jobs(state, _status_now()),
+        "outstanding_jobs": _build_outstanding_jobs(state, runtime.clock.now()),
         "bitcoin": _build_bitcoin_section(cfg, btc_factory),
         "simpleproof": {
             "configured": cfg is not None and cfg.simpleproof is not None,

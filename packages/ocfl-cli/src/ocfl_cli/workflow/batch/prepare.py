@@ -20,7 +20,6 @@ from ocfl_cli.store.ots_state import (
     save_ots,
     with_lock,
 )
-from ocfl_cli.workflow import common as wf_common
 from ocfl_cli.workflow import content as wf_content
 from ocfl_cli.workflow import inventory as wf_inventory
 from ocfl_cli.workflow.batch.reasons import (
@@ -31,6 +30,7 @@ from ocfl_cli.workflow.batch.reasons import (
 
 if TYPE_CHECKING:
     from ocfl_cli.model.ots_state import OtsState
+    from ocfl_cli.ports import Runtime
     from ocfl_cli.store.staging import StagingStore
 
 
@@ -44,14 +44,16 @@ def read_objects_file(path: Path) -> list[str]:
 
 
 def replace_batch_object(
-    batch: batch_model.BatchFile, row: batch_model.BatchObject
+    batch: batch_model.BatchFile, row: batch_model.BatchObject, *, runtime: Runtime
 ) -> batch_model.BatchFile:
     rows = [
         existing for existing in batch.objects if existing.object_id != row.object_id
     ]
     rows.append(row)
     return msgspec.structs.replace(
-        batch, objects=tuple(rows), updated_at=batch_state.now_utc_iso_z()
+        batch,
+        objects=tuple(rows),
+        updated_at=batch_state.utc_iso_z(runtime.clock.now()),
     )
 
 
@@ -93,6 +95,7 @@ def prepare_batch_object(
     batch: batch_model.BatchFile,
     object_id: str,
     allow_missing_metadata: bool,
+    runtime: Runtime,
 ) -> batch_model.BatchObject:
     staging_dir = store.staging_path(root_path, object_id)
     if not store.exists(root_path, object_id) or not has_ots(staging_dir):
@@ -102,7 +105,7 @@ def prepare_batch_object(
             skipped_reason=fixed_batch_reason("committed"),
         )
     try:
-        with with_lock(staging_dir, timeout=wf_common.LOCK_TIMEOUT_SECONDS):
+        with with_lock(staging_dir, timeout=runtime.lock_timeout):
             state = load_ots(staging_dir)
             if state.category_id != batch.category_id:
                 return batch_model.BatchObject(
@@ -120,7 +123,7 @@ def prepare_batch_object(
                 )
             if target == "content":
                 prepared = wf_content.prepare_content_submission_locked(
-                    cfg, store, sr, root_path, object_id, staging_dir
+                    cfg, store, sr, root_path, object_id, staging_dir, runtime=runtime
                 )
                 if not prepared.digests:
                     return batch_model.BatchObject(
@@ -209,7 +212,7 @@ def prepare_batch_object(
 
 
 def collect_recoverable_object_intents(
-    store: StagingStore, batch: batch_model.BatchFile
+    store: StagingStore, batch: batch_model.BatchFile, *, runtime: Runtime
 ) -> tuple[batch_model.BatchObject, ...]:
     known = {row.object_id for row in batch.objects}
     recovered: list[batch_model.BatchObject] = []
@@ -230,7 +233,7 @@ def collect_recoverable_object_intents(
             continue
         if store.staging_path(batch.root_path, object_id) != staging_dir:
             continue
-        with with_lock(staging_dir, timeout=wf_common.LOCK_TIMEOUT_SECONDS):
+        with with_lock(staging_dir, timeout=runtime.lock_timeout):
             state = load_ots(staging_dir)
             row = recover_content_intent(batch, object_id, state)
             if batch.target == "inventory":
@@ -242,7 +245,10 @@ def collect_recoverable_object_intents(
 
 
 def merge_recovered_object_intents(
-    batch: batch_model.BatchFile, recovered: tuple[batch_model.BatchObject, ...]
+    batch: batch_model.BatchFile,
+    recovered: tuple[batch_model.BatchObject, ...],
+    *,
+    runtime: Runtime,
 ) -> batch_model.BatchFile:
     if not recovered:
         return batch
@@ -255,7 +261,9 @@ def merge_recovered_object_intents(
     if len(merged) == len(batch.objects):
         return batch
     return msgspec.structs.replace(
-        batch, objects=tuple(merged), updated_at=batch_state.now_utc_iso_z()
+        batch,
+        objects=tuple(merged),
+        updated_at=batch_state.utc_iso_z(runtime.clock.now()),
     )
 
 

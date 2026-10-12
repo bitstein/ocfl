@@ -23,7 +23,6 @@ from ocfl_cli.store.ots_state import (
     save_ots,
     with_lock,
 )
-from ocfl_cli.workflow import common as wf_common
 from ocfl_cli.workflow.batch.reasons import (
     fixed_batch_reason,
 )
@@ -33,6 +32,7 @@ from ocfl_cli.workflow.batch.upgrade import (
 
 if TYPE_CHECKING:
     from ocfl_cli.model import batch as batch_model
+    from ocfl_cli.ports import Runtime
     from ocfl_cli.store.staging import StagingStore
 
 
@@ -183,6 +183,7 @@ def reverify_batch_watch_rows(
     staging_root: Path,
     batch: batch_model.BatchFile,
     btc,
+    runtime: Runtime,
 ) -> batch_model.BatchFile:
     if cfg.bitcoin is None:
         raise RuntimeError("bitcoin config missing")
@@ -194,7 +195,7 @@ def reverify_batch_watch_rows(
             rows.append(row)
             continue
         staging_dir = store.staging_path(batch.root_path, row.object_id)
-        with with_lock(staging_dir, timeout=wf_common.LOCK_TIMEOUT_SECONDS):
+        with with_lock(staging_dir, timeout=runtime.lock_timeout):
             state = load_ots(staging_dir)
             if target == "content":
                 state, row_reset, row_reorg = reverify_batch_content_row(
@@ -234,10 +235,13 @@ def reverify_batch_watch_rows(
         if not changed_rows:
             return batch
         return save_batch_upgrade(
-            staging_root, msgspec.structs.replace(batch, objects=tuple(rows))
+            staging_root,
+            msgspec.structs.replace(batch, objects=tuple(rows)),
+            runtime=runtime,
         )
     kept_jobs = tuple(job for job in batch.verify_jobs if reset.isdisjoint(job.digests))
     return save_batch_upgrade(
         staging_root,
         msgspec.structs.replace(batch, objects=tuple(rows), verify_jobs=kept_jobs),
+        runtime=runtime,
     )

@@ -23,7 +23,6 @@ from ocfl_cli.store.ots_state import (
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow.common import (
     StateMap,
-    lock_timeout,
     non_ots_digests,
     update_head_state,
 )
@@ -33,6 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from ocfl_cli.ports import Runtime
     from ocfl_lib import StorageRoot
 
 logger = logging.getLogger(__name__)
@@ -401,6 +401,7 @@ def edit_metadata(
     clear_message: bool,
     clear_name: bool,
     clear_address: bool,
+    runtime: Runtime,
 ) -> None:
     """Set or clear staged version metadata; regress OTS progress it invalidates."""
     validate_metadata_update_options(
@@ -411,7 +412,7 @@ def edit_metadata(
         clear_name=clear_name,
         clear_address=clear_address,
     )
-    with with_lock(resolved.staging_dir, timeout=lock_timeout()):
+    with with_lock(resolved.staging_dir, timeout=runtime.lock_timeout):
 
         def invalidate_ots_if_needed(
             current: StagedMetadata, updated: StagedMetadata
@@ -440,6 +441,7 @@ def add_sources(
     *,
     as_path: str | None,
     command: str,
+    runtime: Runtime,
 ) -> None:
     """Stage files and directories (by reference) at their logical paths."""
     store = resolved.store
@@ -512,7 +514,7 @@ def add_sources(
         store.save_content_map(root_path, object_id, content_map)
 
     if has_ots(staging_dir):
-        with with_lock(staging_dir, timeout=lock_timeout()):
+        with with_lock(staging_dir, timeout=runtime.lock_timeout):
             _finalize()
             apply_rm_mv_regression(staging_dir, state, "add", command)
     else:
@@ -520,7 +522,12 @@ def add_sources(
 
 
 def move_path(
-    resolved: StagingResolved, object_id: str, src_path: str, dst_path: str
+    resolved: StagingResolved,
+    object_id: str,
+    src_path: str,
+    dst_path: str,
+    *,
+    runtime: Runtime,
 ) -> None:
     """Rename a logical path (and its `.ots` companion in an OTS area)."""
     store = resolved.store
@@ -557,7 +564,7 @@ def move_path(
     state[found_digest].append(dst_path)
 
     if has_ots(staging_dir):
-        with with_lock(staging_dir, timeout=lock_timeout()):
+        with with_lock(staging_dir, timeout=runtime.lock_timeout):
             pair_ots_companion_rename(state, src_path, dst_path)
             store.save_inventory(root_path, object_id, update_head_state(inv, state))
             apply_rm_mv_regression(
@@ -568,7 +575,12 @@ def move_path(
 
 
 def remove_paths(
-    resolved: StagingResolved, object_id: str, paths: list[str], *, recursive: bool
+    resolved: StagingResolved,
+    object_id: str,
+    paths: list[str],
+    *,
+    recursive: bool,
+    runtime: Runtime,
 ) -> None:
     """Remove logical paths (prefixes with `recursive`) from the staged version."""
     store = resolved.store
@@ -617,7 +629,7 @@ def remove_paths(
         store.save_content_map(root_path, object_id, content_map)
 
     if has_ots(staging_dir):
-        with with_lock(staging_dir, timeout=lock_timeout()):
+        with with_lock(staging_dir, timeout=runtime.lock_timeout):
             pair_ots_companion_remove(state, removed_paths)
             _finalize()
             apply_rm_mv_regression(

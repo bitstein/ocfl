@@ -24,7 +24,6 @@ from ocfl_cli.store.ots_state import (
     with_lock,
 )
 from ocfl_cli.workflow import commit as wf_commit
-from ocfl_cli.workflow import common as wf_common
 from ocfl_cli.workflow import content as wf_content
 from ocfl_cli.workflow import inventory as wf_inventory
 from ocfl_cli.workflow.batch.reasons import (
@@ -35,6 +34,7 @@ from ocfl_lib import BitcoinRpcError, DigestAlgorithm
 if TYPE_CHECKING:
     from ocfl_cli.model.ots_state import OtsState
     from ocfl_cli.model.simpleproof import SimpleProofDownloadResult
+    from ocfl_cli.ports import Runtime
     from ocfl_cli.store.staging import StagingStore
 
 
@@ -74,6 +74,7 @@ def batch_unverified_submitted_digests(
     target: batch_model.BatchTarget,
     store: StagingStore,
     batch: batch_model.BatchFile,
+    runtime: Runtime,
 ) -> tuple[str, ...]:
     covered = covered_verify_digests(batch)
     pending: list[str] = []
@@ -82,7 +83,7 @@ def batch_unverified_submitted_digests(
         if row.status != "submitted":
             continue
         staging_dir = store.staging_path(batch.root_path, row.object_id)
-        with with_lock(staging_dir, timeout=wf_common.LOCK_TIMEOUT_SECONDS):
+        with with_lock(staging_dir, timeout=runtime.lock_timeout):
             state = load_ots(staging_dir)
             for digest in row.digests:
                 if digest in seen or digest in covered:
@@ -94,9 +95,11 @@ def batch_unverified_submitted_digests(
 
 
 def save_batch_upgrade(
-    staging_root: Path, batch: batch_model.BatchFile
+    staging_root: Path, batch: batch_model.BatchFile, *, runtime: Runtime
 ) -> batch_model.BatchFile:
-    batch = msgspec.structs.replace(batch, updated_at=batch_state.now_utc_iso_z())
+    batch = msgspec.structs.replace(
+        batch, updated_at=batch_state.utc_iso_z(runtime.clock.now())
+    )
     with batch_state.with_batch_lock(staging_root, batch.batch_id):
         batch_state.save_batch(staging_root, batch)
     return batch
@@ -110,10 +113,11 @@ def submit_batch_verify_jobs(
     staging_root: Path,
     batch: batch_model.BatchFile,
     sp_factory,
+    runtime: Runtime,
 ) -> batch_model.BatchFile:
     sp = sp_factory(cfg)
     digests = batch_unverified_submitted_digests(
-        target=target, store=store, batch=batch
+        target=target, store=store, batch=batch, runtime=runtime
     )
     if not digests:
         return batch
@@ -127,7 +131,7 @@ def submit_batch_verify_jobs(
                 job_id=f"failed-{len(jobs) + 1}",
                 digests=chunk,
                 status="FAILED",
-                submitted_at=batch_state.now_utc_iso_z(),
+                submitted_at=batch_state.utc_iso_z(runtime.clock.now()),
                 attempts=1,
                 last_error=str(e),
             )
@@ -143,23 +147,28 @@ def submit_batch_verify_jobs(
             batch = msgspec.structs.replace(
                 batch, objects=rows, verify_jobs=tuple(jobs)
             )
-            return save_batch_upgrade(staging_root, batch)
+            return save_batch_upgrade(staging_root, batch, runtime=runtime)
         jobs.append(
             batch_model.BatchVerifyJob(
                 job_id=job_id,
                 digests=chunk,
                 status="IN_PROGRESS",
-                submitted_at=batch_state.now_utc_iso_z(),
+                submitted_at=batch_state.utc_iso_z(runtime.clock.now()),
                 attempts=1,
             )
         )
         batch = msgspec.structs.replace(batch, verify_jobs=tuple(jobs))
-        batch = save_batch_upgrade(staging_root, batch)
+        batch = save_batch_upgrade(staging_root, batch, runtime=runtime)
     return batch
 
 
 def poll_batch_verify_jobs(
-    *, cfg, staging_root: Path, batch: batch_model.BatchFile, sp_factory
+    *,
+    cfg,
+    staging_root: Path,
+    batch: batch_model.BatchFile,
+    sp_factory,
+    runtime: Runtime,
 ) -> batch_model.BatchFile:
     sp = sp_factory(cfg)
     jobs: list[batch_model.BatchVerifyJob] = []
@@ -176,7 +185,7 @@ def poll_batch_verify_jobs(
                 msgspec.structs.replace(
                     job,
                     status="FAILED",
-                    completed_at=batch_state.now_utc_iso_z(),
+                    completed_at=batch_state.utc_iso_z(runtime.clock.now()),
                     last_error=str(e),
                 )
             )
@@ -196,7 +205,7 @@ def poll_batch_verify_jobs(
                 msgspec.structs.replace(
                     job,
                     status="FAILED",
-                    completed_at=batch_state.now_utc_iso_z(),
+                    completed_at=batch_state.utc_iso_z(runtime.clock.now()),
                     last_error=str(e),
                 )
             )
@@ -221,7 +230,7 @@ def poll_batch_verify_jobs(
             status=status,
             results_url=poll.results_url or job.results_url,
             completed_at=(
-                batch_state.now_utc_iso_z()
+                batch_state.utc_iso_z(runtime.clock.now())
                 if status in batch_model.BATCH_VERIFY_TERMINAL_STATUSES
                 else None
             ),
@@ -260,6 +269,7 @@ def poll_batch_verify_jobs(
     return save_batch_upgrade(
         staging_root,
         msgspec.structs.replace(batch, objects=tuple(rows), verify_jobs=tuple(jobs)),
+        runtime=runtime,
     )
 
 
@@ -280,9 +290,10 @@ def ingest_batch_content_downloads(
     downloads: SimpleProofDownloadResult,
     btc,
     min_confirmations: int,
+    runtime: Runtime,
 ) -> tuple[batch_model.BatchObject, bool]:
     staging_dir = store.staging_path(batch.root_path, row.object_id)
-    with with_lock(staging_dir, timeout=wf_common.LOCK_TIMEOUT_SECONDS):
+    with with_lock(staging_dir, timeout=runtime.lock_timeout):
         state = load_ots(staging_dir)
         inv = store.load_inventory(batch.root_path, row.object_id)
         alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
@@ -304,6 +315,7 @@ def ingest_batch_content_downloads(
                 object_id=row.object_id,
                 staging_dir=staging_dir,
                 min_confirmations=min_confirmations,
+                runtime=runtime,
             )
         ready, _unverified_pending, _orphans = wf_content.phase_advance_ready(
             state, store, sr, batch.root_path, row.object_id
@@ -328,9 +340,10 @@ def ingest_batch_inventory_downloads(
     downloads: SimpleProofDownloadResult,
     btc,
     min_confirmations: int,
+    runtime: Runtime,
 ) -> tuple[batch_model.BatchObject, bool]:
     staging_dir = store.staging_path(batch.root_path, row.object_id)
-    with with_lock(staging_dir, timeout=wf_common.LOCK_TIMEOUT_SECONDS):
+    with with_lock(staging_dir, timeout=runtime.lock_timeout):
         state = load_ots(staging_dir)
         proof = state.inventory_proof
         if proof is None or proof.batch_id != batch.batch_id:
@@ -358,7 +371,7 @@ def ingest_batch_inventory_downloads(
         if ots_bytes is None or proof.proof.verified:
             return row, False
         state = wf_inventory.verify_inventory_digest(
-            state, ots_bytes, btc, staging_dir, min_confirmations
+            state, ots_bytes, btc, staging_dir, min_confirmations, runtime=runtime
         )
         if inventory_row_upgraded(state, row):
             return (
@@ -411,6 +424,7 @@ def ingest_batch_verify_jobs(
     batch: batch_model.BatchFile,
     sp_factory,
     btc_factory,
+    runtime: Runtime,
 ) -> batch_model.BatchFile:
     if cfg.bitcoin is None:
         raise RuntimeError("bitcoin config missing")
@@ -496,6 +510,7 @@ def ingest_batch_verify_jobs(
                         downloads=downloads,
                         btc=btc,
                         min_confirmations=min_confirmations,
+                        runtime=runtime,
                     )
                 else:
                     new_row, row_changed = ingest_batch_inventory_downloads(
@@ -506,6 +521,7 @@ def ingest_batch_verify_jobs(
                         downloads=downloads,
                         btc=btc,
                         min_confirmations=min_confirmations,
+                        runtime=runtime,
                     )
             except AttestationMismatchError:
                 new_row = msgspec.structs.replace(
@@ -553,6 +569,7 @@ def ingest_batch_verify_jobs(
             objects=tuple(rows.values()),
             verify_jobs=tuple(jobs),
         ),
+        runtime=runtime,
     )
 
 
@@ -562,6 +579,7 @@ def reconcile_upgraded_batch_rows(
     store: StagingStore,
     staging_root: Path,
     batch: batch_model.BatchFile,
+    runtime: Runtime,
 ) -> batch_model.BatchFile:
     rows: list[batch_model.BatchObject] = []
     changed = False
@@ -570,7 +588,7 @@ def reconcile_upgraded_batch_rows(
             rows.append(row)
             continue
         staging_dir = store.staging_path(batch.root_path, row.object_id)
-        with with_lock(staging_dir, timeout=wf_common.LOCK_TIMEOUT_SECONDS):
+        with with_lock(staging_dir, timeout=runtime.lock_timeout):
             state = load_ots(staging_dir)
             upgraded = (
                 content_row_upgraded(state, row)
@@ -587,7 +605,9 @@ def reconcile_upgraded_batch_rows(
     if not changed:
         return batch
     return save_batch_upgrade(
-        staging_root, msgspec.structs.replace(batch, objects=tuple(rows))
+        staging_root,
+        msgspec.structs.replace(batch, objects=tuple(rows)),
+        runtime=runtime,
     )
 
 
@@ -601,6 +621,7 @@ def run_batch_upgrade_pass(
     batch: batch_model.BatchFile,
     sp_factory,
     btc_factory,
+    runtime: Runtime,
 ) -> batch_model.BatchFile:
     batch = submit_batch_verify_jobs(
         target=target,
@@ -609,18 +630,21 @@ def run_batch_upgrade_pass(
         staging_root=staging_root,
         batch=batch,
         sp_factory=sp_factory,
+        runtime=runtime,
     )
     batch = reconcile_upgraded_batch_rows(
         target=target,
         store=store,
         staging_root=staging_root,
         batch=batch,
+        runtime=runtime,
     )
     batch = poll_batch_verify_jobs(
         cfg=cfg,
         staging_root=staging_root,
         batch=batch,
         sp_factory=sp_factory,
+        runtime=runtime,
     )
     batch = ingest_batch_verify_jobs(
         target=target,
@@ -631,10 +655,12 @@ def run_batch_upgrade_pass(
         batch=batch,
         sp_factory=sp_factory,
         btc_factory=btc_factory,
+        runtime=runtime,
     )
     return reconcile_upgraded_batch_rows(
         target=target,
         store=store,
         staging_root=staging_root,
         batch=batch,
+        runtime=runtime,
     )

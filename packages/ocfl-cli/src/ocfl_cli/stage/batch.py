@@ -212,6 +212,7 @@ def commit_batch(ctx: typer.Context, batch_id: str) -> None:
         root_path=resolve_root_path(ctx),
         batch_id=batch_id,
         events=_CliBatchEvents(ctx, resumed_by_id=True),
+        runtime=appctx.runtime(ctx),
     )
     if failures:
         raise typer.Exit(1)
@@ -239,6 +240,7 @@ def _drive_batch_retry(
         batch_id=batch_id,
         sp_factory=appctx.sp_client_factory(ctx),
         events=events,
+        runtime=appctx.runtime(ctx),
     )
     events.summary(batch)
     if not appctx.json_mode(ctx):
@@ -267,6 +269,7 @@ def _drive_batch_upgrade(
         sp_factory=appctx.sp_client_factory(ctx),
         btc_factory=appctx.btc_rpc_factory(ctx),
         events=events,
+        runtime=appctx.runtime(ctx),
     )
     events.summary(batch)
     if not appctx.json_mode(ctx):
@@ -306,6 +309,7 @@ def _drive_batch_watch(
         sp_factory=appctx.sp_client_factory(ctx),
         btc_factory=appctx.btc_rpc_factory(ctx),
         events=_CliBatchEvents(ctx, resumed_by_id=batch_id is not None),
+        runtime=appctx.runtime(ctx),
     )
     if exit_code:
         raise typer.Exit(exit_code)
@@ -339,6 +343,7 @@ def _drive_batch_submit(
         allow_missing_metadata=allow_missing_metadata,
         sp_factory=appctx.sp_client_factory(ctx),
         events=events,
+        runtime=appctx.runtime(ctx),
     )
     events.summary(batch)
     if not appctx.json_mode(ctx):

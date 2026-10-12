@@ -29,8 +29,9 @@ import hashlib
 import json
 from pathlib import Path
 
+import filelock
 import pytest
-from fakes import FakeBitcoinRPC, FakeSimpleProof
+from fakes import FakeBitcoinRPC, FakeClock, FakeSimpleProof
 from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
@@ -801,21 +802,13 @@ class TestStageStatusOts:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``stage status`` is documented as lock-free (bounded staleness is
-        correct semantics for an inspector). Monkeypatch
-        ``with_lock`` to raise if called from anywhere in the status path.
+        correct semantics for an inspector): it answers while another
+        process holds the staging ``.lock``, with a lock timeout that would
+        fail any command that waits for the lock.
         """
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
-
-        from ocfl_cli.store import ots_state as staging_mod
-        from ocfl_cli.workflow import status as wf_status
-
-        def _boom(*a: object, **kw: object):
-            raise AssertionError("status MUST NOT take the staging .lock")
-
-        monkeypatch.setattr(staging_mod, "with_lock", _boom, raising=False)
-        monkeypatch.setattr(wf_status, "with_lock", _boom, raising=False)
 
         staging = tmp_path / "staging"
         sd, _ = _new_ots_staging(
@@ -826,14 +819,13 @@ class TestStageStatusOts:
             ("a.txt", b"alpha"),
         )
 
-        r = runner.invoke(
-            app,
-            _stage_args_json(empty_sha256_root, staging, "status", "obj:s-nolock"),
-        )
+        runner_obj(runner)["lock_timeout"] = 0.01
+        with filelock.FileLock(str(sd / ".lock")).acquire(timeout=1):
+            r = runner.invoke(
+                app,
+                _stage_args_json(empty_sha256_root, staging, "status", "obj:s-nolock"),
+            )
         assert r.exit_code == 0, r.output
-        # As an additional belt-and-braces check, no .lock file should exist
-        # after a status invocation (with_lock would have created one).
-        assert not (sd / ".lock").exists()
 
     # ---- 14. Human output is dense (Phase / Bitcoin / Next + per-job line) ----
     def test_status_human_output_dense(
@@ -929,9 +921,7 @@ class TestStageStatusOts:
         submitted = fake_now - timedelta(seconds=30)
         submitted_iso = submitted.isoformat(timespec="seconds")
 
-        from ocfl_cli.workflow import status as wf_status
-
-        monkeypatch.setattr(wf_status, "_status_now", lambda: fake_now, raising=False)
+        runner_obj(runner)["clock"] = FakeClock(fake_now)
 
         _set_phase(
             sd,
@@ -988,15 +978,9 @@ class TestStageStatusOts:
 
         fake_now = datetime(2026, 4, 25, 14, 0, 0, tzinfo=UTC)
         submitted = fake_now - timedelta(seconds=7200)
-        submitted_iso = submitted.isoformat(timespec="seconds")
-
-        from ocfl_cli.workflow import content as wf_content
-        from ocfl_cli.workflow import status as wf_status
-
-        monkeypatch.setattr(
-            wf_content, "now_utc_iso", lambda: submitted_iso, raising=False
-        )
-        monkeypatch.setattr(wf_status, "_status_now", lambda: fake_now, raising=False)
+        # Submit two hours before `status` reads the clock.
+        clock = FakeClock(submitted)
+        runner_obj(runner)["clock"] = clock
 
         r = runner.invoke(
             app,
@@ -1023,6 +1007,7 @@ class TestStageStatusOts:
         assert r.exit_code == 0, r.output
         assert load_ots(sd).verify_jobs[0].status == "IN_PROGRESS"
 
+        clock.set(fake_now)
         r = runner.invoke(
             app, _stage_args(empty_sha256_root, staging, "status", "obj:s-h-hr")
         )

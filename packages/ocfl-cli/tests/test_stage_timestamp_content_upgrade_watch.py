@@ -7,7 +7,7 @@ Pins the `--upgrade --watch` contract from `OTS workflow contract`:
   block; exits when phase advances to ``content-upgraded`` or on
   SIGINT/SIGTERM (exit 130).
 - Loop sketch (per ``stage_timestamp_content_upgrade_watch.loop_sketch``):
-    1. ``BitcoinZmqSubscriber`` (or fake ``HashBlockStream``) opened
+    1. ``BitcoinZmqSubscriber`` (or fake ``BlockStream``) opened
        outside the lock.
     2. ``wait_for_block(timeout_ms=5000)`` — ``None`` ⇒ continue
        (re-check cancel flag).
@@ -34,7 +34,7 @@ Test infrastructure seam (introduced by the implementer in
 ``commands/stage.py``):
 
 - ``block_stream_for(cfg)`` — production factory returning a
-  ``HashBlockStream``-shaped object. Tests monkeypatch it to inject
+  ``BlockStream``-shaped object. Tests monkeypatch it to inject
   ``InMemoryHashBlockStream`` from ``tests/fakes/fake_bitcoin.py``.
   SimpleProof / Bitcoin clients are injected via ``runner.obj``
   factory entries (see ``conftest.py::runner``).
@@ -45,15 +45,22 @@ option or ``AttributeError`` on the patched seam) is an acceptable
 diagnostic.
 """
 
+import dataclasses
 import hashlib
 import logging
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import filelock
 import pytest
-from fakes import FakeBitcoinRPC, FakeSimpleProof, InMemoryHashBlockStream
+from fakes import (
+    FakeBitcoinRPC,
+    FakeSimpleProof,
+    InMemoryHashBlockStream,
+    RecordingSleeper,
+)
 from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
@@ -61,7 +68,7 @@ from typer.testing import CliRunner
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Submission, VerifyJob
 from ocfl_cli.model.phase import Phase
-from ocfl_cli.ports import HashBlockStream
+from ocfl_cli.ports import BlockStream
 from ocfl_cli.store.ots_state import load_ots, save_ots
 from ocfl_cli.store.staging import StagingStore
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
@@ -117,25 +124,21 @@ def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
     runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
 
 
-def _inject_fake_zmq(monkeypatch: pytest.MonkeyPatch, stream: HashBlockStream) -> None:
-    """Patch the ``block_stream_for`` seam to return *stream*.
+def _inject_fake_zmq(runner: CliRunner, stream: BlockStream) -> None:
+    """Inject *stream* as the ``block_stream_factory`` port.
 
-    Tests monkeypatch it to bypass real ZMQ sockets. Accepts any
-    ``HashBlockStream``-shaped object (``InMemoryHashBlockStream`` or
+    Bypasses real ZMQ sockets. Accepts any
+    ``BlockStream``-shaped object (``InMemoryHashBlockStream`` or
     inline test stub).
     """
-    from ocfl_cli.workflow import watch as stage_watch
 
-    monkeypatch.setattr(
-        stage_watch, "block_stream_for", lambda *a, **kw: stream, raising=False
-    )
+    runner_obj(runner)["block_stream_factory"] = lambda *a, **kw: stream
 
 
 @pytest.fixture(autouse=True)
-def no_block_processing_delay(monkeypatch: pytest.MonkeyPatch) -> None:
-    from ocfl_cli.workflow import watch as stage_watch
+def no_block_processing_delay(runner: CliRunner) -> None:
 
-    monkeypatch.setattr(stage_watch, "sleep_after_block", lambda: None, raising=True)
+    runner_obj(runner)["sleeper"] = RecordingSleeper()
 
 
 # --------------------------------------------------------------------------- #
@@ -154,6 +157,7 @@ def empty_sha256_root(tmp_path: Path) -> Path:
 
 
 DIGEST_BLOCK_HEIGHT = 800_000
+RECHECKED = "Rechecking cached proofs after chain movement"
 MIN_CONFS = 3
 
 
@@ -236,7 +240,7 @@ def _seed_completed_verify_job(
 
 
 # =========================================================================== #
-# Layer-2: --watch loop with fake HashBlockStream — phase advance
+# Layer-2: --watch loop with fake BlockStream — phase advance
 # =========================================================================== #
 
 
@@ -253,13 +257,9 @@ class TestWatchLoopAdvancesOnBlock:
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
-        from ocfl_cli.workflow import watch as stage_watch
 
-        monkeypatch.setattr(
-            stage_watch,
-            "block_stream_for",
-            lambda *a, **kw: pytest.fail("already-upgraded watch subscribed to ZMQ"),
-            raising=True,
+        runner_obj(runner)["block_stream_factory"] = lambda *a, **kw: pytest.fail(
+            "already-upgraded watch subscribed to ZMQ",
         )
 
         staging = tmp_path / "staging"
@@ -321,13 +321,12 @@ class TestWatchLoopAdvancesOnBlock:
         _inject_fake_btc(runner, btc_fake.rpc)
 
         stream = InMemoryHashBlockStream()
-        _inject_fake_zmq(monkeypatch, stream)
+        _inject_fake_zmq(runner, stream)
 
         calls: list[str] = []
-        from ocfl_cli.workflow import watch as stage_watch
 
-        monkeypatch.setattr(
-            stage_watch, "sleep_after_block", lambda: calls.append("sleep")
+        runner_obj(runner)["sleeper"] = SimpleNamespace(
+            sleep=lambda _seconds: calls.append("sleep")
         )
 
         staging = tmp_path / "staging"
@@ -375,7 +374,7 @@ class TestWatchLoopAdvancesOnBlock:
         _inject_fake_btc(runner, btc_fake.rpc)
 
         stream = InMemoryHashBlockStream()
-        _inject_fake_zmq(monkeypatch, stream)
+        _inject_fake_zmq(runner, stream)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -437,26 +436,11 @@ class TestWatchHeightJumpTriggersReverify:
         """Two-digest staging: first digest verified before --watch starts.
         Between the two pushed block hashes, the chain jumps by >1
         (simulating dropped ZMQ notifications). The loop's per-wake
-        ``getblockchaininfo`` notices and runs ``reverify_content_proofs``.
-        Spy on the module-level ``reverify_content_proofs`` to assert
-        it ran."""
+        ``getblockchaininfo`` notices and runs ``reverify_content_proofs``,
+        which the progress output reports."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
-
-        from ocfl_cli.workflow import content as wf_content
-
-        # Spy: count invocations of reverify_content_proofs.
-        real_reverify = wf_content.reverify_content_proofs
-        calls: list[int] = []
-
-        def spy_reverify(*args: Any, **kwargs: Any):
-            calls.append(1)
-            return real_reverify(*args, **kwargs)
-
-        monkeypatch.setattr(
-            wf_content, "reverify_content_proofs", spy_reverify, raising=True
-        )
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -502,7 +486,7 @@ class TestWatchHeightJumpTriggersReverify:
                 # raise so a stuck loop fails fast.
                 raise KeyboardInterrupt("loop did not exit after phase advance")
 
-        _inject_fake_zmq(monkeypatch, _JumpStream())
+        _inject_fake_zmq(runner, _JumpStream())
 
         r = runner.invoke(
             app,
@@ -518,9 +502,8 @@ class TestWatchHeightJumpTriggersReverify:
         )
         assert r.exit_code == 0, r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
-        # Reverify ran at least once during --watch (in addition to any
-        # baseline call during pass 1 if implementer always invokes it).
-        assert len(calls) >= 1
+        # The chain moved between wakes, so the loop rechecked cached proofs.
+        assert RECHECKED in r.output
 
 
 # =========================================================================== #
@@ -544,19 +527,6 @@ class TestWatchTipChangeAtStableHeightTriggersReverify:
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
 
-        from ocfl_cli.workflow import content as wf_content
-
-        real_reverify = wf_content.reverify_content_proofs
-        calls: list[int] = []
-
-        def spy_reverify(*args: Any, **kwargs: Any):
-            calls.append(1)
-            return real_reverify(*args, **kwargs)
-
-        monkeypatch.setattr(
-            wf_content, "reverify_content_proofs", spy_reverify, raising=True
-        )
-
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
             runner,
@@ -570,7 +540,9 @@ class TestWatchTipChangeAtStableHeightTriggersReverify:
 
         ots_bytes = _ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        # One confirmation short: wake 1 cannot advance the phase, so only
+        # the tip change on wake 2 can make the loop recheck its proofs.
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
         _register_attested(btc_fake.rpc, d)
 
         class _ReorgStream:
@@ -592,7 +564,7 @@ class TestWatchTipChangeAtStableHeightTriggersReverify:
                     )
                 raise KeyboardInterrupt("loop did not exit after phase advance")
 
-        _inject_fake_zmq(monkeypatch, _ReorgStream())
+        _inject_fake_zmq(runner, _ReorgStream())
 
         r = runner.invoke(
             app,
@@ -606,11 +578,10 @@ class TestWatchTipChangeAtStableHeightTriggersReverify:
                 "--watch",
             ),
         )
-        # Either advances on pass 1 (clean verify) and exits 0, or runs
-        # pass 2 with reverify after reorg — both are spec-correct paths.
-        # In either case the spy must have observed at least one call.
-        assert r.exit_code in (0, 130), r.output
-        assert len(calls) >= 1
+        # Still short of confirmations after the reorg: interrupted on
+        # wake 3, after the tip change made the loop recheck cached proofs.
+        assert r.exit_code == 130, r.output
+        assert r.output.count(RECHECKED) == 1
 
 
 # =========================================================================== #
@@ -654,7 +625,7 @@ class TestWatchSigintExits130WithoutTornCheckpoint:
             def wait_for_block(self, timeout_ms: int) -> bytes | None:
                 raise KeyboardInterrupt("simulated SIGINT before first block")
 
-        _inject_fake_zmq(monkeypatch, _SigintStream())
+        _inject_fake_zmq(runner, _SigintStream())
 
         r = runner.invoke(
             app,
@@ -705,10 +676,8 @@ class TestWatchLockTimeoutWarningAndContinue:
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
 
-        from ocfl_cli.workflow import common as wf_common
-
         # Speed knob: monkeypatch the lock timeout if the constant exists.
-        monkeypatch.setattr(wf_common, "LOCK_TIMEOUT_SECONDS", 1, raising=False)
+        runner_obj(runner)["lock_timeout"] = 1
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -741,7 +710,7 @@ class TestWatchLockTimeoutWarningAndContinue:
                     )
                 raise KeyboardInterrupt("terminate after lock-contention pass")
 
-        _inject_fake_zmq(monkeypatch, _ContendedStream())
+        _inject_fake_zmq(runner, _ContendedStream())
 
         try:
             with caplog.at_level(logging.WARNING):
@@ -788,6 +757,7 @@ class TestTwoWatchersSerializeSafely:
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        runtime,
     ) -> None:
         """Spawn two CliRunner invocations on separate threads, each
         driven by an independent fake stream that delivers one block.
@@ -814,7 +784,7 @@ class TestTwoWatchersSerializeSafely:
         _register_attested(btc_fake.rpc, d)
 
         from ocfl_cli.config import load_config
-        from ocfl_cli.workflow import watch as stage_watch
+        from ocfl_cli.workflow.watch import watch_content
         from ocfl_lib import LocalFS, StorageRoot
 
         # Two independent streams; each delivers one block then raises
@@ -847,9 +817,7 @@ class TestTwoWatchersSerializeSafely:
                 idx["i"] = i + 1
             return streams[i]
 
-        monkeypatch.setattr(
-            stage_watch, "block_stream_for", _next_stream, raising=False
-        )
+        thread_runtime = dataclasses.replace(runtime, block_streams=_next_stream)
 
         # Call watch_content directly per thread. CliRunner patches
         # process-global sys.stdout/err which is not thread-safe; the
@@ -869,7 +837,7 @@ class TestTwoWatchersSerializeSafely:
                 store = StagingStore(staging)
                 sr = StorageRoot.open(LocalFS(empty_sha256_root))
                 barrier.wait(timeout=10)
-                results[tag] = stage_watch.watch_content(
+                results[tag] = watch_content(
                     cfg,
                     store,
                     sr,
@@ -878,6 +846,7 @@ class TestTwoWatchersSerializeSafely:
                     sd,
                     sp_factory=lambda _cfg: sp_fake,
                     btc_factory=lambda _cfg: btc_fake.rpc,
+                    runtime=thread_runtime,
                 )
             except BaseException as e:
                 errors[tag] = e

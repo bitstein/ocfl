@@ -12,6 +12,7 @@ ADR-0002 put workflows in `ocfl-cli` and asked for layers inside it. Before this
 | commands | `ocfl_cli.archive`, `ocfl_cli.stage`, `_appctx`, `_common`, `_exit`, `_style`, `exit_codes` | option parsing, rendering, the one error handler |
 | use cases | `ocfl_cli.workflow` | the Staging Area workflows: `staging`, `status`, `content`, `inventory`, `commit`, `watch`, `validation`, the batch engine (`batch`) and shared helpers (`common`) |
 | adapters | `ocfl_cli.ots`, `ocfl_cli.store` | SimpleProof HTTP, Bitcoin RPC/ZMQ (`ots`); staging files, `ots.json`, batch files, locks (`store`) |
+| system | `ocfl_cli.system` | the real clock and sleep behind the time ports |
 | base | `ocfl_cli.model`, `ocfl_cli.ports`, `ocfl_cli.config`, `ocfl_cli.errors` | value types, the Protocols the use cases need, configuration, errors |
 
 `ocfl_lib` is a library under all of them; any layer may use it.
@@ -31,3 +32,4 @@ Rules, enforced by import-linter (`[tool.importlinter]` in the root `pyproject.t
 
 - Moving a function across a layer is a contract change that import-linter reports.
 - No contract lists exemptions (`ignore_imports`).
+- The use cases reach time only through the ports (`Clock`, `Sleeper`, `BlockStream`, bundled with the lock timeout as `ports.Runtime`); `ocfl_cli.system` is the one module that reads the real clock or sleeps. Tests inject fakes through `ctx.obj` / `AppCtx` or a `Runtime`, not by patching module internals.

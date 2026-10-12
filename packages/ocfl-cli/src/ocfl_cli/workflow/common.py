@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     )
     from ocfl_cli.model.simpleproof import VerifyBatchAck
     from ocfl_cli.ports import (
+        Runtime,
         SimpleProofClient,
     )
     from ocfl_lib import Inventory
@@ -42,14 +43,6 @@ logger = logging.getLogger(__name__)
 
 # Inventory head-state shape: digest -> logical paths.
 type StateMap = dict[str, list[str]]
-
-
-LOCK_TIMEOUT_SECONDS = 30
-
-
-def lock_timeout() -> float:
-    """Seconds to wait for a staging or commit lock (read at call time)."""
-    return LOCK_TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,7 +211,7 @@ def snapshot_results(
     return state
 
 
-def _parse_iso_seconds(value: str | None) -> int | None:
+def _parse_iso_seconds(value: str | None, *, runtime: Runtime) -> int | None:
     if value is None:
         return None
     try:
@@ -227,10 +220,12 @@ def _parse_iso_seconds(value: str | None) -> int | None:
         return None
     if created.tzinfo is None:
         created = created.replace(tzinfo=UTC)
-    return max(0, int((datetime.now(UTC) - created).total_seconds()))
+    return max(0, int((runtime.clock.now() - created).total_seconds()))
 
 
-def compute_job_progress(state: OtsState) -> tuple[JobProgress, ...]:
+def compute_job_progress(
+    state: OtsState, *, runtime: Runtime
+) -> tuple[JobProgress, ...]:
     progress: list[JobProgress] = []
     for job in state.verify_jobs:
         calendar_counts: dict[str, int] = {}
@@ -245,7 +240,7 @@ def compute_job_progress(state: OtsState) -> tuple[JobProgress, ...]:
                 status=job.status,
                 total_hashes=job.total_hashes,
                 verified_hashes=job.verified_hashes,
-                age_seconds=_parse_iso_seconds(job.created_at),
+                age_seconds=_parse_iso_seconds(job.created_at, runtime=runtime),
                 anchored_digests=len(job.attestation_snapshots),
                 pending_digests=max(
                     0, len(job.digests) - len(job.attestation_snapshots)
@@ -262,11 +257,13 @@ def compute_job_progress(state: OtsState) -> tuple[JobProgress, ...]:
     return tuple(progress)
 
 
-def compute_inventory_job_progress(state: OtsState) -> JobProgress | None:
+def compute_inventory_job_progress(
+    state: OtsState, *, runtime: Runtime
+) -> JobProgress | None:
     inv = state.inventory_proof
     if inv is None:
         return None
-    progress = {job.job_id: job for job in compute_job_progress(state)}
+    progress = {job.job_id: job for job in compute_job_progress(state, runtime=runtime)}
     for job in state.verify_jobs:
         if inv.digest in job.digests:
             return progress.get(job.job_id)

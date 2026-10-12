@@ -1,6 +1,5 @@
 """SimpleProof API client protocol and HTTP implementation."""
 
-import time
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
@@ -23,6 +22,7 @@ from ocfl_cli.model.simpleproof import (
     VerifyBatchAck,
 )
 from ocfl_cli.ots._retry import retry
+from ocfl_cli.system import SYSTEM_CLOCK, SYSTEM_SLEEPER
 from ocfl_lib import OtsParseError
 from ocfl_lib.ots import parse as parse_ots
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from ocfl_cli.config import Config
-    from ocfl_cli.ports import SimpleProofClient
+    from ocfl_cli.ports import Clock, SimpleProofClient
 
 
 _REDACTED = "<redacted>"
@@ -152,7 +152,7 @@ def _response_error_detail(resp: httpx.Response) -> str | None:
     return None
 
 
-def _retry_after_seconds(value: str) -> float | None:
+def _retry_after_seconds(value: str, clock: Clock) -> float | None:
     try:
         delay = float(value)
     except ValueError:
@@ -162,7 +162,7 @@ def _retry_after_seconds(value: str) -> float | None:
             return None
         if retry_at.tzinfo is None:
             return None
-        return max(0.0, retry_at.timestamp() - time.time())
+        return max(0.0, (retry_at - clock.now()).total_seconds())
     return max(0.0, delay)
 
 
@@ -171,8 +171,11 @@ class SimpleProofHttpClient:
 
     Callers inject a fully-configured ``httpx2.Client`` so tests can swap in
     a ``MockTransport`` and lifecycle stays caller-controlled. ``sleep`` is
-    forwarded to ``ocfl_cli.ots._retry.retry`` so tests bypass wall-clock time.
+    forwarded to ``ocfl_cli.ots._retry.retry`` and ``clock`` reads HTTP-date
+    ``Retry-After`` values, so tests bypass wall-clock time.
     """
+
+    submit_chunk_size = SUBMIT_CHUNK_SIZE
 
     def __init__(
         self,
@@ -180,13 +183,15 @@ class SimpleProofHttpClient:
         creds: SimpleProofCreds,
         *,
         client: httpx.Client,
-        sleep: Callable[[float], None] = time.sleep,
+        sleep: Callable[[float], None] = SYSTEM_SLEEPER.sleep,
+        clock: Clock = SYSTEM_CLOCK,
         attempts: int = 3,
     ) -> None:
         self._base_url = base_url
         self._creds = creds
         self._client = client
         self._sleep = sleep
+        self._clock = clock
         self._attempts = attempts
 
     def close(self) -> None:
@@ -222,7 +227,9 @@ class SimpleProofHttpClient:
                     f"SimpleProof rate-limited: HTTP {status}"
                 )
                 if (retry_after := exc.response.headers.get("Retry-After")) is not None:
-                    transient.retry_after = _retry_after_seconds(retry_after)
+                    transient.retry_after = _retry_after_seconds(
+                        retry_after, self._clock
+                    )
                 raise transient from exc
             if 500 <= status < 600:
                 raise SimpleProofTransient(f"SimpleProof HTTP {status}") from exc

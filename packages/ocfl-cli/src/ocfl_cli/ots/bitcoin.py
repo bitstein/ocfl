@@ -16,7 +16,6 @@ import httpx2 as httpx
 import zmq
 
 from ocfl_cli.errors import AttestationMismatchError, ReorgDetectedError
-from ocfl_cli.ports import BitcoinRPC, HashBlockStream
 from ocfl_lib import BitcoinNoBlockError
 from ocfl_lib.bitcoin import BitcoinRpcClient, BlockchainInfo, BlockHeader
 from ocfl_lib.ots import (
@@ -28,19 +27,19 @@ from ocfl_lib.ots import parse as parse_ots
 
 if TYPE_CHECKING:
     from ocfl_cli.config import Config
+    from ocfl_cli.ports import BitcoinRPC, BlockStream
     from ocfl_lib.ots import BlockHeaderSource
 
 __all__ = [
-    "BitcoinRPC",
     "BitcoinZmqSubscriber",
     "BlockHeader",
     "BlockchainInfo",
-    "HashBlockStream",
     "PendingReason",
     "PendingVerification",
     "VerifiedAttestation",
     "VerifyResult",
     "block_source",
+    "default_block_stream_factory",
     "default_btc_factory",
     "verify_attestation",
 ]
@@ -209,3 +208,15 @@ def default_btc_factory(cfg: Config) -> BitcoinRPC:
     headers = {"Authorization": "Basic " + b64encode(creds.encode()).decode()}
     client = httpx.Client(timeout=btc_cfg.rpc_timeout_s, headers=headers)
     return BitcoinRpcClient(btc_cfg.rpc_url, client=client)
+
+
+def default_block_stream_factory(cfg: Config) -> BlockStream:
+    """The production block stream: ZMQ `hashblock` from the configured node.
+
+    Registered on `ctx.obj["block_stream_factory"]` by `main`; tests inject
+    an in-memory stream under the same key.
+    """
+    btc_cfg = cfg.bitcoin
+    if btc_cfg is None:
+        raise RuntimeError("bitcoin config missing")
+    return BitcoinZmqSubscriber(btc_cfg.zmq_endpoint)

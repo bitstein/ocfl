@@ -15,7 +15,6 @@ from ocfl_cli.store.ots_state import (
     load_ots,
     with_lock,
 )
-from ocfl_cli.workflow import common as wf_common
 from ocfl_cli.workflow.batch.reasons import fixed_batch_reason
 from ocfl_cli.workflow.batch.report import object_record_ids_by_digest
 from ocfl_cli.workflow.batch.submit import (
@@ -27,6 +26,7 @@ from ocfl_cli.workflow.batch.submit import (
 )
 
 if TYPE_CHECKING:
+    from ocfl_cli.ports import Runtime
     from ocfl_cli.store.staging import StagingStore
 
 
@@ -48,6 +48,7 @@ def collect_retry_record_ids(
     staging_root: Path,
     batch: batch_model.BatchFile,
     submissions: list[batch_model.BatchSubmission],
+    runtime: Runtime,
 ) -> tuple[dict[str, str], dict[str, batch_model.BatchObject]]:
     rows = row_by_object(batch)
     ids_by_digest: dict[str, str] = {}
@@ -65,7 +66,7 @@ def collect_retry_record_ids(
         if row.status not in {"prepared", "submitted"}:
             continue
         staging_dir = store.staging_path(batch.root_path, row.object_id)
-        with with_lock(staging_dir, timeout=wf_common.LOCK_TIMEOUT_SECONDS):
+        with with_lock(staging_dir, timeout=runtime.lock_timeout):
             state = load_ots(staging_dir)
             for digest, record_id in object_record_ids_by_digest(
                 batch, row, state
@@ -107,6 +108,7 @@ def collect_retry_record_ids(
             batch=batch,
             object_id=row.object_id,
             ids_by_digest=row_ids,
+            runtime=runtime,
         ):
             rows[row.object_id] = msgspec.structs.replace(
                 row, status="submitted", last_error=None
@@ -122,6 +124,7 @@ def append_retry_chunk(
     record_ids: tuple[str, ...] | None = None,
     attempts: int = 0,
     last_error: str | None = None,
+    runtime: Runtime,
 ) -> batch_model.BatchSubmission:
     next_index = (
         max((submission.chunk_index for submission in submissions), default=-1) + 1
@@ -131,7 +134,9 @@ def append_retry_chunk(
         digests=digests,
         status=status,
         record_ids=record_ids,
-        submitted_at=batch_state.now_utc_iso_z() if status == "submitted" else None,
+        submitted_at=batch_state.utc_iso_z(runtime.clock.now())
+        if status == "submitted"
+        else None,
         attempts=attempts,
         last_error=last_error,
     )
@@ -147,6 +152,7 @@ def missing_prepared_retry_digests(
     rows: dict[str, batch_model.BatchObject],
     ids_by_digest: dict[str, str],
     source_digests: set[str],
+    runtime: Runtime,
 ) -> tuple[str, ...]:
     missing: list[str] = []
     seen: set[str] = set(source_digests)
@@ -154,7 +160,7 @@ def missing_prepared_retry_digests(
         if rows[row.object_id].status != "prepared":
             continue
         staging_dir = store.staging_path(batch.root_path, row.object_id)
-        with with_lock(staging_dir, timeout=wf_common.LOCK_TIMEOUT_SECONDS):
+        with with_lock(staging_dir, timeout=runtime.lock_timeout):
             state = load_ots(staging_dir)
             object_ids = object_record_ids_by_digest(batch, row, state)
         for digest in row.digests:
@@ -171,12 +177,14 @@ def save_retry_pre_post(
     batch: batch_model.BatchFile,
     rows: dict[str, batch_model.BatchObject],
     submissions: list[batch_model.BatchSubmission],
+    *,
+    runtime: Runtime,
 ) -> batch_model.BatchFile:
     batch = msgspec.structs.replace(
         batch,
         objects=tuple(rows.values()),
         submissions=tuple(submissions),
-        updated_at=batch_state.now_utc_iso_z(),
+        updated_at=batch_state.utc_iso_z(runtime.clock.now()),
     )
     with batch_state.with_batch_lock(staging_root, batch.batch_id):
         batch_state.save_batch(staging_root, batch)
@@ -191,8 +199,11 @@ def retry_batch_submissions(
     staging_root: Path,
     batch: batch_model.BatchFile,
     sp_factory,
+    runtime: Runtime,
 ) -> batch_model.BatchFile:
-    batch = ensure_submit_chunks(batch)
+    batch = ensure_submit_chunks(
+        batch, chunk_size=sp_factory(cfg).submit_chunk_size, runtime=runtime
+    )
     submissions = list(batch.submissions)
     ids_by_digest, rows = collect_retry_record_ids(
         target=target,
@@ -200,6 +211,7 @@ def retry_batch_submissions(
         staging_root=staging_root,
         batch=batch,
         submissions=submissions,
+        runtime=runtime,
     )
     retry_sources = [
         (index, chunk)
@@ -216,6 +228,7 @@ def retry_batch_submissions(
         rows=rows,
         ids_by_digest=ids_by_digest,
         source_digests=source_digests,
+        runtime=runtime,
     ):
         retry_sources.append(
             (
@@ -224,6 +237,7 @@ def retry_batch_submissions(
                     submissions,
                     digests=(digest,),
                     status="pending",
+                    runtime=runtime,
                 ),
             )
         )
@@ -247,7 +261,7 @@ def retry_batch_submissions(
                     source,
                     status="submitted",
                     record_ids=tuple(record_id for _digest, record_id in repaired),
-                    submitted_at=batch_state.now_utc_iso_z(),
+                    submitted_at=batch_state.utc_iso_z(runtime.clock.now()),
                 )
                 submissions[source_index] = repair_chunk
             else:
@@ -256,6 +270,7 @@ def retry_batch_submissions(
                     digests=tuple(digest for digest, _record_id in repaired),
                     status="submitted",
                     record_ids=tuple(record_id for _digest, record_id in repaired),
+                    runtime=runtime,
                 )
             for object_id in object_ids_for_digests(batch, repair_chunk.digests):
                 if mirror_chunk_to_object(
@@ -266,6 +281,7 @@ def retry_batch_submissions(
                     batch=batch,
                     object_id=object_id,
                     ids_by_digest=dict(repaired),
+                    runtime=runtime,
                 ):
                     rows[object_id] = msgspec.structs.replace(
                         rows[object_id], status="submitted", last_error=None
@@ -294,6 +310,7 @@ def retry_batch_submissions(
             batch=msgspec.structs.replace(batch, submissions=tuple(submissions)),
             chunk=retry_chunk,
             rows=rows,
+            runtime=runtime,
         )
         if not object_ids:
             if source.status == "pending":
@@ -310,7 +327,9 @@ def retry_batch_submissions(
         else:
             submissions.append(retry_chunk)
             retry_index = len(submissions) - 1
-        batch = save_retry_pre_post(staging_root, batch, rows, submissions)
+        batch = save_retry_pre_post(
+            staging_root, batch, rows, submissions, runtime=runtime
+        )
         try:
             result = sp.submit_hashes(list(retry_chunk.digests), batch.category_id)
         except SimpleProofError as e:
@@ -324,7 +343,9 @@ def retry_batch_submissions(
                     rows[object_id],
                     last_error=fixed_batch_reason("transient_sp_error"),
                 )
-            return save_batch_submit_progress(staging_root, batch, rows, submissions)
+            return save_batch_submit_progress(
+                staging_root, batch, rows, submissions, runtime=runtime
+            )
         if len(result.record_ids) != len(retry_chunk.digests):
             submissions[retry_index] = msgspec.structs.replace(
                 retry_chunk,
@@ -343,7 +364,7 @@ def retry_batch_submissions(
             retry_chunk,
             status="submitted",
             record_ids=result.record_ids,
-            submitted_at=batch_state.now_utc_iso_z(),
+            submitted_at=batch_state.utc_iso_z(runtime.clock.now()),
         )
         submissions[retry_index] = retry_chunk
         for object_id in object_ids:
@@ -355,8 +376,11 @@ def retry_batch_submissions(
                 batch=batch,
                 object_id=object_id,
                 ids_by_digest=retry_ids,
+                runtime=runtime,
             ):
                 rows[object_id] = msgspec.structs.replace(
                     rows[object_id], status="submitted", last_error=None
                 )
-    return save_batch_submit_progress(staging_root, batch, rows, submissions)
+    return save_batch_submit_progress(
+        staging_root, batch, rows, submissions, runtime=runtime
+    )

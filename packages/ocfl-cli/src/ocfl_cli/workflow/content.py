@@ -21,15 +21,14 @@ from ocfl_cli.ots.bitcoin import (
     VerifiedAttestation,
     verify_attestation,
 )
-from ocfl_cli.ots.simpleproof import SUBMIT_CHUNK_SIZE
 from ocfl_cli.store import staging as _store_mod
 from ocfl_cli.store.ingest import ingest_file
 from ocfl_cli.store.ots_state import (
     apply_category_id,
     load_ots,
-    now_utc_iso,
     ots_cache_path,
     save_ots,
+    utc_iso,
     with_lock,
 )
 from ocfl_cli.workflow.common import (
@@ -37,7 +36,6 @@ from ocfl_cli.workflow.common import (
     StateMap,
     compute_job_progress,
     is_failed_verify_job,
-    lock_timeout,
     log_phase,
     non_ots_digests,
     poll_outstanding_jobs,
@@ -55,6 +53,7 @@ if TYPE_CHECKING:
     from ocfl_cli.ports import (
         BitcoinRPC,
         BtcRpcFactory,
+        Runtime,
         SimpleProofClient,
         SpClientFactory,
     )
@@ -206,6 +205,7 @@ def verify_and_ingest_digest(
     object_id: str,
     staging_dir: Path,
     min_confirmations: int,
+    runtime: Runtime,
 ) -> tuple[OtsState, Inventory]:
     """Apply the three-step crash-recovery invariant for one digest.
 
@@ -266,7 +266,7 @@ def verify_and_ingest_digest(
             block_height=result.block_height,
             block_hash=result.block_hash,
             confirmations_at_verify=result.confirmations,
-            verified_at=now_utc_iso(),
+            verified_at=utc_iso(runtime.clock.now()),
         ),
     )
     save_ots(staging_dir, state)
@@ -282,6 +282,8 @@ def _process_completed_jobs(
     object_id: str,
     staging_dir: Path,
     min_confirmations: int,
+    *,
+    runtime: Runtime,
 ) -> OtsState:
     """Download + verify + ingest every completed verify_job's digests."""
     from ocfl_lib import DigestAlgorithm
@@ -316,6 +318,7 @@ def _process_completed_jobs(
                 object_id=object_id,
                 staging_dir=staging_dir,
                 min_confirmations=min_confirmations,
+                runtime=runtime,
             )
     return state
 
@@ -355,6 +358,7 @@ def upgrade_content_locked(
     *,
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
+    runtime: Runtime,
 ) -> UpgradeContentResult:
     """One `--upgrade` pass. Caller MUST hold the staging lock."""
     btc_cfg = cfg.bitcoin
@@ -390,6 +394,7 @@ def upgrade_content_locked(
         sp=sp,
         btc=btc,
         min_confirmations=min_confs,
+        runtime=runtime,
     )
 
     ready, unverified_pending, orphans = phase_advance_ready(
@@ -402,7 +407,7 @@ def upgrade_content_locked(
         return UpgradeContentResult(
             previous_phase=prev_phase,
             phase=state.phase,
-            jobs=compute_job_progress(state),
+            jobs=compute_job_progress(state, runtime=runtime),
         )
     if unverified_pending:
         logger.debug(
@@ -419,7 +424,7 @@ def upgrade_content_locked(
         phase=state.phase,
         unverified_pending_count=len(unverified_pending),
         orphan_count=len(orphans),
-        jobs=compute_job_progress(state),
+        jobs=compute_job_progress(state, runtime=runtime),
     )
 
 
@@ -475,10 +480,19 @@ def ingest_content_verifications_locked(
     sp: SimpleProofClient,
     btc: BitcoinRPC,
     min_confirmations: int,
+    runtime: Runtime,
 ) -> OtsState:
     """Download completed content verify results and ingest verified proofs."""
     return _process_completed_jobs(
-        state, sp, btc, store, root_path, object_id, staging_dir, min_confirmations
+        state,
+        sp,
+        btc,
+        store,
+        root_path,
+        object_id,
+        staging_dir,
+        min_confirmations,
+        runtime=runtime,
     )
 
 
@@ -492,9 +506,10 @@ def upgrade_content(
     *,
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
+    runtime: Runtime,
 ) -> UpgradeContentResult:
     """Drive `stage timestamp content --upgrade` end-to-end under the lock."""
-    with with_lock(staging_dir, timeout=lock_timeout()):
+    with with_lock(staging_dir, timeout=runtime.lock_timeout):
         return upgrade_content_locked(
             cfg,
             store,
@@ -504,6 +519,7 @@ def upgrade_content(
             staging_dir,
             sp_factory=sp_factory,
             btc_factory=btc_factory,
+            runtime=runtime,
         )
 
 
@@ -514,6 +530,8 @@ def prepare_content_submission_locked(
     root_path: str,
     object_id: str,
     staging_dir: Path,
+    *,
+    runtime: Runtime,
 ) -> PreparedContentSubmission:
     """Prepare a durable content submission intent under the staging lock."""
     sp_cfg = cfg.simpleproof
@@ -567,7 +585,7 @@ def prepare_content_submission_locked(
     merged_pending = tuple(dict.fromkeys((*state.pending_digests, *ordered)))
 
     intent = Submission(
-        submitted_at=now_utc_iso(),
+        submitted_at=utc_iso(runtime.clock.now()),
         digests=ordered,
         status="submitting",
         attempts=max_attempts + 1,
@@ -609,9 +627,10 @@ def submit_prepared_content_locked(
         raise RuntimeError("prepared content submission missing durable intent")
 
     sp = sp_factory(cfg)
-    for i in range(0, len(prepared.digests), SUBMIT_CHUNK_SIZE):
+    size = sp.submit_chunk_size
+    for i in range(0, len(prepared.digests), size):
         sp.submit_hashes(
-            list(prepared.digests[i : i + SUBMIT_CHUNK_SIZE]),
+            list(prepared.digests[i : i + size]),
             prepared.category_id,
         )
 
@@ -645,10 +664,11 @@ def submit_content_locked(
     staging_dir: Path,
     *,
     sp_factory: SpClientFactory,
+    runtime: Runtime,
 ) -> SubmitContentResult:
     """One `stage timestamp content` submit pass as a batch of size 1."""
     prepared = prepare_content_submission_locked(
-        cfg, store, sr, root_path, object_id, staging_dir
+        cfg, store, sr, root_path, object_id, staging_dir, runtime=runtime
     )
     result = submit_prepared_content_locked(
         cfg, staging_dir, prepared, sp_factory=sp_factory
@@ -668,6 +688,7 @@ def retry_content_locked(
     object_id: str,
     *,
     sp_factory: SpClientFactory,
+    runtime: Runtime,
 ) -> None:
     """One `stage timestamp content --retry` pass under the lock."""
     sp_cfg = cfg.simpleproof
@@ -690,7 +711,7 @@ def retry_content_locked(
     for i in failed_indices:
         subs[i] = replace(
             subs[i],
-            submitted_at=now_utc_iso(),
+            submitted_at=utc_iso(runtime.clock.now()),
             status="submitting",
             attempts=subs[i].attempts + 1,
         )
@@ -702,8 +723,9 @@ def retry_content_locked(
     sp = sp_factory(cfg)
     for i in failed_indices:
         digests = list(subs[i].digests)
-        for j in range(0, len(digests), SUBMIT_CHUNK_SIZE):
-            sp.submit_hashes(digests[j : j + SUBMIT_CHUNK_SIZE], category_id)
+        size = sp.submit_chunk_size
+        for j in range(0, len(digests), size):
+            sp.submit_hashes(digests[j : j + size], category_id)
 
     for i in failed_indices:
         subs[i] = replace(subs[i], status="submitted")
@@ -733,11 +755,19 @@ def submit_content(
     staging_dir: Path,
     *,
     sp_factory: SpClientFactory,
+    runtime: Runtime,
 ) -> SubmitContentResult:
     """`stage timestamp content`: submit the content digests under the lock."""
-    with with_lock(staging_dir, timeout=lock_timeout()):
+    with with_lock(staging_dir, timeout=runtime.lock_timeout):
         return submit_content_locked(
-            cfg, store, sr, root_path, object_id, staging_dir, sp_factory=sp_factory
+            cfg,
+            store,
+            sr,
+            root_path,
+            object_id,
+            staging_dir,
+            sp_factory=sp_factory,
+            runtime=runtime,
         )
 
 
@@ -747,7 +777,10 @@ def retry_content(
     object_id: str,
     *,
     sp_factory: SpClientFactory,
+    runtime: Runtime,
 ) -> None:
     """`stage timestamp content --retry` under the staging lock."""
-    with with_lock(staging_dir, timeout=lock_timeout()):
-        retry_content_locked(cfg, staging_dir, object_id, sp_factory=sp_factory)
+    with with_lock(staging_dir, timeout=runtime.lock_timeout):
+        retry_content_locked(
+            cfg, staging_dir, object_id, sp_factory=sp_factory, runtime=runtime
+        )

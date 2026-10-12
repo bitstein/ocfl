@@ -1,5 +1,6 @@
 """Batch timestamping state file helpers."""
 
+import importlib.metadata
 import json
 import os
 import signal
@@ -16,7 +17,6 @@ import pytest
 from ocfl_cli.errors import LockTimeoutError, StagingError
 from ocfl_cli.model.batch import BatchFile, BatchObject, BatchSubmission, BatchVerifyJob
 from ocfl_cli.store import batch as batch_state
-from ocfl_cli.store import staging as store_mod
 from ocfl_cli.store.batch import (
     batch_file_path,
     batch_lock_path,
@@ -151,7 +151,7 @@ def test_save_batch_keeps_previous_file_when_replace_fails(
     def fail_replace(src: Path | str, dst: Path | str) -> None:
         raise OSError("simulated crash before rename")
 
-    monkeypatch.setattr(store_mod.os, "replace", fail_replace)
+    monkeypatch.setattr(os, "replace", fail_replace)
 
     with pytest.raises(OSError, match="simulated crash"):
         save_batch(tmp_path, replacement)
@@ -659,7 +659,7 @@ def test_cli_version_is_cached(monkeypatch: pytest.MonkeyPatch):
         return "1.2.3"
 
     batch_state._cli_version.cache_clear()
-    monkeypatch.setattr(batch_state, "version", fake_version)
+    monkeypatch.setattr(importlib.metadata, "version", fake_version)
     try:
         assert batch_state._cli_version() == "1.2.3"
         assert batch_state._cli_version() == "1.2.3"
@@ -676,10 +676,10 @@ def test_cli_version_cache_preserves_unknown(monkeypatch: pytest.MonkeyPatch):
         nonlocal calls
         calls += 1
         assert distribution == "ocfl-cli"
-        raise batch_state.PackageNotFoundError(distribution)
+        raise importlib.metadata.PackageNotFoundError(distribution)
 
     batch_state._cli_version.cache_clear()
-    monkeypatch.setattr(batch_state, "version", missing_version)
+    monkeypatch.setattr(importlib.metadata, "version", missing_version)
     try:
         assert batch_state._cli_version() == "unknown"
         assert batch_state._cli_version() == "unknown"

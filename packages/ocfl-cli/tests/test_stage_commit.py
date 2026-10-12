@@ -7,23 +7,17 @@ from unittest.mock import patch
 
 import filelock
 import pytest
-from typer.testing import CliRunner
+from runner_helpers import runner_obj
 
 from ocfl_cli.errors import LockTimeoutError
 from ocfl_cli.main import app
 from ocfl_cli.store import locks as locks
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow import commit as wf_commit
-from ocfl_cli.workflow import common as wf_common
 from ocfl_lib import LocalFS, StaleHeadError, StorageRoot
 
 # Content lookups run mid-commit, after the commit has started writing.
 _FAIL_DURING_COMMIT = "ocfl_cli.workflow.commit._StagingContentSource.get_content"
-
-
-@pytest.fixture
-def runner():
-    return CliRunner()
 
 
 def _invoke(runner, storage_root, staging, *args):
@@ -418,7 +412,7 @@ class TestCommitLocking:
         ):
             pytest.fail("second lock acquire should time out")
 
-    def test_bare_commits_for_same_object_are_serialized(self, tmp_path):
+    def test_bare_commits_for_same_object_are_serialized(self, tmp_path, runtime):
         """Local CLI commits for one object do not overlap plan execution."""
         current = 0
         peak = 0
@@ -454,6 +448,7 @@ class TestCommitLocking:
                         "object_id": object_id,
                         "staging_dir": staging_dir,
                         "allow_missing_metadata": True,
+                        "runtime": runtime,
                     },
                     daemon=True,
                 )
@@ -514,7 +509,7 @@ class TestCommitLocking:
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
         staging_dir = store.staging_path(root_path, oid)
-        monkeypatch.setattr(wf_common, "LOCK_TIMEOUT_SECONDS", 0.01)
+        runner_obj(runner)["lock_timeout"] = 0.01
 
         with filelock.FileLock(str(staging_dir / ".lock")).acquire(timeout=1):
             result = _invoke(runner, storage_root, staging, "commit", oid)

@@ -35,6 +35,7 @@ from unittest.mock import patch
 import pytest
 from fakes import FakeSimpleProof
 from msgspec.structs import replace
+from runner_helpers import runner_obj
 
 # Re-use the inventory-upgrade test harness verbatim instead of
 # duplicating its setup helpers — that file already documents them as
@@ -70,7 +71,6 @@ from ocfl_cli.store.ots_state import (
     save_ots,
 )
 from ocfl_cli.store.staging import StagingStore
-from ocfl_cli.workflow import common as wf_common
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
 
@@ -770,7 +770,7 @@ class TestStageCommitOtsPreExecuteErrors:
             btc_fake,
         )
         root_path = str(empty_sha256_root.resolve())
-        monkeypatch.setattr(wf_common, "LOCK_TIMEOUT_SECONDS", 0.01)
+        runner_obj(runner)["lock_timeout"] = 0.01
 
         with locks.object_commit_lock(root_path, "obj:commit-lock-timeout", timeout=30):
             r = runner.invoke(

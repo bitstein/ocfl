@@ -5,6 +5,7 @@ The model lives in `ocfl_cli.model.batch`.
 
 import atexit
 import fcntl
+import importlib.metadata
 import os
 import signal
 import socket
@@ -15,7 +16,6 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import cache
-from importlib.metadata import PackageNotFoundError, version
 from types import FrameType
 from typing import TYPE_CHECKING, Any, cast
 
@@ -29,10 +29,13 @@ from ocfl_cli.model.batch import (
     DriverLease,
 )
 from ocfl_cli.store import staging as store
+from ocfl_cli.system import SYSTEM_CLOCK
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+    from ocfl_cli.ports import Clock
 
 
 DRIVER_LEASE_STALE_AFTER_SECONDS = 300
@@ -43,6 +46,7 @@ class DriverLeaseHandle:
     """Owned driver lease with explicit refresh and release operations."""
 
     __slots__ = (
+        "_clock",
         "_heartbeat_thread",
         "_lease",
         "_released",
@@ -57,9 +61,11 @@ class DriverLeaseHandle:
         lease: DriverLease,
         *,
         heartbeat_interval: float | None,
+        clock: Clock = SYSTEM_CLOCK,
     ) -> None:
         self._staging_root = staging_root
         self._lease = lease
+        self._clock = clock
         self._released = False
         self._stop = threading.Event()
         self._heartbeat_thread: threading.Thread | None = None
@@ -101,7 +107,7 @@ class DriverLeaseHandle:
         """Refresh this holder's heartbeat under the lease refresh lock."""
         if self._released:
             raise StagingError(f"batch {self.batch_id}: driver lease is released")
-        now = _coerce_utc(now or datetime.now(UTC))
+        now = _coerce_utc(now or self._clock.now())
         lock_path = driver_refresh_lock_path(self._staging_root, self.batch_id)
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with open(lock_path, "a+b") as lock_file:
@@ -317,6 +323,7 @@ def with_driver_lease(
     command: tuple[str, ...],
     heartbeat_interval: float | None = DRIVER_LEASE_HEARTBEAT_SECONDS,
     stale_after: float = DRIVER_LEASE_STALE_AFTER_SECONDS,
+    clock: Clock = SYSTEM_CLOCK,
 ) -> Iterator[DriverLeaseHandle]:
     """Acquire a command-driver lease for one batch and release it on exit."""
     handle = acquire_driver_lease(
@@ -325,6 +332,7 @@ def with_driver_lease(
         command=command,
         heartbeat_interval=heartbeat_interval,
         stale_after=stale_after,
+        clock=clock,
     )
     try:
         handle._signal_registration = _register_signal_release(handle)
@@ -340,10 +348,11 @@ def acquire_driver_lease(
     command: tuple[str, ...],
     heartbeat_interval: float | None = DRIVER_LEASE_HEARTBEAT_SECONDS,
     stale_after: float = DRIVER_LEASE_STALE_AFTER_SECONDS,
+    clock: Clock = SYSTEM_CLOCK,
 ) -> DriverLeaseHandle:
     """Acquire a command-driver lease, stealing only if the existing lease is stale."""
     _validate_batch_id(batch_id)
-    lease = _new_driver_lease(batch_id, command=command)
+    lease = _new_driver_lease(batch_id, command=command, now=clock.now())
     directory = batches_dir(staging_root)
     directory.mkdir(parents=True, exist_ok=True)
     lock_path = driver_refresh_lock_path(staging_root, batch_id)
@@ -355,21 +364,25 @@ def acquire_driver_lease(
                 _write_driver_lease_exclusive(staging_root, lease, replace=False)
             except FileExistsError:
                 lease = _steal_or_raise_locked(
-                    staging_root, lease, stale_after=stale_after
+                    staging_root, lease, stale_after=stale_after, now=clock.now()
                 )
         finally:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-    return DriverLeaseHandle(staging_root, lease, heartbeat_interval=heartbeat_interval)
+    return DriverLeaseHandle(
+        staging_root, lease, heartbeat_interval=heartbeat_interval, clock=clock
+    )
 
 
-def _new_driver_lease(batch_id: str, *, command: tuple[str, ...]) -> DriverLease:
-    now = _format_datetime(datetime.now(UTC))
+def _new_driver_lease(
+    batch_id: str, *, command: tuple[str, ...], now: datetime
+) -> DriverLease:
+    stamp = _format_datetime(now)
     return DriverLease(
         batch_id=batch_id,
         pid=os.getpid(),
         host=socket.gethostname(),
-        started_at=now,
-        heartbeat_at=now,
+        started_at=stamp,
+        heartbeat_at=stamp,
         command=_format_command(command),
         cli_version=_cli_version(),
     )
@@ -380,15 +393,16 @@ def _steal_or_raise_locked(
     replacement: DriverLease,
     *,
     stale_after: float,
+    now: datetime,
     expected: DriverLease | None = None,
 ) -> DriverLease:
     batch_id = replacement.batch_id
     current = load_driver_lease(staging_root, batch_id)
     if (expected is not None and not _same_holder(current, expected)) or not _is_stale(
-        current, stale_after=stale_after
+        current, stale_after=stale_after, now=now
     ):
         raise _lease_held_error(batch_id, current)
-    _rename_stolen_lease(staging_root, current)
+    _rename_stolen_lease(staging_root, current, now=now)
     _write_driver_lease_exclusive(staging_root, replacement, replace=False)
     return replacement
 
@@ -413,17 +427,19 @@ def _write_driver_lease_exclusive(
         raise
 
 
-def _rename_stolen_lease(staging_root: Path, lease: DriverLease) -> None:
+def _rename_stolen_lease(
+    staging_root: Path, lease: DriverLease, *, now: datetime
+) -> None:
     path = driver_lease_path(staging_root, lease.batch_id)
     stolen_path = path.with_name(
-        f"{path.name}.stolen.{os.getpid()}.{int(datetime.now(UTC).timestamp())}"
+        f"{path.name}.stolen.{os.getpid()}.{int(now.timestamp())}"
     )
     os.replace(path, stolen_path)
 
 
-def _is_stale(lease: DriverLease, *, stale_after: float) -> bool:
+def _is_stale(lease: DriverLease, *, stale_after: float, now: datetime) -> bool:
     heartbeat_at = _parse_datetime(lease.heartbeat_at)
-    if datetime.now(UTC) - heartbeat_at > timedelta(seconds=stale_after):
+    if _coerce_utc(now) - heartbeat_at > timedelta(seconds=stale_after):
         return True
     return lease.host == socket.gethostname() and not _pid_is_alive(lease.pid)
 
@@ -481,14 +497,14 @@ def _format_command(command: tuple[str, ...]) -> str:
 @cache
 def _cli_version() -> str:
     try:
-        return version("ocfl-cli")
-    except PackageNotFoundError:
+        return importlib.metadata.version("ocfl-cli")
+    except importlib.metadata.PackageNotFoundError:
         return "unknown"
 
 
-def now_utc_iso_z() -> str:
-    """UTC timestamp for batch files at seconds precision with a Z suffix."""
-    return _format_datetime(datetime.now(UTC))
+def utc_iso_z(now: datetime) -> str:
+    """`now` for batch files: UTC at seconds precision with a Z suffix."""
+    return _format_datetime(now)
 
 
 def _format_datetime(value: datetime) -> str:

@@ -33,9 +33,10 @@ Tests inject ``FakeBitcoinRPC`` / ``FakeSimpleProof`` via
 (see ``conftest.py::runner`` for the auto-attach mechanism).
 """
 
-import contextlib
 import hashlib
 import json
+import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -417,6 +418,7 @@ class TestMidflightProgressSnapshots:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         sp_fake: FakeSimpleProof,
+        runtime,
     ):
         _write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
@@ -449,7 +451,7 @@ class TestMidflightProgressSnapshots:
         job = state.verify_jobs[0]
         assert digest in job.attestation_snapshots
         assert state.content_proofs == {}
-        progress = wf_common.compute_job_progress(state)
+        progress = wf_common.compute_job_progress(state, runtime=runtime)
         assert progress[0].anchored_digests == 1
         assert progress[0].pending_digests == 0
         assert progress[0].calendar_counts == (
@@ -492,6 +494,7 @@ class TestMidflightProgressSnapshots:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         sp_fake: FakeSimpleProof,
+        runtime,
     ):
         _write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
@@ -508,7 +511,7 @@ class TestMidflightProgressSnapshots:
         state = wf_content.snapshot_content_results_locked(state, sd, sp=sp_fake)
 
         assert state.verify_jobs[0].attestation_snapshots == {}
-        progress = wf_common.compute_job_progress(state)
+        progress = wf_common.compute_job_progress(state, runtime=runtime)
         assert progress[0].anchored_digests == 0
         assert progress[0].pending_digests == 1
 
@@ -673,6 +676,7 @@ class TestMidflightProgressSnapshots:
         monkeypatch: pytest.MonkeyPatch,
         sp_fake: FakeSimpleProof,
         btc_fake,
+        runtime,
     ):
         _write_config(tmp_path, monkeypatch)
         _inject_fake_btc(runner, btc_fake.rpc)
@@ -720,6 +724,7 @@ class TestMidflightProgressSnapshots:
             sp=sp_fake,
             btc=btc_fake.rpc,
             min_confirmations=MIN_CONFS,
+            runtime=runtime,
         )
 
         assert state.content_proofs[digest].verified is True
@@ -1544,95 +1549,55 @@ def _install_crash_fault(
     sd: Path,
     digest: str,
 ) -> None:
-    """Wrap module-level seams to raise at the specified boundary.
+    """Crash at one boundary of the upgrade's per-digest ingest.
 
-    `atomic_write_bytes` from `ocfl_cli.stage.store` underlies BOTH the
-    ots-cache write (step 1) and the ots.json save (step 3). Fault site
-    is selected by inspecting the target path. `ingest_file` from
-    `ocfl_cli.stage.ingest` is the step-2 seam.
+    Every staging write (the ots-cache entry, the staged inventory and
+    content map, ``ots.json``) is an atomic write that ends in
+    ``os.replace``. The fault fails the replace that would publish the
+    file at the chosen boundary, the same way a crash before that point
+    would leave the staging area:
+
+      - ``before_cache``: the ots-cache entry is never written.
+      - ``after_cache``: the cache is written; ingesting the companion
+        (the staged inventory / content map) fails.
+      - ``after_ingest``: cache and ingest done; saving the verified
+        ``ots.json`` fails.
+      - ``during_ots_save``: as ``after_ingest``, and a dead process's
+        temp file is left next to ``ots.json``.
     """
-    from ocfl_cli.store import ingest as ingest_mod
-    from ocfl_cli.store import staging as staging_mod
-
-    real_atomic = staging_mod.atomic_write_bytes
-
     cache_path = ots_cache_path(sd, digest)
     ots_json_path = sd / "ots.json"
+    ingest_paths = {sd / "inventory.json", sd / "content.json"}
 
-    if fault_at == "before_cache":
+    def verified_save(src: object) -> bool:
+        try:
+            parsed = json.loads(Path(str(src)).read_bytes())
+        except OSError, json.JSONDecodeError:
+            return False
+        entry = (parsed.get("content_proofs") or {}).get(digest)
+        return bool(entry and entry.get("verified") is True)
 
-        def _atomic(path: Path, data: bytes) -> None:
-            if path == cache_path:
-                raise OSError("injected: cache write failed")
-            real_atomic(path, data)
-
-        _patch_attr(staging_mod, "atomic_write_bytes", _atomic)
-
-    elif fault_at == "after_cache":
-
-        def _ingest(*args: object, **kwargs: object):
-            raise OSError("injected: ingest_file failed")
-
-        # The implementer is expected to import ingest_file at the module
-        # level of `commands.stage` so it's patchable there. Fall back to
-        # patching the source module if it's referenced via attribute.
-        _patch_attr(ingest_mod, "ingest_file", _ingest)
-        with contextlib.suppress(ImportError):
-            from ocfl_cli.workflow import content as wf_content
-
-            _patch_attr(wf_content, "ingest_file", _ingest)
-
-    elif fault_at == "after_ingest":
-
-        def _atomic(path: Path, data: bytes) -> None:
-            if path == ots_json_path:
-                # Cache + ingest already done; fail the per-digest ots.json
-                # update step — but only when the about-to-be-written state
-                # carries verified=True for *digest* (so we don't crash on
-                # earlier ots.json saves like verify_jobs init).
-                try:
-                    parsed = json.loads(data)
-                    cp = parsed.get("content_proofs") or {}
-                    entry = cp.get(digest)
-                    if entry and entry.get("verified") is True:
-                        raise OSError("injected: ots.json save failed")
-                except json.JSONDecodeError, AttributeError:
-                    pass
-            real_atomic(path, data)
-
-        _patch_attr(staging_mod, "atomic_write_bytes", _atomic)
-
-    elif fault_at == "during_ots_save":
-        # Fault inside the atomic helper between temp-write and replace.
-        # Old ots.json must remain intact (atomicity guarantee).
-        original_replace = __import__("os").replace
-
-        def _atomic(path: Path, data: bytes) -> None:
-            if path == ots_json_path:
-                try:
-                    parsed = json.loads(data)
-                    cp = parsed.get("content_proofs") or {}
-                    entry = cp.get(digest)
-                    if entry and entry.get("verified") is True:
-                        # Write tmp, then crash before replace.
-                        import os as _os
-
-                        tmp = path.with_name(f"{path.name}.tmp.{_os.getpid()}")
-                        with open(tmp, "wb") as f:
-                            f.write(data)
-                            f.flush()
-                            _os.fsync(f.fileno())
-                        # Leave tmp behind; raise before os.replace.
-                        raise OSError("injected: crash mid-save")
-                except json.JSONDecodeError, AttributeError:
-                    pass
-            real_atomic(path, data)
-            assert original_replace  # silence unused-warning
-
-        _patch_attr(staging_mod, "atomic_write_bytes", _atomic)
-
-    else:
+    def fails(src: object, dst: Path) -> bool:
+        match fault_at:
+            case "before_cache":
+                return dst == cache_path
+            case "after_cache":
+                return dst in ingest_paths and cache_path.is_file()
+            case "after_ingest" | "during_ots_save":
+                return dst == ots_json_path and verified_save(src)
         raise AssertionError(f"unknown fault_at: {fault_at!r}")
+
+    real_replace = os.replace
+
+    def faulty_replace(src, dst, *args, **kwargs):
+        dst_path = Path(dst)
+        if fails(src, dst_path):
+            if fault_at == "during_ots_save":
+                shutil.copyfile(src, dst_path.with_name(f"{dst_path.name}.tmp.1"))
+            raise OSError(f"injected: {fault_at}")
+        return real_replace(src, dst, *args, **kwargs)
+
+    _patch_attr(os, "replace", faulty_replace)
 
 
 def _uninstall_crash_fault(monkeypatch: pytest.MonkeyPatch) -> None:

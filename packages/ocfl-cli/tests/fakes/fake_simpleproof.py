@@ -38,6 +38,7 @@ class FakeSimpleProof:
     fail_timeout: bool = False
     truncate_downloads: bool = False
     retry_after_seconds: float | None = None
+    submit_chunk_size: int = 1000
 
     _submissions: list[_Submission] = field(default_factory=list)
     _jobs: dict[str, _Job] = field(default_factory=dict)

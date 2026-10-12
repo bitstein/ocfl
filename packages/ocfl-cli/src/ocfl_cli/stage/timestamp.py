@@ -219,7 +219,7 @@ def timestamp_content(
         _render_watch_start(
             out,
             object_id,
-            wf_common.compute_job_progress(state),
+            wf_common.compute_job_progress(state, runtime=appctx.runtime(ctx)),
             waiting=state.phase is not Phase.CONTENT_UPGRADED,
         )
         try:
@@ -235,6 +235,7 @@ def timestamp_content(
                 progress=lambda kind, data: _render_watch_progress(
                     out, kind, data, next_action="stage timestamp inventory"
                 ),
+                runtime=appctx.runtime(ctx),
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             raise ErrorContext(e, prefix="halt: ") from e
@@ -251,6 +252,7 @@ def timestamp_content(
                 resolved.staging_dir,
                 sp_factory=preflight.sp_factory,
                 btc_factory=preflight.btc_factory,
+                runtime=appctx.runtime(ctx),
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             raise ErrorContext(e, prefix="halt: ") from e
@@ -264,6 +266,7 @@ def timestamp_content(
                 resolved.staging_dir,
                 object_id,
                 sp_factory=preflight.sp_factory,
+                runtime=appctx.runtime(ctx),
             )
         except wf_content.NoFailedSubmissionsError as e:
             typer.echo(str(e))
@@ -277,6 +280,7 @@ def timestamp_content(
         object_id,
         resolved.staging_dir,
         sp_factory=preflight.sp_factory,
+        runtime=appctx.runtime(ctx),
     )
     render_section(out, "Content")
     typer.echo(f"  Object: {object_id}")
@@ -354,7 +358,7 @@ def timestamp_inventory(
         _render_watch_start(
             out,
             object_id,
-            wf_common.compute_job_progress(state),
+            wf_common.compute_job_progress(state, runtime=appctx.runtime(ctx)),
             waiting=state.phase is not Phase.INVENTORY_UPGRADED,
         )
         try:
@@ -366,6 +370,7 @@ def timestamp_inventory(
                 progress=lambda kind, data: _render_watch_progress(
                     out, kind, data, next_action="stage commit"
                 ),
+                runtime=appctx.runtime(ctx),
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             raise ErrorContext(e, prefix="halt: ") from e
@@ -378,6 +383,7 @@ def timestamp_inventory(
                 resolved.staging_dir,
                 sp_factory=preflight.sp_factory,
                 btc_factory=preflight.btc_factory,
+                runtime=appctx.runtime(ctx),
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             raise ErrorContext(e, prefix="halt: ") from e
@@ -389,6 +395,7 @@ def timestamp_inventory(
             resolved.staging_dir,
             object_id,
             sp_factory=preflight.sp_factory,
+            runtime=appctx.runtime(ctx),
         )
         return
 
@@ -402,6 +409,7 @@ def timestamp_inventory(
             resolved.staging_dir,
             sp_factory=preflight.sp_factory,
             allow_missing_metadata=allow_missing_metadata,
+            runtime=appctx.runtime(ctx),
         )
     except PhaseError as e:
         raise ErrorContext(e, suffix="; run 'stage timestamp content' first") from e

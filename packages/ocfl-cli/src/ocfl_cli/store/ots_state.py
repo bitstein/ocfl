@@ -66,9 +66,9 @@ def plan_path(staging: Path) -> Path:
     return staging / "plan.json"
 
 
-def now_utc_iso() -> str:
-    """RFC-3339 / ISO-8601 UTC timestamp at seconds precision."""
-    return datetime.now(UTC).isoformat(timespec="seconds")
+def utc_iso(now: datetime) -> str:
+    """`now` for `ots.json`: RFC-3339 / ISO-8601 UTC at seconds precision."""
+    return now.astimezone(UTC).isoformat(timespec="seconds")
 
 
 def load_ots(staging: Path) -> OtsState:

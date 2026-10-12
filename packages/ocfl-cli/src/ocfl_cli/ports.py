@@ -1,14 +1,17 @@
 """Ports: what the use cases need from the outside world, as Protocols.
 
-Adapters implement them (``ocfl_cli.ots``, the lib's ``BitcoinRpcClient``);
-``main`` wires the production ones into ``AppCtx`` and tests inject fakes
-through ``ctx.obj`` under the same names.
+Adapters implement them (``ocfl_cli.system``, ``ocfl_cli.ots``, the lib's
+``BitcoinRpcClient``); ``main`` wires the production ones into ``AppCtx`` and
+tests inject fakes through ``ctx.obj`` under the same names.
 """
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Protocol
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from ocfl_cli.config import Config
     from ocfl_cli.model.simpleproof import (
         JobStatus,
@@ -20,6 +23,31 @@ if TYPE_CHECKING:
     from ocfl_lib.bitcoin import BlockchainInfo, BlockHeader
 
 
+@runtime_checkable
+class Clock(Protocol):
+    """The current time."""
+
+    def now(self) -> datetime:
+        """An aware UTC datetime."""
+        ...
+
+
+@runtime_checkable
+class Sleeper(Protocol):
+    """Waiting, so tests need not."""
+
+    def sleep(self, seconds: float) -> None: ...
+
+
+@runtime_checkable
+class BlockStream(Protocol):
+    """New Bitcoin blocks (ZMQ `hashblock` in production)."""
+
+    def wait_for_block(self, timeout_ms: int) -> bytes | None:
+        """The next block hash, or None when `timeout_ms` passes first."""
+        ...
+
+
 class BitcoinRPC(Protocol):
     def getblockchaininfo(self) -> BlockchainInfo: ...
 
@@ -28,11 +56,12 @@ class BitcoinRPC(Protocol):
     def getblockhash(self, height: int) -> str: ...
 
 
-class HashBlockStream(Protocol):
-    def wait_for_block(self, timeout_ms: int) -> bytes | None: ...
-
-
 class SimpleProofClient(Protocol):
+    @property
+    def submit_chunk_size(self) -> int:
+        """At most this many hashes per `submit_hashes` call."""
+        ...
+
     def submit_hashes(self, digests: list[str], category_id: int) -> SubmitResult: ...
 
     def verify_batch(self, digests: list[str], category_id: int) -> VerifyBatchAck: ...
@@ -48,3 +77,16 @@ class SimpleProofClient(Protocol):
 
 type SpClientFactory = Callable[[Config], SimpleProofClient]
 type BtcRpcFactory = Callable[[Config], BitcoinRPC]
+type BlockStreamFactory = Callable[[Config], BlockStream]
+
+DEFAULT_LOCK_TIMEOUT_SECONDS = 30.0
+
+
+@dataclass(frozen=True, slots=True)
+class Runtime:
+    """The time-related ports one command run gives its use cases."""
+
+    clock: Clock
+    sleeper: Sleeper
+    block_streams: BlockStreamFactory
+    lock_timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS

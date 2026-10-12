@@ -26,10 +26,10 @@ from ocfl_cli.store import staging as _store_mod
 from ocfl_cli.store.ots_state import (
     apply_category_id,
     load_ots,
-    now_utc_iso,
     ots_cache_path,
     plan_path,
     save_ots,
+    utc_iso,
     with_lock,
 )
 from ocfl_cli.workflow.commit import (
@@ -42,7 +42,6 @@ from ocfl_cli.workflow.common import (
     JobProgress,
     compute_inventory_job_progress,
     is_failed_verify_job,
-    lock_timeout,
     log_phase,
     poll_outstanding_jobs,
     require_verified_content_before_inventory,
@@ -57,6 +56,7 @@ if TYPE_CHECKING:
     from ocfl_cli.ports import (
         BitcoinRPC,
         BtcRpcFactory,
+        Runtime,
         SimpleProofClient,
         SpClientFactory,
     )
@@ -171,6 +171,8 @@ def verify_inventory_digest(
     btc: BitcoinRPC,
     staging_dir: Path,
     min_confirmations: int,
+    *,
+    runtime: Runtime,
 ) -> OtsState:
     """Apply the three-step crash-recovery invariant for the inventory digest.
 
@@ -205,7 +207,7 @@ def verify_inventory_digest(
                 block_height=h,
                 block_hash=result.block_hash,
                 confirmations_at_verify=c,
-                verified_at=now_utc_iso(),
+                verified_at=utc_iso(runtime.clock.now()),
             )
             state = replace(
                 state,
@@ -226,6 +228,8 @@ def _process_completed_inventory_job(
     btc: BitcoinRPC,
     staging_dir: Path,
     min_confirmations: int,
+    *,
+    runtime: Runtime,
 ) -> OtsState:
     """Download + verify any completed verify_job covering the inventory digest."""
     inv_proof = state.inventory_proof
@@ -243,7 +247,12 @@ def _process_completed_inventory_job(
         if inv_digest not in downloads:
             continue
         return verify_inventory_digest(
-            state, downloads[inv_digest], btc, staging_dir, min_confirmations
+            state,
+            downloads[inv_digest],
+            btc,
+            staging_dir,
+            min_confirmations,
+            runtime=runtime,
         )
     return state
 
@@ -309,10 +318,11 @@ def ingest_inventory_verifications_locked(
     sp: SimpleProofClient,
     btc: BitcoinRPC,
     min_confirmations: int,
+    runtime: Runtime,
 ) -> OtsState:
     """Download completed inventory verify results and persist proof state."""
     return _process_completed_inventory_job(
-        state, sp, btc, staging_dir, min_confirmations
+        state, sp, btc, staging_dir, min_confirmations, runtime=runtime
     )
 
 
@@ -322,6 +332,7 @@ def upgrade_inventory_locked(
     *,
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
+    runtime: Runtime,
 ) -> UpgradeInventoryResult:
     """One inventory `--upgrade` pass. Caller MUST hold the staging lock."""
     btc_cfg = cfg.bitcoin
@@ -356,6 +367,7 @@ def upgrade_inventory_locked(
         sp=sp,
         btc=btc,
         min_confirmations=min_confs,
+        runtime=runtime,
     )
 
     if (
@@ -366,7 +378,7 @@ def upgrade_inventory_locked(
     return UpgradeInventoryResult(
         previous_phase=prev_phase,
         phase=state.phase,
-        job=compute_inventory_job_progress(state),
+        job=compute_inventory_job_progress(state, runtime=runtime),
     )
 
 
@@ -376,11 +388,16 @@ def upgrade_inventory(
     *,
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
+    runtime: Runtime,
 ) -> UpgradeInventoryResult:
     """Drive `stage timestamp inventory --upgrade` end-to-end under the lock."""
-    with with_lock(staging_dir, timeout=lock_timeout()):
+    with with_lock(staging_dir, timeout=runtime.lock_timeout):
         return upgrade_inventory_locked(
-            cfg, staging_dir, sp_factory=sp_factory, btc_factory=btc_factory
+            cfg,
+            staging_dir,
+            sp_factory=sp_factory,
+            btc_factory=btc_factory,
+            runtime=runtime,
         )
 
 
@@ -558,9 +575,10 @@ def submit_inventory(
     *,
     sp_factory: SpClientFactory,
     allow_missing_metadata: bool,
+    runtime: Runtime,
 ) -> SubmitInventoryResult:
     """`stage timestamp inventory`: build the plan, submit its digest, locked."""
-    with with_lock(staging_dir, timeout=lock_timeout()):
+    with with_lock(staging_dir, timeout=runtime.lock_timeout):
         return submit_inventory_locked(
             cfg,
             store,
@@ -579,7 +597,8 @@ def retry_inventory(
     object_id: str,
     *,
     sp_factory: SpClientFactory,
+    runtime: Runtime,
 ) -> None:
     """`stage timestamp inventory --retry` under the staging lock."""
-    with with_lock(staging_dir, timeout=lock_timeout()):
+    with with_lock(staging_dir, timeout=runtime.lock_timeout):
         retry_inventory_locked(cfg, staging_dir, object_id, sp_factory=sp_factory)

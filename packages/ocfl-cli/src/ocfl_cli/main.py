@@ -22,9 +22,10 @@ from ocfl_cli.archive.show import show
 from ocfl_cli.archive.validate import validate
 from ocfl_cli.config import load_config
 from ocfl_cli.exit_codes import format_exit_code_help
-from ocfl_cli.ots.bitcoin import default_btc_factory
+from ocfl_cli.ots.bitcoin import default_block_stream_factory, default_btc_factory
 from ocfl_cli.ots.simpleproof import default_sp_factory
 from ocfl_cli.stage import stage_app
+from ocfl_cli.system import SYSTEM_CLOCK, SYSTEM_SLEEPER
 
 ARCHIVE_PANEL = "Archive"
 STAGING_PANEL = "Staging"
@@ -152,4 +153,7 @@ def main(
         no_color=no_color,
         sp_client_factory=default_sp_factory,
         btc_rpc_factory=default_btc_factory,
+        clock=SYSTEM_CLOCK,
+        sleeper=SYSTEM_SLEEPER,
+        block_stream_factory=default_block_stream_factory,
     )

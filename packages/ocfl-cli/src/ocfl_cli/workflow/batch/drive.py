@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from ocfl_cli.config import Config
-    from ocfl_cli.ports import BtcRpcFactory, HashBlockStream, SpClientFactory
+    from ocfl_cli.ports import BlockStream, BtcRpcFactory, Runtime, SpClientFactory
     from ocfl_cli.store.staging import StagingStore
     from ocfl_lib import StorageRoot
     from ocfl_lib.fs import WriteFS
@@ -112,6 +112,7 @@ def _new_or_resumed(
     batch_id: str | None,
     category: int | None,
     default_category: int,
+    runtime: Runtime,
 ) -> tuple[batch_model.BatchFile, bool]:
     if batch_id is not None and (selected or category is not None):
         raise UsageError(
@@ -122,7 +123,7 @@ def _new_or_resumed(
         raise UsageError("new batch requires --object or --objects-file")
     if batch_id is not None:
         return _resumed_batch(store.root, batch_id, target), False
-    now = batch_state.now_utc_iso_z()
+    now = batch_state.utc_iso_z(runtime.clock.now())
     batch = batch_model.BatchFile(
         batch_id=batch_state.new_batch_id(),
         target=target,
@@ -147,6 +148,7 @@ def _start(
     allow_missing_metadata: bool,
     sp_factory: SpClientFactory,
     events: BatchEvents,
+    runtime: Runtime,
 ) -> batch_model.BatchFile:
     """Create (or resume) the batch, recover lost intents, submit what is due."""
     staging_root = store.root
@@ -165,18 +167,19 @@ def _start(
                 batch=batch,
                 object_id=object_id,
                 allow_missing_metadata=allow_missing_metadata,
+                runtime=runtime,
             )
-            batch = replace_batch_object(batch, row)
+            batch = replace_batch_object(batch, row, runtime=runtime)
             with batch_state.with_batch_lock(staging_root, batch.batch_id):
                 batch_state.save_batch(staging_root, batch)
             events.object_prepared(batch, row)
     else:
         events.resumed(batch)
-    recovered = collect_recoverable_object_intents(store, batch)
+    recovered = collect_recoverable_object_intents(store, batch, runtime=runtime)
     with batch_state.with_batch_lock(staging_root, batch.batch_id):
         before_recovered = batch
         batch = batch_state.load_batch(staging_root, batch.batch_id)
-        batch = merge_recovered_object_intents(batch, recovered)
+        batch = merge_recovered_object_intents(batch, recovered, runtime=runtime)
         batch_state.save_batch(staging_root, batch)
     events.changed(before_recovered, batch)
     before_submit = batch
@@ -187,6 +190,7 @@ def _start(
         staging_root=staging_root,
         batch=batch,
         sp_factory=sp_factory,
+        runtime=runtime,
     )
     events.changed(before_submit, batch)
     return batch
@@ -205,6 +209,7 @@ def submit(
     allow_missing_metadata: bool,
     sp_factory: SpClientFactory,
     events: BatchEvents,
+    runtime: Runtime,
 ) -> batch_model.BatchFile:
     """`stage timestamp batch content|inventory`: create or resume, then submit."""
     sp_cfg = cfg.simpleproof
@@ -218,6 +223,7 @@ def submit(
         batch_id=batch_id,
         category=category,
         default_category=sp_cfg.proof_category_id,
+        runtime=runtime,
     )
     with batch_state.with_driver_lease(
         store.root,
@@ -236,6 +242,7 @@ def submit(
             allow_missing_metadata=allow_missing_metadata,
             sp_factory=sp_factory,
             events=events,
+            runtime=runtime,
         )
 
 
@@ -247,6 +254,7 @@ def retry(
     batch_id: str,
     sp_factory: SpClientFactory,
     events: BatchEvents,
+    runtime: Runtime,
 ) -> batch_model.BatchFile:
     """`--retry --batch ID`: resubmit the batch's failed chunks."""
     staging_root = store.root
@@ -265,6 +273,7 @@ def retry(
             staging_root=staging_root,
             batch=batch,
             sp_factory=sp_factory,
+            runtime=runtime,
         )
         events.changed(before_retry, batch)
     return batch
@@ -280,6 +289,7 @@ def upgrade(
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
     events: BatchEvents,
+    runtime: Runtime,
 ) -> batch_model.BatchFile:
     """`--upgrade --batch ID`: one upgrade pass over the batch."""
     staging_root = store.root
@@ -301,6 +311,7 @@ def upgrade(
             batch=batch,
             sp_factory=sp_factory,
             btc_factory=btc_factory,
+            runtime=runtime,
         )
         events.changed(before_upgrade, batch)
     return batch
@@ -320,6 +331,7 @@ def watch(
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
     events: BatchEvents,
+    runtime: Runtime,
 ) -> int:
     """`--watch`: submit, then run an upgrade pass per Bitcoin block.
 
@@ -340,6 +352,7 @@ def watch(
         batch_id=batch_id,
         category=category,
         default_category=sp_cfg.proof_category_id,
+        runtime=runtime,
     )
     exit_code = 1
 
@@ -359,6 +372,7 @@ def watch(
             batch=batch,
             sp_factory=sp_factory,
             btc_factory=btc_factory,
+            runtime=runtime,
         )
         events.changed(before_upgrade, batch)
         if batch_has_submitted_subset(batch):
@@ -384,6 +398,7 @@ def watch(
                 allow_missing_metadata=allow_missing_metadata,
                 sp_factory=sp_factory,
                 events=events,
+                runtime=runtime,
             )
             batch, done = run_watch_upgrade_pass(batch)
             if done:
@@ -391,9 +406,9 @@ def watch(
 
             events.waiting(batch)
             btc = btc_factory(cfg)
-            stream = wf_watch.block_stream_for(cfg)
+            stream = runtime.block_streams(cfg)
             stream_cm = cast(
-                "contextlib.AbstractContextManager[HashBlockStream]",
+                "contextlib.AbstractContextManager[BlockStream]",
                 stream
                 if hasattr(stream, "__enter__")
                 else contextlib.nullcontext(stream),
@@ -408,7 +423,7 @@ def watch(
                         if done:
                             return exit_code
                         continue
-                    wf_watch.sleep_after_block()
+                    runtime.sleeper.sleep(wf_watch.BLOCK_PROCESSING_DELAY_SECONDS)
                     info = btc.getblockchaininfo()
                     height_jumped = (
                         last_height is not None and info.height - last_height > 1
@@ -431,6 +446,7 @@ def watch(
                             staging_root=staging_root,
                             batch=batch,
                             btc=btc,
+                            runtime=runtime,
                         )
                         events.changed(before_reverify, batch)
                     before_block_upgrade = batch
@@ -477,8 +493,13 @@ def commit(
     root_path: str,
     batch_id: str,
     events: BatchEvents,
+    runtime: Runtime,
+    commit_object: Callable[..., None] = wf_commit.commit_ots,
 ) -> int:
-    """`stage commit --batch ID`: commit every upgraded object; returns failures."""
+    """`stage commit --batch ID`: commit every upgraded object; returns failures.
+
+    `commit_object` commits one object's Staging Area (`commit_ots` keywords).
+    """
     staging_root = store.root
     with batch_state.with_batch_lock(staging_root, batch_id):
         batch = load_batch_or_usage(staging_root, batch_id)
@@ -528,7 +549,7 @@ def commit(
             )
             continue
         try:
-            wf_commit.commit_ots(
+            commit_object(
                 store=store,
                 sr=sr,
                 fs=fs,
@@ -536,6 +557,7 @@ def commit(
                 object_id=object_id,
                 staging_dir=staging_dir,
                 allow_missing_metadata=False,
+                runtime=runtime,
             )
         except (
             AttestationMismatchError,

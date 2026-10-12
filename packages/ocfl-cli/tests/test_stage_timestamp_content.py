@@ -43,8 +43,9 @@ from ocfl_cli.config.ots import SimpleProofConfig
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Submission
 from ocfl_cli.model.phase import Phase
-from ocfl_cli.store.ots_state import load_ots, now_utc_iso, save_ots
+from ocfl_cli.store.ots_state import load_ots, save_ots, utc_iso
 from ocfl_cli.store.staging import StagingStore
+from ocfl_cli.system import SYSTEM_CLOCK
 from ocfl_cli.workflow import content as wf_content
 from ocfl_lib import (
     DigestAlgorithm,
@@ -435,6 +436,7 @@ class TestContentSubmissionPrimitives:
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        runtime,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
@@ -471,6 +473,7 @@ class TestContentSubmissionPrimitives:
             str(empty_sha256_root.resolve()),
             "obj:primitive",
             sd,
+            runtime=runtime,
         )
 
         assert prepared.digests == (hashlib.sha256(b"primitive").hexdigest(),)
@@ -515,7 +518,7 @@ def _seed_submitting_intent(staging_dir: Path, digests: tuple[str, ...]) -> None
         pending_digests=digests,
         submissions=(
             Submission(
-                submitted_at=now_utc_iso(),
+                submitted_at=utc_iso(SYSTEM_CLOCK.now()),
                 digests=digests,
                 status="submitting",
                 job_id=None,

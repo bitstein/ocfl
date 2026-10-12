@@ -7,6 +7,7 @@ import filelock
 import pytest
 from click.testing import Result
 from msgspec.structs import replace
+from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
@@ -15,13 +16,6 @@ from ocfl_cli.model.ots_state import InventoryProof, VerifiedProof, VerifyJob
 from ocfl_cli.model.phase import Phase
 from ocfl_cli.store.ots_state import load_ots, plan_path, save_ots, with_lock
 from ocfl_cli.store.staging import StagingStore
-from ocfl_cli.workflow import common as wf_common
-from ocfl_cli.workflow import staging as wf_staging
-
-
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
 
 
 def _invoke(runner: CliRunner, storage_root: Path, staging: Path, *args: str) -> Result:
@@ -341,18 +335,19 @@ class TestStageMetadata:
         assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
-        original_update_metadata = wf_staging.update_metadata
+        original_save_metadata = StagingStore.save_metadata
         observed_lock = False
 
-        def assert_locked(*args: Any, **kwargs: Any) -> StagedMetadata:
+        def assert_locked(self: StagingStore, *args: Any, **kwargs: Any) -> None:
             nonlocal observed_lock
             sibling = filelock.FileLock(str(staging_dir / ".lock"))
             with pytest.raises(filelock.Timeout):
                 sibling.acquire(timeout=0)
             observed_lock = True
-            return original_update_metadata(*args, **kwargs)
+            original_save_metadata(self, *args, **kwargs)
 
-        monkeypatch.setattr(wf_staging, "update_metadata", assert_locked)
+        # The store is the adapter: its write must happen under the lock.
+        monkeypatch.setattr(StagingStore, "save_metadata", assert_locked)
 
         result = _invoke(
             runner,
@@ -378,7 +373,7 @@ class TestStageMetadata:
         assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
-        monkeypatch.setattr(wf_common, "LOCK_TIMEOUT_SECONDS", 0.01)
+        runner_obj(runner)["lock_timeout"] = 0.01
 
         with with_lock(staging_dir, timeout=1):
             result = _invoke(
@@ -405,7 +400,7 @@ class TestStageMetadata:
         assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
-        monkeypatch.setattr(wf_common, "LOCK_TIMEOUT_SECONDS", 0.01)
+        runner_obj(runner)["lock_timeout"] = 0.01
 
         with with_lock(staging_dir, timeout=1):
             result = _invoke(

@@ -2,21 +2,25 @@
 
 import json
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 from typing import get_args, get_type_hints, is_typeddict
 
 import pytest
+from fakes.batch_events import RecordingBatchEvents
 from msgspec.structs import replace
 from typer.testing import CliRunner
 
+from ocfl_cli._common import open_root
 from ocfl_cli.errors import AttestationMismatchError, PhaseError
 from ocfl_cli.main import app
 from ocfl_cli.model import batch as batch_model
 from ocfl_cli.model.batch import BatchFile, BatchObject
+from ocfl_cli.ports import Runtime
 from ocfl_cli.store import batch as batch_state
 from ocfl_cli.store.batch import save_batch
 from ocfl_cli.store.staging import StagingStore
-from ocfl_cli.workflow import commit as wf_commit
+from ocfl_cli.workflow.batch import drive
 from ocfl_cli.workflow.batch import report as batch_report
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 
@@ -41,6 +45,35 @@ def _invoke(runner: CliRunner, storage_root: Path, staging: Path, *args: str):
         app,
         ["--root", str(storage_root), "stage", "--staging-root", str(staging), *args],
     )
+
+
+def _remove_staging(**kwargs) -> None:
+    """A commit that succeeds: the object's Staging Area goes away."""
+    shutil.rmtree(kwargs["staging_dir"])
+
+
+def _commit_batch(
+    storage_root: Path,
+    staging: Path,
+    batch_id: str,
+    commit_object: Callable[..., None],
+    runtime: Runtime,
+) -> tuple[int, list[dict]]:
+    """`stage commit --batch` through its use case, with a fake object commit.
+
+    Returns the command's exit code and the events it would print.
+    """
+    events = RecordingBatchEvents()
+    failures = drive.commit(
+        StagingStore(staging),
+        lambda: open_root(str(storage_root)),
+        root_path=str(storage_root.resolve()),
+        batch_id=batch_id,
+        events=events,
+        runtime=runtime,
+        commit_object=commit_object,
+    )
+    return (1 if failures else 0), events.commit_events
 
 
 def _batch(
@@ -101,6 +134,7 @@ def test_all_upgraded_batch_commits_every_object(
     runner: CliRunner,
     storage_root: Path,
     tmp_path: Path,
+    runtime: Runtime,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     staging = tmp_path / "staging"
@@ -120,15 +154,15 @@ def test_all_upgraded_batch_commits_every_object(
         committed.append((kwargs["object_id"], kwargs["allow_missing_metadata"]))
         shutil.rmtree(kwargs["staging_dir"])
 
-    monkeypatch.setattr(wf_commit, "commit_ots", fake_commit_ots)
+    commit_object = fake_commit_ots
 
-    result = _invoke_json(
-        runner, storage_root, staging, "commit", "--batch", batch.batch_id
+    exit_code, events = _commit_batch(
+        storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    assert result.exit_code == 0, result.output
+    assert exit_code == 0, events
     assert committed == [("obj:one", False), ("obj:two", False)]
-    assert _events(result.output) == [
+    assert events == [
         {
             "event": "object_committed",
             "batch_id": batch.batch_id,
@@ -160,6 +194,7 @@ def test_mixed_batch_commits_upgraded_and_skips_other_rows(
     runner: CliRunner,
     storage_root: Path,
     tmp_path: Path,
+    runtime: Runtime,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     staging = tmp_path / "staging"
@@ -182,18 +217,14 @@ def test_mixed_batch_commits_upgraded_and_skips_other_rows(
             ),
         ),
     )
-    monkeypatch.setattr(
-        wf_commit,
-        "commit_ots",
-        lambda **kwargs: shutil.rmtree(kwargs["staging_dir"]),
+    commit_object = _remove_staging
+
+    exit_code, events = _commit_batch(
+        storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    result = _invoke_json(
-        runner, storage_root, staging, "commit", "--batch", batch.batch_id
-    )
-
-    assert result.exit_code == 0, result.output
-    assert _events(result.output) == [
+    assert exit_code == 0, events
+    assert events == [
         {
             "event": "object_committed",
             "batch_id": batch.batch_id,
@@ -233,6 +264,7 @@ def test_batch_commit_continues_after_failure_and_exits_one(
     runner: CliRunner,
     storage_root: Path,
     tmp_path: Path,
+    runtime: Runtime,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     staging = tmp_path / "staging"
@@ -254,15 +286,15 @@ def test_batch_commit_continues_after_failure_and_exits_one(
             raise AttestationMismatchError("plan digest mismatch")
         shutil.rmtree(kwargs["staging_dir"])
 
-    monkeypatch.setattr(wf_commit, "commit_ots", fake_commit_ots)
+    commit_object = fake_commit_ots
 
-    result = _invoke_json(
-        runner, storage_root, staging, "commit", "--batch", batch.batch_id
+    exit_code, events = _commit_batch(
+        storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    assert result.exit_code == 1, result.output
+    assert exit_code == 1, events
     assert calls == ["obj:stale", "obj:next"]
-    assert _events(result.output) == [
+    assert events == [
         {
             "event": "object_failed",
             "batch_id": batch.batch_id,
@@ -294,6 +326,7 @@ def test_resume_after_partial_commit_skips_missing_staging(
     runner: CliRunner,
     storage_root: Path,
     tmp_path: Path,
+    runtime: Runtime,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     staging = tmp_path / "staging"
@@ -306,18 +339,14 @@ def test_resume_after_partial_commit_skips_missing_staging(
             BatchObject(object_id="obj:remaining", status="upgraded"),
         ),
     )
-    monkeypatch.setattr(
-        wf_commit,
-        "commit_ots",
-        lambda **kwargs: shutil.rmtree(kwargs["staging_dir"]),
+    commit_object = _remove_staging
+
+    exit_code, events = _commit_batch(
+        storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    result = _invoke_json(
-        runner, storage_root, staging, "commit", "--batch", batch.batch_id
-    )
-
-    assert result.exit_code == 0, result.output
-    assert _events(result.output) == [
+    assert exit_code == 0, events
+    assert events == [
         {
             "event": "object_skipped",
             "batch_id": batch.batch_id,
@@ -359,12 +388,6 @@ def test_content_target_batch_is_rejected_before_commit_attempt(
         target="content",
         rows=(BatchObject(object_id="obj:content", status="upgraded"),),
     )
-    monkeypatch.setattr(
-        wf_commit,
-        "commit_ots",
-        lambda **kwargs: pytest.fail("content batch attempted object commit"),
-    )
-
     result = _invoke(runner, storage_root, staging, "commit", "--batch", batch.batch_id)
 
     assert result.exit_code == 2
@@ -385,12 +408,6 @@ def test_batch_commit_rejects_wrong_archive_root_before_commit_attempt(
         storage_root,
         rows=(BatchObject(object_id="obj:wrong-root", status="upgraded"),),
     )
-    monkeypatch.setattr(
-        wf_commit,
-        "commit_ots",
-        lambda **kwargs: pytest.fail("wrong-root batch attempted object commit"),
-    )
-
     result = _invoke(runner, other_root, staging, "commit", "--batch", batch.batch_id)
 
     assert result.exit_code == 2
@@ -403,6 +420,7 @@ def test_batch_commit_does_not_require_batch_driver_lease(
     runner: CliRunner,
     storage_root: Path,
     tmp_path: Path,
+    runtime: Runtime,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     staging = tmp_path / "staging"
@@ -412,11 +430,7 @@ def test_batch_commit_does_not_require_batch_driver_lease(
         storage_root,
         rows=(BatchObject(object_id="obj:leased", status="upgraded"),),
     )
-    monkeypatch.setattr(
-        wf_commit,
-        "commit_ots",
-        lambda **kwargs: shutil.rmtree(kwargs["staging_dir"]),
-    )
+    commit_object = _remove_staging
 
     with batch_state.with_driver_lease(
         staging,
@@ -432,11 +446,11 @@ def test_batch_commit_does_not_require_batch_driver_lease(
         ),
         heartbeat_interval=None,
     ):
-        result = _invoke(
-            runner, storage_root, staging, "commit", "--batch", batch.batch_id
+        exit_code, events = _commit_batch(
+            storage_root, staging, batch.batch_id, commit_object, runtime
         )
 
-    assert result.exit_code == 0, result.output
+    assert exit_code == 0, events
 
 
 @pytest.mark.parametrize(
@@ -475,6 +489,7 @@ def test_snapshot_row_invalidated_mid_run_is_reported_as_failed(
     runner: CliRunner,
     storage_root: Path,
     tmp_path: Path,
+    runtime: Runtime,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     staging = tmp_path / "staging"
@@ -507,15 +522,15 @@ def test_snapshot_row_invalidated_mid_run_is_reported_as_failed(
             raise PhaseError("inventory timestamp plan missing or stale")
         shutil.rmtree(kwargs["staging_dir"])
 
-    monkeypatch.setattr(wf_commit, "commit_ots", fake_commit_ots)
+    commit_object = fake_commit_ots
 
-    result = _invoke_json(
-        runner, storage_root, staging, "commit", "--batch", batch.batch_id
+    exit_code, events = _commit_batch(
+        storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    assert result.exit_code == 1, result.output
+    assert exit_code == 1, events
     assert calls == ["obj:invalidated", "obj:after"]
-    assert _events(result.output)[0] == {
+    assert events[0] == {
         "event": "object_failed",
         "batch_id": batch.batch_id,
         "target": "inventory",
@@ -523,7 +538,7 @@ def test_snapshot_row_invalidated_mid_run_is_reported_as_failed(
         "reason": "phase_error",
         "message": "inventory timestamp plan missing or stale",
     }
-    assert _events(result.output)[-1]["counts"] == {
+    assert events[-1]["counts"] == {
         "committed": 1,
         "skipped": 0,
         "failed": 1,

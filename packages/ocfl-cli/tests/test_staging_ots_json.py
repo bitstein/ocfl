@@ -12,6 +12,7 @@ Pins:
 import json
 import logging
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -33,11 +34,11 @@ from ocfl_cli.store.ots_state import (
     apply_category_id,
     has_ots,
     load_ots,
-    now_utc_iso,
     ots_cache_path,
     plan_path,
     remove_ots,
     save_ots,
+    utc_iso,
 )
 from ocfl_cli.workflow.common import poll_outstanding_jobs
 
@@ -700,11 +701,10 @@ class TestHelpers:
     def test_plan_path(self, tmp_path: Path):
         assert plan_path(tmp_path) == tmp_path / "plan.json"
 
-    def test_now_utc_iso_format(self):
-        s = now_utc_iso()
-        assert s.endswith("+00:00")
+    def test_utc_iso_format(self):
+        s = utc_iso(datetime(2030, 1, 2, 3, 4, 5, 678, tzinfo=UTC))
         # No microseconds (timespec="seconds"): "YYYY-MM-DDTHH:MM:SS+00:00"
-        assert len(s) == 25
+        assert s == "2030-01-02T03:04:05+00:00"
 
 
 class TestCategoryIdDrift:

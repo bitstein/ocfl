@@ -1,17 +1,18 @@
-"""ZMQ-driven block-watch loops for `stage timestamp content/inventory --watch`.
+"""Block-watch loops for `stage timestamp content/inventory --watch`.
 
 Per-block invariant: under the staging filelock, decide whether the chain
 moved (height jumped or stable-height tip swapped — the reorg/stale-tip
 window) and re-verify cached proofs accordingly, then run one upgrade
 pass. Returns when the phase advances or the user interrupts.
 
-Receives `sp_factory` / `btc_factory` from the command (sourced from
-`AppCtx`); tests inject fakes by passing them in `runner.invoke(obj=...)`.
+Blocks come from `runtime.block_streams` (ZMQ `hashblock` in production)
+and the wait for SimpleProof after each block is `runtime.sleeper`; the
+clients come from `sp_factory` / `btc_factory`. All are ports from `AppCtx`,
+so tests inject fakes through `runner.invoke(obj=...)`.
 """
 
 import contextlib
 import logging
-import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ocfl_cli.config import Config
-    from ocfl_cli.ports import BtcRpcFactory, HashBlockStream, SpClientFactory
+    from ocfl_cli.ports import BlockStream, BtcRpcFactory, Runtime, SpClientFactory
     from ocfl_cli.store.staging import StagingStore
 
 
@@ -35,25 +36,7 @@ logger = logging.getLogger(__name__)
 
 type WatchProgress = Callable[[str, dict[str, Any]], None]
 
-_BLOCK_PROCESSING_DELAY_SECONDS = 60.0
-
-
-def block_stream_for(cfg: Config) -> HashBlockStream:
-    """Construct the production ``BitcoinZmqSubscriber`` from `cfg`.
-
-    Tests monkeypatch this seam to inject ``InMemoryHashBlockStream``.
-    """
-    from ocfl_cli.ots.bitcoin import BitcoinZmqSubscriber
-
-    btc_cfg = cfg.bitcoin
-    if btc_cfg is None:
-        raise RuntimeError("bitcoin config missing")
-    return BitcoinZmqSubscriber(btc_cfg.zmq_endpoint)
-
-
-def sleep_after_block() -> None:
-    """Give SimpleProof time to process newly mined blocks before polling."""
-    time.sleep(_BLOCK_PROCESSING_DELAY_SECONDS)
+BLOCK_PROCESSING_DELAY_SECONDS = 60.0
 
 
 def watch_content(
@@ -67,6 +50,7 @@ def watch_content(
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
     progress: WatchProgress | None = None,
+    runtime: Runtime,
 ) -> int:
     """Drive ``timestamp content --upgrade --watch`` end-to-end. Returns exit code."""
     btc_cfg = cfg.bitcoin
@@ -84,16 +68,16 @@ def watch_content(
                 "already_advanced",
                 {
                     "phase": state.phase.value,
-                    "jobs": wf_common.compute_job_progress(state),
+                    "jobs": wf_common.compute_job_progress(state, runtime=runtime),
                 },
             )
         return 0
-    stream = block_stream_for(cfg)
+    stream = runtime.block_streams(cfg)
     # Real BitcoinZmqSubscriber is a context manager (closes the socket on
     # exit); test fakes implement only `wait_for_block`. nullcontext bridges
     # both with one `with` site.
     stream_cm = cast(
-        "contextlib.AbstractContextManager[HashBlockStream]",
+        "contextlib.AbstractContextManager[BlockStream]",
         stream if hasattr(stream, "__enter__") else contextlib.nullcontext(stream),
     )
     try:
@@ -102,9 +86,9 @@ def watch_content(
                 block = zmq_sub.wait_for_block(timeout_ms=5000)
                 if block is None:
                     continue
-                sleep_after_block()
+                runtime.sleeper.sleep(BLOCK_PROCESSING_DELAY_SECONDS)
                 try:
-                    with with_lock(staging_dir, timeout=wf_common.LOCK_TIMEOUT_SECONDS):
+                    with with_lock(staging_dir, timeout=runtime.lock_timeout):
                         info = btc.getblockchaininfo()
                         height_jumped = (
                             last_height is not None and info.height - last_height > 1
@@ -137,9 +121,10 @@ def watch_content(
                             staging_dir,
                             sp_factory=sp_factory,
                             btc_factory=btc_factory,
+                            runtime=runtime,
                         )
                         state = load_ots(staging_dir)
-                        jobs = wf_common.compute_job_progress(state)
+                        jobs = wf_common.compute_job_progress(state, runtime=runtime)
                         if progress is not None:
                             progress(
                                 "block",
@@ -178,6 +163,7 @@ def watch_inventory(
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
     progress: WatchProgress | None = None,
+    runtime: Runtime,
 ) -> int:
     """Drive ``timestamp inventory --upgrade --watch``. Returns exit code."""
     btc_cfg = cfg.bitcoin
@@ -195,13 +181,13 @@ def watch_inventory(
                 "already_advanced",
                 {
                     "phase": state.phase.value,
-                    "jobs": wf_common.compute_job_progress(state),
+                    "jobs": wf_common.compute_job_progress(state, runtime=runtime),
                 },
             )
         return 0
-    stream = block_stream_for(cfg)
+    stream = runtime.block_streams(cfg)
     stream_cm = cast(
-        "contextlib.AbstractContextManager[HashBlockStream]",
+        "contextlib.AbstractContextManager[BlockStream]",
         stream if hasattr(stream, "__enter__") else contextlib.nullcontext(stream),
     )
     try:
@@ -210,9 +196,9 @@ def watch_inventory(
                 block = zmq_sub.wait_for_block(timeout_ms=5000)
                 if block is None:
                     continue
-                sleep_after_block()
+                runtime.sleeper.sleep(BLOCK_PROCESSING_DELAY_SECONDS)
                 try:
-                    with with_lock(staging_dir, timeout=wf_common.LOCK_TIMEOUT_SECONDS):
+                    with with_lock(staging_dir, timeout=runtime.lock_timeout):
                         info = btc.getblockchaininfo()
                         height_jumped = (
                             last_height is not None and info.height - last_height > 1
@@ -241,9 +227,10 @@ def watch_inventory(
                             staging_dir,
                             sp_factory=sp_factory,
                             btc_factory=btc_factory,
+                            runtime=runtime,
                         )
                         state = load_ots(staging_dir)
-                        jobs = wf_common.compute_job_progress(state)
+                        jobs = wf_common.compute_job_progress(state, runtime=runtime)
                         if progress is not None:
                             progress(
                                 "block",

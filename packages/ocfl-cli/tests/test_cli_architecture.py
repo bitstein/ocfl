@@ -70,8 +70,11 @@ class TestLayers:
         by_type = {c["type"]: c for c in _contracts() if c["type"] == "layers"}
         layers = by_type["layers"]
         assert layers["containers"] == ["ocfl_cli"] and layers["exhaustive"]
-        assert layers["layers"][0] == "main"
-        assert layers["layers"].index("workflow") == len(layers["layers"]) - 3
+        order = layers["layers"]
+        assert order[0] == "main"
+        assert order.index("archive | stage") < order.index("workflow")
+        assert order.index("workflow") < order.index("ots | store")
+        assert order.index("ots | store") < order.index("system")
         forbidden = [c for c in _contracts() if c["type"] == "forbidden"]
         assert any(c["source_modules"] == ["ocfl_lib"] for c in forbidden)
         commands = next(c for c in forbidden if "ocfl_cli.stage" in c["source_modules"])
@@ -188,6 +191,85 @@ class TestBatchEngine:
             if (n := len(p.read_text().splitlines())) > 1000
         }
         assert not big, big
+
+
+# --- 5.3 ports for Clock, Sleeper and BlockStream; fakes, not patched internals
+
+
+class TestPorts:
+    def test_time_ports_are_protocols(self):
+        from fakes import FakeClock, InMemoryHashBlockStream, RecordingSleeper
+
+        from ocfl_cli import ports
+
+        assert isinstance(FakeClock(), ports.Clock)
+        assert isinstance(RecordingSleeper(), ports.Sleeper)
+        assert isinstance(InMemoryHashBlockStream(), ports.BlockStream)
+
+    def test_appctx_carries_the_ports(self):
+        import dataclasses
+
+        from ocfl_cli._appctx import AppCtx
+
+        names = {f.name for f in dataclasses.fields(AppCtx)}
+        assert {"clock", "sleeper", "block_stream_factory", "lock_timeout"} <= names
+
+    def test_only_the_system_adapter_reads_time(self):
+        homes = set()
+        for p in _py_files(CLI_SRC):
+            for node in ast.walk(_tree(p)):
+                if (
+                    isinstance(node, ast.Attribute)
+                    and isinstance(node.value, ast.Name)
+                    and (node.value.id, node.attr)
+                    in {
+                        ("time", "sleep"),
+                        ("time", "time"),
+                        ("time", "monotonic"),
+                        ("datetime", "now"),
+                        ("datetime", "utcnow"),
+                    }
+                ):
+                    homes.add(_rel(p))
+        assert homes == {"system.py"}, homes
+
+    def test_tests_patch_no_cli_module(self):
+        """Tests inject fakes through `ctx.obj` / `Runtime`, not module internals."""
+        bad = []
+        for p in _py_files(CLI_TESTS):
+            tree = _tree(p)
+            modules: set[str] = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    if node.module.split(".")[0] != "ocfl_cli":
+                        continue
+                    for a in node.names:
+                        if _is_module(f"{node.module}.{a.name}"):
+                            modules.add(a.asname or a.name)
+                elif isinstance(node, ast.Import):
+                    for a in node.names:
+                        if a.name.split(".")[0] == "ocfl_cli":
+                            modules.add(a.asname or a.name.split(".")[0])
+            for node in ast.walk(tree):
+                if not (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in {"setattr", "delattr"}
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "monkeypatch"
+                    and node.args
+                ):
+                    continue
+                target = node.args[0]
+                if isinstance(target, ast.Constant):
+                    if str(target.value).startswith("ocfl_cli"):
+                        bad.append(f"{p.name}:{node.lineno}")
+                    continue
+                while isinstance(target, ast.Attribute):
+                    target = target.value
+                if isinstance(target, ast.Name) and target.id in modules:
+                    bad.append(f"{p.name}:{node.lineno}")
+        assert not bad, bad
 
 
 # --- 5.4 one error handler: ErrorClass -> ExitCode, JSON errors on stderr

@@ -27,11 +27,13 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import filelock
 import pytest
-from fakes import FakeBitcoinRPC, FakeSimpleProof
+from fakes import FakeBitcoinRPC, FakeSimpleProof, RecordingSleeper
 from msgspec.structs import replace
 from pydantic import SecretStr
 from runner_helpers import runner_obj
@@ -42,11 +44,11 @@ from ocfl_cli.config.ots import SimpleProofConfig
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import VerifiedProof, VerifyJob
 from ocfl_cli.model.phase import Phase
-from ocfl_cli.ports import HashBlockStream
+from ocfl_cli.ports import BlockStream
 from ocfl_cli.store.ots_state import load_ots, ots_cache_path, save_ots
 from ocfl_cli.store.staging import StagingStore
-from ocfl_cli.workflow import common as wf_common
 from ocfl_cli.workflow import inventory as wf_inventory
+from ocfl_cli.workflow.common import compute_inventory_job_progress
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
 
@@ -101,19 +103,15 @@ def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
     runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
 
 
-def _inject_fake_zmq(monkeypatch: pytest.MonkeyPatch, stream: HashBlockStream) -> None:
-    from ocfl_cli.workflow import watch as stage_watch
+def _inject_fake_zmq(runner: CliRunner, stream: BlockStream) -> None:
 
-    monkeypatch.setattr(
-        stage_watch, "block_stream_for", lambda *a, **kw: stream, raising=False
-    )
+    runner_obj(runner)["block_stream_factory"] = lambda *a, **kw: stream
 
 
 @pytest.fixture(autouse=True)
-def no_block_processing_delay(monkeypatch: pytest.MonkeyPatch) -> None:
-    from ocfl_cli.workflow import watch as stage_watch
+def no_block_processing_delay(runner: CliRunner) -> None:
 
-    monkeypatch.setattr(stage_watch, "sleep_after_block", lambda: None, raising=True)
+    runner_obj(runner)["sleeper"] = RecordingSleeper()
 
 
 # --------------------------------------------------------------------------- #
@@ -313,6 +311,7 @@ class TestInventoryUpgradePrimitives:
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        runtime,
     ):
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
@@ -337,7 +336,7 @@ class TestInventoryUpgradePrimitives:
 
         state = wf_inventory.snapshot_inventory_results_locked(state, sd, sp=sp_fake)
 
-        progress = wf_common.compute_inventory_job_progress(state)
+        progress = compute_inventory_job_progress(state, runtime=runtime)
         assert progress is not None
         assert progress.anchored_digests == 0
         assert progress.pending_digests == 1
@@ -350,6 +349,7 @@ class TestInventoryUpgradePrimitives:
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        runtime,
     ) -> None:
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
@@ -402,6 +402,7 @@ class TestInventoryUpgradePrimitives:
             sp=sp_fake,
             btc=btc_fake.rpc,
             min_confirmations=cfg.bitcoin.confirmations,
+            runtime=runtime,
         )
 
         assert state.phase is Phase.INVENTORY_UPGRADED
@@ -662,61 +663,50 @@ def _install_inv_crash_fault(
     sd: Path,
     inv_digest: str,
 ) -> None:
-    """Wrap module-level seams to raise at the specified inventory boundary.
+    """Crash at one boundary of the inventory upgrade's ingest.
 
-    ``atomic_write_bytes`` from ``ocfl_cli.stage.store`` underlies BOTH
-    the ots-cache write (step 1) and the ots.json save (step 3). Fault
-    site is selected by inspecting the target path. The wire format
-    flattens ``inventory_proof.proof`` into the top-level
-    ``inventory_proof`` object, so the JSON inspection looks at
-    ``inventory_proof.verified``.
+    Every staging write ends in ``os.replace``; the fault fails the replace
+    that would publish the file at the chosen boundary:
+
+      - ``before_cache``: the inventory proof's ots-cache entry is never
+        written.
+      - ``during_ots_save``: saving the verified ``ots.json`` fails and a
+        dead process's temp file is left next to it. The wire format
+        flattens ``inventory_proof.proof`` into ``inventory_proof``.
     """
-    from ocfl_cli.store import staging as staging_mod
-
-    real_atomic = staging_mod.atomic_write_bytes
-
     cache_path = ots_cache_path(sd, inv_digest)
     ots_json_path = sd / "ots.json"
 
-    if fault_at == "before_cache":
+    def verified_save(src: object) -> bool:
+        try:
+            parsed = json.loads(Path(str(src)).read_bytes())
+        except OSError, json.JSONDecodeError:
+            return False
+        ip = parsed.get("inventory_proof") or {}
+        return (
+            isinstance(ip, dict)
+            and ip.get("verified") is True
+            and ip.get("digest") == inv_digest
+        )
 
-        def _atomic(path: Path, data: bytes) -> None:
-            if path == cache_path:
-                raise OSError("injected: inventory cache write failed")
-            real_atomic(path, data)
+    real_replace = os.replace
 
-        _patch_attr(staging_mod, "atomic_write_bytes", _atomic)
+    def faulty_replace(src, dst, *args, **kwargs):
+        dst_path = Path(dst)
+        if fault_at == "before_cache" and dst_path == cache_path:
+            raise OSError("injected: inventory cache write failed")
+        if (
+            fault_at == "during_ots_save"
+            and dst_path == ots_json_path
+            and verified_save(src)
+        ):
+            shutil.copyfile(src, dst_path.with_name(f"{dst_path.name}.tmp.1"))
+            raise OSError("injected: crash mid-save (inventory)")
+        return real_replace(src, dst, *args, **kwargs)
 
-    elif fault_at == "during_ots_save":
-        # Fault inside the atomic helper between temp-write and replace
-        # ONLY when the about-to-be-written state carries
-        # inventory_proof.verified=True (so we don't crash on earlier
-        # benign saves like the verify-job append).
-        def _atomic(path: Path, data: bytes) -> None:
-            if path == ots_json_path:
-                try:
-                    parsed = json.loads(data)
-                    ip = parsed.get("inventory_proof") or {}
-                    if (
-                        isinstance(ip, dict)
-                        and ip.get("verified") is True
-                        and ip.get("digest") == inv_digest
-                    ):
-                        # Write tmp, then crash before replace.
-                        tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
-                        with open(tmp, "wb") as f:
-                            f.write(data)
-                            f.flush()
-                            os.fsync(f.fileno())
-                        raise OSError("injected: crash mid-save (inventory)")
-                except json.JSONDecodeError, AttributeError:
-                    pass
-            real_atomic(path, data)
-
-        _patch_attr(staging_mod, "atomic_write_bytes", _atomic)
-
-    else:
+    if fault_at not in ("before_cache", "during_ots_save"):
         raise AssertionError(f"unknown fault_at: {fault_at!r}")
+    _patch_attr(os, "replace", faulty_replace)
 
 
 def _uninstall_crash_fault(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -900,13 +890,12 @@ class TestInventoryWatchLoop:
                     )
                 raise KeyboardInterrupt("loop did not exit after phase advance")
 
-        _inject_fake_zmq(monkeypatch, _OneBlockStream())
+        _inject_fake_zmq(runner, _OneBlockStream())
 
         calls: list[str] = []
-        from ocfl_cli.workflow import watch as stage_watch
 
-        monkeypatch.setattr(
-            stage_watch, "sleep_after_block", lambda: calls.append("sleep")
+        runner_obj(runner)["sleeper"] = SimpleNamespace(
+            sleep=lambda _seconds: calls.append("sleep")
         )
 
         r = runner.invoke(
@@ -965,7 +954,7 @@ class TestInventoryWatchLoop:
                     )
                 raise KeyboardInterrupt("loop did not exit after phase advance")
 
-        _inject_fake_zmq(monkeypatch, _OneBlockStream())
+        _inject_fake_zmq(runner, _OneBlockStream())
 
         r = runner.invoke(
             app,
@@ -1021,7 +1010,7 @@ class TestInventoryWatchLoop:
             def wait_for_block(self, timeout_ms: int) -> bytes | None:
                 raise KeyboardInterrupt("simulated SIGINT before first block")
 
-        _inject_fake_zmq(monkeypatch, _SigintStream())
+        _inject_fake_zmq(runner, _SigintStream())
 
         r = runner.invoke(
             app,
@@ -1060,7 +1049,7 @@ class TestInventoryWatchLoop:
 
         # Speed knob: shrink the watch loop's lock timeout if the constant
         # exists (it does — see test_stage_timestamp_content_upgrade_watch).
-        monkeypatch.setattr(wf_common, "LOCK_TIMEOUT_SECONDS", 1, raising=False)
+        runner_obj(runner)["lock_timeout"] = 1
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest = _setup_at_inventory_pending(
@@ -1088,7 +1077,7 @@ class TestInventoryWatchLoop:
                     )
                 raise KeyboardInterrupt("terminate after lock-contention pass")
 
-        _inject_fake_zmq(monkeypatch, _ContendedStream())
+        _inject_fake_zmq(runner, _ContendedStream())
 
         try:
             with caplog.at_level(logging.WARNING):

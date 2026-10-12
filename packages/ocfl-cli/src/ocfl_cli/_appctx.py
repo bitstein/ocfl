@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from ocfl_cli._style import make_console
+from ocfl_cli.ports import DEFAULT_LOCK_TIMEOUT_SECONDS, Runtime
 
 if TYPE_CHECKING:
     import typer
@@ -17,8 +18,11 @@ if TYPE_CHECKING:
     from ocfl_cli.config import ArchiveConfig, Config
     from ocfl_cli.ports import (
         BitcoinRPC,
+        BlockStreamFactory,
         BtcRpcFactory,
+        Clock,
         SimpleProofClient,
+        Sleeper,
         SpClientFactory,
     )
 
@@ -38,6 +42,10 @@ class AppCtx:
     no_color: bool
     sp_client_factory: SpClientFactory
     btc_rpc_factory: BtcRpcFactory
+    clock: Clock
+    sleeper: Sleeper
+    block_stream_factory: BlockStreamFactory
+    lock_timeout: float
     console: Console
     err_console: Console
 
@@ -124,11 +132,16 @@ def install_app_ctx(
     no_color: bool,
     sp_client_factory: SpClientFactory,
     btc_rpc_factory: BtcRpcFactory,
+    clock: Clock,
+    sleeper: Sleeper,
+    block_stream_factory: BlockStreamFactory,
 ) -> None:
     """Install application defaults into ``ctx.obj``.
 
     Factory source values preserve ``runner.invoke(obj=...)`` injection, then
     get wrapped in a per-invocation cache registered with Click's close hooks.
+    The ports (``clock``, ``sleeper``, ``block_stream_factory``) and
+    ``lock_timeout`` keep any value a test injected the same way.
     """
     obj = _obj(ctx)
     obj["root"] = root
@@ -141,6 +154,10 @@ def install_app_ctx(
     # Fresh consoles per run: colour follows this run's flag, env and TTY.
     obj["console"] = make_console(no_color=no_color)
     obj["err_console"] = make_console(stderr=True, no_color=no_color)
+    obj.setdefault("clock", clock)
+    obj.setdefault("sleeper", sleeper)
+    obj.setdefault("block_stream_factory", block_stream_factory)
+    obj.setdefault("lock_timeout", DEFAULT_LOCK_TIMEOUT_SECONDS)
     # Factory sources intentionally preserve runner.invoke(obj=...) test overrides.
     sp_source = _factory_source(
         obj,
@@ -182,6 +199,12 @@ def app_ctx(ctx: typer.Context) -> AppCtx:
         no_color=cast("bool", _required(ctx, "no_color")),
         sp_client_factory=cast("SpClientFactory", _required(ctx, "sp_client_factory")),
         btc_rpc_factory=cast("BtcRpcFactory", _required(ctx, "btc_rpc_factory")),
+        clock=cast("Clock", _required(ctx, "clock")),
+        sleeper=cast("Sleeper", _required(ctx, "sleeper")),
+        block_stream_factory=cast(
+            "BlockStreamFactory", _required(ctx, "block_stream_factory")
+        ),
+        lock_timeout=cast("float", _required(ctx, "lock_timeout")),
         console=console(ctx),
         err_console=err_console(ctx),
     )
@@ -221,6 +244,18 @@ def sp_client_factory(ctx: typer.Context) -> SpClientFactory:
 
 def btc_rpc_factory(ctx: typer.Context) -> BtcRpcFactory:
     return cast("BtcRpcFactory", _required(ctx, "btc_rpc_factory"))
+
+
+def runtime(ctx: typer.Context) -> Runtime:
+    """This run's time ports and lock timeout, for the use cases."""
+    return Runtime(
+        clock=cast("Clock", _required(ctx, "clock")),
+        sleeper=cast("Sleeper", _required(ctx, "sleeper")),
+        block_streams=cast(
+            "BlockStreamFactory", _required(ctx, "block_stream_factory")
+        ),
+        lock_timeout=cast("float", _required(ctx, "lock_timeout")),
+    )
 
 
 def console(ctx: typer.Context) -> Console:
