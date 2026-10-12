@@ -284,6 +284,69 @@ class TestAbsurdLengthCaps:
         assert r.has_code("L002")
 
 
+def _info_codes(r: ValidationResult) -> list[str]:
+    return [i.code for i in r.infos]
+
+
+def _error_codes(r: ValidationResult) -> list[str]:
+    return [e.code for e in r.errors]
+
+
+class TestLimitsAreInfoOnly:
+    """L-codes are non-spec: reported as info, never affect validity."""
+
+    def test_long_object_id_is_valid(self):
+        r = ValidationResult()
+        inv = _inv_with_manifest({_D1: ["v1/content/file.txt"]})
+        inv["id"] = "http://example.org/" + ("x" * 2048)
+        validate_inventory(inv, r)
+        assert _info_codes(r) == ["L002"]
+        assert r.is_valid
+
+    def test_null_in_object_id_is_valid(self):
+        r = ValidationResult()
+        inv = _inv_with_manifest({_D1: ["v1/content/file.txt"]})
+        inv["id"] = "http://example.org/obj\x00x"
+        validate_inventory(inv, r)
+        assert _info_codes(r) == ["L001"]
+        assert r.is_valid
+
+    def test_null_manifest_path_still_spec_checked(self):
+        r = ValidationResult()
+        validate_inventory(_inv_with_manifest({_D1: ["/v1/content/a\x00b"]}), r)
+        assert "L001" in _info_codes(r)
+        assert "E100" in _error_codes(r)
+
+    def test_long_manifest_path_still_spec_checked(self):
+        r = ValidationResult()
+        long_seg = "x" * 5000
+        validate_inventory(_inv_with_manifest({_D1: [f"v1/content//{long_seg}"]}), r)
+        assert "L002" in _info_codes(r)
+        assert "E099" in _error_codes(r)
+
+    def test_null_logical_path_still_spec_checked(self):
+        r = ValidationResult()
+        versions = {
+            "v1": {
+                "created": "2024-01-01T00:00:00Z",
+                "state": {_D1: ["/a\x00b"]},
+            },
+        }
+        validate_inventory(
+            _inv_with_manifest({_D1: ["v1/content/file.txt"]}, versions=versions),
+            r,
+        )
+        assert "L001" in _info_codes(r)
+        assert "E053" in _error_codes(r)
+
+    def test_no_l_codes_in_errors_or_warnings(self):
+        r = ValidationResult()
+        inv = _inv_with_manifest({_D1: ["v1/content/a\x00" + "x" * 5000]})
+        inv["id"] = "http://example.org/" + ("x" * 2048)
+        validate_inventory(inv, r)
+        assert not [e.code for e in (*r.errors, *r.warnings) if e.code.startswith("L")]
+
+
 class TestUnicodeNormalizationCharacterization:
     """Pin current behavior: NFC and NFD are treated as DISTINCT.
 

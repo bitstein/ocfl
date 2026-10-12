@@ -109,9 +109,9 @@ def _validate_structure(
         result.error("E037a", where=where)
     else:
         if contains_null(id_val):
-            result.error("L001", where=where, field="id")
+            result.info("L001", where=where, field="id")
         if len(id_val) > MAX_OBJECT_ID:
-            result.error(
+            result.info(
                 "L002",
                 where=where,
                 field="id",
@@ -230,19 +230,17 @@ def _validate_manifest(
                 result.error("E091", where=where, digest=digest)
                 continue
 
-            # Null byte + length sanity checks (non-spec)
+            # Null byte + length sanity checks (non-spec, info only)
             if contains_null(path):
-                result.error("L001", where=where, field="manifest path")
-                continue
+                result.info("L001", where=where, field="manifest path")
             if len(path) > MAX_PATH:
-                result.error(
+                result.info(
                     "L002",
                     where=where,
                     field="manifest path",
                     limit=MAX_PATH,
                     actual=len(path),
                 )
-                continue
 
             # Path segment validation
             if path.startswith("/") or path.endswith("/"):
@@ -385,7 +383,7 @@ def _validate_versions(
         elif not isinstance(vblock["message"], str):
             result.error("E094", where=where, version=vkey)
         elif len(vblock["message"]) > MAX_MESSAGE:
-            result.error(
+            result.info(
                 "L002",
                 where=where,
                 field=f"{vkey} message",
@@ -477,19 +475,17 @@ def _validate_version_state(
             if not isinstance(path, str):
                 continue
 
-            # Null byte + length sanity checks (non-spec)
+            # Null byte + length sanity checks (non-spec, info only)
             if contains_null(path):
-                result.error("L001", where=where, field="logical path")
-                continue
+                result.info("L001", where=where, field="logical path")
             if len(path) > MAX_PATH:
-                result.error(
+                result.info(
                     "L002",
                     where=where,
                     field="logical path",
                     limit=MAX_PATH,
                     actual=len(path),
                 )
-                continue
 
             # Check for leading/trailing slash
             if path.startswith("/") or path.endswith("/"):
@@ -542,7 +538,7 @@ def _validate_user(
     if "name" not in user or not isinstance(user.get("name"), str):
         result.error("E054b", where=where, version=version)
     elif len(user["name"]) > MAX_USER_NAME:
-        result.error(
+        result.info(
             "L002",
             where=where,
             field=f"{version} user name",

@@ -2,7 +2,7 @@
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from ocfl_lib.fs import utils as fs_utils
@@ -162,6 +162,9 @@ def _walk_and_validate(
             obj_result,
             check_digests=check_digests,
         )
+        # Infos never affect validity, so surface them for valid objects too.
+        for i in obj_result.infos:
+            result.infos.append(replace(i, message=f"{obj_path}: {i.message}"))
         if obj_result.is_valid:
             summary.valid_objects += 1
         else:

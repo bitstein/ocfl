@@ -1,5 +1,6 @@
 """Tests for ocfl validate command."""
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -198,3 +199,50 @@ class TestValidateObject:
         )
         assert result.exit_code == 0
         assert result.stderr == ""
+
+
+def _inflate_head_message(storage_root: Path) -> None:
+    """Rewrite obj:test head inventory with an over-limit (L002) message."""
+    obj = storage_root / "obj:test"
+    inv = json.loads((obj / "inventory.json").read_bytes())
+    inv["versions"][inv["head"]]["message"] = "x" * (64 * 1024 + 1)
+    raw = json.dumps(inv, indent=2).encode()
+    digest = hashlib.sha512(raw).hexdigest()
+    for d in (obj, obj / inv["head"]):
+        (d / "inventory.json").write_bytes(raw)
+        (d / "inventory.json.sha512").write_text(f"{digest} inventory.json\n")
+
+
+class TestValidateLimitInfo:
+    """L-codes are info: reported, never fail validation."""
+
+    def test_object_json_reports_info_and_valid(
+        self, runner: CliRunner, storage_root: Path
+    ):
+        _inflate_head_message(storage_root)
+        result = runner.invoke(
+            app, ["--root", str(storage_root), "--json", "validate", "obj:test"]
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data["valid"] is True
+        assert data["errors"] == []
+        assert {i["code"] for i in data["info"]} == {"L002"}
+
+    def test_root_json_merges_object_info(self, runner: CliRunner, storage_root: Path):
+        _inflate_head_message(storage_root)
+        result = runner.invoke(app, ["--root", str(storage_root), "--json", "validate"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data["valid"] is True
+        assert {i["code"] for i in data["info"]} == {"L002"}
+        assert all(i["message"].startswith("obj:test: ") for i in data["info"])
+
+    def test_object_text_shows_info(self, runner: CliRunner, storage_root: Path):
+        _inflate_head_message(storage_root)
+        result = runner.invoke(
+            app, ["--root", str(storage_root), "validate", "obj:test"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "Info: [L002]" in result.stderr
+        assert "Valid" in result.stdout

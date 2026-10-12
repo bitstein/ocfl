@@ -393,6 +393,7 @@ def _output_result(
     result: ValidationResult, json_mode: bool, suppress: frozenset[str]
 ) -> None:
     warnings = [w for w in result.warnings if w.code not in suppress]
+    infos = [i for i in result.infos if i.code not in suppress]
     if json_mode:
         output_json(
             {
@@ -401,6 +402,7 @@ def _output_result(
                     {"code": e.code, "message": e.message} for e in result.errors
                 ],
                 "warnings": [{"code": w.code, "message": w.message} for w in warnings],
+                "info": [{"code": i.code, "message": i.message} for i in infos],
             }
         )
     else:
@@ -408,6 +410,8 @@ def _output_result(
             err(f"[{e.code}] {e.message}")
         for w in warnings:
             _style.echo(_style.warning(f"Warning: [{w.code}] {w.message}"), err=True)
+        for i in infos:
+            _style.echo(_style.dim(f"Info: [{i.code}] {i.message}"), err=True)
         if result.is_valid:
             _style.echo(
                 _style.valid(

@@ -632,7 +632,7 @@ class TestVerifyPendingW903:
         assert r.exit_code == 0, r.output
         data = json.loads(r.stdout)
         assert data["valid"] is True
-        assert data.keys() == {"valid", "errors", "warnings"}
+        assert data.keys() == {"valid", "errors", "warnings", "info"}
         assert data["errors"] == []
         warning_codes = {w["code"] for w in data["warnings"]}
         assert {"W004", "W005", "W903"}.issubset(warning_codes)
