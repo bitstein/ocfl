@@ -35,7 +35,17 @@ from ocfl_lib.errors import (
 from ocfl_lib.fs import FS, CopyFS, FileWalker, LocalFS, WriteFS
 from ocfl_lib.inventory import Inventory, StoredInventory, UserInfo, VersionInfo
 from ocfl_lib.inventory_builder import InventoryBuilder
-from ocfl_lib.layout import Layout, get_layout
+from ocfl_lib.layout import (
+    DEFAULT_LAYOUTS,
+    FlatDirectLayout,
+    FlatOmitPrefixLayout,
+    HashAndIdNTupleLayout,
+    HashedNTupleLayout,
+    Layout,
+    LayoutRegistry,
+    NTupleOmitPrefixLayout,
+    get_layout,
+)
 from ocfl_lib.object import Object
 from ocfl_lib.root import StorageRoot
 from ocfl_lib.spec import Namaste, Spec, VNum
@@ -46,6 +56,7 @@ from ocfl_lib.validation.result import ValidationResult
 from ocfl_lib.validation.root import validate_root
 
 __all__ = [
+    "DEFAULT_LAYOUTS",
     "FS",
     "ContentNotFound",
     "ContentSource",
@@ -56,6 +67,10 @@ __all__ = [
     "ErrorClass",
     "FileWalker",
     "FixitySource",
+    "FlatDirectLayout",
+    "FlatOmitPrefixLayout",
+    "HashAndIdNTupleLayout",
+    "HashedNTupleLayout",
     "InvalidLayoutConfig",
     "InvalidPath",
     "InvalidVersionNumber",
@@ -65,9 +80,11 @@ __all__ = [
     "InventorySidecarMismatch",
     "Layout",
     "LayoutNotConfigured",
+    "LayoutRegistry",
     "LocalFS",
     "LogicalPathNotFound",
     "MultipleRootDeclarations",
+    "NTupleOmitPrefixLayout",
     "Namaste",
     "NotAnOcflRoot",
     "Object",

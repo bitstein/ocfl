@@ -2,7 +2,8 @@
 
 import pytest
 
-from ocfl_lib.layout import Layout, LayoutRegistry, get_layout
+from ocfl_lib.errors import UnknownLayout
+from ocfl_lib.layout import DEFAULT_LAYOUTS, Layout, LayoutRegistry, get_layout
 
 
 class _DummyLayout(Layout):
@@ -31,9 +32,10 @@ class TestLayoutProtocol:
 
 
 class TestLayoutRegistry:
-    def test_register_and_get(self):
-        reg = LayoutRegistry()
-        reg.register("dummy-layout", lambda config: _DummyLayout())
+    def test_with_layout_and_get(self):
+        reg = LayoutRegistry().with_layout(
+            "dummy-layout", lambda config: _DummyLayout()
+        )
         layout = reg.get_layout("dummy-layout")
         assert layout.name == "dummy-layout"
 
@@ -44,22 +46,40 @@ class TestLayoutRegistry:
             configs_seen.append(config)
             return _DummyLayout()
 
-        reg = LayoutRegistry()
-        reg.register("dummy-layout", factory)
+        reg = LayoutRegistry({"dummy-layout": factory})
         reg.get_layout("dummy-layout", config={"key": "val"})
         assert configs_seen == [{"key": "val"}]
 
     def test_unknown_layout_raises(self):
         reg = LayoutRegistry()
-        with pytest.raises(KeyError, match="nonexistent"):
+        with pytest.raises(UnknownLayout, match="nonexistent"):
+            reg.get_layout("nonexistent")
+        with pytest.raises(KeyError):
             reg.get_layout("nonexistent")
 
-    def test_register_overwrites(self):
-        reg = LayoutRegistry()
-        reg.register("x", lambda config: _DummyLayout())
-        reg.register("x", lambda config: _DummyLayout())
-        # no error — last registration wins
-        assert reg.get_layout("x") is not None
+    def test_with_layout_returns_new_registry(self):
+        base = LayoutRegistry()
+        reg = base.with_layout("x", lambda config: _DummyLayout())
+        assert "x" in reg
+        assert "x" not in base
+
+    def test_with_layout_overrides(self):
+        first, second = _DummyLayout(), _DummyLayout()
+        reg = LayoutRegistry({"x": lambda config: first})
+        reg = reg.with_layout("x", lambda config: second)
+        assert reg.get_layout("x") is second
+
+    def test_immutable(self):
+        with pytest.raises(AttributeError):
+            DEFAULT_LAYOUTS._factories = {}  # ty: ignore[invalid-assignment]
+        with pytest.raises(TypeError):
+            DEFAULT_LAYOUTS._factories["x"] = lambda config: _DummyLayout()
+
+    def test_get_layout_uses_explicit_registry(self):
+        reg = LayoutRegistry({"x": lambda config: _DummyLayout()})
+        assert get_layout("x", layouts=reg).name == "dummy-layout"
+        with pytest.raises(UnknownLayout):
+            get_layout("x")
 
 
 class TestDefaultRegistry:

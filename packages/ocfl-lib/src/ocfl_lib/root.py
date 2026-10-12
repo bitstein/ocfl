@@ -13,7 +13,7 @@ from ocfl_lib.errors import (
     SpecVersionError,
 )
 from ocfl_lib.fs import utils as fs_utils
-from ocfl_lib.layout import get_layout
+from ocfl_lib.layout import DEFAULT_LAYOUTS, get_layout
 from ocfl_lib.layout.config import (
     read_layout_config,
     read_ocfl_layout,
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
     from ocfl_lib.fs.protocols import FileWalker, WriteFS
     from ocfl_lib.inventory import UserInfo
+    from ocfl_lib.layout.registry import LayoutRegistry
     from ocfl_lib.layout.types import Layout
     from ocfl_lib.stage import Stage
 
@@ -39,9 +40,16 @@ class StorageRoot:
     Layout is loaded eagerly in the constructor (fail fast on bad config).
     """
 
-    def __init__(self, fsys: FileWalker, path: str = "") -> None:
+    def __init__(
+        self,
+        fsys: FileWalker,
+        path: str = "",
+        *,
+        layouts: LayoutRegistry = DEFAULT_LAYOUTS,
+    ) -> None:
         self._fsys = fsys
         self._path = path
+        self._layouts = layouts
         self._spec = self._detect_spec()
         self._layout = self._load_layout()
 
@@ -258,4 +266,4 @@ class StorageRoot:
             return None
         ext_name, _description = info
         config = read_layout_config(self._fsys, ext_name, root=self._path)
-        return get_layout(ext_name, config=config)
+        return get_layout(ext_name, config=config, layouts=self._layouts)

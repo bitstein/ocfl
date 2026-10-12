@@ -15,6 +15,7 @@ from ocfl_lib.layout.registry import LayoutRegistry
 from ocfl_lib.layout.types import Layout
 
 __all__ = [
+    "DEFAULT_LAYOUTS",
     "FlatDirectLayout",
     "FlatOmitPrefixLayout",
     "HashAndIdNTupleLayout",
@@ -28,25 +29,23 @@ __all__ = [
     "write_ocfl_layout",
 ]
 
-# Default registry with all built-in layouts
-_default_registry = LayoutRegistry()
-_default_registry.register(
-    "0002-flat-direct-storage-layout", FlatDirectLayout.from_config
-)
-_default_registry.register(
-    "0003-hash-and-id-n-tuple-storage-layout", HashAndIdNTupleLayout.from_config
-)
-_default_registry.register(
-    "0004-hashed-n-tuple-storage-layout", HashedNTupleLayout.from_config
-)
-_default_registry.register(
-    "0006-flat-omit-prefix-storage-layout", FlatOmitPrefixLayout.from_config
-)
-_default_registry.register(
-    "0007-n-tuple-omit-prefix-storage-layout", NTupleOmitPrefixLayout.from_config
+# Built-in layouts. Frozen; pass a custom registry explicitly to extend it.
+DEFAULT_LAYOUTS = LayoutRegistry(
+    {
+        "0002-flat-direct-storage-layout": FlatDirectLayout.from_config,
+        "0003-hash-and-id-n-tuple-storage-layout": HashAndIdNTupleLayout.from_config,
+        "0004-hashed-n-tuple-storage-layout": HashedNTupleLayout.from_config,
+        "0006-flat-omit-prefix-storage-layout": FlatOmitPrefixLayout.from_config,
+        "0007-n-tuple-omit-prefix-storage-layout": NTupleOmitPrefixLayout.from_config,
+    }
 )
 
 
-def get_layout(name: str, *, config: dict | None = None) -> Layout:
-    """Get a layout from the default registry."""
-    return _default_registry.get_layout(name, config=config)
+def get_layout(
+    name: str,
+    *,
+    config: dict | None = None,
+    layouts: LayoutRegistry = DEFAULT_LAYOUTS,
+) -> Layout:
+    """Get a layout by extension name from `layouts`."""
+    return layouts.get_layout(name, config=config)
