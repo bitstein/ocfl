@@ -1,22 +1,25 @@
-"""Validation for the NNNN-ots-timestamps OCFL extension."""
+"""Local checks of the NNNN-ots-timestamps extension (spec "Local Checks").
+
+The extension is in use when its directory exists in the object root. The
+checks run without network access; Bitcoin checks are separate.
+"""
 
 import hashlib
 from typing import TYPE_CHECKING
 
 from ocfl_lib import ots
-from ocfl_lib._errors import OtsParseError
-from ocfl_lib._json_value import object_field
+from ocfl_lib._errors import OtsConfigError, OtsParseError
+from ocfl_lib._json_value import as_object, object_field, parse_json
 from ocfl_lib._path import join_path
 from ocfl_lib.fs import _utils as fs_utils
 
 if TYPE_CHECKING:
     from ocfl_lib._digest import DigestAlgorithm
-    from ocfl_lib._json_value import JsonObject, JsonValue
+    from ocfl_lib._json_value import JsonObject
     from ocfl_lib.fs._protocols import FS
     from ocfl_lib.validation._report import FindingCollector
 
-
-EXTENSION_NAME = "NNNN-ots-timestamps"
+_SHA256 = "sha256"
 
 
 def validate_ots_extension(
@@ -27,144 +30,186 @@ def validate_ots_extension(
     inv_versions: dict[str, int],
     result: FindingCollector,
 ) -> None:
-    """Validate the NNNN-ots-timestamps extension.
-
-    Activated by presence of ``extensions/NNNN-ots-timestamps/config.json``.
-    """
-    ext_root = join_path(obj_path, "extensions", EXTENSION_NAME)
-    if not fsys.exists(join_path(ext_root, "config.json")):
+    """Run the extension's local checks on the object at `obj_path`."""
+    ext_dir = join_path(obj_path, "extensions", ots.EXTENSION_NAME)
+    if not fsys.exists(ext_dir):
         return
 
-    if alg.ocfl_name == "sha512":
+    cfg = _read_config(fsys, ext_dir, result)
+    if cfg is None:
+        return
+    if cfg.timestamp_from is not None and cfg.timestamp_from not in inv_versions:
+        result.error("E908", reason=f"timestampFrom {cfg.timestamp_from!r}")
+        return
+
+    ordered = sorted(inv_versions, key=inv_versions.__getitem__)
+    start = inv_versions[cfg.timestamp_from] if cfg.timestamp_from else 0
+    covered = [v for v in ordered if inv_versions[v] >= start]
+
+    version_inventories = _read_version_inventories(fsys, obj_path, ordered)
+    if (
+        cfg.proof_digest_algorithm != _SHA256
+        or alg.ocfl_name != _SHA256
+        or any(a not in (None, _SHA256) for _raw, a in version_inventories.values())
+    ):
         result.error("E901")
         return
 
-    versions = object_field(inv_data, "versions")
-    manifest = object_field(inv_data, "manifest")
+    for v in covered:
+        if v not in version_inventories:
+            result.error("E909", version=v)
 
-    for vkey in sorted(inv_versions):
-        _validate_version_state(vkey, versions.get(vkey), result)
-        vots_rel = f"inventory.json.{vkey}.ots"
-        if not fsys.exists(join_path(ext_root, vots_rel)):
-            result.error("E904", where=vkey, path=vots_rel)
-        else:
-            _check_inventory_proof(fsys, obj_path, vkey, vots_rel, result)
-
-    if isinstance(manifest, dict):
-        _check_embedded_digests(fsys, obj_path, manifest, result)
+    if cfg.timestamp_content:
+        _check_content_proofs(fsys, obj_path, inv_data, covered, result)
+    _check_inventory_proofs(
+        fsys, obj_path, cfg, ordered, covered, version_inventories, result
+    )
 
 
-def _validate_version_state(
-    vkey: str,
-    vblock: JsonValue,
-    result: FindingCollector,
-) -> None:
-    if not isinstance(vblock, dict):
-        return
-    state = vblock.get("state")
-    if not isinstance(state, dict):
-        return
+def _read_config(
+    fsys: FS, ext_dir: str, result: FindingCollector
+) -> ots.OtsConfig | None:
+    try:
+        raw = fs_utils.read_all(fsys, join_path(ext_dir, "config.json"))
+    except FileNotFoundError:
+        result.error("E908", reason="no config.json")
+        return None
+    try:
+        cfg = ots.OtsConfig.from_json(raw)
+    except OtsConfigError as e:
+        result.error("E908", reason=str(e))
+        return None
+    if cfg.unknown:
+        result.warning("W904", properties=", ".join(cfg.unknown))
+    return cfg
 
-    path_set: set[str] = {
-        p
-        for plist in state.values()
-        if isinstance(plist, list)
-        for p in plist
-        if isinstance(p, str)
-    }
 
-    for p in sorted(path_set):
-        if p.endswith(".ots.ots"):
-            result.error("E903", where=vkey, path=p)
+def _read_version_inventories(
+    fsys: FS, obj_path: str, versions: list[str]
+) -> dict[str, tuple[bytes, str | None]]:
+    """{version: (inventory bytes, digestAlgorithm)} of each `vN/inventory.json`."""
+    found: dict[str, tuple[bytes, str | None]] = {}
+    for v in versions:
+        try:
+            raw = fs_utils.read_all(fsys, join_path(obj_path, v, "inventory.json"))
+        except FileNotFoundError:
             continue
-        if p.endswith(".ots"):
-            continue
-        if f"{p}.ots" not in path_set:
-            result.error("E902", where=vkey, path=p)
+        try:
+            data = as_object(parse_json(raw))
+        except ValueError:
+            data = None
+        dalg = data.get("digestAlgorithm") if data is not None else None
+        found[v] = (raw, dalg if isinstance(dalg, str) else None)
+    return found
 
 
-def _check_inventory_proof(
+def _check_content_proofs(
     fsys: FS,
     obj_path: str,
-    vkey: str,
-    vots_rel: str,
+    inv_data: JsonObject,
+    covered: list[str],
     result: FindingCollector,
 ) -> None:
-    ext_root = join_path(obj_path, "extensions", EXTENSION_NAME)
+    """Content-proof rules 1-3 for every covered version (E902, E905, E907)."""
+    versions = object_field(inv_data, "versions")
+    content_path = _content_paths(object_field(inv_data, "manifest"))
+    checked: dict[str, ots.ParsedOts | None] = {}  # by content path
+
+    for v in covered:
+        state = object_field(as_object(versions.get(v)) or {}, "state")
+        digest_of = {
+            p: d
+            for d, plist in state.items()
+            if isinstance(plist, list)
+            for p in plist
+            if isinstance(p, str)
+        }
+        ordinary, proofs = ots.split_state(digest_of)
+        for p in sorted(ordinary):
+            if f"{p}{ots.PROOF_SUFFIX}" not in proofs:
+                result.error("E902", version=v, path=p)
+        for proof, companion in sorted(proofs.items()):
+            cpath = content_path.get(digest_of[proof])
+            if cpath is None:
+                continue  # E050 is reported by the inventory checks
+            if cpath not in checked:
+                checked[cpath] = _check_proof(
+                    fsys, obj_path, cpath, digest_of[companion], result
+                )
+            parsed = checked[cpath]
+            if parsed is not None and not parsed.is_final:
+                result.error("E907", version=v, path=companion)
+
+
+def _check_inventory_proofs(
+    fsys: FS,
+    obj_path: str,
+    cfg: ots.OtsConfig,
+    ordered: list[str],
+    covered: list[str],
+    version_inventories: dict[str, tuple[bytes, str | None]],
+    result: FindingCollector,
+) -> None:
+    """Inventory-proof rules (E904, E905, W902) and moved timestampFrom (W905)."""
+    for v in ordered:
+        proof = f"extensions/{ots.EXTENSION_NAME}/inventory.json.{v}{ots.PROOF_SUFFIX}"
+        present = fsys.exists(join_path(obj_path, proof))
+        if v not in covered:
+            if present:
+                result.warning("W905", version=v)
+            continue
+        if not present:
+            if cfg.timestamp_inventory:
+                result.error("E904", version=v)
+            continue
+        if v not in version_inventories:
+            continue  # E909
+        raw, _alg = version_inventories[v]
+        parsed = _check_proof(
+            fsys, obj_path, proof, hashlib.sha256(raw).hexdigest(), result
+        )
+        if parsed is not None and not parsed.is_final:
+            result.warning("W902", version=v)
+
+
+def _check_proof(
+    fsys: FS,
+    obj_path: str,
+    proof: str,
+    expected_hex: str,
+    result: FindingCollector,
+) -> ots.ParsedOts | None:
+    """Parse the proof at object-relative `proof` and check what it commits to.
+
+    Reports E905 and returns None for a proof that does not parse, uses the
+    wrong file-hash operation, or commits to another digest.
+    """
     try:
-        ots_bytes = fs_utils.read_all(fsys, join_path(ext_root, vots_rel))
-        vinv_path = join_path(obj_path, vkey, "inventory.json")
-        vinv_bytes = fs_utils.read_all(fsys, vinv_path)
-    except OSError:
-        return
-
-    expected = hashlib.sha256(vinv_bytes).digest()
-
+        raw = fs_utils.read_all(fsys, join_path(obj_path, proof))
+    except FileNotFoundError:
+        return None  # a missing content file is E092
     try:
-        parsed = ots.parse(ots_bytes)
-    except OtsParseError as exc:
-        result.error("E905", path=vots_rel, reason=str(exc))
-        return
-
-    if parsed.commitment_digest != expected:
+        parsed = ots.parse(raw)
+    except OtsParseError as e:
+        result.error("E905", proof=proof, reason=str(e))
+        return None
+    if parsed.file_hash != _SHA256:
+        result.error("E905", proof=proof, reason=f"file hash {parsed.file_hash}")
+        return None
+    if parsed.commitment_digest.hex() != expected_hex.lower():
         result.error(
             "E905",
-            path=vots_rel,
-            reason=(
-                f"commitment_digest {parsed.commitment_digest.hex()} "
-                f"does not match inventory digest {expected.hex()}"
-            ),
+            proof=proof,
+            reason=(f"commits to {parsed.commitment_digest.hex()}, not {expected_hex}"),
         )
+        return None
+    return parsed
 
 
-def _check_embedded_digests(
-    fsys: FS,
-    obj_path: str,
-    manifest: JsonObject,
-    result: FindingCollector,
-) -> None:
-    path_to_digest: dict[str, str] = {
-        p: digest
-        for digest, plist in manifest.items()
-        if isinstance(plist, list)
-        for p in plist
-        if isinstance(p, str)
-    }
-
-    for ots_path in sorted(path_to_digest):
-        if not ots_path.endswith(".ots") or ots_path.endswith(".ots.ots"):
-            continue
-        companion = ots_path.removesuffix(".ots")
-        companion_digest = path_to_digest.get(companion)
-        if companion_digest is None:
-            continue
-
-        try:
-            ots_bytes = fs_utils.read_all(fsys, join_path(obj_path, ots_path))
-        except OSError:
-            continue
-
-        try:
-            parsed = ots.parse(ots_bytes)
-        except OtsParseError as exc:
-            result.error("E905", path=ots_path, reason=str(exc))
-            continue
-
-        try:
-            expected = bytes.fromhex(companion_digest)
-        except ValueError:
-            continue
-
-        if parsed.commitment_digest != expected:
-            result.error(
-                "E905",
-                path=ots_path,
-                reason=(
-                    f"commitment_digest {parsed.commitment_digest.hex()} "
-                    f"does not match manifest digest {companion_digest}"
-                ),
-            )
-            continue
-
-        if parsed.block_height is None:
-            result.warning("W902", path=ots_path)
+def _content_paths(manifest: JsonObject) -> dict[str, str]:
+    """{digest: first content path} from the manifest."""
+    out: dict[str, str] = {}
+    for digest, plist in manifest.items():
+        if isinstance(plist, list) and plist and isinstance(plist[0], str):
+            out[digest] = plist[0]
+    return out

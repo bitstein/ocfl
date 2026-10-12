@@ -217,6 +217,7 @@ def _verify_ots_walk(
 
     for vkey in versions:
         ots_rel = f"inventory.json.{vkey}.ots"
+        proof = f"extensions/{_OTS_EXT_NAME}/{ots_rel}"
         ots_path_full = _join(ext_root, ots_rel)
         vinv_path = _join(obj_path, vkey, "inventory.json")
         try:
@@ -242,7 +243,7 @@ def _verify_ots_walk(
             OtsParseError,
         ) as exc:
             _emit_ots_result(emit_progress, vkey, ots_rel, f"failed ({exc})")
-            add("E906", Severity.ERROR, path=ots_rel, reason=str(exc))
+            add("E906", Severity.ERROR, proof=proof, reason=str(exc))
             continue
 
         match outcome:
@@ -261,7 +262,7 @@ def _verify_ots_walk(
                 add(
                     "W903",
                     Severity.WARNING,
-                    path=ots_rel,
+                    proof=proof,
                     reason=PendingReason.PENDING_ATTESTATION.value,
                 )
                 continue
@@ -269,7 +270,7 @@ def _verify_ots_walk(
                 _emit_ots_result(
                     emit_progress, vkey, ots_rel, f"pending ({reason.value})"
                 )
-                add("W903", Severity.WARNING, path=ots_rel, reason=reason.value)
+                add("W903", Severity.WARNING, proof=proof, reason=reason.value)
     return findings
 
 
@@ -394,9 +395,7 @@ def _output_result(
             {
                 "valid": report.is_valid,
                 "errors": [{"code": e.code, "message": message(e)} for e in errors],
-                "warnings": [
-                    {"code": w.code, "message": message(w)} for w in warnings
-                ],
+                "warnings": [{"code": w.code, "message": message(w)} for w in warnings],
                 "info": [{"code": i.code, "message": message(i)} for i in infos],
             }
         )

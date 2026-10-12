@@ -162,20 +162,20 @@ def test_companion_file_missing_for_content(tmp_path: Path) -> None:
     assert r.has_code("E902"), f"expected E902, got errors={[e.code for e in r.errors]}"
 
 
-def test_stray_ots_ots_file_rejected(tmp_path: Path) -> None:
-    """`<file>.ots.ots` companion-of-companion → E903."""
+def test_proof_of_a_proof_is_allowed(tmp_path: Path) -> None:
+    """`P.ots.ots` is the content proof of `P.ots`; E903 is gone."""
     file_data = b"hello world"
     file_sha256 = hashlib.sha256(file_data).digest()
     inner_ots = build_attestation(file_sha256, block_height=800_000)
     inner_sha256 = hashlib.sha256(inner_ots).digest()
-    stray_ots = build_attestation(inner_sha256, block_height=800_000)
+    outer_ots = build_attestation(inner_sha256, block_height=800_000)
     _build_ots_object(
         tmp_path,
         files={"file.txt": file_data},
-        extra_content_files={"file.txt.ots.ots": stray_ots},
+        extra_content_files={"file.txt.ots.ots": outer_ots},
     )
     r = _validate(tmp_path)
-    assert r.has_code("E903"), f"expected E903, got errors={[e.code for e in r.errors]}"
+    assert r.is_valid, [e.code for e in r.errors]
 
 
 def test_inventory_version_ots_missing(tmp_path: Path) -> None:
@@ -216,20 +216,15 @@ def test_inventory_ots_match_no_error(tmp_path: Path) -> None:
     )
 
 
-def test_pending_inventory_ots_does_not_warn(tmp_path: Path) -> None:
-    """Pending inventory `.ots` is structurally valid and does not emit W902."""
+def test_pending_inventory_ots_warns_w902(tmp_path: Path) -> None:
+    """A pending inventory proof is a warning (W902), not an error."""
     _build_ots_object(tmp_path, pending_inventory_ots=True)
 
     r = _validate(tmp_path)
 
-    assert not r.has_code("W902"), (
-        f"unexpected W902, warnings={[w.code for w in r.warnings]}"
-    )
+    assert r.has_code("W902"), [w.code for w in r.warnings]
     pending_errors = [e for e in r.errors if e.code in _OTS_ERROR_CODES]
-    assert not pending_errors, (
-        "pending inventory proof must not error, "
-        f"got {[e.code for e in pending_errors]}"
-    )
+    assert not pending_errors, [e.code for e in pending_errors]
 
 
 def test_embedded_digest_mismatch(tmp_path: Path) -> None:
@@ -267,25 +262,35 @@ def test_embedded_digest_match_no_error(tmp_path: Path) -> None:
     )
 
 
-_OTS_ERROR_CODES = frozenset({"E901", "E902", "E903", "E904", "E905"})
+_OTS_ERROR_CODES = frozenset(
+    {"E901", "E902", "E904", "E905", "E906", "E907", "E908", "E909"}
+)
 
 
-def test_pending_attestation_warns_not_error(tmp_path: Path) -> None:
-    """Companion with only PendingAttestation → W902 warn, not error."""
+def test_pending_content_proof_is_e907(tmp_path: Path) -> None:
+    """A content proof with only a PendingAttestation is an error (E907)."""
     _build_ots_object(tmp_path, pending_companions={"file.txt"})
     r = _validate(tmp_path)
-    assert r.has_code("W902"), (
-        f"expected W902 warning, got warnings={[w.code for w in r.warnings]}"
-    )
-    pending_errors = [e for e in r.errors if e.code in _OTS_ERROR_CODES]
-    assert not pending_errors, (
-        f"pending attestation must not error, got {[e.code for e in pending_errors]}"
-    )
+    assert r.has_code("E907"), [e.code for e in r.errors]
+    assert not r.has_code("W902")
 
 
 @pytest.mark.parametrize(
     "code",
-    ["E901", "E902", "E903", "E904", "E905", "W902"],
+    [
+        "E901",
+        "E902",
+        "E904",
+        "E905",
+        "E906",
+        "E907",
+        "E908",
+        "E909",
+        "W902",
+        "W903",
+        "W904",
+        "W905",
+    ],
 )
 def test_ots_codes_registered(code: str) -> None:
     """Codes used by the extension must be registered in validation-errors.json."""

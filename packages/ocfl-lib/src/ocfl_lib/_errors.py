@@ -330,3 +330,10 @@ class OtsParseError(OcflError):
 
     code = "ots_parse"
     error_class = ErrorClass.INVALID
+
+
+class OtsConfigError(OcflError, ValueError):
+    """The OTS extension's `config.json` is missing or invalid (E908)."""
+
+    code = "ots_config"
+    error_class = ErrorClass.INVALID

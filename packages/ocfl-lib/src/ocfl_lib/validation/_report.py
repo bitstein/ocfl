@@ -50,9 +50,16 @@ class Finding:
         )
 
     def render(self) -> str:
-        """Human-readable message from the code's description template."""
-        description = get_code(self.code).description
-        return description.format(**self.detail) if self.detail else description
+        """Human-readable message from the code's description template.
+
+        Detail the template does not use (such as a `reason`) follows it.
+        """
+        code = get_code(self.code)
+        if not self.detail:
+            return code.description
+        text = code.description.format(**self.detail)
+        extra = [f"{k}: {v}" for k, v in self.detail.items() if k not in code.params]
+        return f"{text} ({'; '.join(extra)})" if extra else text
 
 
 @dataclass(frozen=True, slots=True)

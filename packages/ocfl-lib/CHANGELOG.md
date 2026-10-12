@@ -25,6 +25,14 @@ No release is published yet, so every entry below is unreleased and may still ch
 - A commit checks every content file against its manifest digest while copying it (a server-side copy is read back). A mismatch raises `ContentDigestMismatch` and the commit is undone before anything is published.
 - `ocfl_lib.fs` adds the `ClaimFS` (`rename_noreplace`, `lock`, `remove_empty_dir`) and `ConditionalFS` (`read_tagged`, `write_new`, `write_if_match`, `check_conditional_writes`) protocols. `LocalFS` implements `ClaimFS`; `S3FS` implements `ConditionalFS`.
 
+### OTS extension (ADR-0002)
+
+- Validation follows the revised `docs/ext/NNNN-ots-timestamps.md`. The extension is in use when its directory exists; a missing or invalid `config.json` is E908, and an unknown property is W904. `timestampContent`, `timestampInventory` and `timestampFrom` are honored: only covered versions are checked, a covered version needs `vN/inventory.json` (E909), and an inventory proof before `timestampFrom` is W905. Every inventory must use sha256 (E901).
+- Content proofs: a standalone `x.ots` is ordinary content and needs `x.ots.ots` (E902). A content proof that does not parse, does not use a sha256 file hash or commits to another digest is E905; a pending one is E907 (was W902). E903 is removed.
+- Inventory proofs: one that commits to the wrong digest is E905, also when `timestampInventory` is false; a pending one is W902.
+- The E9xx/W9xx codes are generated from the spec's code table (`packages/ocfl-lib/scripts/gen_ots_codes.py`). Their detail keys are `version`, `path` and `proof`. `Finding.render` appends detail the template does not use, such as `reason`.
+- `ocfl_lib.ots` adds `EXTENSION_NAME`, `OtsConfig` (`from_json`, `to_json`), `split_state` and `ParsedOts.file_hash` / `is_final`. New error: `OtsConfigError`.
+
 ### Changed
 
 - Errors: every lib error subclasses `OcflError` and carries `error_class` (`ErrorClass`) and a stable snake_case `code`. Errors that replace a builtin raise keep that base (`ValueError`, `KeyError`). New: `ContentNotFound`, `LogicalPathNotFound`, `UnknownLayout`, `RootExistsError`, `UnknownInventoryType`, `InvalidVersionNumber`, `UnknownDigestAlgorithm`, `DigestAlgorithmMismatch`, `InvalidPath`, `PathCollision`, `InvalidLayoutConfig`, `InventoryBuildError`, `PlanMismatchError`.

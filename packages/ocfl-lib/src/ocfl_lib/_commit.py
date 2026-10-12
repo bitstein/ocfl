@@ -38,7 +38,7 @@ from ocfl_lib._path import join_path
 from ocfl_lib._spec import INVENTORY_FILENAME, Namaste, Spec
 from ocfl_lib.fs import _utils as fs_utils
 from ocfl_lib.fs._protocols import ClaimFS, ConditionalFS, CopyFS
-from ocfl_lib.validation._extension_ots import EXTENSION_NAME as OTS_EXTENSION
+from ocfl_lib.ots import EXTENSION_NAME as OTS_EXTENSION
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

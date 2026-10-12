@@ -599,12 +599,14 @@ class TestVerifyPendingW903:
 
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
 
-        assert r.exit_code == 0, r.output
+        # The extension requires vN/inventory.json (E909); OCFL only warns (W010).
+        assert r.exit_code == 1, r.output
         data = json.loads(r.stdout)
-        assert data["valid"] is True
+        assert data["valid"] is False
         error_codes = {e["code"] for e in data["errors"]}
         warning_codes = {w["code"] for w in data["warnings"]}
         assert "W010" in warning_codes
+        assert "E909" in error_codes
         assert "E906" not in error_codes
         assert "W903" not in warning_codes
 

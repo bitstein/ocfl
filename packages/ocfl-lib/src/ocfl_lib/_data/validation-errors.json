@@ -917,54 +917,70 @@
   },
   "E901": {
     "params": [],
-    "description": "OCFL Object NNNN-ots-timestamps extension is incompatible with the SHA-512 digest algorithm"
+    "description": "proofDigestAlgorithm is not sha256, or an inventory of the object uses another digestAlgorithm."
   },
   "E902": {
     "params": [
-      "where",
+      "version",
       "path"
     ],
-    "description": "OCFL Object {where} logical path {path} has no companion '.ots' file in state"
-  },
-  "E903": {
-    "params": [
-      "where",
-      "path"
-    ],
-    "description": "OCFL Object {where} contains stray '.ots.ots' file: {path}"
+    "description": "Version {version}, ordinary path {path}: no content proof {path}.ots in the state."
   },
   "E904": {
     "params": [
-      "where",
-      "path"
+      "version"
     ],
-    "description": "OCFL Object NNNN-ots-timestamps extension missing {path} for version {where}"
+    "description": "Version {version}: the inventory proof inventory.json.{version}.ots is missing."
   },
   "E905": {
     "params": [
-      "path",
-      "reason"
+      "proof"
     ],
-    "description": "OCFL Object '.ots' file {path} failed embedded-digest check: {reason}"
-  },
-  "W902": {
-    "params": [
-      "path"
-    ],
-    "description": "OCFL Object '.ots' file {path} has only pending attestations (not anchored to Bitcoin)"
+    "description": "Proof {proof} does not parse, uses the wrong file-hash operation, or commits to the wrong digest."
   },
   "E906": {
     "params": [
-      "path",
-      "reason"
+      "proof"
     ],
-    "description": "OCFL Object '.ots' file {path} failed Bitcoin attestation walk: {reason}"
+    "description": "Proof {proof}: an attestation at a block with at least N confirmations does not match the block's merkle root."
+  },
+  "E907": {
+    "params": [
+      "version",
+      "path"
+    ],
+    "description": "Version {version}: the content proof {path}.ots is pending."
+  },
+  "E908": {
+    "params": [],
+    "description": "The extension directory has no config.json, or config.json is not a JSON object, has the wrong extensionName, has a parameter of the wrong type, or timestampFrom does not name a version of the object."
+  },
+  "E909": {
+    "params": [
+      "version"
+    ],
+    "description": "Version {version} has no {version}/inventory.json."
+  },
+  "W902": {
+    "params": [
+      "version"
+    ],
+    "description": "Version {version}: the inventory proof is pending."
   },
   "W903": {
     "params": [
-      "path",
-      "reason"
+      "proof"
     ],
-    "description": "OCFL Object '.ots' file {path} not yet anchored at required confirmation depth: {reason}"
+    "description": "Proof {proof}: every Bitcoin attestation is shallow."
+  },
+  "W904": {
+    "params": [],
+    "description": "config.json has a property that this extension does not define."
+  },
+  "W905": {
+    "params": [
+      "version"
+    ],
+    "description": "An inventory proof exists for version {version}, which is before timestampFrom."
   }
 }

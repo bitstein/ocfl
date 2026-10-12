@@ -788,3 +788,47 @@ class TestCrashTests:
         assert len(crash_machines) >= 2, machines
         text = (REPO / "packages/ocfl-lib/tests/test_commit_stateful.py").read_text()
         assert "mock_aws" in text and "LocalFS(" in text and "fail_at(" in text
+
+
+# --- phase 4 (docs/roadmap.md §4, ADR-0002)
+
+OTS_SPEC = REPO / "docs/ext/NNNN-ots-timestamps.md"
+
+
+# --- 4.1 the revised extension spec
+
+
+class TestOtsExtensionSpec:
+    def test_codes_generated_from_the_spec(self):
+        import subprocess
+        import sys
+
+        script = REPO / "packages/ocfl-lib/scripts/gen_ots_codes.py"
+        proc = subprocess.run(
+            [sys.executable, str(script), "--check"], capture_output=True, text=True
+        )
+        assert proc.returncode == 0, proc.stderr
+
+    def test_every_spec_code_registered_and_no_other(self):
+        from ocfl_lib.validation import get_code
+
+        table = set(re.findall(r"^\| ([EW]9\d\d) \|", OTS_SPEC.read_text(), re.M))
+        data = json.loads((LIB_SRC / "_data/validation-errors.json").read_text())
+        assert {c for c in data if re.fullmatch(r"[EW]9\d\d", c)} == table
+        for code in table:
+            get_code(code)
+        with pytest.raises(KeyError):
+            get_code("E903")
+
+    def test_activation_is_the_extension_directory(self):
+        """Deleting config.json must not switch the checks off (E908)."""
+        text = (LIB_SRC / "validation/_extension_ots.py").read_text()
+        assert '"E908"' in text
+        assert "if not fsys.exists(ext_dir):" in text
+        assert 'fsys.exists(join_path(ext_dir, "config.json"))' not in text
+
+    def test_extra_detail_still_renders(self):
+        from ocfl_lib.validation import Finding, Severity
+
+        f = Finding("E905", Severity.ERROR, None, "", {"proof": "x", "reason": "r"})
+        assert f.render().endswith("(reason: r)")
