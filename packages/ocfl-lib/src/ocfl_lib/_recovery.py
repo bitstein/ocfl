@@ -67,6 +67,11 @@ class CommitState(enum.Enum):
     """`vN` is published; only the plan is left."""
     STRAY = "stray"
     """`vN` is claimed and there is no plan: its writer is gone."""
+    UNREADABLE_PLAN = "unreadable_plan"
+    """`plan.json` exists but cannot be read, or is for another object.
+
+    Resume or revert discards it; the object is then read on its own.
+    """
 
 
 class RecoveryAction(enum.Enum):
@@ -110,9 +115,14 @@ def detect(
     """Name the partial state of the object's last commit. Reads only."""
     wd = work_dir(root_path, object_id)
     plan_raw = read_or_none(fsys, join_path(wd, "plan.json"))
-    plan = CommitPlan.from_json(plan_raw) if plan_raw is not None else None
-    if plan is not None and plan.object_id != object_id:
-        raise PlanMismatchError(f"{wd}/plan.json is for {plan.object_id!r}")
+    plan = None
+    if plan_raw is not None:
+        try:
+            plan = CommitPlan.from_json(plan_raw)
+        except PlanMismatchError:
+            return CommitStatus(CommitState.UNREADABLE_PLAN), None
+        if plan.object_id != object_id:
+            return CommitStatus(CommitState.UNREADABLE_PLAN), None
     root_raw = read_or_none(fsys, join_path(obj_path, INVENTORY_FILENAME))
 
     if plan is not None:
@@ -297,6 +307,13 @@ def _finish_sidecar(ctx: _Ctx) -> None:
         )
 
 
+def _drop_plan(ctx: _Ctx) -> None:
+    """Discard a plan that cannot be read; the object is read on its own next."""
+    remove_if_exists(
+        ctx.fsys, join_path(work_dir(ctx.root_path, ctx.object_id), "plan.json")
+    )
+
+
 def _finish(ctx: _Ctx) -> None:
     finish(ctx.target)
 
@@ -364,6 +381,7 @@ type _Table = dict[CommitState, dict[RecoveryAction, Callable[[_Ctx], None]]]
 _R, _V, _S = RecoveryAction.RESUME, RecoveryAction.REVERT, RecoveryAction.REMOVE_STRAY
 _NOT_STRAY = _refuse("nothing to remove; there is no stray claim")
 _NO_PLAN = _refuse("no plan to resume or revert; use remove-stray")
+_DROP_FIRST = _refuse("discard the unreadable plan first with resume or revert")
 
 _LOCAL: _Table = {
     CommitState.CLEAN: {_R: _nothing, _V: _nothing, _S: _NOT_STRAY},
@@ -380,6 +398,7 @@ _LOCAL: _Table = {
     },
     CommitState.PUBLISHED: {_R: _finish, _V: _published, _S: _NOT_STRAY},
     CommitState.STRAY: {_R: _NO_PLAN, _V: _NO_PLAN, _S: _remove_stray_local},
+    CommitState.UNREADABLE_PLAN: {_R: _drop_plan, _V: _drop_plan, _S: _DROP_FIRST},
 }
 """Local: a claim moves a complete `vN/` (or a whole new object), so a claimed
 version never lacks content and a new object is published by its claim."""
@@ -399,6 +418,7 @@ _S3: _Table = {
     },
     CommitState.PUBLISHED: {_R: _finish, _V: _published, _S: _NOT_STRAY},
     CommitState.STRAY: {_R: _NO_PLAN, _V: _NO_PLAN, _S: _remove_stray_s3},
+    CommitState.UNREADABLE_PLAN: {_R: _drop_plan, _V: _drop_plan, _S: _DROP_FIRST},
 }
 """S3: the claim is the one key `vN/inventory.json`; content, the version
 sidecar and the proof follow it, so resuming a claim may need the content

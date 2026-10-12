@@ -292,6 +292,51 @@ class TestStates:
         assert sorted(r.path for r in fs.walk_files("")) == snapshot
 
 
+class TestUnreadablePlan:
+    def _corrupt(self, fs, body: bytes) -> None:
+        from ocfl_lib._commit import work_dir
+
+        fs.write(f"{work_dir('', OID)}/plan.json", BytesIO(body))
+
+    @pytest.mark.parametrize("body", [b"{not json", b'{"planFormat": 99}'])
+    def test_blocks_commit_and_purge_until_discarded(self, backend, tmp_path, body):
+        _kind, fs, _die = backend
+        root, plan, content = _setup(fs, tmp_path)
+        self._corrupt(fs, body)
+        assert root.commit_status(OID).state is CommitState.UNREADABLE_PLAN
+        with pytest.raises(RecoveryRequiredError):
+            root.commit(fs, OID, plan, content=content)
+        with pytest.raises(RecoveryRequiredError):
+            root.purge(fs, OID)
+        with pytest.raises(RecoveryActionError):
+            root.recover(fs, OID, S, version="v2")
+        st = root.recover(fs, OID, V)
+        assert st.state is CommitState.UNREADABLE_PLAN
+        _clean(fs, root)
+        root.commit(fs, OID, plan, content=content)
+        assert _head(root) == "v2"
+
+    def test_plan_for_another_object(self, backend, tmp_path):
+        _kind, fs, _die = backend
+        root, _plan, _content = _setup(fs, tmp_path)
+        other = root.plan("ark:/1/other", _stage(tmp_path, "o", {"z": b"z"}))
+        self._corrupt(fs, other.to_json())
+        assert root.commit_status(OID).state is CommitState.UNREADABLE_PLAN
+        root.recover(fs, OID, R)
+        _clean(fs, root)
+
+    def test_stray_claim_shows_after_discard(self, backend, tmp_path):
+        _kind, fs, die = backend
+        root, _plan, _content, _obj = _claimed(fs, die, tmp_path)
+        self._corrupt(fs, b"garbage")
+        root.recover(fs, OID, V)
+        st = root.commit_status(OID)
+        assert (st.state, st.version) == (CommitState.STRAY, "v2")
+        root.recover(fs, OID, S, version="v2")
+        assert _head(root) == "v1"
+        _clean(fs, root)
+
+
 def test_key_is_sha256_of_object_id():
     from ocfl_lib._commit import work_dir
 

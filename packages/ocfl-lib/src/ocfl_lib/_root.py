@@ -252,7 +252,9 @@ class StorageRoot:
         RESUME finishes a claimed version (an unclaimed one is discarded;
         nothing of it is in the object). REVERT undoes a version that is not
         published yet, else raises RevertCompletedError. REMOVE_STRAY removes
-        the stray claim `version` and its inventory proof. Every action also
+        the stray claim `version` and its inventory proof. RESUME or REVERT
+        discards an unreadable plan.json (state UNREADABLE_PLAN); check the
+        status again afterwards. Every action also
         removes empty work dirs and empty layout parents (E073). On S3,
         resuming a claim whose content is incomplete needs `content`.
         """

@@ -45,6 +45,8 @@ validator reports the directory as an unregistered extension (W016).
 The plan is written before anything else and removed after the root
 sidecar is written. A `plan.json` with no live writer means a commit died;
 the object must be recovered before it takes another commit or is purged.
+A `plan.json` that cannot be read, or that names another object, is
+discarded by recovery; the object is then recovered from what it holds.
 
 ## Parameters
 

@@ -35,7 +35,10 @@ def purge(fsys: WriteFS, root_path: str, obj_path: str, object_id: str) -> None:
         if isinstance(fsys, ClaimFS):
             stack.enter_context(object_lock(fsys, wd, timeout=0))
         status, plan = detect(fsys, root_path, obj_path, object_id)
-        if plan is not None or status.state is CommitState.STRAY:
+        if plan is not None or status.state in (
+            CommitState.STRAY,
+            CommitState.UNREADABLE_PLAN,
+        ):
             raise RecoveryRequiredError(
                 f"{object_id} has an unfinished commit or stray claim "
                 f"({status.state.value} {status.version}); run recover first"
