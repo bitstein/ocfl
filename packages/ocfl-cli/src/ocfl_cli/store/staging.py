@@ -28,6 +28,11 @@ class StagingStore:
     def __init__(self, root: Path) -> None:
         self._root = root
 
+    @property
+    def root(self) -> Path:
+        """The staging root holding every object's Staging Area and batches/."""
+        return self._root
+
     def staging_path(self, root_path: str, object_id: str) -> Path:
         """Deterministic staging directory for a (root, object) pair."""
         key = f"{root_path}\0{object_id}".encode()

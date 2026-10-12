@@ -13,11 +13,11 @@ from ocfl_cli.errors import AttestationMismatchError, PhaseError
 from ocfl_cli.main import app
 from ocfl_cli.model import batch as batch_model
 from ocfl_cli.model.batch import BatchFile, BatchObject
-from ocfl_cli.stage import batch as stage_batch
 from ocfl_cli.store import batch as batch_state
 from ocfl_cli.store.batch import save_batch
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow import commit as wf_commit
+from ocfl_cli.workflow.batch import report as batch_report
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 
 
@@ -82,8 +82,8 @@ def _events(output: str) -> list[dict]:
 
 
 def test_commit_batch_output_helpers_have_typed_contracts() -> None:
-    object_event_hints = get_type_hints(stage_batch._commit_object_event)
-    summary_hints = get_type_hints(stage_batch._commit_summary_event)
+    object_event_hints = get_type_hints(batch_report.commit_object_event)
+    summary_hints = get_type_hints(batch_report.commit_summary_event)
     summary_contract = get_type_hints(summary_hints["return"])
 
     assert is_typeddict(object_event_hints["return"])

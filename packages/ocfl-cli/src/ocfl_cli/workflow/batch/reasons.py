@@ -1,0 +1,120 @@
+"""Batch row reasons: the fixed reason codes and the next command to run."""
+
+from typing import TYPE_CHECKING, Literal
+
+from ocfl_cli import errors as errors
+
+if TYPE_CHECKING:
+    from ocfl_cli.model import batch as batch_model
+
+
+BATCH_MISSING_NEXT = "Operate per-object via stage timestamp content/inventory"
+
+
+type FixedBatchReason = Literal[
+    "attestation_mismatch",
+    "batch_file_missing",
+    "committed",
+    "content_not_upgraded",
+    "lock_contended",
+    "missing_metadata",
+    "missing_record_ids",
+    "no_new_digests",
+    "noop",
+    "regressed",
+    "reorg_deeper_than_min_conf",
+    "results_expired",
+    "sp_partial_results",
+    "submit_pending",
+    "transient_rpc_error",
+    "transient_sp_error",
+    "verify_job_failed",
+]
+
+
+type PrefixedBatchReason = Literal["category_mismatch", "in_batch"]
+
+
+FIXED_BATCH_REASONS: tuple[FixedBatchReason, ...] = (
+    "attestation_mismatch",
+    "batch_file_missing",
+    "committed",
+    "content_not_upgraded",
+    "lock_contended",
+    "missing_metadata",
+    "missing_record_ids",
+    "no_new_digests",
+    "noop",
+    "regressed",
+    "reorg_deeper_than_min_conf",
+    "results_expired",
+    "sp_partial_results",
+    "submit_pending",
+    "transient_rpc_error",
+    "transient_sp_error",
+    "verify_job_failed",
+)
+
+
+def fixed_batch_reason(reason: FixedBatchReason) -> FixedBatchReason:
+    return reason
+
+
+def in_batch_reason(batch_id: str) -> str:
+    return f"in_batch={batch_id}"
+
+
+def category_mismatch_reason(category_id: int) -> str:
+    return f"category_mismatch={category_id}"
+
+
+def split_prefixed_batch_reason(reason: str) -> tuple[PrefixedBatchReason, str] | None:
+    match reason.split("=", maxsplit=1):
+        case ["in_batch", batch_id]:
+            return "in_batch", batch_id
+        case ["category_mismatch", category_id]:
+            return "category_mismatch", category_id
+        case _:
+            return None
+
+
+def reason_next(reason: str | None, *, batch: batch_model.BatchFile) -> str | None:
+    if reason is None:
+        return None
+    match split_prefixed_batch_reason(reason):
+        case ("in_batch", batch_id):
+            return f"stage timestamp batch status {batch_id}"
+        case ("category_mismatch", _category_id):
+            return (
+                "Start a separate batch for that category or reset/recreate the "
+                "staging session"
+            )
+        case None:
+            pass
+    match reason:
+        case "regressed":
+            return "stage status OBJECT; reset or restart timestamp flow"
+        case "missing_record_ids" | "transient_sp_error" | "submit_pending":
+            return (
+                f"stage timestamp batch {batch.target} --batch {batch.batch_id} --retry"
+            )
+        case "lock_contended":
+            return f"Re-run --batch {batch.batch_id} after the other process exits"
+        case "committed" | "no_new_digests" | "noop":
+            return "None"
+        case "content_not_upgraded":
+            return "Upgrade content first"
+        case "missing_metadata":
+            return "Add staged metadata or rerun with --allow-missing-metadata"
+        case "sp_partial_results":
+            return "Re-run --upgrade later"
+        case "results_expired" | "verify_job_failed" | "transient_rpc_error":
+            return "Re-run --upgrade"
+        case "reorg_deeper_than_min_conf":
+            return "Retry after node catches up or investigate chain state"
+        case "attestation_mismatch":
+            return "Operator inspection required"
+        case "batch_file_missing":
+            return BATCH_MISSING_NEXT
+        case _:
+            return "Inspect batch status"

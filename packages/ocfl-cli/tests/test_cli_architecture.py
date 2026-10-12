@@ -152,6 +152,44 @@ class TestLayers:
             assert (CLI_SRC / "workflow" / f"{mod}.py").is_file(), mod
 
 
+# --- 5.2 the batch engine lives in the use cases
+
+
+class TestBatchEngine:
+    def test_engine_is_a_use_case_package(self):
+        engine = {p.stem for p in _py_files(CLI_SRC / "workflow/batch")}
+        assert {"drive", "prepare", "submit", "retry", "upgrade", "watch"} <= engine
+
+    def test_commands_hold_no_engine(self):
+        """Batch commands parse options and render events; nothing else."""
+        bad = []
+        for p in _py_files(CLI_SRC / "stage"):
+            text = p.read_text()
+            for needle in (
+                "save_batch(",
+                "load_batch(",
+                "with_batch_lock(",
+                "with_driver_lease(",
+                "with_lock(",
+                "submit_hashes(",
+                "verify_batch(",
+            ):
+                if needle in text:
+                    bad.append(f"{_rel(p)} {needle}")
+        assert not bad, bad
+
+    def test_no_contract_lists_exemptions(self):
+        assert not [c["name"] for c in _contracts() if c.get("ignore_imports")]
+
+    def test_no_module_over_1000_lines(self):
+        big = {
+            _rel(p): n
+            for p in _py_files(CLI_SRC)
+            if (n := len(p.read_text().splitlines())) > 1000
+        }
+        assert not big, big
+
+
 # --- 5.4 one error handler: ErrorClass -> ExitCode, JSON errors on stderr
 
 

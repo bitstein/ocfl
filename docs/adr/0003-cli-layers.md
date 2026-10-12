@@ -10,7 +10,7 @@ ADR-0002 put workflows in `ocfl-cli` and asked for layers inside it. Before this
 |---|---|---|
 | composition root | `ocfl_cli.main` | the Typer app; wires the production adapters into `AppCtx` |
 | commands | `ocfl_cli.archive`, `ocfl_cli.stage`, `_appctx`, `_common`, `_exit`, `_style`, `exit_codes` | option parsing, rendering, the one error handler |
-| use cases | `ocfl_cli.workflow` | the Staging Area workflows: `staging`, `status`, `content`, `inventory`, `commit`, `watch`, `validation` and shared helpers (`common`) |
+| use cases | `ocfl_cli.workflow` | the Staging Area workflows: `staging`, `status`, `content`, `inventory`, `commit`, `watch`, `validation`, the batch engine (`batch`) and shared helpers (`common`) |
 | adapters | `ocfl_cli.ots`, `ocfl_cli.store` | SimpleProof HTTP, Bitcoin RPC/ZMQ (`ots`); staging files, `ots.json`, batch files, locks (`store`) |
 | base | `ocfl_cli.model`, `ocfl_cli.ports`, `ocfl_cli.config`, `ocfl_cli.errors` | value types, the Protocols the use cases need, configuration, errors |
 
@@ -30,4 +30,4 @@ Rules, enforced by import-linter (`[tool.importlinter]` in the root `pyproject.t
 ## Consequences
 
 - Moving a function across a layer is a contract change that import-linter reports.
-- Until the batch engine moves into the use cases (roadmap §5 item 2), `ocfl_cli.stage.batch` is the one listed exemption from the commands-to-adapters rule.
+- No contract lists exemptions (`ignore_imports`).

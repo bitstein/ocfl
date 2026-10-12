@@ -48,6 +48,12 @@ from ocfl_cli.store.batch import batch_file_path, new_batch_id, save_batch
 from ocfl_cli.store.ots_state import load_ots, ots_cache_path, save_ots
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow import content as wf_content
+from ocfl_cli.workflow.batch import prepare as batch_prepare
+from ocfl_cli.workflow.batch import reasons as batch_reasons
+from ocfl_cli.workflow.batch import report as batch_report
+from ocfl_cli.workflow.batch import submit as batch_submit
+from ocfl_cli.workflow.batch import upgrade as batch_upgrade
+from ocfl_cli.workflow.batch import watch as batch_watch
 from ocfl_lib import (
     BitcoinRpcTransientError,
     LocalFS,
@@ -71,9 +77,9 @@ zmq_endpoint = "tcp://127.0.0.1:28332"
 
 
 def test_batch_output_helpers_have_typed_contracts() -> None:
-    status_hints = get_type_hints(stage_batch._batch_status_dict)
-    object_event_hints = get_type_hints(stage_batch._batch_object_event)
-    digest_rows_hints = get_type_hints(stage_batch._verbose_digest_rows)
+    status_hints = get_type_hints(batch_report.batch_status_dict)
+    object_event_hints = get_type_hints(batch_report.batch_object_event)
+    digest_rows_hints = get_type_hints(batch_report.verbose_digest_rows)
     status_contract = get_type_hints(status_hints["return"])
 
     assert is_typeddict(status_hints["return"])
@@ -85,14 +91,14 @@ def test_batch_output_helpers_have_typed_contracts() -> None:
 
 
 def test_fixed_batch_reasons_are_canonicalized_through_helper() -> None:
-    assert set(stage_batch._FIXED_BATCH_REASONS) == set(
-        get_args(stage_batch.FixedBatchReason.__value__)
+    assert set(batch_reasons.FIXED_BATCH_REASONS) == set(
+        get_args(batch_reasons.FixedBatchReason.__value__)
     )
-    assert "sp_partial_results" in stage_batch._FIXED_BATCH_REASONS
+    assert "sp_partial_results" in batch_reasons.FIXED_BATCH_REASONS
     assert [
-        stage_batch._fixed_batch_reason(reason)
-        for reason in stage_batch._FIXED_BATCH_REASONS
-    ] == list(stage_batch._FIXED_BATCH_REASONS)
+        batch_reasons.fixed_batch_reason(reason)
+        for reason in batch_reasons.FIXED_BATCH_REASONS
+    ] == list(batch_reasons.FIXED_BATCH_REASONS)
 
 
 @pytest.mark.parametrize("status", ["PENDING", "PROCESSING"])
@@ -124,8 +130,8 @@ def test_batch_verify_active_statuses_include_simpleproof_v2_states(
         ),
     )
 
-    assert stage_batch._verify_job_covers(batch, batch.objects[0])
-    assert stage_batch._covered_verify_digests(batch) == {digest}
+    assert batch_report.verify_job_covers(batch, batch.objects[0])
+    assert batch_upgrade.covered_verify_digests(batch) == {digest}
 
 
 def _assert_z_timestamp(value: str) -> None:
@@ -1089,7 +1095,7 @@ def test_batch_content_recovers_object_intent_without_batch_row(
     batch_lock_depth = 0
     events: list[str] = []
     original_batch_lock = batch_state.with_batch_lock
-    original_object_lock = stage_batch.with_lock
+    original_object_lock = batch_prepare.with_lock
 
     def recording_batch_lock(*args, **kwargs):
         manager = original_batch_lock(*args, **kwargs)
@@ -1116,7 +1122,8 @@ def test_batch_content_recovers_object_intent_without_batch_row(
         return original_object_lock(*args, **kwargs)
 
     monkeypatch.setattr(batch_state, "with_batch_lock", recording_batch_lock)
-    monkeypatch.setattr(stage_batch, "with_lock", recording_object_lock)
+    monkeypatch.setattr(batch_prepare, "with_lock", recording_object_lock)
+    monkeypatch.setattr(batch_submit, "with_lock", recording_object_lock)
 
     result = runner.invoke(
         app,
@@ -3061,7 +3068,7 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
         calls.append(kwargs["expected_digest"].hex())
         raise AttestationMismatchError("stale proof")
 
-    monkeypatch.setattr(stage_batch, "verify_attestation", mismatch_once, raising=True)
+    monkeypatch.setattr(batch_watch, "verify_attestation", mismatch_once, raising=True)
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3168,7 +3175,7 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
         calls.append(kwargs["expected_digest"].hex())
         raise AttestationMismatchError("stale proof")
 
-    monkeypatch.setattr(stage_batch, "verify_attestation", mismatch_once, raising=True)
+    monkeypatch.setattr(batch_watch, "verify_attestation", mismatch_once, raising=True)
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3303,7 +3310,7 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
         calls.append(kwargs["expected_digest"].hex())
         raise AttestationMismatchError("stale inventory proof")
 
-    monkeypatch.setattr(stage_batch, "verify_attestation", mismatch_once, raising=True)
+    monkeypatch.setattr(batch_watch, "verify_attestation", mismatch_once, raising=True)
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3430,7 +3437,7 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
     def deep_reorg(*args, **kwargs):
         raise ReorgDetectedError("reorg deeper than confirmation depth")
 
-    monkeypatch.setattr(stage_batch, "verify_attestation", deep_reorg, raising=True)
+    monkeypatch.setattr(batch_watch, "verify_attestation", deep_reorg, raising=True)
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3562,7 +3569,7 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
     def deep_reorg(*args, **kwargs):
         raise ReorgDetectedError("reorg deeper than confirmation depth")
 
-    monkeypatch.setattr(stage_batch, "verify_attestation", deep_reorg, raising=True)
+    monkeypatch.setattr(batch_watch, "verify_attestation", deep_reorg, raising=True)
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
