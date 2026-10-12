@@ -645,12 +645,6 @@
     ],
     "description": "OCFL Storage Root hierarchy contains an empty directory: {path}"
   },
-  "E086": {
-    "params": [
-      "entry"
-    ],
-    "description": "OCFL Storage Root extensions directory contains an unexpected non-directory entry: {entry}"
-  },
   "E091": {
     "params": [
       "where",
@@ -797,6 +791,12 @@
     ],
     "description": "OCFL Object {where} inventory includes a fixity key with value that isn't a JSON object"
   },
+  "E112": {
+    "params": [
+      "entry"
+    ],
+    "description": "OCFL Storage Root extensions directory contains an unexpected non-directory entry: {entry}"
+  },
   "W001": {
     "params": [
       "where"
@@ -878,7 +878,7 @@
     ],
     "description": "OCFL Object includes unregistered extension directory '{entry}'"
   },
-  "W901": {
+  "W016": {
     "params": [
       "entry"
     ],

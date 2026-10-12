@@ -119,9 +119,9 @@ def validate_root(
         ext_entries = list(fsys.read_dir(ext_path))
         for entry in ext_entries:
             if not entry.is_dir:
-                result.error("E086", entry=entry.name)
+                result.error("E112", entry=entry.name)
             elif entry.name not in _KNOWN_ROOT_EXTENSIONS:
-                result.warning("W901", entry=entry.name)
+                result.warning("W016", entry=entry.name)
     except OSError:
         pass
 

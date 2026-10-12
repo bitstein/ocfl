@@ -76,7 +76,8 @@ class TestRootExtensions:
         fsys = LocalFS(tmp_path)
         r = ValidationResult()
         validate_root(fsys, "", r, validate_objects=False)
-        assert r.has_code("E086")
+        assert r.has_code("E112")
+        assert not r.has_code("E086")
 
     def test_unregistered_extension_warning(self, tmp_path: Path):
         (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
@@ -86,7 +87,8 @@ class TestRootExtensions:
         fsys = LocalFS(tmp_path)
         r = ValidationResult()
         validate_root(fsys, "", r, validate_objects=False)
-        assert r.has_code("W901")
+        assert r.has_code("W016")
+        assert not r.has_code("W901")
 
 
 class TestE069cUnparseableDecl:

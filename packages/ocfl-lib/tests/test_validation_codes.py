@@ -23,7 +23,7 @@ class TestValidationCode:
             get_code("E999z")
 
     def test_all_codes_have_description(self):
-        for code_str in ("E001a", "E033", "E063", "W001", "W901"):
+        for code_str in ("E001a", "E033", "E063", "W001", "W016"):
             code = get_code(code_str)
             assert code.description
 
