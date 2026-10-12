@@ -700,3 +700,33 @@ class TestRecoveryTables:
         ).read_text()
         for word in ("completed", "journal", "progress.json"):
             assert word not in text, word
+
+
+# --- 3.5 purge follows the ADR-0001 order, refuses live or stray claims
+
+
+class TestPurgeGuards:
+    def _names(self) -> set[str]:
+        names = set()
+        for node in ast.walk(_tree(LIB_SRC / "_purge.py")):
+            if isinstance(node, ast.Name):
+                names.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                names.add(node.attr)
+        return names
+
+    def test_purge_checks_for_live_and_stray_claims(self):
+        names = self._names()
+        assert {"object_lock", "detect", "RecoveryRequiredError"} <= names
+
+    def test_purge_removes_root_inventory_first(self):
+        src = (LIB_SRC / "_purge.py").read_text()
+        body = src[src.index("def _delete_in_order") :]
+        order = [
+            body.index("remove_if_exists(fsys, path(INVENTORY_FILENAME))"),
+            body.index('n.startswith(f"{INVENTORY_FILENAME}.")'),
+            body.index("sorted(versions, reverse=True)"),
+            body.index('("extensions", "logs")'),
+            body.index("for name in namastes"),
+        ]
+        assert order == sorted(order)

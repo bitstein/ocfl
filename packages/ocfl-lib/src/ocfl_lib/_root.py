@@ -10,7 +10,6 @@ from ocfl_lib._errors import (
     LayoutNotConfigured,
     MultipleRootDeclarations,
     NotAnOcflRoot,
-    ObjectNotFound,
     PlanMismatchError,
     RootExistsError,
     SpecVersionError,
@@ -24,6 +23,7 @@ from ocfl_lib._layout.config import (
 )
 from ocfl_lib._object import Object
 from ocfl_lib._path import join_path
+from ocfl_lib._purge import purge
 from ocfl_lib._recovery import CommitStatus, RecoveryAction, detect, recover
 from ocfl_lib._spec import DEFAULT_SPEC, Namaste, Spec
 from ocfl_lib.fs import _utils as fs_utils
@@ -148,35 +148,16 @@ class StorageRoot:
     def purge(self, fsys: WriteFS, object_id: str) -> None:
         """Permanently remove an object from the storage root.
 
-        Resolves ID via layout, verifies object exists, removes object dir,
-        and cleans empty parent directories up the hierarchy.
-
-        NOT atomic. If ``remove_all`` fails partway through (permission
-        error, network failure), the object directory may be left in a
-        partially-deleted state with no automatic recovery. Treat purge
-        failures as requiring manual investigation.
+        Refuses while a commit of the object is live (ObjectLockedError) or
+        unfinished or stray (RecoveryRequiredError). Deletes in the ADR-0001
+        order: root inventory, root sidecar, version dirs highest first,
+        `extensions/` and `logs/`, the NAMASTE, then empty parents. Every
+        partial state is still an object or gone, and a re-run finishes it.
 
         Raises ObjectNotFound if missing, LayoutNotConfigured if no layout.
         """
-        obj = self.get_object(object_id)
-        if not obj.exists:
-            raise ObjectNotFound(object_id)
-
-        obj_path = self.object_path(object_id)
-        full_path = join_path(self._path, obj_path)
-        fsys.remove_all(full_path)
-
-        # Clean empty parent directories up to (but not including) root
-        parts = obj_path.split("/")
-        for i in range(len(parts) - 1, 0, -1):
-            parent = join_path(self._path, "/".join(parts[:i]))
-            try:
-                entries = list(self._fsys.read_dir(parent))
-            except OSError:
-                break
-            if entries:
-                break
-            fsys.remove_all(parent)
+        obj_path = join_path(self._path, self.object_path(object_id))
+        purge(fsys, self._path, obj_path, object_id)
 
     def plan(
         self,

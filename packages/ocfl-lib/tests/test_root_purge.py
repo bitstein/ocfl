@@ -5,7 +5,12 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ocfl_lib._digest import DigestAlgorithm
-from ocfl_lib._errors import LayoutNotConfigured, ObjectNotFound
+from ocfl_lib._errors import (
+    LayoutNotConfigured,
+    ObjectLockedError,
+    ObjectNotFound,
+    RecoveryRequiredError,
+)
 from ocfl_lib._layout import FlatDirectLayout, HashedNTupleLayout
 from ocfl_lib._root import StorageRoot
 from ocfl_lib._version_state import scan_dir
@@ -115,3 +120,116 @@ class TestStorageRootPurge:
 
         with pytest.raises(LayoutNotConfigured, match="no layout"):
             root.purge(fsys, "obj-a")
+
+
+class Died(BaseException):
+    """The purging process died: nothing after this ran."""
+
+
+class _Recorder(LocalFS):
+    """Records deletions; dies at deletion number `die_at` if given."""
+
+    def __init__(self, root: Path, die_at: int | None = None) -> None:
+        super().__init__(root)
+        self.ops: list[str] = []
+        self.die_at = die_at
+
+    def _op(self, name: str) -> None:
+        self.ops.append(name)
+        if self.die_at is not None and len(self.ops) >= self.die_at:
+            raise Died(name)
+
+    def remove(self, name):
+        self._op(name)
+        return super().remove(name)
+
+    def remove_all(self, name):
+        self._op(name)
+        return super().remove_all(name)
+
+    def remove_empty_dir(self, name):
+        self._op(name)
+        return super().remove_empty_dir(name)
+
+
+def _three_versions(tmp_path: Path) -> tuple[LocalFS, StorageRoot, Path, str]:
+    """A 3-version object in the root `tmp_path/root` (sources stay outside)."""
+    d = tmp_path / "root"
+    d.mkdir()
+    fsys = LocalFS(d)
+    root = StorageRoot.init(fsys, fsys, layout=HashedNTupleLayout())
+    for i in range(3):
+        _commit_object(tmp_path, root, fsys, "obj:p", {f"f{i}.txt": str(i)})
+    return fsys, root, d, root.object_path("obj:p")
+
+
+class TestPurgeOrder:
+    def test_adr_0001_order(self, tmp_path: Path):
+        _fsys, root, d, obj = _three_versions(tmp_path)
+        rec = _Recorder(d)
+        root.purge(rec, "obj:p")
+        ops = [op for op in rec.ops if op.split("/")[0] != "extensions"]
+        parents = obj.split("/")
+        assert ops == [
+            f"{obj}/inventory.json",
+            f"{obj}/inventory.json.sha512",
+            f"{obj}/v3",
+            f"{obj}/v2",
+            f"{obj}/v1",
+            f"{obj}/0=ocfl_object_1.1",
+            obj,
+            *("/".join(parents[:i]) for i in range(len(parents) - 1, 0, -1)),
+        ]
+        assert not (d / parents[0]).exists()
+        assert not (d / "extensions" / "NNNN-work-dir").exists()
+
+    def test_every_crash_point_is_object_or_gone(self, tmp_path: Path):
+        from ocfl_lib.validation import validate_root
+
+        probe = tmp_path / "probe"
+        probe.mkdir()
+        fsys, root, d, _obj = _three_versions(probe)
+        rec = _Recorder(d)
+        root.purge(rec, "obj:p")
+        for n in range(1, len(rec.ops) + 1):
+            base = tmp_path / f"p{n}"
+            base.mkdir()
+            fsys, root, d, obj = _three_versions(base)
+            with pytest.raises(Died):
+                root.purge(_Recorder(d, die_at=n), "obj:p")
+            errors = {f.code[:4] for f in validate_root(fsys, "").errors}
+            assert "E072" not in errors
+            if any(p.is_file() for p in (d / obj).rglob("*")):
+                assert root.get_object("obj:p").exists
+            try:
+                root.purge(fsys, "obj:p")
+            except ObjectNotFound:
+                assert not (d / obj.split("/")[0]).exists()
+            report = validate_root(fsys, "")
+            assert report.is_valid
+            assert not [f for f in report.findings if f.code.startswith("W016")]
+
+    def test_refuses_stray_claim(self, tmp_path: Path):
+        fsys, root, d, obj = _three_versions(tmp_path)
+        (d / obj / "v4").mkdir()
+        with pytest.raises(RecoveryRequiredError):
+            root.purge(fsys, "obj:p")
+        assert root.get_object("obj:p").exists
+
+    def test_refuses_live_commit(self, tmp_path: Path):
+        from ocfl_lib._commit import work_dir
+
+        fsys, root, _d, _obj = _three_versions(tmp_path)
+        with (
+            fsys.lock(work_dir("", "obj:p"), timeout=0),
+            pytest.raises(ObjectLockedError),
+        ):
+            root.purge(fsys, "obj:p")
+        assert root.get_object("obj:p").exists
+
+    def test_missing_object_leaves_no_work_dir(self, tmp_path: Path):
+        fsys = LocalFS(tmp_path)
+        root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
+        with pytest.raises(ObjectNotFound):
+            root.purge(fsys, "nope")
+        assert not (tmp_path / "extensions").exists()
