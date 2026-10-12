@@ -1,4 +1,4 @@
-"""Tests for Stage data structure, FixitySource protocol, and stage_dir."""
+"""Tests for VersionState, FixitySource protocol, and scan_dir."""
 
 from typing import TYPE_CHECKING
 
@@ -11,9 +11,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.object import Object
+from ocfl_lib.sources import ContentSource
 from ocfl_lib.spec import VNum
-from ocfl_lib.stage import FixitySource, Stage, stage_dir
-from ocfl_lib.update_plan import ContentSource
+from ocfl_lib.version_state import FixitySource, VersionState, scan_dir
 
 
 class _DummyFS:
@@ -66,7 +66,7 @@ class TestStageConstruction:
     def test_basic_construction(self):
         state = {"digest1": ["file1.txt", "file2.txt"]}
         cs = _DummyContentSource({"digest1": (_DummyFS(), "path/to/file")})
-        stage = Stage(
+        stage = VersionState(
             state=state,
             digest_algorithm=DigestAlgorithm.SHA512,
             content_source=cs,
@@ -80,7 +80,7 @@ class TestStageConstruction:
         state = {"digest1": ["file.txt"]}
         cs = _DummyContentSource({"digest1": (_DummyFS(), "f")})
         fs_src = _DummyFixitySource({"digest1": {DigestAlgorithm.SHA256: "sha256hex"}})
-        stage = Stage(
+        stage = VersionState(
             state=state,
             digest_algorithm=DigestAlgorithm.SHA512,
             content_source=cs,
@@ -93,7 +93,7 @@ class TestStageConstruction:
         assert cs is not None
 
     def test_empty_state(self):
-        stage = Stage(
+        stage = VersionState(
             state={},
             digest_algorithm=DigestAlgorithm.SHA256,
             content_source=_DummyContentSource({}),
@@ -105,7 +105,7 @@ class TestStageConstruction:
             "aaa": ["a.txt"],
             "bbb": ["b.txt", "b_copy.txt"],
         }
-        stage = Stage(
+        stage = VersionState(
             state=state,
             digest_algorithm=DigestAlgorithm.SHA512,
             content_source=_DummyContentSource({}),
@@ -118,7 +118,7 @@ class TestStageDir:
     def test_single_file(self, tmp_path: Path):
         (tmp_path / "hello.txt").write_text("hello world")
         fsys = LocalFS(tmp_path)
-        stage = stage_dir(fsys, "", DigestAlgorithm.SHA512)
+        stage = scan_dir(fsys, "", DigestAlgorithm.SHA512)
 
         assert stage.digest_algorithm is DigestAlgorithm.SHA512
         assert len(stage.state) == 1
@@ -134,7 +134,7 @@ class TestStageDir:
         (sub / "b.txt").write_text("bbb")
 
         fsys = LocalFS(tmp_path)
-        stage = stage_dir(fsys, "", DigestAlgorithm.SHA256)
+        stage = scan_dir(fsys, "", DigestAlgorithm.SHA256)
 
         # Should have 2 digests
         paths = {p for d, ps in stage.state.items() for p in ps}
@@ -146,7 +146,7 @@ class TestStageDir:
         (tmp_path / "copy.txt").write_text("same content")
 
         fsys = LocalFS(tmp_path)
-        stage = stage_dir(fsys, "", DigestAlgorithm.SHA256)
+        stage = scan_dir(fsys, "", DigestAlgorithm.SHA256)
 
         # One digest with two paths
         assert len(stage.state) == 1
@@ -154,11 +154,11 @@ class TestStageDir:
         assert sorted(stage.state[digest]) == ["copy.txt", "orig.txt"]
 
     def test_content_source_resolves(self, tmp_path: Path):
-        """ContentSource from stage_dir can retrieve files."""
+        """ContentSource from scan_dir can retrieve files."""
         (tmp_path / "data.bin").write_bytes(b"\x00\x01\x02")
 
         fsys = LocalFS(tmp_path)
-        stage = stage_dir(fsys, "", DigestAlgorithm.SHA512)
+        stage = scan_dir(fsys, "", DigestAlgorithm.SHA512)
         digest = next(iter(stage.state))
 
         src_fs, src_path = stage.content_source.get_content(digest)
@@ -166,28 +166,28 @@ class TestStageDir:
             assert f.read() == b"\x00\x01\x02"
 
     def test_subdirectory_stage(self, tmp_path: Path):
-        """Stage a subdirectory, not root."""
+        """Scan a subdirectory, not root."""
         sub = tmp_path / "payload"
         sub.mkdir()
         (sub / "file.txt").write_text("payload")
 
         fsys = LocalFS(tmp_path)
-        stage = stage_dir(fsys, "payload", DigestAlgorithm.SHA256)
+        stage = scan_dir(fsys, "payload", DigestAlgorithm.SHA256)
 
         paths = {p for d, ps in stage.state.items() for p in ps}
         assert paths == {"file.txt"}
 
     def test_empty_directory(self, tmp_path: Path):
         fsys = LocalFS(tmp_path)
-        stage = stage_dir(fsys, "", DigestAlgorithm.SHA512)
+        stage = scan_dir(fsys, "", DigestAlgorithm.SHA512)
         assert stage.state == {}
 
     def test_fixity_algorithms(self, tmp_path: Path):
-        """stage_dir with fixity_algs computes additional digests."""
+        """scan_dir with fixity_algs computes additional digests."""
         (tmp_path / "f.txt").write_text("fixity test")
 
         fsys = LocalFS(tmp_path)
-        stage = stage_dir(
+        stage = scan_dir(
             fsys,
             "",
             DigestAlgorithm.SHA512,
@@ -209,7 +209,7 @@ class TestStageDir:
     def test_no_fixity_by_default(self, tmp_path: Path):
         (tmp_path / "f.txt").write_text("no fixity")
         fsys = LocalFS(tmp_path)
-        stage = stage_dir(fsys, "", DigestAlgorithm.SHA512)
+        stage = scan_dir(fsys, "", DigestAlgorithm.SHA512)
         assert stage.fixity_source is None
 
 
@@ -218,11 +218,13 @@ def _make_stage(
     alg: DigestAlgorithm = DigestAlgorithm.SHA512,
     files: dict[str, tuple[FS, str]] | None = None,
     fixity: dict[str, dict[DigestAlgorithm, str]] | None = None,
-) -> Stage:
-    """Helper to build a Stage with dummy sources."""
+) -> VersionState:
+    """Helper to build a VersionState with dummy sources."""
     cs = _DummyContentSource(files or {})
     fs = _DummyFixitySource(fixity) if fixity else None
-    return Stage(state=state, digest_algorithm=alg, content_source=cs, fixity_source=fs)
+    return VersionState(
+        state=state, digest_algorithm=alg, content_source=cs, fixity_source=fs
+    )
 
 
 class TestStageOverlay:
@@ -303,22 +305,22 @@ class TestStageOverlay:
         assert merged.digest_algorithm is DigestAlgorithm.SHA256
 
 
-class TestVersionStage:
+class TestObjectVersionState:
     def test_version_stage_state_matches(self, good_objects_1_1: Path):
         """version_stage state matches version_state."""
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
         v1 = VNum(1)
-        stage = obj.version_stage(v1)
-        assert stage.state == obj.version_state(v1)
+        stage = obj.version_state(v1)
+        assert stage.state == obj.version_info(v1).state
 
     def test_version_stage_algorithm(self, good_objects_1_1: Path):
         """version_stage uses object's digest algorithm."""
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
-        stage = obj.version_stage(VNum(1))
+        stage = obj.version_state(VNum(1))
         assert stage.digest_algorithm is DigestAlgorithm.SHA512
 
     def test_version_stage_content_source(self, good_objects_1_1: Path):
@@ -327,7 +329,7 @@ class TestVersionStage:
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
         v1 = VNum(1)
-        stage = obj.version_stage(v1)
+        stage = obj.version_state(v1)
 
         # Get first digest from state
         digest = next(iter(stage.state))
@@ -342,8 +344,8 @@ class TestVersionStage:
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
-        stage = obj.version_stage(obj.head)
-        assert stage.state == obj.version_state(obj.head)
+        stage = obj.version_state(obj.head)
+        assert stage.state == obj.version_info(obj.head).state
 
     def test_version_stage_invalid_version(self, good_objects_1_1: Path):
         """version_stage raises VersionNotFound for nonexistent version."""
@@ -353,4 +355,4 @@ class TestVersionStage:
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
         with pytest.raises(VersionNotFound):
-            obj.version_stage(VNum(99))
+            obj.version_state(VNum(99))

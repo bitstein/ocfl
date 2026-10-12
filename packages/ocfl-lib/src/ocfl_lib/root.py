@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from ocfl_lib.inventory import UserInfo
     from ocfl_lib.layout.registry import LayoutRegistry
     from ocfl_lib.layout.types import Layout
-    from ocfl_lib.stage import Stage
+    from ocfl_lib.version_state import VersionState
 
 
 class StorageRoot:
@@ -158,7 +158,7 @@ class StorageRoot:
         self,
         fsys: WriteFS,
         id: str,
-        stage: Stage,
+        version_state: VersionState,
         *,
         spec: Spec | None = None,
         message: str | None = None,
@@ -186,7 +186,7 @@ class StorageRoot:
 
         obj.update(
             fsys,
-            stage,
+            version_state,
             id=id,
             spec=obj_spec,
             message=message,

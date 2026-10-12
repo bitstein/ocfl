@@ -19,7 +19,7 @@ from ocfl_lib import (
     LocalFS,
     StorageRoot,
     UserInfo,
-    stage_dir,
+    scan_dir,
 )
 from ocfl_lib.inventory import Inventory, StoredInventory
 from ocfl_lib.layout import FlatDirectLayout
@@ -63,7 +63,7 @@ class FixtureRoot:
         src_dir = self.base / src_name
         write_files(src_dir, files)
 
-        stage = stage_dir(LocalFS(self.base), src_name, algorithm)
+        stage = scan_dir(LocalFS(self.base), src_name, algorithm)
         self.root.commit(
             self.fs,
             object_id,

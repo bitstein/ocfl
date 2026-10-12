@@ -48,12 +48,13 @@ from ocfl_lib.layout import (
 )
 from ocfl_lib.object import Object
 from ocfl_lib.root import StorageRoot
+from ocfl_lib.sources import ContentSource, FixitySource
 from ocfl_lib.spec import Namaste, Spec, VNum
-from ocfl_lib.stage import FixitySource, Stage, stage_dir
-from ocfl_lib.update_plan import ContentSource, UpdatePlan, execute_plan, revert_plan
+from ocfl_lib.update_plan import UpdatePlan, execute_plan, revert_plan
 from ocfl_lib.validation.object import validate_object
 from ocfl_lib.validation.result import ValidationResult
 from ocfl_lib.validation.root import validate_root
+from ocfl_lib.version_state import VersionState, scan_dir
 
 __all__ = [
     "DEFAULT_LAYOUTS",
@@ -101,7 +102,6 @@ __all__ = [
     "RootExistsError",
     "Spec",
     "SpecVersionError",
-    "Stage",
     "StaleHeadError",
     "StorageRoot",
     "StoredInventory",
@@ -114,13 +114,14 @@ __all__ = [
     "ValidationResult",
     "VersionInfo",
     "VersionNotFound",
+    "VersionState",
     "WriteFS",
     "bytes_digest",
     "execute_plan",
     "file_digest",
     "get_layout",
     "revert_plan",
-    "stage_dir",
+    "scan_dir",
     "validate_object",
     "validate_root",
 ]

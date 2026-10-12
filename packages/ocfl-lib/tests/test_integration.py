@@ -21,10 +21,10 @@ from ocfl_lib.layout import (
 )
 from ocfl_lib.root import StorageRoot
 from ocfl_lib.spec import Spec, VNum
-from ocfl_lib.stage import stage_dir
 from ocfl_lib.validation.object import validate_object
 from ocfl_lib.validation.result import ValidationResult
 from ocfl_lib.validation.root import validate_root
+from ocfl_lib.version_state import scan_dir
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -94,7 +94,7 @@ class TestRoundTripAllLayouts:
         src1 = tmp_path / "src1"
         src1.mkdir()
         _write_files(src1, {"hello.txt": "hello", "dir/nested.txt": "nested"})
-        stage1 = stage_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
+        stage1 = scan_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
         obj = root.commit(
             fsys,
             obj_id,
@@ -111,7 +111,7 @@ class TestRoundTripAllLayouts:
         src2 = tmp_path / "src2"
         src2.mkdir()
         _write_files(src2, {"hello.txt": "hello modified", "new.txt": "brand new"})
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         obj = root.commit(
             fsys,
             obj_id,
@@ -174,7 +174,7 @@ class TestRoundTripAllLayouts:
             src = tmp_path / f"src-{i}"
             src.mkdir()
             _write_files(src, {"data.txt": f"content-{i}"})
-            stage = stage_dir(LocalFS(tmp_path), f"src-{i}", DigestAlgorithm.SHA512)
+            stage = scan_dir(LocalFS(tmp_path), f"src-{i}", DigestAlgorithm.SHA512)
             root.commit(fsys, oid, stage, created="2024-01-01T00:00:00Z")
 
         # All objects discoverable
@@ -200,7 +200,7 @@ class TestFixityRoundTrip:
         src = tmp_path / "src"
         src.mkdir()
         _write_files(src, {"a.txt": "aaa", "b.txt": "bbb"})
-        stage = stage_dir(
+        stage = scan_dir(
             LocalFS(tmp_path),
             "src",
             DigestAlgorithm.SHA512,
@@ -230,7 +230,7 @@ class TestFixityRoundTrip:
         src = tmp_path / "src"
         src.mkdir()
         _write_files(src, {"file.txt": "content"})
-        stage = stage_dir(
+        stage = scan_dir(
             LocalFS(tmp_path),
             "src",
             DigestAlgorithm.SHA512,
@@ -257,7 +257,7 @@ class TestFixityRoundTrip:
         src1 = tmp_path / "src1"
         src1.mkdir()
         _write_files(src1, {"keep.txt": "stable", "change.txt": "old"})
-        stage1 = stage_dir(
+        stage1 = scan_dir(
             LocalFS(tmp_path),
             "src1",
             DigestAlgorithm.SHA512,
@@ -269,7 +269,7 @@ class TestFixityRoundTrip:
         src2 = tmp_path / "src2"
         src2.mkdir()
         _write_files(src2, {"keep.txt": "stable", "change.txt": "new"})
-        stage2 = stage_dir(
+        stage2 = scan_dir(
             LocalFS(tmp_path),
             "src2",
             DigestAlgorithm.SHA512,
@@ -301,7 +301,7 @@ class TestOnDiskStructure:
         src = tmp_path / "src"
         src.mkdir()
         _write_files(src, {"file.txt": "hello"})
-        stage = stage_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
         root.commit(fsys, "struct-obj", stage, created="2024-01-01T00:00:00Z")
 
         obj_dir = tmp_path / "struct-obj"
@@ -349,13 +349,13 @@ class TestOnDiskStructure:
         src1 = tmp_path / "src1"
         src1.mkdir()
         _write_files(src1, {"keep.txt": "stable", "change.txt": "old"})
-        stage1 = stage_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
+        stage1 = scan_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
         root.commit(fsys, "delta-obj", stage1, created="2024-01-01T00:00:00Z")
 
         src2 = tmp_path / "src2"
         src2.mkdir()
         _write_files(src2, {"keep.txt": "stable", "change.txt": "new"})
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         root.commit(fsys, "delta-obj", stage2, created="2024-06-01T00:00:00Z")
 
         obj_dir = tmp_path / "delta-obj"
@@ -413,7 +413,7 @@ class TestOnDiskStructure:
         src = tmp_path / "src"
         src.mkdir()
         _write_files(src, {"file.txt": "content"})
-        stage = stage_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
         root.commit(
             fsys,
             "inv-test",
@@ -461,7 +461,7 @@ class TestSpecVersions:
         src = tmp_path / "src"
         src.mkdir()
         _write_files(src, {"file.txt": "content"})
-        stage = stage_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
         obj = root.commit(fsys, "spec-obj", stage, created="2024-01-01T00:00:00Z")
 
         assert obj.spec == spec
@@ -482,7 +482,7 @@ class TestSpecVersions:
         src = tmp_path / "src"
         src.mkdir()
         _write_files(src, {"file.txt": "hello"})
-        stage = stage_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA256)
+        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA256)
 
         obj = root.commit(fsys, "sha256-obj", stage, created="2024-01-01T00:00:00Z")
 
@@ -521,7 +521,7 @@ class TestDiffIntegration:
                 "rename-old.txt": "will be renamed",
             },
         )
-        stage1 = stage_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
+        stage1 = scan_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
         root.commit(fsys, "diff-obj", stage1, created="2024-01-01T00:00:00Z")
 
         # v2: keep same, modify changed, delete removed, rename-old → rename-new
@@ -536,7 +536,7 @@ class TestDiffIntegration:
                 "rename-new.txt": "will be renamed",  # same content as rename-old.txt
             },
         )
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         obj = root.commit(fsys, "diff-obj", stage2, created="2024-06-01T00:00:00Z")
 
         diff = obj.diff_versions(VNum(1), VNum(2))
@@ -575,17 +575,17 @@ class TestEdgeCases:
         src1 = tmp_path / "src1"
         src1.mkdir()
         _write_files(src1, {"file.txt": "hello"})
-        stage1 = stage_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
+        stage1 = scan_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
         root.commit(fsys, "empty-obj", stage1, created="2024-01-01T00:00:00Z")
 
         # v2 with empty state
         src2 = tmp_path / "src2"
         src2.mkdir()
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         obj = root.commit(fsys, "empty-obj", stage2, created="2024-06-01T00:00:00Z")
 
         assert obj.head == VNum(2)
-        state = obj.version_state(VNum(2))
+        state = obj.version_info(VNum(2)).state
         assert len(state) == 0
 
         result = ValidationResult()
@@ -603,7 +603,7 @@ class TestEdgeCases:
         src1 = tmp_path / "src1"
         src1.mkdir()
         _write_files(src1, {"file.txt": "v1"})
-        stage1 = stage_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
+        stage1 = scan_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
         root.commit(
             fsys,
             "http://example.org/reopen",
@@ -619,7 +619,7 @@ class TestEdgeCases:
         src2 = tmp_path / "src2"
         src2.mkdir()
         _write_files(src2, {"file.txt": "v2"})
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         obj = root2.commit(
             fsys,
             "http://example.org/reopen",
@@ -644,11 +644,11 @@ class TestEdgeCases:
         src.mkdir()
         files = {f"file-{i:03d}.txt": f"content-{i}" for i in range(50)}
         _write_files(src, files)
-        stage = stage_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
 
         obj = root.commit(fsys, "many-files", stage, created="2024-01-01T00:00:00Z")
 
-        state = obj.version_state(VNum(1))
+        state = obj.version_info(VNum(1)).state
         all_paths = sorted(p for ps in state.values() for p in ps)
         assert len(all_paths) == 50
 
@@ -665,7 +665,7 @@ class TestEdgeCases:
         src.mkdir()
         binary_data = bytes(range(256))
         (src / "binary.bin").write_bytes(binary_data)
-        stage = stage_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
 
         obj = root.commit(fsys, "bin-obj", stage, created="2024-01-01T00:00:00Z")
 
@@ -684,7 +684,7 @@ class TestEdgeCases:
         src = tmp_path / "src"
         src.mkdir()
         _write_files(src, {"a.txt": "same", "b.txt": "same"})
-        stage = stage_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
 
         obj = root.commit(fsys, "dedup-obj", stage, created="2024-01-01T00:00:00Z")
 
@@ -695,7 +695,7 @@ class TestEdgeCases:
         assert len(content_paths) == 1
 
         # State maps that digest to both logical paths
-        state = obj.version_state(VNum(1))
+        state = obj.version_info(VNum(1)).state
         assert len(state) == 1
         logical_paths = sorted(next(iter(state.values())))
         assert logical_paths == ["a.txt", "b.txt"]
@@ -724,7 +724,7 @@ class TestEdgeCases:
         src = tmp_path / "src"
         src.mkdir()
         _write_files(src, {"file.txt": "content"})
-        stage = stage_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
         obj = root2.commit(
             fsys,
             "http://example.org/cfg-test",
@@ -746,7 +746,7 @@ class TestEdgeCases:
             src = tmp_path / f"src-{i}"
             src.mkdir()
             _write_files(src, {"data.txt": f"content-{i}"})
-            stage = stage_dir(
+            stage = scan_dir(
                 LocalFS(tmp_path),
                 f"src-{i}",
                 DigestAlgorithm.SHA512,
@@ -770,7 +770,7 @@ class TestEdgeCases:
         src = tmp_path / "src"
         src.mkdir()
         _write_files(src, {"file.txt": "hello"})
-        stage = stage_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
         root.commit(fsys, "cold-obj", stage, created="2024-01-01T00:00:00Z")
 
         # Fresh root instance, pure read path

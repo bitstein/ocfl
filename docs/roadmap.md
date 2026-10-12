@@ -24,7 +24,7 @@ Target architecture from the 2026-10-11 design session. Terms: [CONTEXT.md](../C
 - [x] Errors: every lib error subclasses `OcflError` (it also inherits `ValueError`/`KeyError` where callers rely on that) and carries an `ErrorClass` and a stable `code`. Delete the unused classes. Export every class the public API can raise.
 - [ ] Public API: `__init__` plus `fs.s3`, `ots` and `validation` are public. Every other module gets a leading `_`. `Object.path` becomes public. Start a CHANGELOG.
 - [ ] `Object` only reads. Opening a root uses `StorageRoot.open(fs)`, and its constructor does no I/O.
-- [ ] Rename `Stage` → `VersionState`. Move `ContentSource` and `FixitySource` to their own module.
+- [x] Rename `Stage` → `VersionState`. Move `ContentSource` and `FixitySource` to their own module.
 - [ ] Validators accept a recursive `JsonValue` type and narrowing helpers instead of `dict[str, Any]`.
 - [ ] A frozen `ValidationReport` holds `Finding(code, severity, object_id, path, detail)`. Messages are rendered only for display. Root validation must keep every object's findings: it now drops the warnings of valid objects (`validation/root.py` `_walk_and_validate`).
 - [x] The default layout registry is frozen, and custom registries are passed explicitly.

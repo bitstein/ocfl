@@ -129,6 +129,43 @@ class TestErrors:
         assert issubclass(ocfl_lib.VersionNotFound, LookupError)
 
 
+# ------------------------------------------------------------ 4. Stage -> VersionState
+
+
+class TestVersionState:
+    def test_names(self):
+        import ocfl_lib
+
+        assert hasattr(ocfl_lib, "VersionState")
+        assert not hasattr(ocfl_lib, "Stage")
+
+    def test_no_stage_identifier_anywhere(self):
+        bad = []
+        for root in (LIB_SRC, CLI_SRC, INDEX_SRC):
+            for p in _py_files(root):
+                for node in ast.walk(_tree(p)):
+                    name = None
+                    if isinstance(node, ast.Name):
+                        name = node.id
+                    elif isinstance(node, ast.ClassDef):
+                        name = node.name
+                    elif isinstance(node, ast.alias):
+                        name = node.name.split(".")[-1]
+                    elif isinstance(node, ast.Attribute):
+                        name = node.attr
+                    if name == "Stage":
+                        bad.append(f"{p}:{getattr(node, 'lineno', '?')}")
+        assert not bad, bad
+
+    def test_sources_module(self):
+        import ocfl_lib
+
+        cs, fx = ocfl_lib.ContentSource, ocfl_lib.FixitySource
+        assert cs.__module__ == fx.__module__
+        assert cs.__module__ != ocfl_lib.VersionState.__module__
+        assert cs.__module__ != ocfl_lib.UpdatePlan.__module__
+
+
 # ------------------------------------------------------------ 8. duplicates
 
 

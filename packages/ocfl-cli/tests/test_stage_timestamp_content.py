@@ -56,7 +56,7 @@ from ocfl_lib import (
     Spec,
     StorageRoot,
     get_layout,
-    stage_dir,
+    scan_dir,
 )
 
 # --------------------------------------------------------------------------- #
@@ -140,7 +140,7 @@ def sha256_root_with_v1(tmp_path: Path) -> Path:
     obj_dir = location / "src"
     obj_dir.mkdir()
     (obj_dir / "carry.txt").write_text("carry-over")
-    stage = stage_dir(fs, "src", DigestAlgorithm.SHA256)
+    stage = scan_dir(fs, "src", DigestAlgorithm.SHA256)
     root.commit(fs, "obj:test", stage, message="v1")
     shutil.rmtree(obj_dir)
     return location

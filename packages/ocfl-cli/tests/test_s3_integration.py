@@ -8,7 +8,14 @@ from moto import mock_aws
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
-from ocfl_lib import DigestAlgorithm, LocalFS, Spec, StorageRoot, get_layout, stage_dir
+from ocfl_lib import (
+    DigestAlgorithm,
+    LocalFS,
+    Spec,
+    StorageRoot,
+    get_layout,
+    scan_dir,
+)
 from ocfl_lib.fs.s3 import S3FS
 
 BUCKET = "test-bucket"
@@ -45,11 +52,11 @@ def s3_storage_root(s3_env, s3_root_url, tmp_path):
     obj_dir = tmp_path / "test-files"
     obj_dir.mkdir()
     (obj_dir / "file1.txt").write_text("hello")
-    stage = stage_dir(local_fs, "test-files", DigestAlgorithm.SHA512)
+    stage = scan_dir(local_fs, "test-files", DigestAlgorithm.SHA512)
     root.commit(fs, "obj:test", stage, message="v1")
 
     (obj_dir / "file2.txt").write_text("world")
-    stage2 = stage_dir(local_fs, "test-files", DigestAlgorithm.SHA512)
+    stage2 = scan_dir(local_fs, "test-files", DigestAlgorithm.SHA512)
     root.commit(fs, "obj:test", stage2, message="v2")
 
     shutil.rmtree(obj_dir)

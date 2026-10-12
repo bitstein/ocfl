@@ -1,11 +1,11 @@
-"""OCFL staging for version assembly."""
+"""Version State: a version's logical state plus where its content is."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from ocfl_lib.digest import DigestAlgorithm, stream_multi_digest
 from ocfl_lib.errors import ContentNotFound, DigestAlgorithmMismatch
-from ocfl_lib.update_plan import ContentSource
+from ocfl_lib.sources import ContentSource, FixitySource
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -14,25 +14,19 @@ if TYPE_CHECKING:
     from ocfl_lib.fs.protocols import FS, FileWalker
 
 
-class FixitySource(Protocol):
-    """Protocol for resolving fixity digests by primary digest."""
-
-    def get_fixity(self, digest: str) -> dict[DigestAlgorithm, str]: ...
-
-
 @dataclass
-class Stage:
-    """Staged content for creating or updating an OCFL object version."""
+class VersionState:
+    """Logical state of one object version plus where its content is."""
 
     state: DigestMap
     digest_algorithm: DigestAlgorithm
     content_source: ContentSource
     fixity_source: FixitySource | None = None
 
-    def overlay(self, *others: Stage) -> Stage:
-        """Merge other stages on top of this one.
+    def overlay(self, *others: VersionState) -> VersionState:
+        """Merge other version states on top of this one.
 
-        Later stages override earlier ones by path. All stages must
+        Later states override earlier ones by path. All must
         share the same digest_algorithm. Content and fixity sources
         are chained: tries each in order.
         """
@@ -63,7 +57,7 @@ class Stage:
         if all_fixity:
             fixity_source = _ChainFixitySource(all_fixity)
 
-        return Stage(
+        return VersionState(
             state=merged_state,
             digest_algorithm=self.digest_algorithm,
             content_source=content_source,
@@ -121,14 +115,14 @@ class _DictFixitySource(FixitySource):
         return self._fixity.get(digest, {})
 
 
-def stage_dir(
+def scan_dir(
     fsys: FileWalker,
     dir: str,
     alg: DigestAlgorithm,
     *,
     fixity_algs: Sequence[DigestAlgorithm] = (),
-) -> Stage:
-    """Stage all files in a directory.
+) -> VersionState:
+    """Scan all files in a directory into a VersionState.
 
     Walks dir, computes digests, builds state and content source.
     Optionally computes fixity digests for additional algorithms.
@@ -140,7 +134,7 @@ def stage_dir(
     # Collect all file paths
     files = list(fsys.walk_files(dir))
     if not files:
-        return Stage(
+        return VersionState(
             state={},
             digest_algorithm=alg,
             content_source=_DirContentSource(fsys, {}),
@@ -185,7 +179,7 @@ def stage_dir(
     if compute_fixity:
         fixity_source = _DictFixitySource(fixity_map)
 
-    return Stage(
+    return VersionState(
         state=state,
         digest_algorithm=alg,
         content_source=_DirContentSource(fsys, path_by_digest),

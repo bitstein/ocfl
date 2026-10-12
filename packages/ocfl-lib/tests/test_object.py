@@ -147,7 +147,7 @@ class TestVersionContentAccess:
         obj_path = good_objects_1_1 / "minimal_one_version_one_file"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
-        state = obj.version_state(VNum(1))
+        state = obj.version_info(VNum(1)).state
         # state is digest → [logical_paths]
         assert len(state) == 1
         paths = next(iter(state.values()))
@@ -158,11 +158,11 @@ class TestVersionContentAccess:
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
         # v1 has 3 files: foo/bar.xml, empty.txt, image.tiff
-        state_v1 = obj.version_state(VNum(1))
+        state_v1 = obj.version_info(VNum(1)).state
         v1_paths = sorted(p for paths in state_v1.values() for p in paths)
         assert v1_paths == ["empty.txt", "foo/bar.xml", "image.tiff"]
         # v2: foo/bar.xml modified, image.tiff removed, empty2.txt added
-        state_v2 = obj.version_state(VNum(2))
+        state_v2 = obj.version_info(VNum(2)).state
         v2_paths = sorted(p for paths in state_v2.values() for p in paths)
         assert v2_paths == ["empty.txt", "empty2.txt", "foo/bar.xml"]
 
@@ -189,7 +189,7 @@ class TestVersionContentAccess:
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
         # Get the digest from state
-        state = obj.version_state(VNum(1))
+        state = obj.version_info(VNum(1)).state
         digest = next(iter(state.keys()))
         cp = obj.content_path(digest)
         assert cp == "v1/content/a_file.txt"
@@ -232,7 +232,7 @@ class TestVersionContentAccess:
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
         # This fixture uses contentDirectory="stuff"
-        state = obj.version_state(VNum(1))
+        state = obj.version_info(VNum(1)).state
         logical_path = next(iter(state.values()))[0]
         with obj.open_logical_path(VNum(1), logical_path) as f:
             assert f.read()  # non-empty content

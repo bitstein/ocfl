@@ -8,10 +8,10 @@ from ocfl_lib.digest import DigestAlgorithm, bytes_digest
 from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.object import Object
 from ocfl_lib.spec import Spec, VNum
-from ocfl_lib.stage import Stage, stage_dir
 from ocfl_lib.update_plan import execute_plan, prepare_steps, revert_plan
 from ocfl_lib.validation.object import validate_object
 from ocfl_lib.validation.result import ValidationResult
+from ocfl_lib.version_state import VersionState, scan_dir
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -39,7 +39,7 @@ def _create_v1(
     obj_dir.mkdir()
 
     src_fs = LocalFS(src.parent)
-    stage = stage_dir(src_fs, "src", alg)
+    stage = scan_dir(src_fs, "src", alg)
 
     obj_fs = LocalFS(obj_dir)
     obj = Object(obj_fs, "")
@@ -66,7 +66,7 @@ class TestAlgorithmMigration:
         (src2 / "file.txt").write_text("hello")
         (src2 / "new.txt").write_text("world")
 
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         obj.update(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         inv = obj.inventory.inventory
@@ -86,7 +86,7 @@ class TestAlgorithmMigration:
         src2.mkdir()
         (src2 / "a.txt").write_text("bbb")
 
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         obj.update(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         inv = obj.inventory.inventory
@@ -113,7 +113,7 @@ class TestAlgorithmMigration:
         (src2 / "file.txt").write_text("hello")
         (src2 / "extra.txt").write_text("extra")
 
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         obj.update(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         for cp, content in v1_contents.items():
@@ -128,7 +128,7 @@ class TestAlgorithmMigration:
         (src2 / "file.txt").write_text("hello")
         (src2 / "new.txt").write_text("world")
 
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         obj.update(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         with obj.open_logical_path(VNum(1), "file.txt") as f:
@@ -148,7 +148,7 @@ class TestAlgorithmMigration:
         src2.mkdir()
         (src2 / "file.txt").write_text("hello")
 
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         obj.update(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         assert not (obj_dir / "inventory.json.sha256").exists()
@@ -163,7 +163,7 @@ class TestAlgorithmMigration:
         src2.mkdir()
         (src2 / "file.txt").write_text("hello")
 
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         obj.update(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         inv = obj.inventory.inventory
@@ -181,7 +181,7 @@ class TestAlgorithmMigration:
         src2.mkdir()
         (src2 / "file.txt").write_text("same content")
 
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         obj.update(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         inv = obj.inventory.inventory
@@ -199,7 +199,7 @@ class TestAlgorithmMigration:
         (src2 / "file.txt").write_text("hello")
         (src2 / "new.txt").write_text("world")
 
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         plan = obj.new_update_plan(stage2, created="2024-06-01T00:00:00Z")
         obj.apply_update_plan(obj_fs, plan, stage2.content_source)
 
@@ -216,7 +216,7 @@ class TestAlgorithmMigration:
         obj_dir.mkdir()
 
         src_fs = LocalFS(src.parent)
-        stage1 = stage_dir(
+        stage1 = scan_dir(
             src_fs, "src", DigestAlgorithm.SHA256, fixity_algs=[DigestAlgorithm.MD5]
         )
 
@@ -238,7 +238,7 @@ class TestAlgorithmMigration:
         src2.mkdir()
         (src2 / "file.txt").write_text("hello")
 
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         obj.update(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         inv = obj.inventory.inventory
@@ -261,7 +261,7 @@ class TestAlgorithmMigration:
                 raise OSError("disk full")
 
         sha512_digest = bytes_digest(b"hello", DigestAlgorithm.SHA512)
-        stage = Stage(
+        stage = VersionState(
             state={
                 sha512_digest: ["file.txt"],
                 new_digest: ["new.txt"],
@@ -301,7 +301,7 @@ class TestAlgorithmMigration:
 
         # Build migration stage (SHA256 → SHA512)
         src2 = _make_src_dir(tmp_path, {"file.txt": "hello"})
-        stage = stage_dir(LocalFS(src2.parent), src2.name, DigestAlgorithm.SHA512)
+        stage = scan_dir(LocalFS(src2.parent), src2.name, DigestAlgorithm.SHA512)
 
         # Use two-step API to inject failure at root-sidecar step
         plan = obj.new_update_plan(stage, created="2024-06-01T00:00:00Z")

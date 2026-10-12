@@ -62,7 +62,6 @@ from ocfl_lib.errors import OtsParseError
 from ocfl_lib.inventory import UserInfo, VersionInfo
 from ocfl_lib.ots import parse as parse_ots
 from ocfl_lib.update_plan import (
-    ContentSource,
     UpdatePlan,
     deserialize,
     execute_plan,
@@ -98,6 +97,7 @@ if TYPE_CHECKING:
     from ocfl_lib import DigestAlgorithm
     from ocfl_lib.fs.protocols import FS, WriteFS
     from ocfl_lib.inventory import Inventory
+    from ocfl_lib.sources import ContentSource
 
 
 logger = logging.getLogger(__name__)
@@ -569,14 +569,14 @@ def build_inventory_plan(
     for `prepare_steps`).
     """
     from ocfl_lib import DigestAlgorithm
-    from ocfl_lib.stage import Stage
+    from ocfl_lib.version_state import VersionState
 
     inv = store.load_inventory(root_path, object_id)
     alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
     head = inv.head
 
     content_source = _validate_and_build_content_source(store, root_path, object_id)
-    stage_obj = Stage(
+    stage_obj = VersionState(
         state=inv.versions[head].state,
         digest_algorithm=alg,
         content_source=content_source,

@@ -12,9 +12,9 @@ from ocfl_lib.inventory import UserInfo
 from ocfl_lib.layout import FlatDirectLayout, HashedNTupleLayout
 from ocfl_lib.root import StorageRoot
 from ocfl_lib.spec import Spec, VNum
-from ocfl_lib.stage import stage_dir
 from ocfl_lib.validation.object import validate_object
 from ocfl_lib.validation.result import ValidationResult
+from ocfl_lib.version_state import scan_dir
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -137,7 +137,7 @@ class TestStorageRootCommit:
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
         src_fs = LocalFS(src.parent)
-        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
 
         obj = root.commit(
             fsys,
@@ -159,7 +159,7 @@ class TestStorageRootCommit:
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
         src_fs = LocalFS(src.parent)
-        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
 
         root.commit(fsys, "my-obj", stage, created="2024-01-01T00:00:00Z")
 
@@ -174,14 +174,14 @@ class TestStorageRootCommit:
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
         src_fs = LocalFS(src1.parent)
-        stage1 = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage1 = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
         root.commit(fsys, "my-obj", stage1, created="2024-01-01T00:00:00Z")
 
         # v2
         src2 = tmp_path / "src2"
         src2.mkdir()
         (src2 / "file.txt").write_text("v2")
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
 
         obj = root.commit(
             fsys, "my-obj", stage2, created="2024-06-01T00:00:00Z", message="v2"
@@ -195,7 +195,7 @@ class TestStorageRootCommit:
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
         src_fs = LocalFS(src.parent)
-        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
         root.commit(fsys, "my-obj", stage, created="2024-01-01T00:00:00Z")
 
         obj = root.get_object("my-obj")
@@ -209,7 +209,7 @@ class TestStorageRootCommit:
         root = StorageRoot.init(fsys, fsys)
 
         src = _make_src(tmp_path, {"file.txt": "x"})
-        stage = stage_dir(LocalFS(src.parent), "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(LocalFS(src.parent), "src", DigestAlgorithm.SHA512)
 
         with pytest.raises(LayoutNotConfigured, match="no layout"):
             root.commit(fsys, "obj", stage, created="2024-01-01T00:00:00Z")
@@ -221,7 +221,7 @@ class TestStorageRootCommit:
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout(), spec=Spec.V1_0)
 
         src_fs = LocalFS(src.parent)
-        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
         obj = root.commit(fsys, "my-obj", stage, created="2024-01-01T00:00:00Z")
         assert obj.spec == Spec.V1_0
 
@@ -233,7 +233,7 @@ class TestStorageRootCommit:
         root = StorageRoot.init(fsys, fsys, layout=layout)
 
         src_fs = LocalFS(src.parent)
-        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
         obj = root.commit(fsys, "test:obj", stage, created="2024-01-01T00:00:00Z")
 
         assert obj.id == "test:obj"
@@ -250,7 +250,7 @@ class TestStorageRootCommit:
             src = tmp_path / f"src-{name}"
             src.mkdir()
             (src / "file.txt").write_text(name)
-            stage = stage_dir(LocalFS(tmp_path), f"src-{name}", DigestAlgorithm.SHA512)
+            stage = scan_dir(LocalFS(tmp_path), f"src-{name}", DigestAlgorithm.SHA512)
             root.commit(fsys, name, stage, created="2024-01-01T00:00:00Z")
 
         ids = sorted(o.id for o in root.objects())

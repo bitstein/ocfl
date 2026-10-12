@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, BinaryIO, Literal
 
 from ocfl_lib._path import join_path
 from ocfl_lib.digest import DigestAlgorithm, stream_digest
-from ocfl_lib.digest_map import DigestMap, to_path_map
+from ocfl_lib.digest_map import to_path_map
 from ocfl_lib.errors import (
     ContentNotFound,
     InventorySidecarMismatch,
@@ -17,9 +17,9 @@ from ocfl_lib.errors import (
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.inventory import Inventory, StoredInventory, UserInfo, VersionInfo
 from ocfl_lib.inventory_builder import InventoryBuilder
+from ocfl_lib.sources import ContentSource
 from ocfl_lib.spec import INVENTORY_FILENAME, Namaste, Spec, VNum
 from ocfl_lib.update_plan import (
-    ContentSource,
     RevertError,
     UpdatePlan,
     execute_plan,
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from ocfl_lib.fs.protocols import FS, WriteFS
-    from ocfl_lib.stage import Stage
+    from ocfl_lib.version_state import VersionState
 
 
 def _migrate_algorithm(
@@ -153,10 +153,6 @@ class Object:
         vnums.sort()
         return vnums
 
-    def version_state(self, v: VNum) -> DigestMap:
-        """State (digest → [logical_paths]) for a specific version."""
-        return self.version_info(v).state
-
     def version_info(self, v: VNum) -> VersionInfo:
         """Metadata for a specific version. Raises VersionNotFound if absent."""
         vkey = str(v)
@@ -165,19 +161,19 @@ class Object:
             raise VersionNotFound(vkey)
         return versions[vkey]
 
-    def version_stage(self, v: VNum) -> Stage:
-        """Create a Stage from an existing version's state.
+    def version_state(self, v: VNum) -> VersionState:
+        """VersionState of an existing version.
 
-        The stage's ContentSource is backed by this object's manifest.
-        Raises KeyError if version not found.
+        Its ContentSource is backed by this object's manifest.
+        Raises VersionNotFound if the version is absent.
         """
-        from ocfl_lib.stage import Stage
+        from ocfl_lib.version_state import VersionState
 
-        state = self.version_state(v)
+        state = self.version_info(v).state
         inv = self.inventory.inventory
         alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
         content_source = _ObjectContentSource(self._fsys, self._path, inv.manifest)
-        return Stage(
+        return VersionState(
             state=state,
             digest_algorithm=alg,
             content_source=content_source,
@@ -196,7 +192,7 @@ class Object:
         Raises KeyError if logical_path not in version state.
         Raises FileNotFoundError if content file missing on disk.
         """
-        state = self.version_state(v)
+        state = self.version_info(v).state
         path_map = to_path_map(state)  # logical_path → digest
         if logical_path not in path_map:
             raise LogicalPathNotFound(
@@ -215,8 +211,8 @@ class Object:
         Detects added, deleted, modified, and renamed files.
         Rename detection: pairs added/removed files sharing a digest.
         """
-        pm1 = to_path_map(self.version_state(v1))  # path → digest
-        pm2 = to_path_map(self.version_state(v2))
+        pm1 = to_path_map(self.version_info(v1).state)  # path → digest
+        pm2 = to_path_map(self.version_info(v2).state)
 
         all_paths = set(pm1) | set(pm2)
         added: dict[str, str] = {}  # path → digest
@@ -300,7 +296,7 @@ class Object:
     def update(
         self,
         fsys: WriteFS,
-        stage: Stage,
+        version_state: VersionState,
         *,
         id: str | None = None,
         spec: Spec | None = None,
@@ -316,14 +312,14 @@ class Object:
         Updates cached inventory on success.
         """
         plan = self.new_update_plan(
-            stage,
+            version_state,
             id=id,
             spec=spec,
             message=message,
             user=user,
             created=created,
         )
-        prepare_steps(plan, fsys, self._path, stage.content_source)
+        prepare_steps(plan, fsys, self._path, version_state.content_source)
 
         try:
             execute_plan(plan)
@@ -338,7 +334,7 @@ class Object:
 
     def new_update_plan(
         self,
-        stage: Stage,
+        version_state: VersionState,
         *,
         id: str | None = None,
         spec: Spec | None = None,
@@ -371,27 +367,27 @@ class Object:
         revert_stored = None
         if prev:
             prev_alg = DigestAlgorithm.from_ocfl_name(prev.digest_algorithm)
-            if prev_alg != stage.digest_algorithm:
+            if prev_alg != version_state.digest_algorithm:
                 old_sidecar_alg = prev_alg.ocfl_name
                 revert_stored = old_stored  # Preserve original for revert
                 prev = _migrate_algorithm(
-                    prev, self._fsys, self._path, stage.digest_algorithm
+                    prev, self._fsys, self._path, version_state.digest_algorithm
                 )
                 old_stored = StoredInventory.from_inventory(
-                    prev, stage.digest_algorithm
+                    prev, version_state.digest_algorithm
                 )
 
         builder = InventoryBuilder(prev=prev)
-        builder.digest_algorithm(stage.digest_algorithm)
+        builder.digest_algorithm(version_state.digest_algorithm)
         if id is not None:
             builder.id(id)
         if spec is not None:
             builder.spec(spec)
-        if stage.fixity_source is not None:
-            builder.fixity_source(stage.fixity_source)
+        if version_state.fixity_source is not None:
+            builder.fixity_source(version_state.fixity_source)
 
         builder.add_version(
-            stage.state,
+            version_state.state,
             created=created,
             message=message,
             user=user,

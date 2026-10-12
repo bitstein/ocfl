@@ -15,7 +15,14 @@ from ocfl_cli.config import (
     load_config,
 )
 from ocfl_cli.main import app
-from ocfl_lib import DigestAlgorithm, LocalFS, Spec, StorageRoot, get_layout, stage_dir
+from ocfl_lib import (
+    DigestAlgorithm,
+    LocalFS,
+    Spec,
+    StorageRoot,
+    get_layout,
+    scan_dir,
+)
 
 
 def test_archive_config_reexported_from_domain_module() -> None:
@@ -392,7 +399,7 @@ def sha256_root(tmp_path: Path) -> Path:
     obj_dir = tmp_path / "files"
     obj_dir.mkdir()
     (obj_dir / "a.txt").write_text("x")
-    stage = stage_dir(fs, "files", DigestAlgorithm.SHA256)
+    stage = scan_dir(fs, "files", DigestAlgorithm.SHA256)
     root.commit(fs, "obj:x", stage, message="v1")
     shutil.rmtree(obj_dir)
     return tmp_path

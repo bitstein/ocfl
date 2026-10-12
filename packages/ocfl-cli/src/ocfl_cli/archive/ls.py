@@ -61,7 +61,7 @@ def _ls_object(
         if not obj.exists:
             raise ObjectNotFound(object_id)
         v: VNum = parse_version(version_str) if version_str else obj.head
-        state = obj.version_state(v)
+        state = obj.version_info(v).state
     except OcflError as e:
         exit_for_error(e)
 

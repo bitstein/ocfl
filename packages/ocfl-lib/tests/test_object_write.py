@@ -10,10 +10,10 @@ from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.inventory import UserInfo
 from ocfl_lib.object import Object
 from ocfl_lib.spec import Spec, VNum
-from ocfl_lib.stage import Stage, stage_dir
 from ocfl_lib.update_plan import deserialize, revert_plan, serialize
 from ocfl_lib.validation.object import validate_object
 from ocfl_lib.validation.result import ValidationResult
+from ocfl_lib.version_state import VersionState, scan_dir
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -40,7 +40,7 @@ class TestObjectUpdate:
         obj_dir.mkdir()
 
         src_fs = LocalFS(src.parent)
-        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
@@ -73,7 +73,7 @@ class TestObjectUpdate:
         obj_dir.mkdir()
 
         src_fs = LocalFS(src.parent)
-        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
@@ -95,7 +95,7 @@ class TestObjectUpdate:
         obj_dir.mkdir()
 
         src_fs = LocalFS(src1.parent)
-        stage1 = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage1 = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
@@ -114,7 +114,7 @@ class TestObjectUpdate:
         (src2_dir / "new.txt").write_text("brand new")
 
         src2_fs = LocalFS(tmp_path)
-        stage2 = stage_dir(src2_fs, "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(src2_fs, "src2", DigestAlgorithm.SHA512)
 
         obj.update(
             obj_fs,
@@ -137,7 +137,7 @@ class TestObjectUpdate:
         obj_dir.mkdir()
 
         src_fs = LocalFS(src1.parent)
-        stage1 = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage1 = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
@@ -155,7 +155,7 @@ class TestObjectUpdate:
         (src2 / "a.txt").write_text("same")
         (src2 / "b.txt").write_text("new")
 
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         obj.update(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         # v2 content dir should only have b.txt (a.txt deduplicated)
@@ -173,7 +173,7 @@ class TestObjectUpdate:
         obj_dir.mkdir()
 
         src_fs = LocalFS(src.parent)
-        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
@@ -187,7 +187,7 @@ class TestObjectUpdate:
         obj_dir.mkdir()
 
         src_fs = LocalFS(src.parent)
-        stage = stage_dir(
+        stage = scan_dir(
             src_fs, "src", DigestAlgorithm.SHA512, fixity_algs=[DigestAlgorithm.MD5]
         )
         assert stage.fixity_source is not None
@@ -220,7 +220,7 @@ class TestObjectUpdate:
             def get_content(self, digest: str) -> tuple:
                 raise OSError("disk full")
 
-        stage = Stage(
+        stage = VersionState(
             state={"abc123": ["file.txt"]},
             digest_algorithm=DigestAlgorithm.SHA512,
             content_source=FailingContentSource(),
@@ -253,7 +253,7 @@ class TestObjectUpdate:
             def get_content(self, digest: str) -> tuple:
                 raise KeyboardInterrupt
 
-        stage = Stage(
+        stage = VersionState(
             state={"abc123": ["file.txt"]},
             digest_algorithm=DigestAlgorithm.SHA512,
             content_source=InterruptingContentSource(),
@@ -281,7 +281,7 @@ class TestObjectUpdate:
         obj_dir.mkdir()
 
         src_fs = LocalFS(src.parent)
-        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
@@ -300,7 +300,7 @@ class TestObjectUpdate:
             def get_content(self, digest: str) -> tuple:
                 raise KeyboardInterrupt
 
-        bad_stage = Stage(
+        bad_stage = VersionState(
             state={"deadbeef": ["new.txt"]},
             digest_algorithm=DigestAlgorithm.SHA512,
             content_source=InterruptingContentSource(),
@@ -325,7 +325,7 @@ class TestObjectUpdate:
         obj_dir.mkdir()
 
         src_fs = LocalFS(src.parent)
-        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
@@ -355,7 +355,7 @@ class TestObjectUpdate:
         obj_dir.mkdir()
 
         src_fs = LocalFS(src.parent)
-        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
@@ -367,7 +367,7 @@ class TestObjectUpdate:
             created="2024-01-01T00:00:00Z",
         )
 
-        state = obj.version_state(VNum(1))
+        state = obj.version_info(VNum(1)).state
         all_paths = sorted(p for ps in state.values() for p in ps)
         assert all_paths == ["a.txt", "dir/b.txt", "dir/sub/c.txt"]
 
@@ -382,7 +382,7 @@ class TestObjectUpdate:
         obj_dir.mkdir()
 
         src_fs = LocalFS(src.parent)
-        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
         user = UserInfo(name="Alice", address="mailto:alice@example.org")
 
         obj_fs = LocalFS(obj_dir)
@@ -411,7 +411,7 @@ class TestObjectUpdate:
         obj_dir.mkdir()
 
         src_fs = LocalFS(src1.parent)
-        stage1 = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage1 = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
 
         obj_fs = LocalFS(obj_dir)
         obj1 = Object(obj_fs, "")
@@ -430,7 +430,7 @@ class TestObjectUpdate:
         src2 = tmp_path / "src2"
         src2.mkdir()
         (src2 / "file.txt").write_text("v2")
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
 
         obj2.update(obj_fs, stage2, created="2024-06-01T00:00:00Z")
         assert obj2.head == VNum(2)  # NOT v1
@@ -450,7 +450,7 @@ class TestTwoStepWrite:
         obj_dir.mkdir()
 
         src_fs = LocalFS(src.parent)
-        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
@@ -479,7 +479,7 @@ class TestTwoStepWrite:
         obj_dir.mkdir()
 
         src_fs = LocalFS(src.parent)
-        stage = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
@@ -512,7 +512,7 @@ class TestTwoStepWrite:
             def get_content(self, digest: str) -> tuple:
                 raise OSError("fail")
 
-        stage = Stage(
+        stage = VersionState(
             state={"abc123": ["file.txt"]},
             digest_algorithm=DigestAlgorithm.SHA512,
             content_source=FailingSource(),
@@ -542,7 +542,7 @@ class TestTwoStepWrite:
         obj_dir.mkdir()
 
         src_fs = LocalFS(src1.parent)
-        stage1 = stage_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage1 = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
 
         obj_fs = LocalFS(obj_dir)
         obj = Object(obj_fs, "")
@@ -559,7 +559,7 @@ class TestTwoStepWrite:
         src2.mkdir()
         (src2 / "file.txt").write_text("v2")
 
-        stage2 = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         plan = obj.new_update_plan(stage2, created="2024-06-01T00:00:00Z")
         obj.apply_update_plan(obj_fs, plan, stage2.content_source)
 
@@ -578,7 +578,7 @@ class TestTwoStepWrite:
         obj = Object(obj_fs, "")
         obj.update(
             obj_fs,
-            stage_dir(LocalFS(src1.parent), "src", DigestAlgorithm.SHA512),
+            scan_dir(LocalFS(src1.parent), "src", DigestAlgorithm.SHA512),
             id="test:stale",
             spec=Spec.V1_1,
             created="2024-01-01T00:00:00Z",
@@ -591,8 +591,8 @@ class TestTwoStepWrite:
         src2b.mkdir()
         (src2b / "b.txt").write_text("writer b")
 
-        stage_a = stage_dir(LocalFS(tmp_path), "src2a", DigestAlgorithm.SHA512)
-        stage_b = stage_dir(LocalFS(tmp_path), "src2b", DigestAlgorithm.SHA512)
+        stage_a = scan_dir(LocalFS(tmp_path), "src2a", DigestAlgorithm.SHA512)
+        stage_b = scan_dir(LocalFS(tmp_path), "src2b", DigestAlgorithm.SHA512)
 
         obj_a = Object(obj_fs, "")
         obj_b = Object(obj_fs, "")
@@ -619,7 +619,7 @@ class TestTwoStepWrite:
         obj = Object(obj_fs, "")
         obj.update(
             obj_fs,
-            stage_dir(LocalFS(src1.parent), "src", DigestAlgorithm.SHA512),
+            scan_dir(LocalFS(src1.parent), "src", DigestAlgorithm.SHA512),
             id="test:stale-revert",
             spec=Spec.V1_1,
             created="2024-01-01T00:00:00Z",
@@ -628,7 +628,7 @@ class TestTwoStepWrite:
         src2 = tmp_path / "src2"
         src2.mkdir()
         (src2 / "new.txt").write_text("new content")
-        stage = stage_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
 
         plan = Object(obj_fs, "").new_update_plan(stage, created="2024-02-01T00:00:00Z")
         (obj_dir / "inventory.json.sha512").write_text("0" * 128 + " inventory.json\n")

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from ocfl_lib.digest_map import DigestMap
-    from ocfl_lib.stage import FixitySource
+    from ocfl_lib.sources import FixitySource
 
 
 class InventoryBuilder:

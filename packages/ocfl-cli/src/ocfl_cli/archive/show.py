@@ -42,7 +42,7 @@ def show(
 
         # Diff: v1 diffs against empty (all added), others diff against previous
         if v.number == 1:
-            state = obj.version_state(v)
+            state = obj.version_info(v).state
             pm = to_path_map(state)
             changes = [
                 DiffEntry(path=p, action="added", digest_after=d)

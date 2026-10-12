@@ -11,11 +11,11 @@ from ocfl_lib.layout import FlatDirectLayout
 from ocfl_lib.object import Object
 from ocfl_lib.root import StorageRoot
 from ocfl_lib.spec import Spec
-from ocfl_lib.stage import Stage, stage_dir
 from ocfl_lib.update_plan import prepare_steps, revert_plan
 from ocfl_lib.validation.object import validate_object
 from ocfl_lib.validation.result import ValidationResult
 from ocfl_lib.validation.root import validate_root
+from ocfl_lib.version_state import VersionState, scan_dir
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -23,11 +23,11 @@ if TYPE_CHECKING:
 _CREATED = "2024-01-01T00:00:00Z"
 
 
-def _stage(tmp_path: Path, content: str) -> Stage:
+def _stage(tmp_path: Path, content: str) -> VersionState:
     src = tmp_path / "src"
     src.mkdir(exist_ok=True)
     (src / "file.txt").write_text(content)
-    return stage_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+    return scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
 
 
 def _root(tmp_path: Path, spec: Spec) -> tuple[LocalFS, StorageRoot]:

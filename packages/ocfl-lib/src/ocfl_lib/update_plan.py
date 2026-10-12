@@ -20,7 +20,7 @@ recovered: partial state sits on disk and requires manual cleanup.
 import base64
 import contextlib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 import msgspec
 
@@ -40,9 +40,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from ocfl_lib.fs.protocols import FS, WriteFS
+    from ocfl_lib.sources import ContentSource
 
 __all__ = [
-    "ContentSource",
     "PlanStep",
     "RevertError",
     "UpdatePlan",
@@ -52,12 +52,6 @@ __all__ = [
     "revert_plan",
     "serialize",
 ]
-
-
-class ContentSource(Protocol):
-    """Protocol for resolving content by digest."""
-
-    def get_content(self, digest: str) -> tuple[FS, str]: ...
 
 
 @dataclass

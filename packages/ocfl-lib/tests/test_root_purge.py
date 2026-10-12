@@ -9,7 +9,7 @@ from ocfl_lib.errors import LayoutNotConfigured, ObjectNotFound
 from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.layout import FlatDirectLayout, HashedNTupleLayout
 from ocfl_lib.root import StorageRoot
-from ocfl_lib.stage import stage_dir
+from ocfl_lib.version_state import scan_dir
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -24,7 +24,7 @@ def _commit_object(
         p = src / name
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
-    stage = stage_dir(LocalFS(src.parent), src.name, DigestAlgorithm.SHA512)
+    stage = scan_dir(LocalFS(src.parent), src.name, DigestAlgorithm.SHA512)
     root.commit(fsys, obj_id, stage, created="2024-01-01T00:00:00Z")
 
 

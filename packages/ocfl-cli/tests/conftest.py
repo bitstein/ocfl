@@ -10,7 +10,14 @@ import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof, InMemoryHashBlockStream
 from typer.testing import CliRunner
 
-from ocfl_lib import DigestAlgorithm, LocalFS, Spec, StorageRoot, get_layout, stage_dir
+from ocfl_lib import (
+    DigestAlgorithm,
+    LocalFS,
+    Spec,
+    StorageRoot,
+    get_layout,
+    scan_dir,
+)
 from tests.helpers.regtest import (
     RegtestNode,
     ensure_wallet,
@@ -98,12 +105,12 @@ def storage_root(tmp_path: Path) -> Path:
     obj_dir = tmp_path / "test-files"
     obj_dir.mkdir()
     (obj_dir / "file1.txt").write_text("hello")
-    stage = stage_dir(fs, "test-files", DigestAlgorithm.SHA512)
+    stage = scan_dir(fs, "test-files", DigestAlgorithm.SHA512)
     root.commit(fs, "obj:test", stage, message="v1")
 
     # v2
     (obj_dir / "file2.txt").write_text("world")
-    stage2 = stage_dir(fs, "test-files", DigestAlgorithm.SHA512)
+    stage2 = scan_dir(fs, "test-files", DigestAlgorithm.SHA512)
     root.commit(fs, "obj:test", stage2, message="v2")
 
     shutil.rmtree(obj_dir)

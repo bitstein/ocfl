@@ -190,7 +190,7 @@ class TestRemoveAll:
         from ocfl_lib.fs.s3 import S3FS
         from ocfl_lib.layout import FlatDirectLayout
         from ocfl_lib.root import StorageRoot
-        from ocfl_lib.stage import stage_dir
+        from ocfl_lib.version_state import scan_dir
 
         s3fs = S3FS(BUCKET, client=s3_client)
         root = StorageRoot.init(s3fs, s3fs, layout=FlatDirectLayout())
@@ -199,7 +199,7 @@ class TestRemoveAll:
             src = tmp_path / obj_id
             src.mkdir()
             (src / "file.txt").write_text(content)
-            stage = stage_dir(LocalFS(src.parent), src.name, DigestAlgorithm.SHA512)
+            stage = scan_dir(LocalFS(src.parent), src.name, DigestAlgorithm.SHA512)
             root.commit(s3fs, obj_id, stage, created="2024-01-01T00:00:00Z")
 
         root.purge(s3fs, "abc")
@@ -219,7 +219,7 @@ class TestRemoveAll:
         from ocfl_lib.object import Object
         from ocfl_lib.root import StorageRoot
         from ocfl_lib.spec import VNum
-        from ocfl_lib.stage import stage_dir
+        from ocfl_lib.version_state import scan_dir
 
         s3fs = S3FS(BUCKET, client=s3_client)
         root = StorageRoot.init(s3fs, s3fs, layout=FlatDirectLayout())
@@ -227,7 +227,7 @@ class TestRemoveAll:
         src1 = tmp_path / "src1"
         src1.mkdir()
         (src1 / "base.txt").write_text("v1")
-        stage1 = stage_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
+        stage1 = scan_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
         root.commit(s3fs, "obj:stale", stage1, created="2024-01-01T00:00:00Z")
 
         src2a = tmp_path / "src2a"
@@ -236,8 +236,8 @@ class TestRemoveAll:
         src2b = tmp_path / "src2b"
         src2b.mkdir()
         (src2b / "b.txt").write_text("writer b")
-        stage_a = stage_dir(LocalFS(tmp_path), "src2a", DigestAlgorithm.SHA512)
-        stage_b = stage_dir(LocalFS(tmp_path), "src2b", DigestAlgorithm.SHA512)
+        stage_a = scan_dir(LocalFS(tmp_path), "src2a", DigestAlgorithm.SHA512)
+        stage_b = scan_dir(LocalFS(tmp_path), "src2b", DigestAlgorithm.SHA512)
 
         obj_path = root.object_path("obj:stale")
         obj_a = Object(s3fs, obj_path)
