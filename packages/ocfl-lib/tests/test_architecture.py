@@ -752,3 +752,39 @@ class TestRecoverCommand:
         assert "recover" in attrs
         names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
         assert "RecoveryAction" in names
+
+
+# --- 3.7 fail at write N; commit -> crash -> recover state machines
+
+
+class TestCrashTests:
+    def test_fault_fs_crashes_like_a_dead_process(self, tmp_path):
+        from io import BytesIO
+
+        from ocfl_lib import LocalFS
+        from tests.helpers.faults import Crash, fail_at
+
+        assert issubclass(Crash, BaseException)
+        assert not issubclass(Crash, Exception)
+        fs, counter = fail_at(LocalFS(tmp_path), 2)
+        assert isinstance(fs, LocalFS)
+        fs.write("a", BytesIO(b"1"))
+        with pytest.raises(Crash):
+            fs.write("b", BytesIO(b"2"))
+        with pytest.raises(Crash):
+            fs.mkdir("c")
+        assert counter.crashed and not (tmp_path / "b").exists()
+
+    def test_state_machines_cover_both_backends(self):
+        tree = _tree(REPO / "packages/ocfl-lib/tests/test_commit_stateful.py")
+        machines = {
+            n.name: {b.id for b in n.bases if isinstance(b, ast.Name)}
+            for n in ast.walk(tree)
+            if isinstance(n, ast.ClassDef)
+        }
+        crash_machines = [
+            name for name, bases in machines.items() if "RuleBasedStateMachine" in bases
+        ]
+        assert len(crash_machines) >= 2, machines
+        text = (REPO / "packages/ocfl-lib/tests/test_commit_stateful.py").read_text()
+        assert "mock_aws" in text and "LocalFS(" in text and "fail_at(" in text

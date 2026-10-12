@@ -38,7 +38,7 @@ Target architecture from the 2026-10-11 design session. Terms: [CONTEXT.md](../C
 - [x] `StorageRoot.commit(...)` is the only write entry point.
 - [x] Purge follows the ADR-0001 order and refuses to run over a live or stray claim.
 - [x] `recover OBJ --resume|--revert|--remove-stray VN`.
-- [ ] A fake filesystem that fails at write N, plus a hypothesis state-machine test (commit → crash → recover) on local disk and on moto S3.
+- [x] A fake filesystem that fails at write N, plus a hypothesis state-machine test (commit → crash → recover) on local disk and on moto S3.
 
 ## 4. OTS extension into the lib (ADR-0002)
 
