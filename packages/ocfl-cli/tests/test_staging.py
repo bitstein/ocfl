@@ -6,8 +6,8 @@ import os
 import pytest
 
 from ocfl_cli.errors import StagingError
-from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
-from ocfl_cli.stage.store import StagingStore
+from ocfl_cli.model.metadata import StagedMetadata, StagedUser
+from ocfl_cli.store.staging import StagingStore
 from ocfl_lib import DigestAlgorithm, Inventory, InventoryBuilder, Spec
 
 

@@ -5,7 +5,6 @@ factory injection. Command bodies should consume this typed view instead of
 reading string keys directly.
 """
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, cast
 
@@ -16,12 +15,12 @@ if TYPE_CHECKING:
     from rich.console import Console
 
     from ocfl_cli.config import ArchiveConfig, Config
-    from ocfl_cli.ots.bitcoin import BitcoinRPC
-    from ocfl_cli.ots.simpleproof import SimpleProofClient
-
-
-SpClientFactory = Callable[["Config"], "SimpleProofClient"]
-BtcRpcFactory = Callable[["Config"], "BitcoinRPC"]
+    from ocfl_cli.ports import (
+        BitcoinRPC,
+        BtcRpcFactory,
+        SimpleProofClient,
+        SpClientFactory,
+    )
 
 
 class AppCtxError(RuntimeError):

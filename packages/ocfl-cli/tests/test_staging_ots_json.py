@@ -18,16 +18,18 @@ from typing import cast
 import pytest
 
 from ocfl_cli.errors import StagingError
-from ocfl_cli.ots.simpleproof import JobStatus, SimpleProofClient
-from ocfl_cli.stage import state as st_mod
-from ocfl_cli.stage.fsm import Phase
-from ocfl_cli.stage.service import _poll_outstanding_jobs
-from ocfl_cli.stage.state import (
+from ocfl_cli.model.ots_state import (
     InventoryProof,
     OtsState,
     Submission,
     VerifiedProof,
     VerifyJob,
+)
+from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.simpleproof import JobStatus
+from ocfl_cli.ports import SimpleProofClient
+from ocfl_cli.store import ots_state as st_mod
+from ocfl_cli.store.ots_state import (
     apply_category_id,
     has_ots,
     load_ots,
@@ -37,6 +39,7 @@ from ocfl_cli.stage.state import (
     remove_ots,
     save_ots,
 )
+from ocfl_cli.workflow.common import poll_outstanding_jobs
 
 
 def _bare_hex(prefix: str) -> str:
@@ -312,7 +315,7 @@ class TestTypedDecoding:
 
         poller = Poller()
 
-        polled = _poll_outstanding_jobs(state, cast(SimpleProofClient, poller))
+        polled = poll_outstanding_jobs(state, cast(SimpleProofClient, poller))
 
         assert poller.job_ids == ["job-new-status"]
         assert polled.verify_jobs[0].status == "IN_PROGRESS"
@@ -469,7 +472,7 @@ class TestAtomicWrites:
 
 class TestSchemaMigration:
     def test_constants(self):
-        assert st_mod._OTS_STATE_VERSION == 1
+        assert st_mod.OTS_STATE_VERSION == 1
         assert st_mod._MIGRATIONS == {}
 
     def test_v1_loads_cleanly(self, tmp_path: Path):

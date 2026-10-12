@@ -26,7 +26,7 @@ from ocfl_lib import (
 
 
 def test_archive_config_reexported_from_domain_module() -> None:
-    from ocfl_cli.archive.config import ArchiveConfig as DomainArchiveConfig
+    from ocfl_cli.config.archive import ArchiveConfig as DomainArchiveConfig
 
     assert ArchiveConfig is DomainArchiveConfig
 
@@ -311,7 +311,7 @@ class TestConfigDigestDefault:
         assert "bogus" in result.output
         assert "traceback" not in result.output.lower()
 
-        from ocfl_cli.stage.store import StagingStore
+        from ocfl_cli.store.staging import StagingStore
 
         store = StagingStore(staging)
         assert not store.exists(str(storage_root.resolve()), "obj:bad-cfg")
@@ -343,7 +343,7 @@ class TestConfigDigestDefault:
         )
         assert result.exit_code == 0, result.output
 
-        from ocfl_cli.stage.store import StagingStore
+        from ocfl_cli.store.staging import StagingStore
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -381,7 +381,7 @@ class TestConfigDigestDefault:
         )
         assert result.exit_code == 0, result.output
 
-        from ocfl_cli.stage.store import StagingStore
+        from ocfl_cli.store.staging import StagingStore
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())

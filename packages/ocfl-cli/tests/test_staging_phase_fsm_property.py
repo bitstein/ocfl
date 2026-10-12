@@ -17,7 +17,7 @@ from hypothesis.stateful import RuleBasedStateMachine, invariant, rule
 from hypothesis.strategies import sampled_from
 
 from ocfl_cli.errors import PhaseError
-from ocfl_cli.stage.fsm import Phase, check_transition
+from ocfl_cli.model.phase import Phase, check_transition
 
 COMMANDS = [
     "add",

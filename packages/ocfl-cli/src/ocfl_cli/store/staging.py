@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import msgspec
 
 from ocfl_cli.errors import StagingError
-from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
+from ocfl_cli.model.metadata import StagedMetadata, StagedUser
 from ocfl_lib import Inventory
 
 if TYPE_CHECKING:
@@ -89,17 +89,17 @@ class StagingStore:
 
     def _write_inventory(self, d: Path, inventory: Inventory) -> None:
         data = msgspec.json.encode(inventory)
-        _atomic_write_bytes(d / "inventory.json", data)
+        atomic_write_bytes(d / "inventory.json", data)
 
     def _write_content_map(self, d: Path, content_map: dict) -> None:
         data = json.dumps(content_map, sort_keys=True).encode()
-        _atomic_write_bytes(d / "content.json", data)
+        atomic_write_bytes(d / "content.json", data)
 
     def _write_metadata(self, d: Path, metadata: StagedMetadata) -> None:
         path = d / "metadata.json"
         _validate_metadata(metadata, path=path)
         data = msgspec.json.encode(metadata)
-        _atomic_write_bytes(path, data)
+        atomic_write_bytes(path, data)
 
 
 def _validate_metadata(metadata: StagedMetadata, *, path: Path) -> None:
@@ -119,7 +119,7 @@ def _validate_metadata_value(value: str | None, *, field: str, path: Path) -> No
         raise StagingError(f"{path}: staged metadata {field} cannot be empty")
 
 
-def _atomic_write_bytes(path: Path, data: bytes) -> None:
+def atomic_write_bytes(path: Path, data: bytes) -> None:
     """Write *data* to *path* via write-temp + fsync + os.replace.
 
     Readers never observe a torn file. On any failure the temp is removed

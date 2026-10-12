@@ -14,13 +14,10 @@ from typing import cast
 import pytest
 
 from ocfl_cli.errors import LockTimeoutError, StagingError
-from ocfl_cli.stage import batch as batch_state
-from ocfl_cli.stage import store as store_mod
-from ocfl_cli.stage.batch import (
-    BatchFile,
-    BatchObject,
-    BatchSubmission,
-    BatchVerifyJob,
+from ocfl_cli.model.batch import BatchFile, BatchObject, BatchSubmission, BatchVerifyJob
+from ocfl_cli.store import batch as batch_state
+from ocfl_cli.store import staging as store_mod
+from ocfl_cli.store.batch import (
     batch_file_path,
     batch_lock_path,
     driver_lease_path,

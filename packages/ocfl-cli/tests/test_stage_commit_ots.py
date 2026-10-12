@@ -58,23 +58,24 @@ from test_stage_timestamp_inventory_upgrade import (
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
-from ocfl_cli.stage import service
-from ocfl_cli.stage.fsm import Phase
-from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
-from ocfl_cli.stage.state import (
-    VerifiedProof,
+from ocfl_cli.model.metadata import StagedMetadata, StagedUser
+from ocfl_cli.model.ots_state import VerifiedProof
+from ocfl_cli.model.phase import Phase
+from ocfl_cli.store import locks as locks
+from ocfl_cli.store.ots_state import (
     has_ots,
     load_ots,
     ots_cache_path,
     plan_path,
     save_ots,
 )
-from ocfl_cli.stage.store import StagingStore
+from ocfl_cli.store.staging import StagingStore
+from ocfl_cli.workflow import common as wf_common
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
 
 # Content lookups run mid-commit, after the commit has started writing.
-_FAIL_DURING_COMMIT = "ocfl_cli.stage.service._StagingContentSource.get_content"
+_FAIL_DURING_COMMIT = "ocfl_cli.workflow.commit._StagingContentSource.get_content"
 
 # --------------------------------------------------------------------------- #
 # Local fixture (sibling tests redefine `empty_sha256_root` because it
@@ -769,9 +770,9 @@ class TestStageCommitOtsPreExecuteErrors:
             btc_fake,
         )
         root_path = str(empty_sha256_root.resolve())
-        monkeypatch.setattr(service, "_LOCK_TIMEOUT_SECONDS", 0.01)
+        monkeypatch.setattr(wf_common, "LOCK_TIMEOUT_SECONDS", 0.01)
 
-        with service._object_commit_lock(root_path, "obj:commit-lock-timeout"):
+        with locks.object_commit_lock(root_path, "obj:commit-lock-timeout", timeout=30):
             r = runner.invoke(
                 app,
                 _stage_args(

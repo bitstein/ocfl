@@ -23,7 +23,7 @@ Pins step 11 of `OTS workflow contract`:
 - Phase advances to ``content-upgraded`` only when both:
   (1) ∀ d ∈ pending_digests: content_proofs[d].verified is True
   (2) non_ots_digests(stage.state) ⊆ pending_digests
-- Reorg reconciliation (`_reverify_existing_proofs`) at head of every
+- Reorg reconciliation (`reverify_content_proofs`) at head of every
   --upgrade pass: for each verified=True proof, re-parse cached `.ots`
   and compare attested block hash against ``btc.getblockhash(block_height)``;
   on mismatch reset ``verified=False`` and re-fetch via SP.
@@ -33,6 +33,7 @@ Tests inject ``FakeBitcoinRPC`` / ``FakeSimpleProof`` via
 (see ``conftest.py::runner`` for the auto-attach mechanism).
 """
 
+import contextlib
 import hashlib
 import json
 from pathlib import Path
@@ -46,20 +47,19 @@ from typer.testing import CliRunner
 from ocfl_cli._style import make_console
 from ocfl_cli.errors import AttestationMismatchError
 from ocfl_cli.main import app
-from ocfl_cli.ots.simpleproof import CalendarAttestation as WireCalendarAttestation
-from ocfl_cli.stage import commands as stage_commands
-from ocfl_cli.stage import service
-from ocfl_cli.stage.fsm import Phase
-from ocfl_cli.stage.state import (
+from ocfl_cli.model.ots_state import (
     CalendarAttestation,
     Submission,
     VerifiedProof,
     VerifyJob,
-    load_ots,
-    ots_cache_path,
-    save_ots,
 )
-from ocfl_cli.stage.store import StagingStore
+from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.simpleproof import CalendarAttestation as WireCalendarAttestation
+from ocfl_cli.stage import timestamp as stage_timestamp
+from ocfl_cli.store.ots_state import load_ots, ots_cache_path, save_ots
+from ocfl_cli.store.staging import StagingStore
+from ocfl_cli.workflow import common as wf_common
+from ocfl_cli.workflow import content as wf_content
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
 
@@ -270,12 +270,12 @@ def _seed_processing_verify_job(
 
 class TestProgressRendering:
     def test_one_shot_content_result_renders_jobs_and_warning(self, capsys):
-        result = service.UpgradeContentResult(
+        result = wf_content.UpgradeContentResult(
             previous_phase=Phase.CONTENT_PENDING,
             phase=Phase.CONTENT_PENDING,
             unverified_pending_count=63,
             jobs=(
-                service.JobProgress(
+                wf_common.JobProgress(
                     job_id="ab12cd34-full",
                     status="PROCESSING",
                     total_hashes=250,
@@ -293,7 +293,7 @@ class TestProgressRendering:
             ),
         )
 
-        stage_commands._render_content_upgrade_result(
+        stage_timestamp._render_content_upgrade_result(
             make_console(), "obj:render", result
         )
 
@@ -312,7 +312,7 @@ class TestProgressRendering:
 
     def test_watch_progress_renders_deltas_and_no_change(self, capsys):
         prior = (
-            service.JobProgress(
+            wf_common.JobProgress(
                 job_id="ab12cd34-full",
                 status="PROCESSING",
                 total_hashes=250,
@@ -322,7 +322,7 @@ class TestProgressRendering:
                 pending_digests=63,
                 calendar_counts=(("bob.btc.calendar.opentimestamps.org", 187),),
             ),
-            service.JobProgress(
+            wf_common.JobProgress(
                 job_id="ef56gh78-full",
                 status="PROCESSING",
                 total_hashes=250,
@@ -334,7 +334,7 @@ class TestProgressRendering:
             ),
         )
         current = (
-            service.JobProgress(
+            wf_common.JobProgress(
                 job_id="ab12cd34-full",
                 status="PROCESSING",
                 total_hashes=250,
@@ -344,7 +344,7 @@ class TestProgressRendering:
                 pending_digests=57,
                 calendar_counts=(("bob.btc.calendar.opentimestamps.org", 193),),
             ),
-            service.JobProgress(
+            wf_common.JobProgress(
                 job_id="ef56gh78-full",
                 status="PROCESSING",
                 total_hashes=250,
@@ -356,7 +356,7 @@ class TestProgressRendering:
             ),
         )
 
-        stage_commands._render_watch_progress(
+        stage_timestamp._render_watch_progress(
             make_console(),
             "block",
             {
@@ -383,11 +383,11 @@ class TestProgressRendering:
         assert "      pending: 150 digests" in out
 
     def test_watch_start_renders_submit_mismatch_warning_once(self, capsys):
-        stage_commands._render_watch_start(
+        stage_timestamp._render_watch_start(
             make_console(),
             "obj:watch",
             (
-                service.JobProgress(
+                wf_common.JobProgress(
                     job_id="job-warning",
                     status="PROCESSING",
                     total_hashes=10,
@@ -441,13 +441,15 @@ class TestMidflightProgressSnapshots:
             },
         )
 
-        state = service.poll_content_verifications_locked(load_ots(sd), sd, sp=sp_fake)
-        state = service.snapshot_content_results_locked(state, sd, sp=sp_fake)
+        state = wf_content.poll_content_verifications_locked(
+            load_ots(sd), sd, sp=sp_fake
+        )
+        state = wf_content.snapshot_content_results_locked(state, sd, sp=sp_fake)
 
         job = state.verify_jobs[0]
         assert digest in job.attestation_snapshots
         assert state.content_proofs == {}
-        progress = service.compute_job_progress(state)
+        progress = wf_common.compute_job_progress(state)
         assert progress[0].anchored_digests == 1
         assert progress[0].pending_digests == 0
         assert progress[0].calendar_counts == (
@@ -476,10 +478,12 @@ class TestMidflightProgressSnapshots:
             (digest,),
             {foreign: ()},
         )
-        state = service.poll_content_verifications_locked(load_ots(sd), sd, sp=sp_fake)
+        state = wf_content.poll_content_verifications_locked(
+            load_ots(sd), sd, sp=sp_fake
+        )
 
         with pytest.raises(AttestationMismatchError, match="unexpected digest from SP"):
-            service.snapshot_content_results_locked(state, sd, sp=sp_fake)
+            wf_content.snapshot_content_results_locked(state, sd, sp=sp_fake)
 
     def test_unconfirmed_result_does_not_count_as_anchored(
         self,
@@ -497,12 +501,14 @@ class TestMidflightProgressSnapshots:
         digest = digests_by_name["a.txt"]
         _force_content_pending(sd, (digest,))
         _seed_processing_verify_job(sp_fake, sd, (digest,), {digest: ()})
-        state = service.poll_content_verifications_locked(load_ots(sd), sd, sp=sp_fake)
+        state = wf_content.poll_content_verifications_locked(
+            load_ots(sd), sd, sp=sp_fake
+        )
 
-        state = service.snapshot_content_results_locked(state, sd, sp=sp_fake)
+        state = wf_content.snapshot_content_results_locked(state, sd, sp=sp_fake)
 
         assert state.verify_jobs[0].attestation_snapshots == {}
-        progress = service.compute_job_progress(state)
+        progress = wf_common.compute_job_progress(state)
         assert progress[0].anchored_digests == 0
         assert progress[0].pending_digests == 1
 
@@ -546,10 +552,12 @@ class TestMidflightProgressSnapshots:
             return original(results_url)
 
         monkeypatch.setattr(sp_fake, "fetch_results_entries", counted_fetch)
-        state = service.poll_content_verifications_locked(load_ots(sd), sd, sp=sp_fake)
+        state = wf_content.poll_content_verifications_locked(
+            load_ots(sd), sd, sp=sp_fake
+        )
 
-        state = service.snapshot_content_results_locked(state, sd, sp=sp_fake)
-        state = service.snapshot_content_results_locked(state, sd, sp=sp_fake)
+        state = wf_content.snapshot_content_results_locked(state, sd, sp=sp_fake)
+        state = wf_content.snapshot_content_results_locked(state, sd, sp=sp_fake)
 
         assert calls == 2
 
@@ -583,10 +591,12 @@ class TestMidflightProgressSnapshots:
                 )
             },
         )
-        state = service.poll_content_verifications_locked(load_ots(sd), sd, sp=sp_fake)
+        state = wf_content.poll_content_verifications_locked(
+            load_ots(sd), sd, sp=sp_fake
+        )
         before = state.verify_jobs[0].attestation_snapshots
 
-        state = service.snapshot_content_results_locked(state, sd, sp=sp_fake)
+        state = wf_content.snapshot_content_results_locked(state, sd, sp=sp_fake)
 
         after = state.verify_jobs[0].attestation_snapshots
         assert after is not before
@@ -642,7 +652,7 @@ class TestMidflightProgressSnapshots:
             },
         )
 
-        state = service._reverify_existing_proofs(
+        state = wf_content.reverify_content_proofs(
             state,
             btc_fake.rpc,
             sp_fake,
@@ -701,7 +711,7 @@ class TestMidflightProgressSnapshots:
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
         _register_attested(btc_fake.rpc, digest)
 
-        state = service.ingest_content_verifications_locked(
+        state = wf_content.ingest_content_verifications_locked(
             state,
             StagingStore(staging),
             str(empty_sha256_root.resolve()),
@@ -1024,7 +1034,7 @@ class TestReorgShallow:
     ) -> None:
         """First pass: verifies. Reorg replaces the attested block (shallow):
         the chain is truncated to the attested height, so confirmations drop
-        below MIN_CONFS. Second pass: ``_reverify_existing_proofs`` sees the
+        below MIN_CONFS. Second pass: ``reverify_content_proofs`` sees the
         insufficient-confirmations window and resets verified=False — no HALT.
         (Merkle-mismatch-at-sufficient-confs after a reorg is a separate HALT
         case, covered by ``TestReorgMerkleMismatch``.)"""
@@ -1536,15 +1546,15 @@ def _install_crash_fault(
 ) -> None:
     """Wrap module-level seams to raise at the specified boundary.
 
-    `_atomic_write_bytes` from `ocfl_cli.stage.store` underlies BOTH the
+    `atomic_write_bytes` from `ocfl_cli.stage.store` underlies BOTH the
     ots-cache write (step 1) and the ots.json save (step 3). Fault site
     is selected by inspecting the target path. `ingest_file` from
     `ocfl_cli.stage.ingest` is the step-2 seam.
     """
-    from ocfl_cli.stage import ingest as ingest_mod
-    from ocfl_cli.stage import store as staging_mod
+    from ocfl_cli.store import ingest as ingest_mod
+    from ocfl_cli.store import staging as staging_mod
 
-    real_atomic = staging_mod._atomic_write_bytes
+    real_atomic = staging_mod.atomic_write_bytes
 
     cache_path = ots_cache_path(sd, digest)
     ots_json_path = sd / "ots.json"
@@ -1556,7 +1566,7 @@ def _install_crash_fault(
                 raise OSError("injected: cache write failed")
             real_atomic(path, data)
 
-        _patch_attr(staging_mod, "_atomic_write_bytes", _atomic)
+        _patch_attr(staging_mod, "atomic_write_bytes", _atomic)
 
     elif fault_at == "after_cache":
 
@@ -1567,12 +1577,10 @@ def _install_crash_fault(
         # level of `commands.stage` so it's patchable there. Fall back to
         # patching the source module if it's referenced via attribute.
         _patch_attr(ingest_mod, "ingest_file", _ingest)
-        try:
-            from ocfl_cli.stage import service as stage_cmd
+        with contextlib.suppress(ImportError):
+            from ocfl_cli.workflow import content as wf_content
 
-            _patch_attr(stage_cmd, "ingest_file", _ingest)
-        except ImportError:
-            pass
+            _patch_attr(wf_content, "ingest_file", _ingest)
 
     elif fault_at == "after_ingest":
 
@@ -1592,7 +1600,7 @@ def _install_crash_fault(
                     pass
             real_atomic(path, data)
 
-        _patch_attr(staging_mod, "_atomic_write_bytes", _atomic)
+        _patch_attr(staging_mod, "atomic_write_bytes", _atomic)
 
     elif fault_at == "during_ots_save":
         # Fault inside the atomic helper between temp-write and replace.
@@ -1621,7 +1629,7 @@ def _install_crash_fault(
             real_atomic(path, data)
             assert original_replace  # silence unused-warning
 
-        _patch_attr(staging_mod, "_atomic_write_bytes", _atomic)
+        _patch_attr(staging_mod, "atomic_write_bytes", _atomic)
 
     else:
         raise AssertionError(f"unknown fault_at: {fault_at!r}")
@@ -1945,7 +1953,7 @@ class TestRegtestEndToEnd:
         """Real bitcoind regtest, real OTS bytes, real RPC verify; then
         ``invalidateblock`` on the attestation block forces the next
         ``--upgrade`` pass to mark the proof ``verified=False`` via
-        ``_reverify_existing_proofs``."""
+        ``reverify_content_proofs``."""
         from tests.helpers.ots import build_regtest_attestation
         from tests.helpers.regtest import bitcoin_config_toml, bury_to_confs
 

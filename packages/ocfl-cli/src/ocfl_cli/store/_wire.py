@@ -15,7 +15,7 @@ import msgspec
 from ocfl_cli.errors import StagingError
 
 if TYPE_CHECKING:
-    from ocfl_cli.stage.state import OtsState
+    from ocfl_cli.model.ots_state import OtsState
 
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ def encode_ots_state(state: OtsState) -> dict[str, Any]:
 
 def decode_ots_state(raw: dict[str, Any]) -> OtsState:
     """Decode a current-schema ots.json dict. No I/O, no migrations."""
-    from ocfl_cli.stage.state import VERIFY_JOB_STATUSES, OtsState
+    from ocfl_cli.model.ots_state import VERIFY_JOB_STATUSES, OtsState
 
     raw = copy.deepcopy(raw)
     _nest_inventory_proof(raw)

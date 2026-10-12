@@ -5,9 +5,11 @@ cover ocfl-cli only.
 """
 
 import ast
+import importlib.util
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
@@ -26,6 +28,128 @@ def _tree(p: Path) -> ast.Module:
 
 def _rel(p: Path) -> str:
     return p.relative_to(CLI_SRC).as_posix()
+
+
+def _module(p: Path) -> str:
+    parts = list(p.relative_to(CLI_SRC.parent).with_suffix("").parts)
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def _is_module(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except ModuleNotFoundError, ValueError:
+        return False
+
+
+def _contracts() -> list[dict]:
+    proj = tomllib.loads((REPO / "pyproject.toml").read_text())
+    return proj["tool"]["importlinter"]["contracts"]
+
+
+# --- 5.1 layers: commands -> use cases -> adapters, enforced by import-linter
+
+COMMANDS = ("archive", "stage", "_appctx", "_common", "_exit", "_style", "exit_codes")
+ADAPTERS = ("ots", "store")
+BELOW_COMMANDS = ("workflow", *ADAPTERS, "model", "ports", "config", "errors")
+
+
+class TestLayers:
+    def test_import_linter_contracts_hold(self):
+        out = subprocess.run(
+            [str(VENV_BIN / "lint-imports")],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+        )
+        assert out.returncode == 0, out.stdout + out.stderr
+
+    def test_the_contracts_state_the_layers(self):
+        by_type = {c["type"]: c for c in _contracts() if c["type"] == "layers"}
+        layers = by_type["layers"]
+        assert layers["containers"] == ["ocfl_cli"] and layers["exhaustive"]
+        assert layers["layers"][0] == "main"
+        assert layers["layers"].index("workflow") == len(layers["layers"]) - 3
+        forbidden = [c for c in _contracts() if c["type"] == "forbidden"]
+        assert any(c["source_modules"] == ["ocfl_lib"] for c in forbidden)
+        commands = next(c for c in forbidden if "ocfl_cli.stage" in c["source_modules"])
+        assert set(commands["forbidden_modules"]) == {f"ocfl_cli.{a}" for a in ADAPTERS}
+
+    def test_no_private_names_cross_modules(self):
+        """A `_name` is private to its module, a `_module` to its package."""
+        bad: list[str] = []
+
+        def check_module(full: str, me: str, where: str) -> None:
+            parts = full.split(".")
+            for i, seg in enumerate(parts):
+                if seg.startswith("_") and not seg.startswith("__"):
+                    parent = ".".join(parts[:i])
+                    if not (me == parent or me.startswith(parent + ".")):
+                        bad.append(f"{where} {full}")
+                    return
+
+        for p in _py_files(CLI_SRC):
+            me = _module(p)
+            tree = _tree(p)
+            aliases: dict[str, str] = {}
+            for node in ast.walk(tree):
+                where = f"{_rel(p)}:{getattr(node, 'lineno', '?')}"
+                if isinstance(node, ast.Import):
+                    for a in node.names:
+                        if a.name.split(".")[0] == "ocfl_cli":
+                            check_module(a.name, me, where)
+                            if a.asname:
+                                aliases[a.asname] = a.name
+                elif (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module
+                    and node.module.split(".")[0] == "ocfl_cli"
+                ):
+                    check_module(node.module, me, where)
+                    for a in node.names:
+                        full = f"{node.module}.{a.name}"
+                        if _is_module(full):
+                            check_module(full, me, where)
+                            aliases[a.asname or a.name] = full
+                        elif a.name.startswith("_") and not a.name.startswith("__"):
+                            bad.append(f"{where} {full}")
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Attribute)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id in aliases
+                    and node.attr.startswith("_")
+                    and not node.attr.startswith("__")
+                ):
+                    bad.append(
+                        f"{_rel(p)}:{node.lineno} {aliases[node.value.id]}.{node.attr}"
+                    )
+        assert not bad, "\n".join(bad)
+
+    def test_below_the_commands_there_is_no_ui(self):
+        ui = {"typer", "click", "rich"}
+        bad = []
+        for pkg in BELOW_COMMANDS:
+            path = CLI_SRC / pkg
+            for p in _py_files(path) if path.is_dir() else [path.with_suffix(".py")]:
+                for node in ast.walk(_tree(p)):
+                    if isinstance(node, ast.ImportFrom) and node.module:
+                        mods = [node.module]
+                    elif isinstance(node, ast.Import):
+                        mods = [a.name for a in node.names]
+                    else:
+                        continue
+                    bad += [f"{_rel(p)} {m}" for m in mods if m.split(".")[0] in ui]
+        assert not bad, bad
+
+    def test_service_and_watch_moved_to_the_use_cases(self):
+        assert not (CLI_SRC / "stage/service.py").exists()
+        assert not (CLI_SRC / "stage/watch.py").exists()
+        assert not (CLI_SRC / "stage/commands.py").exists()
+        for mod in ("staging", "status", "content", "inventory", "commit", "watch"):
+            assert (CLI_SRC / "workflow" / f"{mod}.py").is_file(), mod
 
 
 # --- 5.4 one error handler: ErrorClass -> ExitCode, JSON errors on stderr

@@ -8,8 +8,6 @@ import typer
 
 from ocfl_cli._appctx import (
     AppCtxError,
-    BtcRpcFactory,
-    SpClientFactory,
     app_ctx,
     btc_rpc_factory,
     command_path,
@@ -21,6 +19,7 @@ from ocfl_cli._appctx import (
 )
 from ocfl_cli._style import make_console
 from ocfl_cli.config import ArchiveConfig, Config
+from ocfl_cli.ports import BtcRpcFactory, SpClientFactory
 
 
 def _factory(_cfg: Config) -> object:

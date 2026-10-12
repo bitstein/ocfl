@@ -5,6 +5,12 @@ No release is published yet, so every entry below is unreleased and may still ch
 
 ## [Unreleased]
 
+### Layers (ADR-0003)
+
+- `ocfl_cli` is layered commands → use cases → adapters, and import-linter enforces it (`uv run lint-imports`; contracts in the root `pyproject.toml`). Commands: `main`, `archive`, `stage`; use cases: `workflow`; adapters: `ots`, `store`; base: `model`, `ports`, `config`, `errors`. No behavior or output change.
+- Modules moved: `stage.service` and `stage.watch` → `workflow.{staging,status,content,inventory,commit,common,watch}`; `stage.commands` → `stage.{_app,edit,status,commit,timestamp,batch,render}`; `stage.{store,state,_wire,batch,ingest}` → `store.{staging,ots_state,_wire,batch,ingest}` with their value types in `model.{ots_state,batch,content}`; `stage.{fsm,schemas}` → `model.{phase,metadata}`; `config`, `archive.config`, `ots.config` → `config`, `config.archive`, `config.ots`; the `BitcoinRPC`, `HashBlockStream` and `SimpleProofClient` Protocols and the client factory types → `ports`; SimpleProof result types → `model.simpleproof`.
+- Helpers used across modules lost their leading `_` (e.g. `object_commit_lock`, `upgrade_content`, `SUBMIT_CHUNK_SIZE`); no module imports another's `_name`.
+
 ### Output
 
 - Each command run makes its own stdout and stderr consoles (`AppCtx.console`, `AppCtx.err_console`), coloured from that run's `--no-color`, `NO_COLOR`, `FORCE_COLOR` and TTY. `_style` keeps no consoles: `--no-color` no longer leaks into later runs in the same process, and `FORCE_COLOR`/`NO_COLOR` are read per run instead of at import. Removed `_style.echo`, `set_no_color` and `reinit_from_env`; use `_style.make_console`.

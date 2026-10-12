@@ -10,12 +10,13 @@ import contextlib
 from base64 import b64encode
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 import httpx2 as httpx
 import zmq
 
 from ocfl_cli.errors import AttestationMismatchError, ReorgDetectedError
+from ocfl_cli.ports import BitcoinRPC, HashBlockStream
 from ocfl_lib import BitcoinNoBlockError
 from ocfl_lib.bitcoin import BitcoinRpcClient, BlockchainInfo, BlockHeader
 from ocfl_lib.ots import (
@@ -64,18 +65,6 @@ class PendingVerification:
 
 
 VerifyResult = VerifiedAttestation | PendingVerification
-
-
-class BitcoinRPC(Protocol):
-    def getblockchaininfo(self) -> BlockchainInfo: ...
-
-    def getblockheader(self, block_hash: str) -> BlockHeader: ...
-
-    def getblockhash(self, height: int) -> str: ...
-
-
-class HashBlockStream(Protocol):
-    def wait_for_block(self, timeout_ms: int) -> bytes | None: ...
 
 
 class _RpcBlocks:
@@ -208,7 +197,7 @@ def verify_attestation(
 def default_btc_factory(cfg: Config) -> BitcoinRPC:
     """Construct the production `BitcoinRpcClient` from `cfg`.
 
-    Registered on `ctx.obj["btc_rpc_factory"]` by `main` so service
+    Registered on `ctx.obj["btc_rpc_factory"]` by `main` so use case
     callers (and tests via `runner.invoke(obj=...)`) share one entry
     point for client construction.
     """

@@ -11,12 +11,14 @@ from typer.testing import CliRunner
 
 from ocfl_cli.errors import LockTimeoutError
 from ocfl_cli.main import app
-from ocfl_cli.stage import service
-from ocfl_cli.stage.store import StagingStore
+from ocfl_cli.store import locks as locks
+from ocfl_cli.store.staging import StagingStore
+from ocfl_cli.workflow import commit as wf_commit
+from ocfl_cli.workflow import common as wf_common
 from ocfl_lib import LocalFS, StaleHeadError, StorageRoot
 
 # Content lookups run mid-commit, after the commit has started writing.
-_FAIL_DURING_COMMIT = "ocfl_cli.stage.service._StagingContentSource.get_content"
+_FAIL_DURING_COMMIT = "ocfl_cli.workflow.commit._StagingContentSource.get_content"
 
 
 @pytest.fixture
@@ -376,9 +378,7 @@ class TestCrashRecovery:
 
 
 class TestClaimLost:
-    def test_lost_claim_exits_3_and_keeps_staging(
-        self, runner, storage_root, tmp_path
-    ):
+    def test_lost_claim_exits_3_and_keeps_staging(self, runner, storage_root, tmp_path):
         """Another writer claims the object mid-commit: exit 3, nothing written."""
         oid = "obj:race"
         staging = tmp_path / "staging"
@@ -387,14 +387,14 @@ class TestClaimLost:
         _new_with_metadata(runner, storage_root, staging, oid)
         _invoke(runner, storage_root, staging, "add", oid, str(src))
 
-        original = service._StagingContentSource.get_content
+        original = wf_commit._StagingContentSource.get_content
 
         def other_writer_claims_first(self, digest):
             (storage_root / oid).mkdir(exist_ok=True)
             return original(self, digest)
 
         with patch.object(
-            service._StagingContentSource, "get_content", other_writer_claims_first
+            wf_commit._StagingContentSource, "get_content", other_writer_claims_first
         ):
             result = _invoke(runner, storage_root, staging, "commit", oid)
 
@@ -412,9 +412,9 @@ class TestCommitLocking:
         object_id = "obj:locked"
 
         with (
-            service._object_commit_lock(root_path, object_id, timeout=1),
+            locks.object_commit_lock(root_path, object_id, timeout=1),
             pytest.raises(LockTimeoutError, match="commit lock"),
-            service._object_commit_lock(root_path, object_id, timeout=0.01),
+            locks.object_commit_lock(root_path, object_id, timeout=0.01),
         ):
             pytest.fail("second lock acquire should time out")
 
@@ -440,12 +440,12 @@ class TestCommitLocking:
         staging_dir.mkdir(parents=True)
 
         with patch(
-            "ocfl_cli.stage.service.build_inventory_plan",
+            "ocfl_cli.workflow.commit.build_inventory_plan",
             return_value=(SimpleNamespace(object_id=object_id), object()),
         ):
             threads = [
                 threading.Thread(
-                    target=service.commit_bare,
+                    target=wf_commit.commit_bare,
                     kwargs={
                         "store": StagingStore(tmp_path / "staging"),
                         "sr": SimpleNamespace(commit=fake_commit),
@@ -514,7 +514,7 @@ class TestCommitLocking:
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
         staging_dir = store.staging_path(root_path, oid)
-        monkeypatch.setattr(service, "_LOCK_TIMEOUT_SECONDS", 0.01)
+        monkeypatch.setattr(wf_common, "LOCK_TIMEOUT_SECONDS", 0.01)
 
         with filelock.FileLock(str(staging_dir / ".lock")).acquire(timeout=1):
             result = _invoke(runner, storage_root, staging, "commit", oid)

@@ -32,13 +32,10 @@ from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
-from ocfl_cli.stage.fsm import Phase
-from ocfl_cli.stage.state import (
-    Submission,
-    load_ots,
-    save_ots,
-)
-from ocfl_cli.stage.store import StagingStore
+from ocfl_cli.model.ots_state import Submission
+from ocfl_cli.model.phase import Phase
+from ocfl_cli.store.ots_state import load_ots, save_ots
+from ocfl_cli.store.staging import StagingStore
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 
 # --------------------------------------------------------------------------- #

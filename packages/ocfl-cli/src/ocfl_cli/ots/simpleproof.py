@@ -1,11 +1,9 @@
 """SimpleProof API client protocol and HTTP implementation."""
 
 import time
-from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
-from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 import httpx2 as httpx
 
@@ -16,6 +14,14 @@ from ocfl_cli.errors import (
     SimpleProofError,
     SimpleProofTransient,
 )
+from ocfl_cli.model.simpleproof import (
+    CalendarAttestation,
+    JobStatus,
+    ResultsEntry,
+    SimpleProofDownloadResult,
+    SubmitResult,
+    VerifyBatchAck,
+)
 from ocfl_cli.ots._retry import retry
 from ocfl_lib import OtsParseError
 from ocfl_lib.ots import parse as parse_ots
@@ -24,6 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from ocfl_cli.config import Config
+    from ocfl_cli.ports import SimpleProofClient
 
 
 _REDACTED = "<redacted>"
@@ -42,64 +49,6 @@ def _scrub_exc_request(exc: BaseException) -> None:
 
 
 @dataclass(frozen=True, slots=True)
-class SubmitResult:
-    digests: tuple[str, ...]
-    record_ids: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class JobStatus:
-    job_id: str
-    status: str
-    results_url: str | None = None
-    total_hashes: int | None = None
-    verified_hashes: int | None = None
-    created_at: str | None = None
-    updated_at: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class CalendarAttestation:
-    calendar: str
-    block_height: int
-    transaction: str
-    merkle_root: str
-
-
-@dataclass(frozen=True, slots=True)
-class ResultsEntry:
-    digest: str
-    confirmed: bool
-    attestations: tuple[CalendarAttestation, ...]
-    ots_download_url: str
-
-
-@dataclass(frozen=True, slots=True)
-class VerifyBatchAck:
-    job_id: str
-    submitted_hashes: int | None = None
-    total_documents_found: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class SimpleProofDownloadResult(Mapping[str, bytes]):
-    proofs: Mapping[str, bytes]
-    missing_digests: frozenset[str]
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "proofs", MappingProxyType(dict(self.proofs)))
-
-    def __getitem__(self, digest: str) -> bytes:
-        return self.proofs[digest]
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self.proofs)
-
-    def __len__(self) -> int:
-        return len(self.proofs)
-
-
-@dataclass(frozen=True, slots=True)
 class SimpleProofCreds:
     """Credentials for the two SimpleProof auth schemes.
 
@@ -112,25 +61,11 @@ class SimpleProofCreds:
     api_key: str = ""
 
 
-class SimpleProofClient(Protocol):
-    def submit_hashes(self, digests: list[str], category_id: int) -> SubmitResult: ...
-
-    def verify_batch(self, digests: list[str], category_id: int) -> VerifyBatchAck: ...
-
-    def poll_job(self, job_id: str) -> JobStatus: ...
-
-    def fetch_results_entries(self, results_url: str) -> tuple[ResultsEntry, ...]: ...
-
-    def download_results(
-        self, results_url: str, expected_digests: set[str]
-    ) -> SimpleProofDownloadResult: ...
-
-
 _SUBMIT_PATH = "/api/proof/timestamp/hashes"
 _VERIFY_PATH = "/api/v2/proofs/verify-batches"
 _JOBS_PATH = "/api/v2/proofs/jobs"
-_SUBMIT_CHUNK_SIZE = 1000
-_VERIFY_BATCH_CHUNK_SIZE = 1000
+SUBMIT_CHUNK_SIZE = 1000
+VERIFY_BATCH_CHUNK_SIZE = 1000
 
 
 def _json_object(resp: httpx.Response, context: str) -> dict[str, Any]:
@@ -306,8 +241,8 @@ class SimpleProofHttpClient:
         all_digests: list[str] = []
         all_record_ids: list[str] = []
         chunks = [
-            digests[i : i + _SUBMIT_CHUNK_SIZE]
-            for i in range(0, len(digests), _SUBMIT_CHUNK_SIZE)
+            digests[i : i + SUBMIT_CHUNK_SIZE]
+            for i in range(0, len(digests), SUBMIT_CHUNK_SIZE)
         ]
         for chunk in chunks:
             try:
@@ -486,7 +421,7 @@ class SimpleProofHttpClient:
 def default_sp_factory(cfg: Config) -> SimpleProofClient:
     """Construct the production `SimpleProofHttpClient` from `cfg`.
 
-    Registered on `ctx.obj["sp_client_factory"]` by `main` so service
+    Registered on `ctx.obj["sp_client_factory"]` by `main` so use case
     callers (and tests via `runner.invoke(obj=...)`) share one entry
     point for client construction.
     """

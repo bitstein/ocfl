@@ -10,9 +10,9 @@ from platformdirs import user_config_path
 from pydantic import BaseModel, ValidationError
 from pydantic_settings import BaseSettings
 
-from ocfl_cli.archive.config import ArchiveConfig, validate_digest_name
+from ocfl_cli.config.archive import ArchiveConfig, validate_digest_name
+from ocfl_cli.config.ots import BitcoinConfig, SimpleProofConfig, env_file_path
 from ocfl_cli.errors import ConfigError
-from ocfl_cli.ots.config import BitcoinConfig, SimpleProofConfig, env_file_path
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

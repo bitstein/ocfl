@@ -15,9 +15,9 @@ from typer.testing import CliRunner
 
 from ocfl_cli._appctx import app_ctx
 from ocfl_cli.main import app
-from ocfl_cli.stage.fsm import Phase
-from ocfl_cli.stage.state import load_ots
-from ocfl_cli.stage.store import StagingStore
+from ocfl_cli.model.phase import Phase
+from ocfl_cli.store.ots_state import load_ots
+from ocfl_cli.store.staging import StagingStore
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 
 _SP_OK = """\

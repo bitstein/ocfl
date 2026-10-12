@@ -37,20 +37,14 @@ from typer.testing import CliRunner
 
 from ocfl_cli._common import open_root
 from ocfl_cli.config import Config
+from ocfl_cli.config.ots import SimpleProofConfig
 from ocfl_cli.main import app
-from ocfl_cli.ots.config import SimpleProofConfig
-from ocfl_cli.stage import service
-from ocfl_cli.stage.fsm import Phase
-from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
-from ocfl_cli.stage.state import (
-    VerifiedProof,
-    VerifyJob,
-    load_ots,
-    ots_cache_path,
-    plan_path,
-    save_ots,
-)
-from ocfl_cli.stage.store import StagingStore
+from ocfl_cli.model.metadata import StagedMetadata, StagedUser
+from ocfl_cli.model.ots_state import VerifiedProof, VerifyJob
+from ocfl_cli.model.phase import Phase
+from ocfl_cli.store.ots_state import load_ots, ots_cache_path, plan_path, save_ots
+from ocfl_cli.store.staging import StagingStore
+from ocfl_cli.workflow import inventory as wf_inventory
 from ocfl_lib import CommitPlan, LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
 
@@ -345,7 +339,7 @@ class TestInventorySubmissionPrimitives:
         store = StagingStore(staging)
         sr, _fs = open_root(str(empty_sha256_root))
 
-        prepared = service.prepare_inventory_submission_locked(
+        prepared = wf_inventory.prepare_inventory_submission_locked(
             cfg,
             store,
             sr,
@@ -362,7 +356,7 @@ class TestInventorySubmissionPrimitives:
         assert not sp_fake._submissions
         assert not plan_path(sd).exists()
 
-        result = service.submit_prepared_inventory_locked(
+        result = wf_inventory.submit_prepared_inventory_locked(
             cfg,
             sd,
             prepared,
@@ -399,7 +393,7 @@ class TestInventorySubmissionPrimitives:
         store = StagingStore(staging)
         sr, _fs = open_root(str(empty_sha256_root))
 
-        prepared = service.prepare_inventory_submission_locked(
+        prepared = wf_inventory.prepare_inventory_submission_locked(
             cfg,
             store,
             sr,
@@ -408,7 +402,7 @@ class TestInventorySubmissionPrimitives:
             sd,
             allow_missing_metadata=False,
         )
-        result = service.submit_prepared_inventory_locked(
+        result = wf_inventory.submit_prepared_inventory_locked(
             cfg, sd, prepared, sp_factory=lambda cfg: sp_fake
         )
 

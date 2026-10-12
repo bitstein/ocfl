@@ -1,7 +1,6 @@
-"""OTS workspace state for staged OCFL versions.
+"""`<staging>/ots.json` persistence: load/save, schema migrations, the lock.
 
-`<staging>/ots.json` schema plus persistence, locking, and
-schema-migration helpers.
+The model lives in `ocfl_cli.model.ots_state`.
 """
 
 import logging
@@ -13,8 +12,12 @@ import filelock
 import msgspec
 
 from ocfl_cli.errors import LockTimeoutError, StagingError
-from ocfl_cli.stage import _wire, store
-from ocfl_cli.stage.fsm import Phase  # noqa: TC001 - msgspec decodes this at runtime.
+from ocfl_cli.model.ots_state import (
+    OTS_STATE_VERSION,
+    OtsState,
+)
+from ocfl_cli.store import _wire
+from ocfl_cli.store import staging as store
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -23,110 +26,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_OTS_STATE_VERSION = 1
-
-
-# ---------------------------------------------------------------------------
-# OTS state structs
-# ---------------------------------------------------------------------------
-
-
-class VerifiedProof(msgspec.Struct, frozen=True):
-    """Shared sub-shape: present in every `content_proofs` entry and in
-    `inventory_proof`. Optional additions must preserve both wire shapes;
-    breaking changes require a schema bump.
-    """
-
-    ots_path: str | None = None
-    verified: bool = False
-    block_height: int | None = None
-    block_hash: str | None = None
-    confirmations_at_verify: int | None = None
-    verified_at: str | None = None
-
-
-class Submission(msgspec.Struct, frozen=True):
-    """A round of `/api/proof/timestamp/hashes` POSTs."""
-
-    submitted_at: str
-    digests: tuple[str, ...]
-    status: str  # "submitting" | "submitted" | "failed"
-    job_id: str | None = None
-    attempts: int = 0
-    batch_id: str | None = None
-    record_ids: tuple[str | None, ...] | None = None
-
-
-class CalendarAttestation(msgspec.Struct, frozen=True):
-    calendar: str
-    block_height: int
-    transaction: str
-    merkle_root: str
-
-
-class VerifyJob(msgspec.Struct, frozen=True):
-    """An outstanding `verify-batches` job awaiting download/verify."""
-
-    job_id: str
-    digests: tuple[str, ...]
-    # Canonical SimpleProof statuses; unknown future statuses remain loadable.
-    status: str
-    total_hashes: int | None = None
-    verified_hashes: int | None = None
-    created_at: str | None = None
-    updated_at: str | None = None
-    results_url: str | None = None
-    last_snapshot_updated_at: str | None = None
-    submitted_hashes: int | None = None
-    total_documents_found: int | None = None
-    attestation_snapshots: dict[str, tuple[CalendarAttestation, ...]] = msgspec.field(
-        default_factory=dict
-    )
-
-
-VERIFY_JOB_STATUSES = frozenset(
-    {"PENDING", "IN_PROGRESS", "PROCESSING", "COMPLETED", "FAILED", "EXPIRED"}
-)
-
-
-class InventoryProof(msgspec.Struct, frozen=True):
-    """`inventory_proof`: inventory digest + version + verify job_id plus a
-    nested shared `VerifiedProof`. The JSON wire shape flattens `proof`
-    into the top level of `inventory_proof` (see plan §`ots.json` schema)."""
-
-    version: str
-    digest: str
-    proof: VerifiedProof = msgspec.field(default_factory=VerifiedProof)
-    job_id: str | None = None
-    batch_id: str | None = None
-    record_id: str | None = None
-
-
-class OtsState(msgspec.Struct, frozen=True):
-    """In-memory representation of `<staging>/ots.json`.
-
-    Frozen so callers must rebuild via `msgspec.structs.replace` to advance
-    phase or append submissions.
-
-    Persisted via `save_ots` (atomic write-temp + fsync + replace).
-    """
-
-    phase: Phase
-    category_id: int
-    schema_version: int = _OTS_STATE_VERSION
-    pending_digests: tuple[str, ...] = ()
-    submissions: tuple[Submission, ...] = ()
-    verify_jobs: tuple[VerifyJob, ...] = ()
-    content_proofs: dict[str, VerifiedProof] = msgspec.field(default_factory=dict)
-    inventory_proof: InventoryProof | None = None
-
 
 # ---------------------------------------------------------------------------
 # Schema migrations
 # ---------------------------------------------------------------------------
 
 # `_MIGRATIONS[i]` upgrades schema v=i to v=i+1. `load_ots` composes them
-# to walk any supported prior version forward to `_OTS_STATE_VERSION`.
+# to walk any supported prior version forward to `OTS_STATE_VERSION`.
 # Each migration is a single forward step; pure dict-to-dict.
 _MIGRATIONS: dict[int, Callable[[dict], dict]] = {}
 
@@ -169,7 +75,7 @@ def load_ots(staging: Path) -> OtsState:
     """Load `<staging>/ots.json`, running migrations to current schema.
 
     Raises `StagingError` when the file's `schema_version` is newer than
-    `_OTS_STATE_VERSION` (newer CLI required) or its shape can't be parsed.
+    `OTS_STATE_VERSION` (newer CLI required) or its shape can't be parsed.
     """
     path = _ots_path(staging)
     try:
@@ -181,12 +87,12 @@ def load_ots(staging: Path) -> OtsState:
     v = raw.get("schema_version", 1)
     if not isinstance(v, int):
         raise StagingError(f"{path}: invalid schema_version {v!r}")
-    if v > _OTS_STATE_VERSION:
+    if v > OTS_STATE_VERSION:
         raise StagingError(
             f"{path}: schema_version={v} is newer than CLI "
-            f"(supports up to {_OTS_STATE_VERSION}); upgrade the CLI"
+            f"(supports up to {OTS_STATE_VERSION}); upgrade the CLI"
         )
-    for i in range(v, _OTS_STATE_VERSION):
+    for i in range(v, OTS_STATE_VERSION):
         try:
             migrate = _MIGRATIONS[i]
         except KeyError:
@@ -201,7 +107,7 @@ def load_ots(staging: Path) -> OtsState:
 def save_ots(staging: Path, state: OtsState) -> None:
     """Atomically write `state` to `<staging>/ots.json` (temp + fsync + replace)."""
     raw_bytes = msgspec.json.encode(_wire.encode_ots_state(state))
-    store._atomic_write_bytes(_ots_path(staging), raw_bytes)
+    store.atomic_write_bytes(_ots_path(staging), raw_bytes)
 
 
 @contextmanager

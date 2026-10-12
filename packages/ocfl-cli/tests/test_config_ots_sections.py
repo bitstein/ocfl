@@ -24,8 +24,8 @@ from ocfl_cli.config import (
 
 
 def test_ots_config_classes_reexported_from_domain_module() -> None:
-    from ocfl_cli.ots.config import BitcoinConfig as DomainBitcoinConfig
-    from ocfl_cli.ots.config import SimpleProofConfig as DomainSimpleProofConfig
+    from ocfl_cli.config.ots import BitcoinConfig as DomainBitcoinConfig
+    from ocfl_cli.config.ots import SimpleProofConfig as DomainSimpleProofConfig
 
     assert SimpleProofConfig is DomainSimpleProofConfig
     assert BitcoinConfig is DomainBitcoinConfig

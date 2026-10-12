@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from ocfl_lib import ErrorClass
 
 if TYPE_CHECKING:
-    from ocfl_cli.ots.simpleproof import SubmitResult
+    from ocfl_cli.model.simpleproof import SubmitResult
 
 
 class CLIError(Exception):

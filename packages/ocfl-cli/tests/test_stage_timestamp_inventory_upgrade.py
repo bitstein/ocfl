@@ -38,19 +38,15 @@ from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
 from ocfl_cli.config import BitcoinConfig, Config
+from ocfl_cli.config.ots import SimpleProofConfig
 from ocfl_cli.main import app
-from ocfl_cli.ots.bitcoin import HashBlockStream
-from ocfl_cli.ots.config import SimpleProofConfig
-from ocfl_cli.stage import service
-from ocfl_cli.stage.fsm import Phase
-from ocfl_cli.stage.state import (
-    VerifiedProof,
-    VerifyJob,
-    load_ots,
-    ots_cache_path,
-    save_ots,
-)
-from ocfl_cli.stage.store import StagingStore
+from ocfl_cli.model.ots_state import VerifiedProof, VerifyJob
+from ocfl_cli.model.phase import Phase
+from ocfl_cli.ports import HashBlockStream
+from ocfl_cli.store.ots_state import load_ots, ots_cache_path, save_ots
+from ocfl_cli.store.staging import StagingStore
+from ocfl_cli.workflow import common as wf_common
+from ocfl_cli.workflow import inventory as wf_inventory
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
 
@@ -106,18 +102,18 @@ def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
 
 
 def _inject_fake_zmq(monkeypatch: pytest.MonkeyPatch, stream: HashBlockStream) -> None:
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
     monkeypatch.setattr(
-        stage_watch, "_get_zmq_subscriber", lambda *a, **kw: stream, raising=False
+        stage_watch, "block_stream_for", lambda *a, **kw: stream, raising=False
     )
 
 
 @pytest.fixture(autouse=True)
 def no_block_processing_delay(monkeypatch: pytest.MonkeyPatch) -> None:
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
-    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    monkeypatch.setattr(stage_watch, "sleep_after_block", lambda: None, raising=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -337,11 +333,11 @@ class TestInventoryUpgradePrimitives:
             ),
         )
         save_ots(sd, state)
-        state = service.poll_inventory_verifications_locked(state, sd, sp=sp_fake)
+        state = wf_inventory.poll_inventory_verifications_locked(state, sd, sp=sp_fake)
 
-        state = service.snapshot_inventory_results_locked(state, sd, sp=sp_fake)
+        state = wf_inventory.snapshot_inventory_results_locked(state, sd, sp=sp_fake)
 
-        progress = service.compute_inventory_job_progress(state)
+        progress = wf_common.compute_inventory_job_progress(state)
         assert progress is not None
         assert progress.anchored_digests == 0
         assert progress.pending_digests == 1
@@ -383,7 +379,7 @@ class TestInventoryUpgradePrimitives:
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS)
         _register_attested(btc_fake.rpc, inv_digest)
 
-        state = service.prepare_inventory_upgrade_locked(
+        state = wf_inventory.prepare_inventory_upgrade_locked(
             load_ots(sd),
             sd,
             sp=sp_fake,
@@ -396,11 +392,11 @@ class TestInventoryUpgradePrimitives:
         assert load_ots(sd).verify_jobs[0].job_id == job_id
 
         sp_fake.advance_to_completed(job_id, {inv_digest: _ots_for(inv_digest)})
-        state = service.poll_inventory_verifications_locked(state, sd, sp=sp_fake)
+        state = wf_inventory.poll_inventory_verifications_locked(state, sd, sp=sp_fake)
         assert state.verify_jobs[0].status == "COMPLETED"
         assert load_ots(sd).verify_jobs[0].status == "COMPLETED"
 
-        state = service.ingest_inventory_verifications_locked(
+        state = wf_inventory.ingest_inventory_verifications_locked(
             state,
             sd,
             sp=sp_fake,
@@ -668,16 +664,16 @@ def _install_inv_crash_fault(
 ) -> None:
     """Wrap module-level seams to raise at the specified inventory boundary.
 
-    ``_atomic_write_bytes`` from ``ocfl_cli.stage.store`` underlies BOTH
+    ``atomic_write_bytes`` from ``ocfl_cli.stage.store`` underlies BOTH
     the ots-cache write (step 1) and the ots.json save (step 3). Fault
     site is selected by inspecting the target path. The wire format
     flattens ``inventory_proof.proof`` into the top-level
     ``inventory_proof`` object, so the JSON inspection looks at
     ``inventory_proof.verified``.
     """
-    from ocfl_cli.stage import store as staging_mod
+    from ocfl_cli.store import staging as staging_mod
 
-    real_atomic = staging_mod._atomic_write_bytes
+    real_atomic = staging_mod.atomic_write_bytes
 
     cache_path = ots_cache_path(sd, inv_digest)
     ots_json_path = sd / "ots.json"
@@ -689,7 +685,7 @@ def _install_inv_crash_fault(
                 raise OSError("injected: inventory cache write failed")
             real_atomic(path, data)
 
-        _patch_attr(staging_mod, "_atomic_write_bytes", _atomic)
+        _patch_attr(staging_mod, "atomic_write_bytes", _atomic)
 
     elif fault_at == "during_ots_save":
         # Fault inside the atomic helper between temp-write and replace
@@ -717,7 +713,7 @@ def _install_inv_crash_fault(
                     pass
             real_atomic(path, data)
 
-        _patch_attr(staging_mod, "_atomic_write_bytes", _atomic)
+        _patch_attr(staging_mod, "atomic_write_bytes", _atomic)
 
     else:
         raise AssertionError(f"unknown fault_at: {fault_at!r}")
@@ -907,10 +903,10 @@ class TestInventoryWatchLoop:
         _inject_fake_zmq(monkeypatch, _OneBlockStream())
 
         calls: list[str] = []
-        from ocfl_cli.stage import watch as stage_watch
+        from ocfl_cli.workflow import watch as stage_watch
 
         monkeypatch.setattr(
-            stage_watch, "_sleep_after_block", lambda: calls.append("sleep")
+            stage_watch, "sleep_after_block", lambda: calls.append("sleep")
         )
 
         r = runner.invoke(
@@ -1062,11 +1058,9 @@ class TestInventoryWatchLoop:
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
 
-        from ocfl_cli.stage import service as stage_cmd
-
         # Speed knob: shrink the watch loop's lock timeout if the constant
         # exists (it does — see test_stage_timestamp_content_upgrade_watch).
-        monkeypatch.setattr(stage_cmd, "_LOCK_TIMEOUT_SECONDS", 1, raising=False)
+        monkeypatch.setattr(wf_common, "LOCK_TIMEOUT_SECONDS", 1, raising=False)
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest = _setup_at_inventory_pending(

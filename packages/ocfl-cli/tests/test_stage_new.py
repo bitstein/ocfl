@@ -30,7 +30,7 @@ class TestStageNew:
         assert result.exit_code == 0, result.output
 
         # Verify staging dir created with v1 inventory
-        from ocfl_cli.stage.store import StagingStore
+        from ocfl_cli.store.staging import StagingStore
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -58,7 +58,7 @@ class TestStageNew:
         )
         assert result.exit_code == 0, result.output
 
-        from ocfl_cli.stage.store import StagingStore
+        from ocfl_cli.store.staging import StagingStore
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -111,7 +111,7 @@ class TestStageNew:
         )
         assert result.exit_code == 0, result.output
 
-        from ocfl_cli.stage.store import StagingStore
+        from ocfl_cli.store.staging import StagingStore
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -138,7 +138,7 @@ class TestStageNew:
         assert result.exit_code == 2
         assert "invalid value" in result.output.lower()
 
-        from ocfl_cli.stage.store import StagingStore
+        from ocfl_cli.store.staging import StagingStore
 
         store = StagingStore(staging)
         assert not store.exists(str(storage_root.resolve()), "obj:bad-digest")
@@ -167,7 +167,7 @@ class TestStageNew:
         assert "sha512" in result.output
         assert "sha256" in result.output
 
-        from ocfl_cli.stage.store import StagingStore
+        from ocfl_cli.store.staging import StagingStore
 
         store = StagingStore(staging)
         assert not store.exists(str(storage_root.resolve()), "obj:bad-content-digest")
@@ -189,7 +189,7 @@ class TestStageNew:
         )
         assert result.exit_code == 0, result.output
 
-        from ocfl_cli.stage.store import StagingStore
+        from ocfl_cli.store.staging import StagingStore
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -216,7 +216,7 @@ class TestStageNew:
         )
         assert result.exit_code == 0, result.output
 
-        from ocfl_cli.stage.store import StagingStore
+        from ocfl_cli.store.staging import StagingStore
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())

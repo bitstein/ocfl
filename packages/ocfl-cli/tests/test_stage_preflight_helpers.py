@@ -9,20 +9,20 @@ from ocfl_cli._exit import error_class_of
 from ocfl_cli.config import BitcoinConfig, Config, SimpleProofConfig
 from ocfl_cli.errors import CLIError
 from ocfl_cli.exit_codes import ExitCode, exit_code_for_class
-from ocfl_cli.stage.commands import (
-    StagingResolved,
+from ocfl_cli.model.ots_state import OtsState
+from ocfl_cli.model.phase import Phase
+from ocfl_cli.stage._app import (
     TimestampPreflight,
     get_factories,
     require_bitcoin,
     require_existing_staging,
-    require_ots_staging,
     require_simpleproof,
     require_timestamp_preflight,
     validate_timestamp_flags,
 )
-from ocfl_cli.stage.fsm import Phase
-from ocfl_cli.stage.state import OtsState, save_ots
-from ocfl_cli.stage.store import StagingStore
+from ocfl_cli.store.ots_state import save_ots
+from ocfl_cli.store.staging import StagingStore
+from ocfl_cli.workflow.staging import StagingResolved, require_ots_staging
 from ocfl_lib import DigestAlgorithm, Inventory, InventoryBuilder
 
 

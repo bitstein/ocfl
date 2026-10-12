@@ -41,7 +41,7 @@ vacuous fast-path is also an upstream concern.
 import pytest
 
 from ocfl_cli.errors import PhaseError
-from ocfl_cli.stage.fsm import Phase, check_transition
+from ocfl_cli.model.phase import Phase, check_transition
 
 D = Phase.DRAFTING
 CP = Phase.CONTENT_PENDING

@@ -4,11 +4,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 import typer
-from platformdirs import user_state_path
 
 from ocfl_cli import _appctx as appctx
 from ocfl_cli._common import open_root, output_json, resolve_root
 from ocfl_cli.errors import UsageError
+from ocfl_cli.workflow.commit import staged_content_for_recovery
+from ocfl_cli.workflow.staging import default_staging_root
 from ocfl_lib import ClaimFS, CommitState, RecoveryAction
 
 if TYPE_CHECKING:
@@ -85,16 +86,5 @@ def _staged_content(
     ctx: typer.Context, staging_root: str | None, object_id: str
 ) -> ContentSource | None:
     """The object's staged content, if it is still staged."""
-    from ocfl_cli.stage import service
-    from ocfl_cli.stage.store import StagingStore
-
-    path = (
-        Path(staging_root) if staging_root else user_state_path("ocfl-cli") / "staging"
-    )
-    if not path.is_dir():
-        return None
-    store = StagingStore(path)
-    root_path = resolve_root(appctx.root(ctx))
-    if not store.exists(root_path, object_id):
-        return None
-    return service.staged_content_source(store, root_path, object_id)
+    path = Path(staging_root) if staging_root else default_staging_root()
+    return staged_content_for_recovery(path, resolve_root(appctx.root(ctx)), object_id)

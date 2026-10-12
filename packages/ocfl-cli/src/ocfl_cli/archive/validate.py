@@ -10,7 +10,7 @@ from ocfl_cli import _style
 from ocfl_cli._common import open_root, output_json, resolve_root
 from ocfl_cli._exit import error_line
 from ocfl_cli.errors import ConfigError, ErrorContext
-from ocfl_cli.ots.bitcoin import block_source
+from ocfl_cli.workflow import validation as wf_validation
 from ocfl_lib import (
     Finding,
     OcflError,
@@ -26,8 +26,8 @@ from ocfl_lib.fs import open_fs
 if TYPE_CHECKING:
     from rich.console import Console
 
-    from ocfl_cli._appctx import BtcRpcFactory
     from ocfl_cli.config import Config
+    from ocfl_cli.ports import BtcRpcFactory
     from ocfl_lib.fs import FS, FileWalker
 
 
@@ -159,21 +159,8 @@ def _chain_check(cfg: Config | None, btc_factory: BtcRpcFactory) -> ots.ChainChe
             else "in your ocfl config"
         )
         raise ConfigError(f"--verify-ots requires [bitcoin] section {where}")
-    source = _CachedBlocks(block_source(btc_factory(cfg)))
+    source = wf_validation.chain_source(btc_factory(cfg))
     return ots.ChainCheck(source, cfg.bitcoin.confirmations)
-
-
-class _CachedBlocks:
-    """Asks the node once per height, so progress output costs no extra calls."""
-
-    def __init__(self, source: ots.BlockHeaderSource) -> None:
-        self._source = source
-        self._blocks: dict[int, ots.ChainBlock | None] = {}
-
-    def block_at(self, height: int) -> ots.ChainBlock | None:
-        if height not in self._blocks:
-            self._blocks[height] = self._source.block_at(height)
-        return self._blocks[height]
 
 
 def _emit_chain_results(

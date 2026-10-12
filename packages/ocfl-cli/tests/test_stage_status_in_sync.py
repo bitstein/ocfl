@@ -48,6 +48,6 @@ class TestComputeInSyncBoundary:
         # ``compute_in_sync`` lands; failure at red is a clear
         # ImportError-shaped diagnostic in the test body, not a
         # collection abort.
-        from ocfl_cli.stage.service import compute_in_sync
+        from ocfl_cli.workflow.status import compute_in_sync
 
         assert compute_in_sync(_info(ibd=ibd, vp=vp)) is expected

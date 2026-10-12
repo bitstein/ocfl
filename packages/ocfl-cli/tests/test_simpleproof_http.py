@@ -82,17 +82,19 @@ from ocfl_cli.errors import (
     SimpleProofError,
     SimpleProofTransient,
 )
-from ocfl_cli.ots.simpleproof import (
-    _SUBMIT_CHUNK_SIZE,
-    _VERIFY_BATCH_CHUNK_SIZE,
+from ocfl_cli.model.simpleproof import (
     CalendarAttestation,
     JobStatus,
     ResultsEntry,
-    SimpleProofCreds,
     SimpleProofDownloadResult,
-    SimpleProofHttpClient,
     SubmitResult,
     VerifyBatchAck,
+)
+from ocfl_cli.ots.simpleproof import (
+    SUBMIT_CHUNK_SIZE,
+    VERIFY_BATCH_CHUNK_SIZE,
+    SimpleProofCreds,
+    SimpleProofHttpClient,
 )
 from ocfl_lib import OtsParseError
 from tests.helpers.ots import build_attestation
@@ -110,11 +112,11 @@ VERIFY_PATH = "/api/v2/proofs/verify-batches"
 
 
 def test_simpleproof_chunk_sizes_are_shared_from_client_module() -> None:
-    from ocfl_cli.stage import service
+    from ocfl_cli.workflow import content as wf_content
 
-    assert _SUBMIT_CHUNK_SIZE == 1000
-    assert _VERIFY_BATCH_CHUNK_SIZE == 1000
-    assert service._SUBMIT_CHUNK_SIZE is _SUBMIT_CHUNK_SIZE
+    assert SUBMIT_CHUNK_SIZE == 1000
+    assert VERIFY_BATCH_CHUNK_SIZE == 1000
+    assert wf_content.SUBMIT_CHUNK_SIZE is SUBMIT_CHUNK_SIZE
 
 
 def _digest(i: int) -> str:

@@ -5,9 +5,9 @@ import copy
 import pytest
 
 from ocfl_cli.errors import StagingError
-from ocfl_cli.stage._wire import decode_ots_state, encode_ots_state
-from ocfl_cli.stage.fsm import Phase
-from ocfl_cli.stage.state import InventoryProof, OtsState, Submission, VerifiedProof
+from ocfl_cli.model.ots_state import InventoryProof, OtsState, Submission, VerifiedProof
+from ocfl_cli.model.phase import Phase
+from ocfl_cli.store._wire import decode_ots_state, encode_ots_state
 
 
 def _bare_hex(prefix: str) -> str:

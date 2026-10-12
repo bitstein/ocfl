@@ -1,30 +1,14 @@
 """Pure helper to digest a source file and record it in a content map."""
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING
 
+from ocfl_cli.model.content import ContentMap, IngestResult
 from ocfl_lib import file_digest
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from ocfl_lib import DigestAlgorithm
-
-
-class ContentMapEntry(TypedDict):
-    path: str
-    size: int
-    mtime: float
-
-
-ContentMap = dict[str, ContentMapEntry]
-
-
-@dataclass(frozen=True, slots=True)
-class IngestResult:
-    digest: str
-    size: int
-    already_existed: bool
 
 
 def ingest_file(

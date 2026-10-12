@@ -15,7 +15,7 @@ Pins the `--upgrade --watch` contract from `OTS workflow contract`:
        only.
     4. Inside lock: fresh ``load_ots``, ``btc.getblockchaininfo()``,
        if ``height_jump > 1`` or tip-hash changed at stable height ⇒
-       ``_reverify_existing_proofs``; run ``_upgrade_pass``.
+       ``reverify_content_proofs``; run ``upgrade_content``.
     5. Release lock; if phase advanced to ``content-upgraded`` ⇒
        return 0.
 - ``LockTimeoutError`` is logged at WARNING and absorbed (loop continues
@@ -33,14 +33,14 @@ Pins the `--upgrade --watch` contract from `OTS workflow contract`:
 Test infrastructure seam (introduced by the implementer in
 ``commands/stage.py``):
 
-- ``_get_zmq_subscriber(cfg)`` — production factory returning a
+- ``block_stream_for(cfg)`` — production factory returning a
   ``HashBlockStream``-shaped object. Tests monkeypatch it to inject
   ``InMemoryHashBlockStream`` from ``tests/fakes/fake_bitcoin.py``.
   SimpleProof / Bitcoin clients are injected via ``runner.obj``
   factory entries (see ``conftest.py::runner``).
 
 These tests are RED until both the ``--watch`` flag and the
-``_get_zmq_subscriber`` seam land. Either failure mode (unknown CLI
+``block_stream_for`` seam land. Either failure mode (unknown CLI
 option or ``AttributeError`` on the patched seam) is an acceptable
 diagnostic.
 """
@@ -59,15 +59,11 @@ from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
-from ocfl_cli.ots.bitcoin import HashBlockStream
-from ocfl_cli.stage.fsm import Phase
-from ocfl_cli.stage.state import (
-    Submission,
-    VerifyJob,
-    load_ots,
-    save_ots,
-)
-from ocfl_cli.stage.store import StagingStore
+from ocfl_cli.model.ots_state import Submission, VerifyJob
+from ocfl_cli.model.phase import Phase
+from ocfl_cli.ports import HashBlockStream
+from ocfl_cli.store.ots_state import load_ots, save_ots
+from ocfl_cli.store.staging import StagingStore
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
 
@@ -122,24 +118,24 @@ def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
 
 
 def _inject_fake_zmq(monkeypatch: pytest.MonkeyPatch, stream: HashBlockStream) -> None:
-    """Patch the ``_get_zmq_subscriber`` seam to return *stream*.
+    """Patch the ``block_stream_for`` seam to return *stream*.
 
     Tests monkeypatch it to bypass real ZMQ sockets. Accepts any
     ``HashBlockStream``-shaped object (``InMemoryHashBlockStream`` or
     inline test stub).
     """
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
     monkeypatch.setattr(
-        stage_watch, "_get_zmq_subscriber", lambda *a, **kw: stream, raising=False
+        stage_watch, "block_stream_for", lambda *a, **kw: stream, raising=False
     )
 
 
 @pytest.fixture(autouse=True)
 def no_block_processing_delay(monkeypatch: pytest.MonkeyPatch) -> None:
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
-    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    monkeypatch.setattr(stage_watch, "sleep_after_block", lambda: None, raising=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -257,11 +253,11 @@ class TestWatchLoopAdvancesOnBlock:
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
-        from ocfl_cli.stage import watch as stage_watch
+        from ocfl_cli.workflow import watch as stage_watch
 
         monkeypatch.setattr(
             stage_watch,
-            "_get_zmq_subscriber",
+            "block_stream_for",
             lambda *a, **kw: pytest.fail("already-upgraded watch subscribed to ZMQ"),
             raising=True,
         )
@@ -328,10 +324,10 @@ class TestWatchLoopAdvancesOnBlock:
         _inject_fake_zmq(monkeypatch, stream)
 
         calls: list[str] = []
-        from ocfl_cli.stage import watch as stage_watch
+        from ocfl_cli.workflow import watch as stage_watch
 
         monkeypatch.setattr(
-            stage_watch, "_sleep_after_block", lambda: calls.append("sleep")
+            stage_watch, "sleep_after_block", lambda: calls.append("sleep")
         )
 
         staging = tmp_path / "staging"
@@ -441,17 +437,17 @@ class TestWatchHeightJumpTriggersReverify:
         """Two-digest staging: first digest verified before --watch starts.
         Between the two pushed block hashes, the chain jumps by >1
         (simulating dropped ZMQ notifications). The loop's per-wake
-        ``getblockchaininfo`` notices and runs ``_reverify_existing_proofs``.
-        Spy on the module-level ``_reverify_existing_proofs`` to assert
+        ``getblockchaininfo`` notices and runs ``reverify_content_proofs``.
+        Spy on the module-level ``reverify_content_proofs`` to assert
         it ran."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
 
-        from ocfl_cli.stage import service as stage_cmd
+        from ocfl_cli.workflow import content as wf_content
 
-        # Spy: count invocations of _reverify_existing_proofs.
-        real_reverify = stage_cmd._reverify_existing_proofs
+        # Spy: count invocations of reverify_content_proofs.
+        real_reverify = wf_content.reverify_content_proofs
         calls: list[int] = []
 
         def spy_reverify(*args: Any, **kwargs: Any):
@@ -459,7 +455,7 @@ class TestWatchHeightJumpTriggersReverify:
             return real_reverify(*args, **kwargs)
 
         monkeypatch.setattr(
-            stage_cmd, "_reverify_existing_proofs", spy_reverify, raising=True
+            wf_content, "reverify_content_proofs", spy_reverify, raising=True
         )
 
         staging = tmp_path / "staging"
@@ -543,14 +539,14 @@ class TestWatchTipChangeAtStableHeightTriggersReverify:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Tip-hash differs at the same height between wakes ⇒ regtest
-        reorg signal ⇒ ``_reverify_existing_proofs`` runs."""
+        reorg signal ⇒ ``reverify_content_proofs`` runs."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
 
-        from ocfl_cli.stage import service as stage_cmd
+        from ocfl_cli.workflow import content as wf_content
 
-        real_reverify = stage_cmd._reverify_existing_proofs
+        real_reverify = wf_content.reverify_content_proofs
         calls: list[int] = []
 
         def spy_reverify(*args: Any, **kwargs: Any):
@@ -558,7 +554,7 @@ class TestWatchTipChangeAtStableHeightTriggersReverify:
             return real_reverify(*args, **kwargs)
 
         monkeypatch.setattr(
-            stage_cmd, "_reverify_existing_proofs", spy_reverify, raising=True
+            wf_content, "reverify_content_proofs", spy_reverify, raising=True
         )
 
         staging = tmp_path / "staging"
@@ -701,7 +697,7 @@ class TestWatchLockTimeoutWarningAndContinue:
         logged with a message mentioning ``lock``.
 
         Speed: monkeypatch the watch loop's lock timeout down to 1s
-        via the module-level ``_LOCK_TIMEOUT_SECONDS`` constant the
+        via the module-level ``LOCK_TIMEOUT_SECONDS`` constant the
         implementer is expected to introduce. If the implementer
         chooses an inline ``timeout=30`` literal, this test will pause
         for 30s before continuing — still correct, just slow."""
@@ -709,10 +705,10 @@ class TestWatchLockTimeoutWarningAndContinue:
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
 
-        from ocfl_cli.stage import service as stage_cmd
+        from ocfl_cli.workflow import common as wf_common
 
         # Speed knob: monkeypatch the lock timeout if the constant exists.
-        monkeypatch.setattr(stage_cmd, "_LOCK_TIMEOUT_SECONDS", 1, raising=False)
+        monkeypatch.setattr(wf_common, "LOCK_TIMEOUT_SECONDS", 1, raising=False)
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -818,7 +814,7 @@ class TestTwoWatchersSerializeSafely:
         _register_attested(btc_fake.rpc, d)
 
         from ocfl_cli.config import load_config
-        from ocfl_cli.stage import watch as stage_watch
+        from ocfl_cli.workflow import watch as stage_watch
         from ocfl_lib import LocalFS, StorageRoot
 
         # Two independent streams; each delivers one block then raises
@@ -852,13 +848,13 @@ class TestTwoWatchersSerializeSafely:
             return streams[i]
 
         monkeypatch.setattr(
-            stage_watch, "_get_zmq_subscriber", _next_stream, raising=False
+            stage_watch, "block_stream_for", _next_stream, raising=False
         )
 
-        # Call _watch_loop directly per thread. CliRunner patches
+        # Call watch_content directly per thread. CliRunner patches
         # process-global sys.stdout/err which is not thread-safe; the
         # contract under test (filelock serialization) lives entirely in
-        # _watch_loop. Per-thread state (cfg/store/sr) is built locally;
+        # watch_content. Per-thread state (cfg/store/sr) is built locally;
         # only the staging dir + filelock are shared.
         cfg = load_config()
         root_path = str(empty_sha256_root.resolve())
@@ -873,7 +869,7 @@ class TestTwoWatchersSerializeSafely:
                 store = StagingStore(staging)
                 sr = StorageRoot.open(LocalFS(empty_sha256_root))
                 barrier.wait(timeout=10)
-                results[tag] = stage_watch._watch_loop(
+                results[tag] = stage_watch.watch_content(
                     cfg,
                     store,
                     sr,
@@ -941,7 +937,7 @@ class TestRegtestRealZmqHashblockDelivery:
         monkeypatch.setenv("BITCOIN_RPC_PASSWORD", bitcoind_regtest.rpc_password)
         _write_config(tmp_path, monkeypatch, body=cfg_body)
         _inject_fake_sp(runner, sp_fake)
-        # Production btc_rpc_factory + _get_zmq_subscriber paths used.
+        # Production btc_rpc_factory + block_stream_for paths used.
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(

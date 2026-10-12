@@ -20,37 +20,34 @@ from ocfl_cli.errors import (
     SimpleProofTransient,
 )
 from ocfl_cli.main import app
-from ocfl_cli.ots.simpleproof import (
-    JobStatus,
-    SimpleProofDownloadResult,
-    SubmitResult,
-)
-from ocfl_cli.stage import batch as batch_state
-from ocfl_cli.stage import commands as stage_commands
-from ocfl_cli.stage import service
-from ocfl_cli.stage.batch import (
+from ocfl_cli.model import batch as batch_model
+from ocfl_cli.model.batch import (
     BatchFile,
     BatchObject,
     BatchObjectStatus,
     BatchSubmission,
     BatchVerifyJob,
-    batch_file_path,
-    new_batch_id,
-    save_batch,
 )
-from ocfl_cli.stage.fsm import Phase
-from ocfl_cli.stage.schemas import StagedMetadata, StagedUser
-from ocfl_cli.stage.state import (
+from ocfl_cli.model.metadata import StagedMetadata, StagedUser
+from ocfl_cli.model.ots_state import (
     InventoryProof,
     OtsState,
     Submission,
     VerifiedProof,
     VerifyJob,
-    load_ots,
-    ots_cache_path,
-    save_ots,
 )
-from ocfl_cli.stage.store import StagingStore
+from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.simpleproof import (
+    JobStatus,
+    SimpleProofDownloadResult,
+    SubmitResult,
+)
+from ocfl_cli.stage import batch as stage_batch
+from ocfl_cli.store import batch as batch_state
+from ocfl_cli.store.batch import batch_file_path, new_batch_id, save_batch
+from ocfl_cli.store.ots_state import load_ots, ots_cache_path, save_ots
+from ocfl_cli.store.staging import StagingStore
+from ocfl_cli.workflow import content as wf_content
 from ocfl_lib import (
     BitcoinRpcTransientError,
     LocalFS,
@@ -74,9 +71,9 @@ zmq_endpoint = "tcp://127.0.0.1:28332"
 
 
 def test_batch_output_helpers_have_typed_contracts() -> None:
-    status_hints = get_type_hints(stage_commands._batch_status_dict)
-    object_event_hints = get_type_hints(stage_commands._batch_object_event)
-    digest_rows_hints = get_type_hints(stage_commands._verbose_digest_rows)
+    status_hints = get_type_hints(stage_batch._batch_status_dict)
+    object_event_hints = get_type_hints(stage_batch._batch_object_event)
+    digest_rows_hints = get_type_hints(stage_batch._verbose_digest_rows)
     status_contract = get_type_hints(status_hints["return"])
 
     assert is_typeddict(status_hints["return"])
@@ -88,19 +85,19 @@ def test_batch_output_helpers_have_typed_contracts() -> None:
 
 
 def test_fixed_batch_reasons_are_canonicalized_through_helper() -> None:
-    assert set(stage_commands._FIXED_BATCH_REASONS) == set(
-        get_args(stage_commands.FixedBatchReason.__value__)
+    assert set(stage_batch._FIXED_BATCH_REASONS) == set(
+        get_args(stage_batch.FixedBatchReason.__value__)
     )
-    assert "sp_partial_results" in stage_commands._FIXED_BATCH_REASONS
+    assert "sp_partial_results" in stage_batch._FIXED_BATCH_REASONS
     assert [
-        stage_commands._fixed_batch_reason(reason)
-        for reason in stage_commands._FIXED_BATCH_REASONS
-    ] == list(stage_commands._FIXED_BATCH_REASONS)
+        stage_batch._fixed_batch_reason(reason)
+        for reason in stage_batch._FIXED_BATCH_REASONS
+    ] == list(stage_batch._FIXED_BATCH_REASONS)
 
 
 @pytest.mark.parametrize("status", ["PENDING", "PROCESSING"])
 def test_batch_verify_active_statuses_include_simpleproof_v2_states(
-    status: batch_state.BatchVerifyJobStatus,
+    status: batch_model.BatchVerifyJobStatus,
 ) -> None:
     digest = "a" * 64
     batch = BatchFile(
@@ -127,8 +124,8 @@ def test_batch_verify_active_statuses_include_simpleproof_v2_states(
         ),
     )
 
-    assert stage_commands._verify_job_covers(batch, batch.objects[0])
-    assert stage_commands._covered_verify_digests(batch) == {digest}
+    assert stage_batch._verify_job_covers(batch, batch.objects[0])
+    assert stage_batch._covered_verify_digests(batch) == {digest}
 
 
 def _assert_z_timestamp(value: str) -> None:
@@ -242,10 +239,10 @@ def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
 
 
 def _inject_fake_zmq(monkeypatch: pytest.MonkeyPatch, stream) -> None:
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
     monkeypatch.setattr(
-        stage_watch, "_get_zmq_subscriber", lambda *a, **kw: stream, raising=True
+        stage_watch, "block_stream_for", lambda *a, **kw: stream, raising=True
     )
 
 
@@ -1092,7 +1089,7 @@ def test_batch_content_recovers_object_intent_without_batch_row(
     batch_lock_depth = 0
     events: list[str] = []
     original_batch_lock = batch_state.with_batch_lock
-    original_object_lock = stage_commands.with_lock
+    original_object_lock = stage_batch.with_lock
 
     def recording_batch_lock(*args, **kwargs):
         manager = original_batch_lock(*args, **kwargs)
@@ -1119,7 +1116,7 @@ def test_batch_content_recovers_object_intent_without_batch_row(
         return original_object_lock(*args, **kwargs)
 
     monkeypatch.setattr(batch_state, "with_batch_lock", recording_batch_lock)
-    monkeypatch.setattr(stage_commands, "with_lock", recording_object_lock)
+    monkeypatch.setattr(stage_batch, "with_lock", recording_object_lock)
 
     result = runner.invoke(
         app,
@@ -1215,7 +1212,7 @@ def test_batch_content_chunked_multi_chunk_object_completes(
 ) -> None:
     _write_config(tmp_path, monkeypatch)
     _inject_fake_sp(runner, sp_fake)
-    monkeypatch.setattr(service, "_SUBMIT_CHUNK_SIZE", 2)
+    monkeypatch.setattr(wf_content, "SUBMIT_CHUNK_SIZE", 2)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -2723,9 +2720,9 @@ def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
     _write_config(tmp_path, monkeypatch)
     _inject_fake_sp(runner, sp_fake)
     _inject_fake_btc(runner, FakeBitcoinRPC())
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
-    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    monkeypatch.setattr(stage_watch, "sleep_after_block", lambda: None, raising=True)
     subscribers = 0
 
     class _InterruptingStream:
@@ -2738,7 +2735,7 @@ def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
         return _InterruptingStream()
 
     monkeypatch.setattr(
-        stage_watch, "_get_zmq_subscriber", subscriber_factory, raising=True
+        stage_watch, "block_stream_for", subscriber_factory, raising=True
     )
     staging = tmp_path / "staging"
     _new_ots_with_files(
@@ -2782,9 +2779,9 @@ def test_batch_watch_human_output_reports_observed_blocks(
     btc = FakeBitcoinRPC()
     _inject_fake_sp(runner, sp_fake)
     _inject_fake_btc(runner, btc)
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
-    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    monkeypatch.setattr(stage_watch, "sleep_after_block", lambda: None, raising=True)
 
     class _OneBlockStream:
         seen = False
@@ -2797,7 +2794,7 @@ def test_batch_watch_human_output_reports_observed_blocks(
             raise KeyboardInterrupt
 
     monkeypatch.setattr(
-        stage_watch, "_get_zmq_subscriber", lambda *a, **kw: _OneBlockStream()
+        stage_watch, "block_stream_for", lambda *a, **kw: _OneBlockStream()
     )
     staging = tmp_path / "staging"
     _new_ots_with_files(
@@ -2821,7 +2818,7 @@ def test_batch_watch_human_output_reports_observed_blocks(
     )
 
     assert result.exit_code == 130, result.output
-    assert f"block 1 {stage_commands._short_block_hash(btc.getblockhash(1))}" in (
+    assert f"block 1 {stage_batch._short_block_hash(btc.getblockhash(1))}" in (
         result.output
     )
     assert "submitted=1 upgraded=0 failed=0" in result.output
@@ -2839,7 +2836,7 @@ def test_batch_watch_polls_during_quiet_periods(
     btc = FakeBitcoinRPC()
     _inject_fake_sp(runner, sp_fake)
     _inject_fake_btc(runner, btc)
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
     subscribers = 0
     staging = tmp_path / "staging"
@@ -2876,7 +2873,7 @@ def test_batch_watch_polls_during_quiet_periods(
         return _QuietCompletingStream()
 
     monkeypatch.setattr(
-        stage_watch, "_get_zmq_subscriber", subscriber_factory, raising=True
+        stage_watch, "block_stream_for", subscriber_factory, raising=True
     )
 
     result = _invoke_json(
@@ -2910,11 +2907,11 @@ def test_batch_watch_empty_submitted_subset_exits_without_subscriber(
     _write_config(tmp_path, monkeypatch)
     _inject_fake_sp(runner, TransientSubmitFake())
     _inject_fake_btc(runner, FakeBitcoinRPC())
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
     monkeypatch.setattr(
         stage_watch,
-        "_get_zmq_subscriber",
+        "block_stream_for",
         lambda *a, **kw: pytest.fail("watch subscribed with no submitted rows"),
         raising=True,
     )
@@ -2957,11 +2954,11 @@ def test_batch_watch_all_skipped_exits_without_subscriber(
     _write_config(tmp_path, monkeypatch)
     _inject_fake_sp(runner, sp_fake)
     _inject_fake_btc(runner, FakeBitcoinRPC())
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
     monkeypatch.setattr(
         stage_watch,
-        "_get_zmq_subscriber",
+        "block_stream_for",
         lambda *a, **kw: pytest.fail("watch subscribed with only skipped rows"),
         raising=True,
     )
@@ -2995,11 +2992,10 @@ def test_batch_watch_enters_upgrade_for_submitted_subset_after_submit_failure(
     sp = SecondSubmitTransientFake()
     _inject_fake_sp(runner, sp)
     _inject_fake_btc(runner, FakeBitcoinRPC())
-    from ocfl_cli.stage import service as stage_service
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
-    monkeypatch.setattr(stage_service, "_SUBMIT_CHUNK_SIZE", 1, raising=True)
-    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    monkeypatch.setattr(wf_content, "SUBMIT_CHUNK_SIZE", 1, raising=True)
+    monkeypatch.setattr(stage_watch, "sleep_after_block", lambda: None, raising=True)
 
     class _InterruptingStream:
         def wait_for_block(self, timeout_ms: int) -> bytes | None:
@@ -3056,19 +3052,16 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
     btc = FakeBitcoinRPC()
     _inject_fake_sp(runner, sp_fake)
     _inject_fake_btc(runner, btc)
-    from ocfl_cli.stage import commands as stage_commands
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
-    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    monkeypatch.setattr(stage_watch, "sleep_after_block", lambda: None, raising=True)
     calls: list[str] = []
 
     def mismatch_once(*args, **kwargs):
         calls.append(kwargs["expected_digest"].hex())
         raise AttestationMismatchError("stale proof")
 
-    monkeypatch.setattr(
-        stage_commands, "verify_attestation", mismatch_once, raising=True
-    )
+    monkeypatch.setattr(stage_batch, "verify_attestation", mismatch_once, raising=True)
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3166,19 +3159,16 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
     btc = FakeBitcoinRPC()
     _inject_fake_sp(runner, sp_fake)
     _inject_fake_btc(runner, btc)
-    from ocfl_cli.stage import commands as stage_commands
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
-    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    monkeypatch.setattr(stage_watch, "sleep_after_block", lambda: None, raising=True)
     calls: list[str] = []
 
     def mismatch_once(*args, **kwargs):
         calls.append(kwargs["expected_digest"].hex())
         raise AttestationMismatchError("stale proof")
 
-    monkeypatch.setattr(
-        stage_commands, "verify_attestation", mismatch_once, raising=True
-    )
+    monkeypatch.setattr(stage_batch, "verify_attestation", mismatch_once, raising=True)
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3304,19 +3294,16 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
     btc = FakeBitcoinRPC()
     _inject_fake_sp(runner, sp_fake)
     _inject_fake_btc(runner, btc)
-    from ocfl_cli.stage import commands as stage_commands
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
-    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    monkeypatch.setattr(stage_watch, "sleep_after_block", lambda: None, raising=True)
     calls: list[str] = []
 
     def mismatch_once(*args, **kwargs):
         calls.append(kwargs["expected_digest"].hex())
         raise AttestationMismatchError("stale inventory proof")
 
-    monkeypatch.setattr(
-        stage_commands, "verify_attestation", mismatch_once, raising=True
-    )
+    monkeypatch.setattr(stage_batch, "verify_attestation", mismatch_once, raising=True)
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3436,15 +3423,14 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
     btc = FakeBitcoinRPC()
     _inject_fake_sp(runner, sp_fake)
     _inject_fake_btc(runner, btc)
-    from ocfl_cli.stage import commands as stage_commands
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
-    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    monkeypatch.setattr(stage_watch, "sleep_after_block", lambda: None, raising=True)
 
     def deep_reorg(*args, **kwargs):
         raise ReorgDetectedError("reorg deeper than confirmation depth")
 
-    monkeypatch.setattr(stage_commands, "verify_attestation", deep_reorg, raising=True)
+    monkeypatch.setattr(stage_batch, "verify_attestation", deep_reorg, raising=True)
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3569,15 +3555,14 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
     btc = FakeBitcoinRPC()
     _inject_fake_sp(runner, sp_fake)
     _inject_fake_btc(runner, btc)
-    from ocfl_cli.stage import commands as stage_commands
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
-    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    monkeypatch.setattr(stage_watch, "sleep_after_block", lambda: None, raising=True)
 
     def deep_reorg(*args, **kwargs):
         raise ReorgDetectedError("reorg deeper than confirmation depth")
 
-    monkeypatch.setattr(stage_commands, "verify_attestation", deep_reorg, raising=True)
+    monkeypatch.setattr(stage_batch, "verify_attestation", deep_reorg, raising=True)
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3695,9 +3680,9 @@ def test_batch_watch_node_halt_exits_operational_error(
     _write_config(tmp_path, monkeypatch)
     _inject_fake_sp(runner, sp_fake)
     _inject_fake_btc(runner, TransientBitcoinRPC())
-    from ocfl_cli.stage import watch as stage_watch
+    from ocfl_cli.workflow import watch as stage_watch
 
-    monkeypatch.setattr(stage_watch, "_sleep_after_block", lambda: None, raising=True)
+    monkeypatch.setattr(stage_watch, "sleep_after_block", lambda: None, raising=True)
     stream = InMemoryHashBlockStream()
     stream.push(b"\x00" * 32)
     _inject_fake_zmq(monkeypatch, stream)

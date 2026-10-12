@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from ocfl_cli.stage.ingest import ContentMapEntry, IngestResult, ingest_file
+from ocfl_cli.model.content import ContentMapEntry, IngestResult
+from ocfl_cli.store.ingest import ingest_file
 from ocfl_lib import DigestAlgorithm
 
 

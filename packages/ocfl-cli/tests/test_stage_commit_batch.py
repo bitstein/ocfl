@@ -11,11 +11,13 @@ from typer.testing import CliRunner
 
 from ocfl_cli.errors import AttestationMismatchError, PhaseError
 from ocfl_cli.main import app
-from ocfl_cli.stage import batch as batch_state
-from ocfl_cli.stage import commands as stage_commands
-from ocfl_cli.stage import service
-from ocfl_cli.stage.batch import BatchFile, BatchObject, save_batch
-from ocfl_cli.stage.store import StagingStore
+from ocfl_cli.model import batch as batch_model
+from ocfl_cli.model.batch import BatchFile, BatchObject
+from ocfl_cli.stage import batch as stage_batch
+from ocfl_cli.store import batch as batch_state
+from ocfl_cli.store.batch import save_batch
+from ocfl_cli.store.staging import StagingStore
+from ocfl_cli.workflow import commit as wf_commit
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 
 
@@ -45,7 +47,7 @@ def _batch(
     staging: Path,
     storage_root: Path,
     *,
-    target: batch_state.BatchTarget = "inventory",
+    target: batch_model.BatchTarget = "inventory",
     rows: tuple[BatchObject, ...],
 ) -> BatchFile:
     batch = BatchFile(
@@ -80,8 +82,8 @@ def _events(output: str) -> list[dict]:
 
 
 def test_commit_batch_output_helpers_have_typed_contracts() -> None:
-    object_event_hints = get_type_hints(stage_commands._commit_object_event)
-    summary_hints = get_type_hints(stage_commands._commit_summary_event)
+    object_event_hints = get_type_hints(stage_batch._commit_object_event)
+    summary_hints = get_type_hints(stage_batch._commit_summary_event)
     summary_contract = get_type_hints(summary_hints["return"])
 
     assert is_typeddict(object_event_hints["return"])
@@ -118,7 +120,7 @@ def test_all_upgraded_batch_commits_every_object(
         committed.append((kwargs["object_id"], kwargs["allow_missing_metadata"]))
         shutil.rmtree(kwargs["staging_dir"])
 
-    monkeypatch.setattr(service, "commit_ots", fake_commit_ots)
+    monkeypatch.setattr(wf_commit, "commit_ots", fake_commit_ots)
 
     result = _invoke_json(
         runner, storage_root, staging, "commit", "--batch", batch.batch_id
@@ -181,7 +183,7 @@ def test_mixed_batch_commits_upgraded_and_skips_other_rows(
         ),
     )
     monkeypatch.setattr(
-        service,
+        wf_commit,
         "commit_ots",
         lambda **kwargs: shutil.rmtree(kwargs["staging_dir"]),
     )
@@ -252,7 +254,7 @@ def test_batch_commit_continues_after_failure_and_exits_one(
             raise AttestationMismatchError("plan digest mismatch")
         shutil.rmtree(kwargs["staging_dir"])
 
-    monkeypatch.setattr(service, "commit_ots", fake_commit_ots)
+    monkeypatch.setattr(wf_commit, "commit_ots", fake_commit_ots)
 
     result = _invoke_json(
         runner, storage_root, staging, "commit", "--batch", batch.batch_id
@@ -305,7 +307,7 @@ def test_resume_after_partial_commit_skips_missing_staging(
         ),
     )
     monkeypatch.setattr(
-        service,
+        wf_commit,
         "commit_ots",
         lambda **kwargs: shutil.rmtree(kwargs["staging_dir"]),
     )
@@ -358,7 +360,7 @@ def test_content_target_batch_is_rejected_before_commit_attempt(
         rows=(BatchObject(object_id="obj:content", status="upgraded"),),
     )
     monkeypatch.setattr(
-        service,
+        wf_commit,
         "commit_ots",
         lambda **kwargs: pytest.fail("content batch attempted object commit"),
     )
@@ -384,7 +386,7 @@ def test_batch_commit_rejects_wrong_archive_root_before_commit_attempt(
         rows=(BatchObject(object_id="obj:wrong-root", status="upgraded"),),
     )
     monkeypatch.setattr(
-        service,
+        wf_commit,
         "commit_ots",
         lambda **kwargs: pytest.fail("wrong-root batch attempted object commit"),
     )
@@ -411,7 +413,7 @@ def test_batch_commit_does_not_require_batch_driver_lease(
         rows=(BatchObject(object_id="obj:leased", status="upgraded"),),
     )
     monkeypatch.setattr(
-        service,
+        wf_commit,
         "commit_ots",
         lambda **kwargs: shutil.rmtree(kwargs["staging_dir"]),
     )
@@ -505,7 +507,7 @@ def test_snapshot_row_invalidated_mid_run_is_reported_as_failed(
             raise PhaseError("inventory timestamp plan missing or stale")
         shutil.rmtree(kwargs["staging_dir"])
 
-    monkeypatch.setattr(service, "commit_ots", fake_commit_ots)
+    monkeypatch.setattr(wf_commit, "commit_ots", fake_commit_ots)
 
     result = _invoke_json(
         runner, storage_root, staging, "commit", "--batch", batch.batch_id

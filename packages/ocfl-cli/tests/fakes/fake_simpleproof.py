@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 
-from ocfl_cli.ots.simpleproof import (
+from ocfl_cli.model.simpleproof import (
     CalendarAttestation,
     JobStatus,
     ResultsEntry,

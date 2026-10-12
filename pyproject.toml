@@ -18,6 +18,7 @@ dev = [
     "ocfl-cli[test]",
     "ocfl-index",
     "mypy-boto3-s3>=1.42.80",
+    "import-linter>=2.15",
 ]
 
 [tool.uv.workspace]
@@ -46,6 +47,53 @@ include = [
     "packages/ocfl-index/src",
     "packages/ocfl-index/tests",
     "tests",
+]
+
+[tool.importlinter]
+root_packages = ["ocfl_cli", "ocfl_lib"]
+
+[[tool.importlinter.contracts]]
+name = "ocfl_lib never imports ocfl_cli (ADR-0002)"
+type = "forbidden"
+source_modules = ["ocfl_lib"]
+forbidden_modules = ["ocfl_cli"]
+
+[[tool.importlinter.contracts]]
+# docs/adr/0003-cli-layers.md. Each layer may import the layers below it.
+name = "ocfl-cli layers: commands -> use cases -> adapters"
+type = "layers"
+containers = ["ocfl_cli"]
+exhaustive = true
+layers = [
+    "main",
+    "archive | stage",
+    "_appctx : _common : _exit : _style : exit_codes",
+    "workflow",
+    "ots | store",
+    "config : errors : model : ports",
+]
+
+[[tool.importlinter.contracts]]
+name = "commands reach adapters only through the use cases"
+type = "forbidden"
+source_modules = [
+    "ocfl_cli.archive",
+    "ocfl_cli.stage",
+    "ocfl_cli._appctx",
+    "ocfl_cli._common",
+    "ocfl_cli._exit",
+    "ocfl_cli._style",
+    "ocfl_cli.exit_codes",
+]
+forbidden_modules = ["ocfl_cli.ots", "ocfl_cli.store"]
+allow_indirect_imports = true
+# Until the batch engine moves into the use cases (docs/roadmap.md §5 item 2).
+ignore_imports = [
+    "ocfl_cli.stage.batch -> ocfl_cli.ots.bitcoin",
+    "ocfl_cli.stage.batch -> ocfl_cli.ots.simpleproof",
+    "ocfl_cli.stage.batch -> ocfl_cli.store.batch",
+    "ocfl_cli.stage.batch -> ocfl_cli.store.ots_state",
+    "ocfl_cli.stage.batch -> ocfl_cli.store.staging",
 ]
 
 [tool.ruff]

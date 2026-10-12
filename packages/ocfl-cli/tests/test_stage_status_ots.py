@@ -36,16 +36,15 @@ from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
-from ocfl_cli.stage.fsm import Phase
-from ocfl_cli.stage.state import (
+from ocfl_cli.model.ots_state import (
     InventoryProof,
     Submission,
     VerifiedProof,
     VerifyJob,
-    load_ots,
-    save_ots,
 )
-from ocfl_cli.stage.store import StagingStore
+from ocfl_cli.model.phase import Phase
+from ocfl_cli.store.ots_state import load_ots, save_ots
+from ocfl_cli.store.staging import StagingStore
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 
 # --------------------------------------------------------------------------- #
@@ -809,14 +808,14 @@ class TestStageStatusOts:
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
 
-        from ocfl_cli.stage import service as stage_cmd
-        from ocfl_cli.stage import state as staging_mod
+        from ocfl_cli.store import ots_state as staging_mod
+        from ocfl_cli.workflow import status as wf_status
 
         def _boom(*a: object, **kw: object):
             raise AssertionError("status MUST NOT take the staging .lock")
 
         monkeypatch.setattr(staging_mod, "with_lock", _boom, raising=False)
-        monkeypatch.setattr(stage_cmd, "with_lock", _boom, raising=False)
+        monkeypatch.setattr(wf_status, "with_lock", _boom, raising=False)
 
         staging = tmp_path / "staging"
         sd, _ = _new_ots_staging(
@@ -930,9 +929,9 @@ class TestStageStatusOts:
         submitted = fake_now - timedelta(seconds=30)
         submitted_iso = submitted.isoformat(timespec="seconds")
 
-        from ocfl_cli.stage import service as stage_cmd
+        from ocfl_cli.workflow import status as wf_status
 
-        monkeypatch.setattr(stage_cmd, "_status_now", lambda: fake_now, raising=False)
+        monkeypatch.setattr(wf_status, "_status_now", lambda: fake_now, raising=False)
 
         _set_phase(
             sd,
@@ -991,12 +990,13 @@ class TestStageStatusOts:
         submitted = fake_now - timedelta(seconds=7200)
         submitted_iso = submitted.isoformat(timespec="seconds")
 
-        from ocfl_cli.stage import service as stage_cmd
+        from ocfl_cli.workflow import content as wf_content
+        from ocfl_cli.workflow import status as wf_status
 
         monkeypatch.setattr(
-            stage_cmd, "now_utc_iso", lambda: submitted_iso, raising=False
+            wf_content, "now_utc_iso", lambda: submitted_iso, raising=False
         )
-        monkeypatch.setattr(stage_cmd, "_status_now", lambda: fake_now, raising=False)
+        monkeypatch.setattr(wf_status, "_status_now", lambda: fake_now, raising=False)
 
         r = runner.invoke(
             app,

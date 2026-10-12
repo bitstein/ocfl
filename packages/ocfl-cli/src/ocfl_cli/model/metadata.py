@@ -1,4 +1,4 @@
-"""Schemas surfaced or persisted by the stage workflow."""
+"""Staged version metadata and the next-action kinds the workflow reports."""
 
 from enum import StrEnum
 
