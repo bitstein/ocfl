@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from ocfl_lib.errors import InvalidVersionNumber, UnknownInventoryType
+
 
 class Spec(enum.StrEnum):
     """OCFL specification version."""
@@ -31,7 +33,7 @@ class Spec(enum.StrEnum):
         for member in cls:
             if member.inventory_type_url == url:
                 return member
-        raise ValueError(f"unknown inventory type URL: {url}")
+        raise UnknownInventoryType(f"unknown inventory type URL: {url}")
 
 
 DEFAULT_SPEC: Spec = Spec.V1_1
@@ -73,18 +75,22 @@ class VNum:
 
     def __post_init__(self):
         if self.number < 1:
-            raise ValueError(f"version number must be >= 1, got {self.number}")
+            raise InvalidVersionNumber(
+                f"version number must be >= 1, got {self.number}"
+            )
         if self.padding < 0:
-            raise ValueError(f"padding must be >= 0, got {self.padding}")
+            raise InvalidVersionNumber(f"padding must be >= 0, got {self.padding}")
         if self.padding and len(str(self.number)) >= self.padding:
-            raise ValueError(f"v{self.number} overflows padding width {self.padding}")
+            raise InvalidVersionNumber(
+                f"v{self.number} overflows padding width {self.padding}"
+            )
 
     @classmethod
     def parse(cls, s: str) -> VNum:
         """Parse 'v1' → VNum(1, 0), 'v001' → VNum(1, 3)."""
         m = _VNUM_RE.match(s)
         if not m:
-            raise ValueError(f"invalid version number: {s!r}")
+            raise InvalidVersionNumber(f"invalid version number: {s!r}")
         digits = m.group(1)
         padding = len(digits) if digits[0] == "0" else 0
         return cls(int(digits), padding)

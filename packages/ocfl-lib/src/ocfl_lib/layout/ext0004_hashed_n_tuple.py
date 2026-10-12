@@ -3,6 +3,7 @@
 import msgspec
 
 from ocfl_lib.digest import DigestAlgorithm
+from ocfl_lib.errors import InvalidLayoutConfig
 from ocfl_lib.layout.types import Layout
 
 EXTENSION_NAME = "0004-hashed-n-tuple-storage-layout"
@@ -36,17 +37,19 @@ class HashedNTupleLayout(Layout):
     def _validate(self) -> None:
         ts, nt = self._tuple_size, self._n_tuples
         if (ts == 0) != (nt == 0):
-            raise ValueError(
+            raise InvalidLayoutConfig(
                 "tupleSize and numberOfTuples must both be 0 or both non-zero"
             )
         prefix_len = ts * nt
         if prefix_len > self._alg.hex_length:
-            raise ValueError(
+            raise InvalidLayoutConfig(
                 f"tupleSize*numberOfTuples ({prefix_len}) exceeds "
                 f"digest hex length ({self._alg.hex_length})"
             )
         if self._short_root and prefix_len == self._alg.hex_length:
-            raise ValueError("shortObjectRoot invalid when tuples cover full digest")
+            raise InvalidLayoutConfig(
+                "shortObjectRoot invalid when tuples cover full digest"
+            )
 
     @property
     def name(self) -> str:

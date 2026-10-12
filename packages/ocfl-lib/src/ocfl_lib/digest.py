@@ -6,6 +6,8 @@ import re
 from functools import cached_property
 from typing import TYPE_CHECKING, BinaryIO, Protocol, cast
 
+from ocfl_lib.errors import UnknownDigestAlgorithm
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
     from pathlib import Path
@@ -51,7 +53,7 @@ class DigestAlgorithm(enum.Enum):
         for member in cls:
             if member.ocfl_name == name:
                 return member
-        raise ValueError(f"unknown digest algorithm: {name!r}")
+        raise UnknownDigestAlgorithm(f"unknown digest algorithm: {name!r}")
 
     @property
     def is_spec_algorithm(self) -> bool:

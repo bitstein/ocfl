@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING, BinaryIO, Literal
 from ocfl_lib.digest import DigestAlgorithm, stream_digest
 from ocfl_lib.digest_map import DigestMap, to_path_map
 from ocfl_lib.errors import (
+    ContentNotFound,
     InventorySidecarMismatch,
+    LogicalPathNotFound,
     SpecVersionError,
     VersionNotFound,
 )
@@ -196,11 +198,13 @@ class Object:
         state = self.version_state(v)
         path_map = to_path_map(state)  # logical_path → digest
         if logical_path not in path_map:
-            raise KeyError(f"logical path {logical_path!r} not in version {v} state")
+            raise LogicalPathNotFound(
+                f"logical path {logical_path!r} not in version {v} state"
+            )
         digest = path_map[logical_path]
         cp = self.content_path(digest)
         if cp is None:
-            raise FileNotFoundError(f"digest {digest[:16]}... not found in manifest")
+            raise ContentNotFound(f"digest {digest[:16]}... not found in manifest")
         full_path = _join(self._path, cp)
         return self._fsys.open_file(full_path)
 
@@ -460,7 +464,7 @@ class _ObjectContentSource(ContentSource):
     def get_content(self, digest: str) -> tuple[FS, str]:
         paths = self._manifest.get(digest)
         if not paths:
-            raise KeyError(f"digest {digest!r} not in manifest")
+            raise ContentNotFound(f"digest {digest!r} not in manifest")
         full = _join(self._obj_path, paths[0])
         return self._fsys, full
 

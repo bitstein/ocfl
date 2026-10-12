@@ -4,6 +4,7 @@ from typing import Literal
 
 import msgspec
 
+from ocfl_lib.errors import InvalidLayoutConfig
 from ocfl_lib.layout._casefold import rfind_casefold_span
 from ocfl_lib.layout.types import Layout
 from ocfl_lib.validation.limits import validate_path_component
@@ -33,11 +34,13 @@ class NTupleOmitPrefixLayout(Layout):
         reverse_object_root: bool = False,
     ) -> None:
         if not delimiter:
-            raise ValueError("delimiter must not be empty")
+            raise InvalidLayoutConfig("delimiter must not be empty")
         if tuple_size < 1:
-            raise ValueError(f"tupleSize must be >= 1, got {tuple_size}")
+            raise InvalidLayoutConfig(f"tupleSize must be >= 1, got {tuple_size}")
         if number_of_tuples < 1:
-            raise ValueError(f"numberOfTuples must be >= 1, got {number_of_tuples}")
+            raise InvalidLayoutConfig(
+                f"numberOfTuples must be >= 1, got {number_of_tuples}"
+            )
         self._delimiter = delimiter
         self._tuple_size = tuple_size
         self._n_tuples = number_of_tuples

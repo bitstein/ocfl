@@ -4,6 +4,7 @@ from datetime import UTC
 from typing import TYPE_CHECKING, Self
 
 from ocfl_lib.digest import DigestAlgorithm
+from ocfl_lib.errors import InvalidPath, InventoryBuildError
 from ocfl_lib.inventory import Inventory, UserInfo, VersionInfo
 from ocfl_lib.spec import (
     DEFAULT_CONTENT_DIRECTORY,
@@ -80,12 +81,12 @@ class InventoryBuilder:
 
     def build(self) -> Inventory:
         if self._built:
-            raise ValueError("build() already called; builders are single-use")
+            raise InventoryBuildError("build() already called; builders are single-use")
         self._built = True
         if not self._id:
-            raise ValueError("id must be set")
+            raise InventoryBuildError("id must be set")
         if not self._pending_versions:
-            raise ValueError("at least one version must be added")
+            raise InventoryBuildError("at least one version must be added")
 
         if self._content_dir is None:
             content_dir = DEFAULT_CONTENT_DIRECTORY
@@ -120,7 +121,7 @@ class InventoryBuilder:
         for state, created, message, user in self._pending_versions:
             for digest, logical_paths in state.items():
                 if not logical_paths:
-                    raise ValueError(
+                    raise InventoryBuildError(
                         f"state digest {digest!r} must include at least one "
                         "logical path"
                     )
@@ -175,12 +176,12 @@ class InventoryBuilder:
 def _validate_relative_path(path: str, *, kind: str) -> None:
     """Validate OCFL relative paths used in inventory state/manifest derivation."""
     if not path or path.startswith("/") or path.endswith("/"):
-        raise ValueError(f"invalid {kind}: {path!r}")
+        raise InvalidPath(f"invalid {kind}: {path!r}")
     segments = path.split("/")
     if any(segment in ("", ".", "..") for segment in segments):
-        raise ValueError(f"invalid {kind}: {path!r}")
+        raise InvalidPath(f"invalid {kind}: {path!r}")
 
 
 def _validate_content_directory(content_dir: str) -> None:
     if not content_dir or "/" in content_dir or content_dir in (".", ".."):
-        raise ValueError(f"invalid content directory: {content_dir!r}")
+        raise InvalidPath(f"invalid content directory: {content_dir!r}")

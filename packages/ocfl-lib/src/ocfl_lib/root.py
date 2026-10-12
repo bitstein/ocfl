@@ -10,6 +10,7 @@ from ocfl_lib.errors import (
     MultipleRootDeclarations,
     NotAnOcflRoot,
     ObjectNotFound,
+    RootExistsError,
     SpecVersionError,
 )
 from ocfl_lib.fs import utils as fs_utils
@@ -58,7 +59,7 @@ class StorageRoot:
         for existing_spec in Spec:
             existing = _join(path, Namaste.for_root(existing_spec).filename)
             if fsys.exists(existing):
-                raise ValueError("OCFL storage root already initialized")
+                raise RootExistsError("OCFL storage root already initialized")
 
         namaste = Namaste.for_root(spec)
         namaste_path = _join(path, namaste.filename)

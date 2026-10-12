@@ -25,7 +25,12 @@ from typing import TYPE_CHECKING, Protocol
 import msgspec
 
 from ocfl_lib.digest import DigestAlgorithm, bytes_digest
-from ocfl_lib.errors import RevertCompletedError, RevertError, StaleHeadError
+from ocfl_lib.errors import (
+    PlanMismatchError,
+    RevertCompletedError,
+    RevertError,
+    StaleHeadError,
+)
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.inventory import StoredInventory
 from ocfl_lib.spec import Namaste, Spec, VNum
@@ -189,7 +194,7 @@ def deserialize(data: bytes) -> UpdatePlan:
     """Deserialize an UpdatePlan from JSON bytes. Callables are None."""
     state = msgspec.json.decode(data, type=_PlanState)
     if state.version != _PLAN_WIRE_VERSION:
-        raise ValueError(
+        raise PlanMismatchError(
             f"unsupported plan wire version: got {state.version}, "
             f"expected {_PLAN_WIRE_VERSION}"
         )
@@ -585,13 +590,13 @@ def prepare_steps(
     if plan.steps:
         old_steps = plan.steps
         if len(old_steps) != len(steps):
-            raise ValueError(
+            raise PlanMismatchError(
                 f"plan step count mismatch: existing {len(old_steps)}, "
                 f"rebuilt {len(steps)}"
             )
         for old, new in zip(old_steps, steps, strict=False):
             if old.name != new.name or old.content_digest != new.content_digest:
-                raise ValueError(
+                raise PlanMismatchError(
                     f"plan step mismatch: existing ({old.name!r}, "
                     f"{old.content_digest!r}) != rebuilt ({new.name!r}, "
                     f"{new.content_digest!r})"

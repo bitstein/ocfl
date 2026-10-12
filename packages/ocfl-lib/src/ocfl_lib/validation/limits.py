@@ -9,6 +9,8 @@ Also declares filesystem-safety bounds beyond spec: ``validate_path_component``
 defensively rejects object-id components that would be unsafe on disk.
 """
 
+from ocfl_lib.errors import InvalidPath
+
 MAX_OBJECT_ID = 1024
 MAX_PATH = 4096
 MAX_MESSAGE = 65536
@@ -27,13 +29,13 @@ def validate_path_component(s: str, *, what: str = "object id") -> None:
     bound, not OCFL-semantic validation.
     """
     if s == "":
-        raise ValueError(f"{what} must not be empty")
+        raise InvalidPath(f"{what} must not be empty")
     if s == "." or s == "..":
-        raise ValueError(f"{what} must not be {s!r}")
+        raise InvalidPath(f"{what} must not be {s!r}")
     if "/" in s or "\\" in s:
-        raise ValueError(f"{what} must not contain a path separator")
+        raise InvalidPath(f"{what} must not contain a path separator")
     for ch in s:
         if ch == "\x7f" or ord(ch) < 0x20:
-            raise ValueError(f"{what} must not contain control characters")
+            raise InvalidPath(f"{what} must not contain control characters")
     if len(s) > MAX_OBJECT_ID:
-        raise ValueError(f"{what} exceeds maximum length {MAX_OBJECT_ID}")
+        raise InvalidPath(f"{what} exceeds maximum length {MAX_OBJECT_ID}")

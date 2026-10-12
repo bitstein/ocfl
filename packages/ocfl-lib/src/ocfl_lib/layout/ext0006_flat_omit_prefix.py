@@ -2,6 +2,7 @@
 
 import msgspec
 
+from ocfl_lib.errors import InvalidLayoutConfig
 from ocfl_lib.layout._casefold import rfind_casefold_span
 from ocfl_lib.layout.types import Layout
 from ocfl_lib.validation.limits import validate_path_component
@@ -19,7 +20,7 @@ class FlatOmitPrefixLayout(Layout):
 
     def __init__(self, *, delimiter: str) -> None:
         if not delimiter:
-            raise ValueError("delimiter must not be empty")
+            raise InvalidLayoutConfig("delimiter must not be empty")
         self._delimiter = delimiter
 
     @property
@@ -34,14 +35,14 @@ class FlatOmitPrefixLayout(Layout):
     @classmethod
     def from_config(cls, config: dict | None = None) -> FlatOmitPrefixLayout:
         if config is None:
-            raise ValueError("config with delimiter is required")
+            raise InvalidLayoutConfig("config with delimiter is required")
         cfg = msgspec.convert(config, FlatOmitPrefixConfig)
         return cls(delimiter=cfg.delimiter)
 
     def resolve(self, object_id: str) -> str:
         match = rfind_casefold_span(object_id, self._delimiter)
         if match is None:
-            raise ValueError(
+            raise InvalidLayoutConfig(
                 f"delimiter {self._delimiter!r} not found in object ID {object_id!r}"
             )
         remainder = object_id[match[1] :]

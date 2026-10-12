@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from ocfl_lib.digest import DigestAlgorithm, stream_digest, stream_multi_digest
+from ocfl_lib.errors import ContentNotFound, DigestAlgorithmMismatch
 from ocfl_lib.update_plan import ContentSource
 
 if TYPE_CHECKING:
@@ -43,7 +44,7 @@ class Stage:
                     f"digest_algorithm mismatch: "
                     f"{self.digest_algorithm} vs {other.digest_algorithm}"
                 )
-                raise ValueError(msg)
+                raise DigestAlgorithmMismatch(msg)
 
         # Merge states: overlay paths win
         merged_state = dict(self.state)
@@ -82,7 +83,7 @@ class _ChainContentSource(ContentSource):
                 return src.get_content(digest)
             except KeyError:
                 continue
-        raise KeyError(f"digest {digest!r} not found in any content source")
+        raise ContentNotFound(f"digest {digest!r} not found in any content source")
 
 
 class _ChainFixitySource(FixitySource):

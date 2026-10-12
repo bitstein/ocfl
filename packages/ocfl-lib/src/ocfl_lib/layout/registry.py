@@ -2,6 +2,8 @@
 
 from typing import TYPE_CHECKING, Any
 
+from ocfl_lib.errors import UnknownLayout
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -21,5 +23,5 @@ class LayoutRegistry:
         try:
             factory = self._factories[name]
         except KeyError:
-            raise KeyError(f"unknown layout extension: {name!r}") from None
+            raise UnknownLayout(f"unknown layout extension: {name!r}") from None
         return factory(config)

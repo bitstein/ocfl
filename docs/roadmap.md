@@ -21,7 +21,7 @@ Target architecture from the 2026-10-11 design session. Terms: [CONTEXT.md](../C
 
 ## 2. Lib cleanup
 
-- [ ] Errors: every lib error subclasses `OcflError` (it also inherits `ValueError`/`KeyError` where callers rely on that) and carries an `ErrorClass` and a stable `code`. Delete the unused classes. Export every class the public API can raise.
+- [x] Errors: every lib error subclasses `OcflError` (it also inherits `ValueError`/`KeyError` where callers rely on that) and carries an `ErrorClass` and a stable `code`. Delete the unused classes. Export every class the public API can raise.
 - [ ] Public API: `__init__` plus `fs.s3`, `ots` and `validation` are public. Every other module gets a leading `_`. `Object.path` becomes public. Start a CHANGELOG.
 - [ ] `Object` only reads. Opening a root uses `StorageRoot.open(fs)`, and its constructor does no I/O.
 - [ ] Rename `Stage` → `VersionState`. Move `ContentSource` and `FixitySource` to their own module.

@@ -3,6 +3,7 @@
 import msgspec
 
 from ocfl_lib.digest import DigestAlgorithm
+from ocfl_lib.errors import InvalidLayoutConfig
 from ocfl_lib.layout.types import Layout
 
 EXTENSION_NAME = "0003-hash-and-id-n-tuple-storage-layout"
@@ -47,11 +48,11 @@ class HashAndIdNTupleLayout(Layout):
     def _validate(self) -> None:
         ts, nt = self._tuple_size, self._n_tuples
         if (ts == 0) != (nt == 0):
-            raise ValueError(
+            raise InvalidLayoutConfig(
                 "tupleSize and numberOfTuples must both be 0 or both non-zero"
             )
         if ts * nt > self._alg.hex_length:
-            raise ValueError(
+            raise InvalidLayoutConfig(
                 f"tupleSize*numberOfTuples ({ts * nt}) exceeds "
                 f"digest hex length ({self._alg.hex_length})"
             )

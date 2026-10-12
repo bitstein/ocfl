@@ -2,6 +2,8 @@
 
 from typing import TYPE_CHECKING
 
+from ocfl_lib.errors import PathCollision
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -83,7 +85,7 @@ def rename_paths(dm: DigestMap, src: str, dst: str) -> DigestMap:
     for ps in result.values():
         for p in ps:
             if p in seen:
-                raise ValueError(f"rename collision at path {p!r}")
+                raise PathCollision(f"rename collision at path {p!r}")
             seen.add(p)
     return result
 
