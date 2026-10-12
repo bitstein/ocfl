@@ -8,8 +8,8 @@ from ocfl_lib.fs.local import LocalFS
 
 if TYPE_CHECKING:
     from pathlib import Path
-from ocfl_lib.validation.result import ValidationResult
-from ocfl_lib.validation.root import RootValidationSummary, validate_root
+from ocfl_lib.validation.report import ValidationReport
+from ocfl_lib.validation.root import validate_root
 
 
 class TestValidRoot:
@@ -46,24 +46,21 @@ class TestValidRoot:
         (v1 / "inventory.json.sha512").write_text(f"{digest} inventory.json\n")
 
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        summary = validate_root(fsys, "", r, validate_objects=False)
-        assert r.is_valid, [(e.code, e.message) for e in r.errors]
-        assert isinstance(summary, RootValidationSummary)
+        r = validate_root(fsys, "", validate_objects=False)
+        assert r.is_valid, [(e.code, e.render()) for e in r.errors]
+        assert isinstance(r, ValidationReport)
 
 
 class TestRootNamaste:
     def test_missing_namaste(self, tmp_path: Path):
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_root(fsys, "", r, validate_objects=False)
+        r = validate_root(fsys, "", validate_objects=False)
         assert r.has_code("E069")
 
     def test_valid_namaste(self, tmp_path: Path):
         (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_root(fsys, "", r, validate_objects=False)
+        r = validate_root(fsys, "", validate_objects=False)
         assert not r.has_code("E069")
 
 
@@ -74,8 +71,7 @@ class TestRootExtensions:
         ext.mkdir()
         (ext / "somefile.txt").write_text("bad")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_root(fsys, "", r, validate_objects=False)
+        r = validate_root(fsys, "", validate_objects=False)
         assert r.has_code("E112")
         assert not r.has_code("E086")
 
@@ -85,8 +81,7 @@ class TestRootExtensions:
         ext.mkdir()
         (ext / "9999-custom-extension").mkdir()
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_root(fsys, "", r, validate_objects=False)
+        r = validate_root(fsys, "", validate_objects=False)
         assert r.has_code("W016")
         assert not r.has_code("W901")
 
@@ -96,8 +91,7 @@ class TestE069cUnparseableDecl:
         """Root dir has 0= files but none parse as valid root NAMASTE -> E069c."""
         (tmp_path / "0=garbage_1.1").write_text("garbage\n")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_root(fsys, "", r, validate_objects=False)
+        r = validate_root(fsys, "", validate_objects=False)
         assert r.has_code("E069c")
         assert not any(e.code == "E069a" for e in r.errors)
 
@@ -105,8 +99,7 @@ class TestE069cUnparseableDecl:
         """Root dir has no 0= files at all -> E069a (not E069c)."""
         (tmp_path / "readme.txt").write_text("hello\n")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_root(fsys, "", r, validate_objects=False)
+        r = validate_root(fsys, "", validate_objects=False)
         assert any(e.code == "E069a" for e in r.errors)
         assert not r.has_code("E069c")
 
@@ -117,10 +110,9 @@ class TestE069dInvalidNamaste:
         (tmp_path / "0=garbage_1.1").write_text("garbage\n")
         (tmp_path / "0=alsogarbage").write_text("nope\n")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_root(fsys, "", r, validate_objects=False)
+        r = validate_root(fsys, "", validate_objects=False)
         e069d_errors = [e for e in r.errors if e.code == "E069d"]
-        msgs = [e.message for e in e069d_errors]
+        msgs = [e.render() for e in e069d_errors]
         assert any("0=garbage_1.1" in m for m in msgs)
         assert any("0=alsogarbage" in m for m in msgs)
 
@@ -129,11 +121,10 @@ class TestE069dInvalidNamaste:
         (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
         (tmp_path / "0=garbage").write_text("nope\n")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_root(fsys, "", r, validate_objects=False)
+        r = validate_root(fsys, "", validate_objects=False)
         e069d_errors = [e for e in r.errors if e.code == "E069d"]
         assert len(e069d_errors) == 1
-        assert "0=garbage" in e069d_errors[0].message
+        assert "0=garbage" in e069d_errors[0].render()
 
 
 class TestE003dMultipleDeclarations:
@@ -144,8 +135,7 @@ class TestE003dMultipleDeclarations:
         (subdir / "0=ocfl_object_1.0").write_text("ocfl_object_1.0\n")
         (subdir / "0=ocfl_object_1.1").write_text("ocfl_object_1.1\n")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_root(fsys, "", r, validate_objects=True)
+        r = validate_root(fsys, "", validate_objects=True)
         assert r.has_code("E003d")
 
 
@@ -156,8 +146,7 @@ class TestE004aUnknownVersion:
         subdir.mkdir()
         (subdir / "0=ocfl_object_0.9").write_text("ocfl_object_0.9\n")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_root(fsys, "", r, validate_objects=True)
+        r = validate_root(fsys, "", validate_objects=True)
         assert r.has_code("E004a")
 
 
@@ -168,8 +157,7 @@ class TestE004bMalformedDeclaration:
         subdir.mkdir()
         (subdir / "0=special_object_yeah").write_text("junk\n")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_root(fsys, "", r, validate_objects=True)
+        r = validate_root(fsys, "", validate_objects=True)
         assert r.has_code("E004b")
 
     def test_bare_zero_eq_emits_E004b(self, tmp_path: Path):
@@ -178,8 +166,7 @@ class TestE004bMalformedDeclaration:
         subdir.mkdir()
         (subdir / "0=foo").write_text("foo\n")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_root(fsys, "", r, validate_objects=True)
+        r = validate_root(fsys, "", validate_objects=True)
         assert r.has_code("E004b")
 
 
@@ -188,15 +175,13 @@ class TestE073EmptyDir:
         (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
         (tmp_path / "empty_dir").mkdir()
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_root(fsys, "", r, validate_objects=True)
+        r = validate_root(fsys, "", validate_objects=True)
         assert r.has_code("E073")
 
     def test_no_empty_dirs_no_E073(self, tmp_path: Path):
         (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_root(fsys, "", r, validate_objects=True)
+        r = validate_root(fsys, "", validate_objects=True)
         assert not r.has_code("E073")
 
 
@@ -207,8 +192,7 @@ class TestE072FilesInHierarchy:
         subdir.mkdir()
         (subdir / "stray.txt").write_text("bad")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_root(fsys, "", r, validate_objects=True)
+        r = validate_root(fsys, "", validate_objects=True)
         assert r.has_code("E072")
 
 
@@ -216,10 +200,9 @@ class TestRootSummary:
     def test_summary_counts(self, tmp_path: Path):
         (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        summary = validate_root(fsys, "", r, validate_objects=False)
-        assert summary.num_objects == 0
-        assert summary.valid_objects == 0
+        summary = validate_root(fsys, "", validate_objects=False)
+        assert summary.objects_checked == 0
+        assert summary.objects_valid == 0
         assert summary.truncated is False
 
     def test_truncated_flag(self, tmp_path: Path):
@@ -230,7 +213,6 @@ class TestRootSummary:
             d.mkdir()
             (d / "0=ocfl_object_1.1").write_text("ocfl_object_1.1\n")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        summary = validate_root(fsys, "", r, max_errors=2)
+        summary = validate_root(fsys, "", max_errors=2)
         assert summary.truncated is True
-        assert len(summary.object_errors) == 2
+        assert len({f.path for f in summary.errors}) == 2

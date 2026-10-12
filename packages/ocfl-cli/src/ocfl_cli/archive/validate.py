@@ -24,15 +24,16 @@ from ocfl_cli.ots.bitcoin import (
     verify_attestation,
 )
 from ocfl_lib import (
+    Finding,
     OcflError,
+    Severity,
     StorageRoot,
-    ValidationResult,
+    ValidationReport,
     validate_object,
     validate_root,
 )
 from ocfl_lib.errors import OtsParseError
 from ocfl_lib.fs import utils as fs_utils
-from ocfl_lib.validation.result import ValidationError
 
 if TYPE_CHECKING:
     from ocfl_cli._appctx import BtcRpcFactory
@@ -106,18 +107,10 @@ def _validate_root(
     digest_status = "content digests enabled" if check_digests else "digests skipped"
     _emit(ctx, f"Validating objects ({digest_status})...")
 
-    result = ValidationResult()
-    summary = validate_root(fs, "", result, check_digests=check_digests)
-    _emit_root_object_results(
-        emit_progress,
-        fs,
-        object_ids,
-        summary.object_errors,
-        truncated=summary.truncated,
-    )
-    _merge_object_results(result, summary.object_errors)
-    _output_result(result, json_mode, suppress)
-    if not result.is_valid:
+    report = validate_root(fs, "", check_digests=check_digests)
+    _emit_root_object_results(emit_progress, fs, object_ids, report)
+    _output_result(report, json_mode, suppress, show_paths=True)
+    if not report.is_valid:
         raise typer.Exit(1)
 
 
@@ -144,22 +137,22 @@ def _validate_object(
     if check_digests:
         _emit(ctx, "Verifying content digests...")
 
-    result = ValidationResult()
-    validate_object(fs, obj_path, result, check_digests=check_digests)
+    report = validate_object(fs, obj_path, check_digests=check_digests)
 
     if verify_ots and _ots_extension_present(fs, obj_path):
         cfg = appctx.config(ctx)
-        _verify_ots_walk(
-            fs,
-            obj_path,
-            cfg,
-            result,
-            appctx.btc_rpc_factory(ctx),
-            emit_progress=_should_emit_progress(ctx),
+        report = report.with_findings(
+            _verify_ots_walk(
+                fs,
+                obj_path,
+                cfg,
+                appctx.btc_rpc_factory(ctx),
+                emit_progress=_should_emit_progress(ctx),
+            )
         )
 
-    _output_result(result, json_mode, suppress)
-    if not result.is_valid:
+    _output_result(report, json_mode, suppress, show_paths=False)
+    if not report.is_valid:
         raise typer.Exit(1)
 
 
@@ -172,11 +165,10 @@ def _verify_ots_walk(
     fs: FS,
     obj_path: str,
     cfg: Config | None,
-    result: ValidationResult,
     btc_factory: BtcRpcFactory,
     *,
     emit_progress: bool = False,
-) -> None:
+) -> list[Finding]:
     """Walk extension `inventory.json.{vkey}.ots` files through ``verify_attestation``.
 
     The per-version inventory attestation anchors the inventory bytes to
@@ -193,9 +185,22 @@ def _verify_ots_walk(
         )
         raise ConfigError(f"--verify-ots requires [bitcoin] section {where}")
 
+    findings: list[Finding] = []
+
+    def add(code: str, severity: Severity, **detail: str) -> None:
+        findings.append(
+            Finding(
+                code=code,
+                severity=severity,
+                object_id=None,
+                path=obj_path,
+                detail=detail,
+            )
+        )
+
     versions = _enumerate_versions(fs, obj_path)
     if not versions:
-        return
+        return findings
 
     rpc = btc_factory(cfg)
     min_confs = cfg.bitcoin.confirmations
@@ -237,7 +242,7 @@ def _verify_ots_walk(
             OtsParseError,
         ) as exc:
             _emit_ots_result(emit_progress, vkey, ots_rel, f"failed ({exc})")
-            result.error("E906", path=ots_rel, reason=str(exc))
+            add("E906", Severity.ERROR, path=ots_rel, reason=str(exc))
             continue
 
         match outcome:
@@ -253,15 +258,19 @@ def _verify_ots_walk(
                 _emit_ots_result(
                     emit_progress, vkey, ots_rel, "pending (pending_attestation)"
                 )
-                result.warning(
-                    "W903", path=ots_rel, reason=PendingReason.PENDING_ATTESTATION.value
+                add(
+                    "W903",
+                    Severity.WARNING,
+                    path=ots_rel,
+                    reason=PendingReason.PENDING_ATTESTATION.value,
                 )
                 continue
             case PendingVerification(reason=reason):
                 _emit_ots_result(
                     emit_progress, vkey, ots_rel, f"pending ({reason.value})"
                 )
-                result.warning("W903", path=ots_rel, reason=reason.value)
+                add("W903", Severity.WARNING, path=ots_rel, reason=reason.value)
+    return findings
 
 
 def _enumerate_versions(fs: FS, obj_path: str) -> list[str]:
@@ -331,30 +340,29 @@ def _emit_root_object_results(
     emit_progress: bool,
     fs: FS,
     object_ids: dict[str, str],
-    object_errors: list[tuple[str, ValidationResult]],
-    *,
-    truncated: bool = False,
+    report: ValidationReport,
 ) -> None:
     if not emit_progress:
         return
-    errors_by_path = {obj_path: obj_result for obj_path, obj_result in object_errors}
+    errors_by_path: dict[str, int] = {}
+    for e in report.errors:
+        if e.path:
+            errors_by_path[e.path] = errors_by_path.get(e.path, 0) + 1
     for obj_path, object_id in object_ids.items():
-        obj_result = errors_by_path.get(obj_path)
-        if obj_result is None:
-            if truncated:
+        count = errors_by_path.get(obj_path)
+        if count is None:
+            if report.truncated:
                 _style.echo(
                     f"  {object_id}: not validated (max errors reached)", err=True
                 )
                 continue
             _style.echo(f"  {object_id}: ok", err=True)
             continue
-        count = len(obj_result.errors)
         suffix = "error" if count == 1 else "errors"
         _style.echo(f"  {object_id}: {count} {suffix}", err=True)
-    for obj_path, obj_result in errors_by_path.items():
+    for obj_path, count in errors_by_path.items():
         if obj_path in object_ids:
             continue
-        count = len(obj_result.errors)
         suffix = "error" if count == 1 else "errors"
         _style.echo(f"  {_read_object_id(fs, obj_path)}: {count} {suffix}", err=True)
 
@@ -366,53 +374,40 @@ def _emit_ots_result(
         _style.echo(f"  {version} ({ots_rel}): {outcome}", err=True)
 
 
-def _merge_object_results(
-    result: ValidationResult, object_errors: list[tuple[str, ValidationResult]]
-) -> None:
-    """Flatten contained-object validation failures into root validation output."""
-    for obj_path, obj_result in object_errors:
-        for e in obj_result.errors:
-            result.errors.append(
-                ValidationError(
-                    code=e.code,
-                    message=f"{obj_path}: {e.message}",
-                    is_warning=False,
-                )
-            )
-        for w in obj_result.warnings:
-            result.warnings.append(
-                ValidationError(
-                    code=w.code,
-                    message=f"{obj_path}: {w.message}",
-                    is_warning=True,
-                )
-            )
-
-
 def _output_result(
-    result: ValidationResult, json_mode: bool, suppress: frozenset[str]
+    report: ValidationReport,
+    json_mode: bool,
+    suppress: frozenset[str],
+    *,
+    show_paths: bool,
 ) -> None:
-    warnings = [w for w in result.warnings if w.code not in suppress]
-    infos = [i for i in result.infos if i.code not in suppress]
+    def message(f: Finding) -> str:
+        if show_paths and f.path:
+            return f"{f.path}: {f.render()}"
+        return f.render()
+
+    errors = report.errors
+    warnings = [w for w in report.warnings if w.code not in suppress]
+    infos = [i for i in report.infos if i.code not in suppress]
     if json_mode:
         output_json(
             {
-                "valid": result.is_valid,
-                "errors": [
-                    {"code": e.code, "message": e.message} for e in result.errors
+                "valid": report.is_valid,
+                "errors": [{"code": e.code, "message": message(e)} for e in errors],
+                "warnings": [
+                    {"code": w.code, "message": message(w)} for w in warnings
                 ],
-                "warnings": [{"code": w.code, "message": w.message} for w in warnings],
-                "info": [{"code": i.code, "message": i.message} for i in infos],
+                "info": [{"code": i.code, "message": message(i)} for i in infos],
             }
         )
     else:
-        for e in result.errors:
-            err(f"[{e.code}] {e.message}")
+        for e in errors:
+            err(f"[{e.code}] {message(e)}")
         for w in warnings:
-            _style.echo(_style.warning(f"Warning: [{w.code}] {w.message}"), err=True)
+            _style.echo(_style.warning(f"Warning: [{w.code}] {message(w)}"), err=True)
         for i in infos:
-            _style.echo(_style.dim(f"Info: [{i.code}] {i.message}"), err=True)
-        if result.is_valid:
+            _style.echo(_style.dim(f"Info: [{i.code}] {message(i)}"), err=True)
+        if report.is_valid:
             _style.echo(
                 _style.valid(
                     "Valid" + (f" ({len(warnings)} warnings)" if warnings else "")

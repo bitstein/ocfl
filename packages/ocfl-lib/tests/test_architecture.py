@@ -7,6 +7,7 @@ import importlib
 import inspect
 import pkgutil
 import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -205,6 +206,61 @@ class TestVersionState:
         assert cs.__module__ == fx.__module__
         assert cs.__module__ != ocfl_lib.VersionState.__module__
         assert cs.__module__ != ocfl_lib.UpdatePlan.__module__
+
+
+# --- 6. ValidationReport
+
+
+class TestValidationReport:
+    def test_types(self):
+        from ocfl_lib.validation import Finding, ValidationReport
+
+        for cls in (Finding, ValidationReport):
+            assert dataclasses.is_dataclass(cls)
+            assert cls.__dataclass_params__.frozen, cls
+        assert [f.name for f in dataclasses.fields(Finding)] == [
+            "code",
+            "severity",
+            "object_id",
+            "path",
+            "detail",
+        ]
+        assert "message" not in {f.name for f in dataclasses.fields(ValidationReport)}
+
+    def test_old_result_gone(self):
+        import ocfl_lib
+
+        assert not hasattr(ocfl_lib, "ValidationResult")
+
+    def test_validate_object_returns_report(self):
+        from ocfl_lib import LocalFS
+        from ocfl_lib.validation import Finding, ValidationReport, validate_object
+
+        good = FIXTURES / "1.1/good-objects/minimal_one_version_one_file"
+        report = validate_object(LocalFS(good), "")
+        assert isinstance(report, ValidationReport)
+        assert report.is_valid
+        bad = FIXTURES / "1.1/bad-objects/E001_extra_file_in_root"
+        report = validate_object(LocalFS(bad), "")
+        assert not report.is_valid
+        f = next(f for f in report.findings if f.code.startswith("E001"))
+        assert isinstance(f, Finding)
+        assert f.object_id == "ark:123/abc"
+        assert isinstance(f.render(), str) and f.render()
+
+    def test_root_keeps_warnings_of_valid_objects(self, tmp_path):
+        from ocfl_lib import LocalFS, Spec, StorageRoot
+        from ocfl_lib.validation import validate_root
+
+        fs = LocalFS(tmp_path)
+        StorageRoot.init(fs, fs, spec=Spec.V1_1)
+        src = FIXTURES / "1.1/warn-objects/W005_id_not_uri"
+        shutil.copytree(src, tmp_path / "a/obj")
+        report = validate_root(fs, "")
+        assert report.is_valid
+        w = [f for f in report.findings if f.code.startswith("W005")]
+        assert w, report.findings
+        assert w[0].path == "a/obj"
 
 
 # --- 7. layout registry

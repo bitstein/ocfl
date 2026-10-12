@@ -3,7 +3,7 @@
 import unicodedata
 
 from ocfl_lib.validation.inventory import validate_inventory
-from ocfl_lib.validation.result import ValidationResult
+from ocfl_lib.validation.report import FindingCollector
 
 # sha512 hex digest (128 chars)
 _D1 = "a" * 128
@@ -34,26 +34,26 @@ def _inv_with_manifest(manifest, *, alg="sha512", content_dir="content", version
 
 class TestManifestDigestFormat:
     def test_invalid_digest_format(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv_with_manifest({"not-a-hex-digest": ["v1/content/file.txt"]}), r
         )
         assert r.has_code("E025b")
 
     def test_wrong_length_digest(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({"abcdef": ["v1/content/file.txt"]}), r)
         assert r.has_code("E025b")
 
     def test_valid_digest_no_error(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["v1/content/file.txt"]}), r)
         assert not r.has_code("E025b")
 
 
 class TestManifestDuplicateDigests:
     def test_case_insensitive_duplicate(self):
-        r = ValidationResult()
+        r = FindingCollector()
         manifest = {
             "A" * 128: ["v1/content/a.txt"],
             "a" * 128: ["v1/content/b.txt"],
@@ -64,41 +64,41 @@ class TestManifestDuplicateDigests:
 
 class TestManifestValues:
     def test_value_not_array(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: "v1/content/file.txt"}), r)
         assert r.has_code("E092") or r.has_code("E091")
 
     def test_value_array_non_string(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: [42]}), r)
         assert r.has_code("E092") or r.has_code("E091")
 
 
 class TestManifestContentPaths:
     def test_path_must_start_with_version(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["content/file.txt"]}), r)
         assert r.has_code("E042")
 
     def test_path_invalid_version_dir(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["vX/content/file.txt"]}), r)
         assert r.has_code("E042")
 
     def test_path_wrong_content_dir(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["v1/wrong/file.txt"]}), r)
         assert r.has_code("E042")
 
     def test_valid_content_path(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["v1/content/file.txt"]}), r)
         assert not r.has_code("E042")
 
 
 class TestManifestDuplicatePaths:
     def test_duplicate_content_path(self):
-        r = ValidationResult()
+        r = FindingCollector()
         manifest = {
             _D1: ["v1/content/file.txt"],
             _D2: ["v1/content/file.txt"],
@@ -115,7 +115,7 @@ class TestManifestDuplicatePaths:
 
 class TestManifestPathConflicts:
     def test_path_prefix_conflict(self):
-        r = ValidationResult()
+        r = FindingCollector()
         manifest = {
             _D1: ["v1/content/dir/file.txt"],
             _D2: ["v1/content/dir"],
@@ -130,7 +130,7 @@ class TestManifestPathConflicts:
         assert r.has_code("E101") or r.has_code("E095")
 
     def test_non_adjacent_path_prefix_conflict(self):
-        r = ValidationResult()
+        r = FindingCollector()
         manifest = {
             _D1: ["v1/content/a"],
             _D2: ["v1/content/a!"],
@@ -148,27 +148,27 @@ class TestManifestPathConflicts:
 
 class TestManifestPathSegments:
     def test_dot_segment(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["v1/content/./file.txt"]}), r)
         assert r.has_code("E099")
 
     def test_dotdot_segment(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["v1/content/../file.txt"]}), r)
         assert r.has_code("E099")
 
     def test_empty_segment(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["v1/content//file.txt"]}), r)
         assert r.has_code("E099")
 
     def test_leading_slash(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["/v1/content/file.txt"]}), r)
         assert r.has_code("E100")
 
     def test_trailing_slash(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["v1/content/file.txt/"]}), r)
         assert r.has_code("E100")
 
@@ -177,33 +177,33 @@ class TestManifestTraversalGaps:
     """Adversarial path traversal — verify existing checks cover gaps."""
 
     def test_absolute_path_rejected(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["/etc/passwd"]}), r)
         assert r.has_code("E100")
 
     def test_backslash_treated_as_literal(self):
         # Characterization: backslash is a valid filename char on POSIX,
         # not a path separator. Accepted as part of segment.
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["v1/content/foo\\bar"]}), r)
         assert not r.has_code("E099")
         assert not r.has_code("E100")
 
     def test_url_encoded_dotdot_treated_as_literal(self):
         # Characterization: %2e%2e is a literal segment, not decoded.
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["v1/content/%2e%2e/file.txt"]}), r)
         assert not r.has_code("E099")
 
 
 class TestManifestNullBytes:
     def test_null_byte_in_manifest_path(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["v1/content/foo\x00bar"]}), r)
         assert r.has_code("L001")
 
     def test_null_byte_in_logical_state_path(self):
-        r = ValidationResult()
+        r = FindingCollector()
         versions = {
             "v1": {
                 "created": "2024-01-01T00:00:00Z",
@@ -217,7 +217,7 @@ class TestManifestNullBytes:
         assert r.has_code("L001")
 
     def test_null_byte_in_object_id(self):
-        r = ValidationResult()
+        r = FindingCollector()
         inv = _inv_with_manifest({_D1: ["v1/content/file.txt"]})
         inv["id"] = "http://example.org/obj\x00evil"
         validate_inventory(inv, r)
@@ -226,20 +226,20 @@ class TestManifestNullBytes:
 
 class TestAbsurdLengthCaps:
     def test_object_id_over_1kb(self):
-        r = ValidationResult()
+        r = FindingCollector()
         inv = _inv_with_manifest({_D1: ["v1/content/file.txt"]})
         inv["id"] = "http://example.org/" + ("x" * 2048)
         validate_inventory(inv, r)
         assert r.has_code("L002")
 
     def test_manifest_path_over_4kb(self):
-        r = ValidationResult()
+        r = FindingCollector()
         long_seg = "x" * 5000
         validate_inventory(_inv_with_manifest({_D1: [f"v1/content/{long_seg}"]}), r)
         assert r.has_code("L002")
 
     def test_logical_path_over_4kb(self):
-        r = ValidationResult()
+        r = FindingCollector()
         long_seg = "x" * 5000
         versions = {
             "v1": {
@@ -254,7 +254,7 @@ class TestAbsurdLengthCaps:
         assert r.has_code("L002")
 
     def test_message_over_64kb(self):
-        r = ValidationResult()
+        r = FindingCollector()
         versions = {
             "v1": {
                 "created": "2024-01-01T00:00:00Z",
@@ -269,7 +269,7 @@ class TestAbsurdLengthCaps:
         assert r.has_code("L002")
 
     def test_user_name_over_1kb(self):
-        r = ValidationResult()
+        r = FindingCollector()
         versions = {
             "v1": {
                 "created": "2024-01-01T00:00:00Z",
@@ -284,11 +284,11 @@ class TestAbsurdLengthCaps:
         assert r.has_code("L002")
 
 
-def _info_codes(r: ValidationResult) -> list[str]:
+def _info_codes(r: FindingCollector) -> list[str]:
     return [i.code for i in r.infos]
 
 
-def _error_codes(r: ValidationResult) -> list[str]:
+def _error_codes(r: FindingCollector) -> list[str]:
     return [e.code for e in r.errors]
 
 
@@ -296,7 +296,7 @@ class TestLimitsAreInfoOnly:
     """L-codes are non-spec: reported as info, never affect validity."""
 
     def test_long_object_id_is_valid(self):
-        r = ValidationResult()
+        r = FindingCollector()
         inv = _inv_with_manifest({_D1: ["v1/content/file.txt"]})
         inv["id"] = "http://example.org/" + ("x" * 2048)
         validate_inventory(inv, r)
@@ -304,7 +304,7 @@ class TestLimitsAreInfoOnly:
         assert r.is_valid
 
     def test_null_in_object_id_is_valid(self):
-        r = ValidationResult()
+        r = FindingCollector()
         inv = _inv_with_manifest({_D1: ["v1/content/file.txt"]})
         inv["id"] = "http://example.org/obj\x00x"
         validate_inventory(inv, r)
@@ -312,20 +312,20 @@ class TestLimitsAreInfoOnly:
         assert r.is_valid
 
     def test_null_manifest_path_still_spec_checked(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["/v1/content/a\x00b"]}), r)
         assert "L001" in _info_codes(r)
         assert "E100" in _error_codes(r)
 
     def test_long_manifest_path_still_spec_checked(self):
-        r = ValidationResult()
+        r = FindingCollector()
         long_seg = "x" * 5000
         validate_inventory(_inv_with_manifest({_D1: [f"v1/content//{long_seg}"]}), r)
         assert "L002" in _info_codes(r)
         assert "E099" in _error_codes(r)
 
     def test_null_logical_path_still_spec_checked(self):
-        r = ValidationResult()
+        r = FindingCollector()
         versions = {
             "v1": {
                 "created": "2024-01-01T00:00:00Z",
@@ -340,7 +340,7 @@ class TestLimitsAreInfoOnly:
         assert "E053" in _error_codes(r)
 
     def test_no_l_codes_in_errors_or_warnings(self):
-        r = ValidationResult()
+        r = FindingCollector()
         inv = _inv_with_manifest({_D1: ["v1/content/a\x00" + "x" * 5000]})
         inv["id"] = "http://example.org/" + ("x" * 2048)
         validate_inventory(inv, r)
@@ -358,7 +358,7 @@ class TestUnicodeNormalizationCharacterization:
         nfc = unicodedata.normalize("NFC", "café.txt")
         nfd = unicodedata.normalize("NFD", "café.txt")
         assert nfc != nfd
-        r = ValidationResult()
+        r = FindingCollector()
         manifest = {
             _D1: [f"v1/content/{nfc}"],
             _D2: [f"v1/content/{nfd}"],

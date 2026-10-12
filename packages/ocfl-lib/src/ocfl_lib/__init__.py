@@ -53,7 +53,7 @@ from ocfl_lib.sources import ContentSource, FixitySource
 from ocfl_lib.spec import Namaste, Spec, VNum
 from ocfl_lib.update_plan import UpdatePlan, execute_plan, revert_plan
 from ocfl_lib.validation.object import validate_object
-from ocfl_lib.validation.result import ValidationResult
+from ocfl_lib.validation.report import Finding, Severity, ValidationReport
 from ocfl_lib.validation.root import validate_root
 from ocfl_lib.version_state import VersionState, scan_dir
 
@@ -68,6 +68,7 @@ __all__ = [
     "DigestMap",
     "ErrorClass",
     "FileWalker",
+    "Finding",
     "FixitySource",
     "FlatDirectLayout",
     "FlatOmitPrefixLayout",
@@ -101,6 +102,7 @@ __all__ = [
     "RevertCompletedError",
     "RevertError",
     "RootExistsError",
+    "Severity",
     "Spec",
     "SpecVersionError",
     "StaleHeadError",
@@ -112,7 +114,7 @@ __all__ = [
     "UpdatePlan",
     "UserInfo",
     "VNum",
-    "ValidationResult",
+    "ValidationReport",
     "VersionInfo",
     "VersionNotFound",
     "VersionState",

@@ -2,7 +2,7 @@
 
 These are not spec-mandated. They refuse absurd input to prevent DoS and
 ambiguous-intent hazards. Reuse from both non-fatal validation
-(ValidationResult info codes L001/L002) and fail-fast write paths
+(validation info codes L001/L002) and fail-fast write paths
 (raising ValueError in StorageRoot.commit, stage, etc.).
 
 Also declares filesystem-safety bounds beyond spec: ``validate_path_component``

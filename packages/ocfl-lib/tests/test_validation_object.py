@@ -10,7 +10,7 @@ import pytest
 
 from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.validation.object import validate_object
-from ocfl_lib.validation.result import ValidationResult
+from ocfl_lib.validation.report import ValidationReport
 
 FIXTURES_ROOT = Path(__file__).resolve().parents[3] / "tests" / "fixtures"
 
@@ -27,7 +27,7 @@ def _parse_codes(dirname: str) -> list[str]:
     return _CODE_RE.findall(dirname)
 
 
-def _has_fixture_error_code(result: ValidationResult, expected: str) -> bool:
+def _has_fixture_error_code(result: ValidationReport, expected: str) -> bool:
     for error in result.errors:
         match = _CODE_RE.match(error.code)
         if match is not None and match.group(0) == expected:
@@ -51,9 +51,8 @@ def _collect_fixtures(spec_ver: str, category: str) -> list[tuple[str, Path]]:
 class TestGoodObjects:
     def test_valid(self, name: str, path: Path):
         fsys = LocalFS(path)
-        r = ValidationResult()
-        validate_object(fsys, "", r)
-        assert r.is_valid, f"{name}: {[(e.code, e.message) for e in r.errors]}"
+        r = validate_object(fsys, "")
+        assert r.is_valid, f"{name}: {[(e.code, e.render()) for e in r.errors]}"
 
 
 # Bad objects — both spec versions
@@ -67,8 +66,7 @@ class TestBadObjects:
         if name in _XFAIL_BAD:
             pytest.xfail("not yet implemented")
         fsys = LocalFS(path)
-        r = ValidationResult()
-        validate_object(fsys, "", r)
+        r = validate_object(fsys, "")
         assert not r.is_valid, f"{name}: expected invalid"
 
     def test_expected_codes(self, name: str, path: Path):
@@ -78,8 +76,7 @@ class TestBadObjects:
         if not codes:
             pytest.skip("no code in dir name")
         fsys = LocalFS(path)
-        r = ValidationResult()
-        validate_object(fsys, "", r)
+        r = validate_object(fsys, "")
         actual = [e.code for e in r.errors]
         if name in _XFAIL_BAD_EXPECTED_CODES and not all(
             _has_fixture_error_code(r, code) for code in codes
@@ -100,9 +97,8 @@ class TestBadObjects:
 class TestWarnObjects:
     def test_valid_with_warnings(self, name: str, path: Path):
         fsys = LocalFS(path)
-        r = ValidationResult()
-        validate_object(fsys, "", r)
-        assert r.is_valid, f"{name}: {[(e.code, e.message) for e in r.errors]}"
+        r = validate_object(fsys, "")
+        assert r.is_valid, f"{name}: {[(e.code, e.render()) for e in r.errors]}"
         assert r.num_warnings > 0, f"{name}: expected warnings"
 
     def test_expected_warning_codes(self, name: str, path: Path):
@@ -110,8 +106,7 @@ class TestWarnObjects:
         if not codes:
             pytest.skip("no code in dir name")
         fsys = LocalFS(path)
-        r = ValidationResult()
-        validate_object(fsys, "", r)
+        r = validate_object(fsys, "")
         for code in codes:
             assert r.has_code(code), (
                 f"{name}: expected {code}, got {[w.code for w in r.warnings]}"
@@ -198,8 +193,7 @@ class TestE019ContentDirectoryAdded:
         ver_inv = _base_inv(contentDirectory="content")
         _make_object(tmp_path, root_inv, version_inv=ver_inv)
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_object(fsys, "", r, check_digests=False)
+        r = validate_object(fsys, "", check_digests=False)
         assert r.has_code("E019")
 
     def test_root_cd_differs_from_first_version_cd(self, tmp_path: Path):
@@ -207,8 +201,7 @@ class TestE019ContentDirectoryAdded:
         ver_inv = _base_inv(contentDirectory="data")
         _make_object(tmp_path, root_inv, version_inv=ver_inv)
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_object(fsys, "", r, check_digests=False)
+        r = validate_object(fsys, "", check_digests=False)
         assert r.has_code("E019")
 
 
@@ -218,8 +211,7 @@ class TestE020ContentDirectoryMismatch:
         ver_inv = _base_inv(contentDirectory="data")
         _make_object(tmp_path, root_inv, version_inv=ver_inv)
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_object(fsys, "", r, check_digests=False)
+        r = validate_object(fsys, "", check_digests=False)
         assert r.has_code("E020")
 
 
@@ -250,8 +242,7 @@ class TestE010VersionDirSequence:
         (tmp_path / "v4").mkdir()
 
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_object(fsys, "", r, check_digests=False)
+        r = validate_object(fsys, "", check_digests=False)
 
         assert r.has_code("E010")
 
@@ -320,8 +311,7 @@ class TestVersionInventoryJson:
         (v2 / "inventory.json.sha512").write_text(f"{root_inv_digest} inventory.json\n")
 
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_object(fsys, "", r)
+        r = validate_object(fsys, "")
 
         assert r.has_code("E092")
 
@@ -391,8 +381,7 @@ class TestVersionInventoryJson:
         (v2 / "inventory.json.sha512").write_text(f"{root_inv_digest} inventory.json\n")
 
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_object(fsys, "", r, check_digests=False)
+        r = validate_object(fsys, "", check_digests=False)
 
         assert r.has_code("E092")
 
@@ -434,8 +423,7 @@ class TestVersionInventoryJson:
         (v1 / "inventory.json.sha512").write_text(f"{inv_digest} inventory.json\n")
 
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_object(fsys, "", r)
+        r = validate_object(fsys, "")
 
         assert r.has_code("E093")
 
@@ -485,8 +473,7 @@ class TestVersionInventoryJson:
         (v2 / "inventory.json.sha512").write_text(f"{root_inv_digest} inventory.json\n")
 
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_object(fsys, "", r)
+        r = validate_object(fsys, "")
 
         assert r.has_code("E033")
 
@@ -536,8 +523,7 @@ class TestVersionInventoryJson:
         (v2 / "inventory.json.sha512").write_text(f"{root_inv_digest} inventory.json\n")
 
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_object(fsys, "", r)
+        r = validate_object(fsys, "")
 
         assert r.has_code("E034")
 
@@ -548,8 +534,7 @@ class TestE003cUnparseableDecl:
         (tmp_path / "0=garbage_1.1").write_text("garbage\n")
         (tmp_path / "v1").mkdir()
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_object(fsys, "", r)
+        r = validate_object(fsys, "")
         assert r.has_code("E003c")
         assert not any(e.code == "E003a" for e in r.errors)
 
@@ -558,8 +543,7 @@ class TestE003cUnparseableDecl:
         (tmp_path / "v1").mkdir()
         (tmp_path / "readme.txt").write_text("hello\n")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_object(fsys, "", r)
+        r = validate_object(fsys, "")
         assert any(e.code == "E003a" for e in r.errors)
         assert not r.has_code("E003c")
 
@@ -571,10 +555,9 @@ class TestE006InvalidNamaste:
         (tmp_path / "0=alsogarbage").write_text("nope\n")
         (tmp_path / "v1").mkdir()
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_object(fsys, "", r)
+        r = validate_object(fsys, "")
         e006_errors = [e for e in r.errors if e.code == "E006"]
-        msgs = [e.message for e in e006_errors]
+        msgs = [e.render() for e in e006_errors]
         assert any("0=garbage_1.1" in m for m in msgs)
         assert any("0=alsogarbage" in m for m in msgs)
 
@@ -584,11 +567,10 @@ class TestE006InvalidNamaste:
         _make_object(tmp_path, root_inv)
         (tmp_path / "0=garbage").write_text("nope\n")
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_object(fsys, "", r, check_digests=False)
+        r = validate_object(fsys, "", check_digests=False)
         e006_errors = [e for e in r.errors if e.code == "E006"]
         assert len(e006_errors) == 1
-        assert "0=garbage" in e006_errors[0].message
+        assert "0=garbage" in e006_errors[0].render()
 
 
 class TestW003EmptyContentDir:
@@ -606,8 +588,7 @@ class TestW003EmptyContentDir:
         )
         _make_object(tmp_path, root_inv, empty_content=True)
         fsys = LocalFS(tmp_path)
-        r = ValidationResult()
-        validate_object(fsys, "", r, check_digests=False)
+        r = validate_object(fsys, "", check_digests=False)
         assert r.has_code("W003")
 
 
@@ -634,17 +615,15 @@ class TestE103SpecSequence:
         _set_inventory_type(obj / "v1", "1.0")
         _set_inventory_type(obj / "v2", "1.1")
 
-        r = ValidationResult()
-        validate_object(LocalFS(obj), "", r)
+        r = validate_object(LocalFS(obj), "")
         assert not r.has_code("E103")
         assert r.is_valid, [e.code for e in r.errors]
 
     def test_older_than_previous_version_reports_against_it(
         self, bad_objects_1_1: Path
     ) -> None:
-        r = ValidationResult()
-        validate_object(LocalFS(bad_objects_1_1 / "E103_older_spec_v2"), "", r)
+        r = validate_object(LocalFS(bad_objects_1_1 / "E103_older_spec_v2"), "")
         e103 = [e for e in r.errors if e.code == "E103"]
         assert len(e103) == 1
-        assert "v2 inventory" in e103[0].message
-        assert "the v1 inventory" in e103[0].message
+        assert "v2 inventory" in e103[0].render()
+        assert "the v1 inventory" in e103[0].render()

@@ -11,7 +11,6 @@ from ocfl_lib.object import Object
 from ocfl_lib.spec import Spec, VNum
 from ocfl_lib.update_plan import execute_plan, prepare_steps, revert_plan
 from ocfl_lib.validation.object import validate_object
-from ocfl_lib.validation.result import ValidationResult
 from ocfl_lib.version_state import VersionState, scan_dir
 
 if TYPE_CHECKING:
@@ -76,9 +75,8 @@ class TestAlgorithmMigration:
         assert inv.fixity is not None
         assert "sha256" in inv.fixity
 
-        result = ValidationResult()
-        validate_object(obj_fs, "", result)
-        assert result.is_valid, f"errors: {[e.message for e in result.errors]}"
+        result = validate_object(obj_fs, "")
+        assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
 
     def test_version_states_remapped(self, tmp_path: Path):
         """All version states use new algorithm digests after migration."""
@@ -207,9 +205,8 @@ class TestAlgorithmMigration:
 
         assert obj.inventory.inventory.digest_algorithm == "sha512"
 
-        result = ValidationResult()
-        validate_object(obj_fs, "", result)
-        assert result.is_valid, f"errors: {[e.message for e in result.errors]}"
+        result = validate_object(obj_fs, "")
+        assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
 
     def test_existing_fixity_preserved(self, tmp_path: Path):
         """Pre-existing fixity (e.g. md5) preserved through migration."""
@@ -249,9 +246,8 @@ class TestAlgorithmMigration:
         assert "md5" in inv.fixity  # preserved
         assert "sha256" in inv.fixity  # added from migration
 
-        result = ValidationResult()
-        validate_object(obj_fs, "", result)
-        assert result.is_valid, f"errors: {[e.message for e in result.errors]}"
+        result = validate_object(obj_fs, "")
+        assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
 
     def test_migration_error_reverts(self, tmp_path: Path):
         """update() auto-reverts on error during migration write."""
@@ -290,8 +286,7 @@ class TestAlgorithmMigration:
         assert not (obj_dir / "inventory.json.sha512").exists()
 
         # Object should still validate
-        result = ValidationResult()
-        validate_object(obj_fs, "", result)
+        result = validate_object(obj_fs, "")
         assert result.is_valid, result.errors
 
     def test_migration_revert_restores_original_inventory(self, tmp_path: Path):

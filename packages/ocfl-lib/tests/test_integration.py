@@ -22,7 +22,6 @@ from ocfl_lib.layout import (
 from ocfl_lib.root import StorageRoot
 from ocfl_lib.spec import Spec, VNum
 from ocfl_lib.validation.object import validate_object
-from ocfl_lib.validation.result import ValidationResult
 from ocfl_lib.validation.root import validate_root
 from ocfl_lib.version_state import scan_dir
 
@@ -124,11 +123,10 @@ class TestRoundTripAllLayouts:
         assert obj.head == VNum(2)
 
         # Validate entire root
-        result = ValidationResult()
-        summary = validate_root(fsys, "", result)
-        assert result.is_valid, f"errors: {[e.message for e in result.errors]}"
-        assert summary.num_objects == 1
-        assert summary.valid_objects == 1
+        summary = result = validate_root(fsys, "")
+        assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
+        assert summary.objects_checked == 1
+        assert summary.objects_valid == 1
 
         # Read back v1 content
         with obj.open_logical_path(VNum(1), "hello.txt") as f:
@@ -182,11 +180,10 @@ class TestRoundTripAllLayouts:
         assert found_ids == sorted(ids)
 
         # Root validates
-        result = ValidationResult()
-        summary = validate_root(fsys, "", result)
+        summary = result = validate_root(fsys, "")
         assert result.is_valid
-        assert summary.num_objects == 3
-        assert summary.valid_objects == 3
+        assert summary.objects_checked == 3
+        assert summary.objects_valid == 3
 
 
 class TestFixityRoundTrip:
@@ -218,8 +215,7 @@ class TestFixityRoundTrip:
         assert sha256_paths == manifest_paths
 
         # Validates with fixity
-        result = ValidationResult()
-        validate_object(fsys, "fix-obj", result)
+        result = validate_object(fsys, "fix-obj")
         assert result.is_valid
 
     def test_fixity_multiple_algorithms(self, tmp_path: Path):
@@ -244,8 +240,7 @@ class TestFixityRoundTrip:
         assert "sha256" in inv.fixity
         assert "md5" in inv.fixity
 
-        result = ValidationResult()
-        validate_object(fsys, "multi-fix", result)
+        result = validate_object(fsys, "multi-fix")
         assert result.is_valid
 
     def test_fixity_preserved_across_versions(self, tmp_path: Path):
@@ -285,8 +280,7 @@ class TestFixityRoundTrip:
         all_fixity_paths = sorted(p for ps in inv.fixity["sha256"].values() for p in ps)
         assert all_fixity_paths == all_manifest_paths
 
-        result = ValidationResult()
-        validate_object(fsys, "fix-v2", result)
+        result = validate_object(fsys, "fix-v2")
         assert result.is_valid
 
 
@@ -466,8 +460,7 @@ class TestSpecVersions:
 
         assert obj.spec == spec
 
-        result = ValidationResult()
-        validate_root(fsys, "", result)
+        result = validate_root(fsys, "")
         assert result.is_valid
 
         # NAMASTE matches spec
@@ -496,8 +489,7 @@ class TestSpecVersions:
         with obj.open_logical_path(VNum(1), "file.txt") as f:
             assert f.read() == b"hello"
 
-        result = ValidationResult()
-        validate_object(fsys, "sha256-obj", result)
+        result = validate_object(fsys, "sha256-obj")
         assert result.is_valid
 
 
@@ -588,8 +580,7 @@ class TestEdgeCases:
         state = obj.version_info(VNum(2)).state
         assert len(state) == 0
 
-        result = ValidationResult()
-        validate_object(fsys, "empty-obj", result)
+        result = validate_object(fsys, "empty-obj")
         assert result.is_valid
 
     def test_reopen_root_and_continue(self, tmp_path: Path):
@@ -631,8 +622,7 @@ class TestEdgeCases:
         with obj.open_logical_path(VNum(2), "file.txt") as f:
             assert f.read() == b"v2"
 
-        result = ValidationResult()
-        validate_root(fsys, "", result)
+        result = validate_root(fsys, "")
         assert result.is_valid
 
     def test_large_file_count(self, tmp_path: Path):
@@ -652,8 +642,7 @@ class TestEdgeCases:
         all_paths = sorted(p for ps in state.values() for p in ps)
         assert len(all_paths) == 50
 
-        result = ValidationResult()
-        validate_object(fsys, "many-files", result)
+        result = validate_object(fsys, "many-files")
         assert result.is_valid
 
     def test_binary_content(self, tmp_path: Path):
@@ -672,8 +661,7 @@ class TestEdgeCases:
         with obj.open_logical_path(VNum(1), "binary.bin") as f:
             assert f.read() == binary_data
 
-        result = ValidationResult()
-        validate_object(fsys, "bin-obj", result)
+        result = validate_object(fsys, "bin-obj")
         assert result.is_valid
 
     def test_duplicate_content_dedup(self, tmp_path: Path):
@@ -700,8 +688,7 @@ class TestEdgeCases:
         logical_paths = sorted(next(iter(state.values())))
         assert logical_paths == ["a.txt", "b.txt"]
 
-        result = ValidationResult()
-        validate_object(fsys, "dedup-obj", result)
+        result = validate_object(fsys, "dedup-obj")
         assert result.is_valid
 
     def test_non_default_layout_config(self, tmp_path: Path):
@@ -733,8 +720,7 @@ class TestEdgeCases:
         )
         assert obj.exists
 
-        result = ValidationResult()
-        validate_root(fsys, "", result)
+        result = validate_root(fsys, "")
         assert result.is_valid
 
     def test_objects_batch(self, tmp_path: Path):

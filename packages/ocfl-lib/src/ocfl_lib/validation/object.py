@@ -14,10 +14,11 @@ from ocfl_lib.validation.inventory import (
     validate_inventory,
     validate_inventory_against_prior,
 )
+from ocfl_lib.validation.report import FindingCollector
 
 if TYPE_CHECKING:
     from ocfl_lib.fs.protocols import FS, FileWalker
-    from ocfl_lib.validation.result import ValidationResult
+    from ocfl_lib.validation.report import ValidationReport
 
 _SIDECAR_RE = re.compile(r"^inventory\.json\.(\S+)$")
 
@@ -39,12 +40,26 @@ _KNOWN_EXTENSIONS = frozenset(
 def validate_object(
     fsys: FileWalker,
     path: str,
-    result: ValidationResult,
     *,
     check_digests: bool = True,
     lax_digests: bool = False,
-) -> None:
+) -> ValidationReport:
     """Validate an OCFL object at the given path."""
+    result = FindingCollector(path=path)
+    _validate_object(
+        fsys, path, result, check_digests=check_digests, lax_digests=lax_digests
+    )
+    return result.report()
+
+
+def _validate_object(
+    fsys: FileWalker,
+    path: str,
+    result: FindingCollector,
+    *,
+    check_digests: bool,
+    lax_digests: bool,
+) -> None:
     # 1. Read root entries
     try:
         entries = list(fsys.read_dir(path))
@@ -113,6 +128,8 @@ def validate_object(
     if not isinstance(inv_data, dict):
         result.error("E034", where="root")
         return
+    if isinstance(inv_data.get("id"), str):
+        result.object_id = inv_data["id"]
 
     inv = validate_inventory(inv_data, result, lax_digests=lax_digests, where="root")
     if inv is None:
@@ -244,7 +261,7 @@ def _validate_version_dir(
     root_inv_data: dict[str, Any],
     root_inv_bytes: bytes,
     root_alg: DigestAlgorithm,
-    result: ValidationResult,
+    result: FindingCollector,
     *,
     check_digests: bool,
     lax_digests: bool,
@@ -378,7 +395,7 @@ def _validate_version_dir(
 def _check_version_metadata(
     vinv_data: dict[str, Any],
     root_inv_data: dict[str, Any],
-    result: ValidationResult,
+    result: FindingCollector,
     *,
     vkey: str,
 ) -> None:
@@ -408,7 +425,7 @@ def _check_version_metadata(
                 )
 
 
-def _check_version_dir_sequence(entries: list[Any], result: ValidationResult) -> None:
+def _check_version_dir_sequence(entries: list[Any], result: FindingCollector) -> None:
     """E010: version directories present on disk must be sequential."""
     vnums: list[int] = []
     for entry in entries:
@@ -432,7 +449,7 @@ def _check_first_version_content_dir(
     path: str,
     root_inv_data: dict[str, Any],
     inv_versions: dict[str, int],
-    result: ValidationResult,
+    result: FindingCollector,
 ) -> None:
     """E019: contentDirectory must be set consistently from the first version."""
     if "contentDirectory" not in root_inv_data or not inv_versions:
@@ -469,7 +486,7 @@ def _check_spec_sequence(
     prev: tuple[str, str] | None,
     where: str,
     spec: str | None,
-    result: ValidationResult,
+    result: FindingCollector,
 ) -> tuple[str, str] | None:
     """E103: *spec* must not be older than the preceding version's *prev*.
 
@@ -498,7 +515,7 @@ def _validate_sidecar(
     sidecar_path: str,
     inv_bytes: bytes,
     alg: DigestAlgorithm,
-    result: ValidationResult,
+    result: FindingCollector,
     *,
     where: str,
 ) -> None:
@@ -536,7 +553,7 @@ def _verify_digests(
     obj_path: str,
     manifest: dict[str, Any],
     alg: DigestAlgorithm,
-    result: ValidationResult,
+    result: FindingCollector,
     *,
     where: str,
 ) -> None:
@@ -568,7 +585,7 @@ def _verify_fixity_digests(
     fsys: FS,
     obj_path: str,
     fixity: dict[str, Any],
-    result: ValidationResult,
+    result: FindingCollector,
     *,
     where: str,
 ) -> None:

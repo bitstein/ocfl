@@ -17,7 +17,7 @@ from ocfl_lib.validation.limits import (
 )
 
 if TYPE_CHECKING:
-    from ocfl_lib.validation.result import ValidationResult
+    from ocfl_lib.validation.report import FindingCollector
 
 _KNOWN_KEYS = frozenset(
     {
@@ -43,7 +43,7 @@ _URI_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*:")
 
 def validate_inventory(
     data: dict[str, Any],
-    result: ValidationResult,
+    result: FindingCollector,
     *,
     lax_digests: bool = False,
     where: str = "root",
@@ -71,7 +71,7 @@ def validate_inventory(
 
 def _validate_structure(
     data: dict[str, Any],
-    result: ValidationResult,
+    result: FindingCollector,
     *,
     where: str,
     lax_digests: bool,
@@ -191,7 +191,7 @@ def _validate_structure(
 
 def _validate_manifest(
     manifest: dict[str, Any],
-    result: ValidationResult,
+    result: FindingCollector,
     *,
     where: str,
     alg_name: str,
@@ -281,7 +281,7 @@ def _validate_manifest(
 
 def _validate_versions(
     data: dict[str, Any],
-    result: ValidationResult,
+    result: FindingCollector,
     *,
     where: str,
 ) -> None:
@@ -404,7 +404,7 @@ def _validate_versions(
 
 def _validate_created(
     created: str,
-    result: ValidationResult,
+    result: FindingCollector,
     *,
     where: str,
     version: str,
@@ -447,7 +447,7 @@ def _created_has_seconds(created: str) -> bool:
 def _validate_version_state(
     state: dict[str, Any],
     manifest: dict[str, Any],
-    result: ValidationResult,
+    result: FindingCollector,
     *,
     where: str,
     version: str,
@@ -524,7 +524,7 @@ def _path_prefix_conflicts(paths: set[str]) -> list[str]:
 
 def _validate_user(
     user: Any,
-    result: ValidationResult,
+    result: FindingCollector,
     *,
     where: str,
     version: str,
@@ -557,7 +557,7 @@ def _validate_user(
 def _validate_fixity(
     fixity: Any,
     manifest: dict[str, Any],
-    result: ValidationResult,
+    result: FindingCollector,
     *,
     where: str,
     lax_digests: bool,
@@ -632,7 +632,7 @@ def _validate_fixity(
 def validate_inventory_against_prior(
     current: dict[str, Any],
     prior: dict[str, Any],
-    result: ValidationResult,
+    result: FindingCollector,
     *,
     where: str = "root",
 ) -> None:

@@ -1,7 +1,7 @@
 """Tests for inventory cross-version validation."""
 
 from ocfl_lib.validation.inventory import validate_inventory_against_prior
-from ocfl_lib.validation.result import ValidationResult
+from ocfl_lib.validation.report import FindingCollector
 
 _D1 = "a" * 128
 _D2 = "b" * 128
@@ -46,7 +46,7 @@ class TestIdConsistency:
             manifest={_D1: ["v1/content/file.txt"], _D2: ["v2/content/file2.txt"]},
             versions={"v1": _v1_block(), "v2": _v2_block()},
         )
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory_against_prior(current, prior, r)
         assert r.has_code("E037b")
 
@@ -56,7 +56,7 @@ class TestIdConsistency:
             manifest={_D1: ["v1/content/file.txt"], _D2: ["v2/content/file2.txt"]},
             versions={"v1": _v1_block(), "v2": _v2_block()},
         )
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory_against_prior(current, prior, r)
         assert not r.has_code("E037b")
 
@@ -69,7 +69,7 @@ class TestVersionSubset:
         )
         # Current only has v1 — missing v2
         current = _inv(versions={"v1": _v1_block()})
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory_against_prior(current, prior, r)
         assert r.has_code("E066a")
 
@@ -85,7 +85,7 @@ class TestVersionStateConsistency:
                 "v2": _v2_block(),
             },
         )
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory_against_prior(current, prior, r)
         assert r.has_code("E066b")
 
@@ -98,12 +98,12 @@ class TestVersionStateConsistency:
                 "v2": _v2_block(),
             },
         )
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory_against_prior(current, prior, r)
         e066b = [e for e in r.errors if e.code == "E066b"]
         assert len(e066b) == 1
-        assert "prior-only.txt" in e066b[0].message
-        assert "only in v1 inventory" in e066b[0].message
+        assert "prior-only.txt" in e066b[0].render()
+        assert "only in v1 inventory" in e066b[0].render()
 
     def test_current_logical_path_added_to_prior_version(self):
         prior = _inv(versions={"v1": _v1_block(state={_D1: []})})
@@ -114,12 +114,12 @@ class TestVersionStateConsistency:
                 "v2": _v2_block(),
             },
         )
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory_against_prior(current, prior, r)
         e066b = [e for e in r.errors if e.code == "E066b"]
         assert len(e066b) == 1
-        assert "current-only.txt" in e066b[0].message
-        assert "only in root inventory" in e066b[0].message
+        assert "current-only.txt" in e066b[0].render()
+        assert "only in root inventory" in e066b[0].render()
 
     def test_matching_versions_no_error(self):
         prior = _inv(versions={"v1": _v1_block()})
@@ -127,6 +127,6 @@ class TestVersionStateConsistency:
             manifest={_D1: ["v1/content/file.txt"], _D2: ["v2/content/file2.txt"]},
             versions={"v1": _v1_block(), "v2": _v2_block()},
         )
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory_against_prior(current, prior, r)
         assert not r.has_code("E066")

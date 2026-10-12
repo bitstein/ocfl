@@ -13,7 +13,6 @@ from ocfl_lib.object import Object
 from ocfl_lib.spec import Spec, VNum
 from ocfl_lib.update_plan import deserialize, revert_plan, serialize
 from ocfl_lib.validation.object import validate_object
-from ocfl_lib.validation.result import ValidationResult
 from ocfl_lib.version_state import VersionState, scan_dir
 
 if TYPE_CHECKING:
@@ -64,9 +63,8 @@ class TestObjectUpdate:
         assert obj.spec == Spec.V1_1
 
         # Validate the created object
-        result = ValidationResult()
-        validate_object(obj_fs, "", result)
-        assert result.is_valid, f"errors: {[e.message for e in result.errors]}"
+        result = validate_object(obj_fs, "")
+        assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
 
     def test_create_object_reads_back_content(self, tmp_path: Path):
         """Content is accessible after creation."""
@@ -131,9 +129,8 @@ class TestObjectUpdate:
         assert obj.head == VNum(2)
         assert len(obj.versions()) == 2
 
-        result = ValidationResult()
-        validate_object(obj_fs, "", result)
-        assert result.is_valid, f"errors: {[e.message for e in result.errors]}"
+        result = validate_object(obj_fs, "")
+        assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
 
     def test_forward_delta_dedup(self, tmp_path: Path):
         """Unchanged files reuse v1 content paths (no duplication)."""
@@ -213,8 +210,7 @@ class TestObjectUpdate:
         assert inv.fixity is not None
         assert "md5" in inv.fixity
 
-        result = ValidationResult()
-        validate_object(obj_fs, "", result)
+        result = validate_object(obj_fs, "")
         assert result.is_valid
 
     def test_error_reverts_on_failure(self, tmp_path: Path):
@@ -384,8 +380,7 @@ class TestObjectUpdate:
         all_paths = sorted(p for ps in state.values() for p in ps)
         assert all_paths == ["a.txt", "dir/b.txt", "dir/sub/c.txt"]
 
-        result = ValidationResult()
-        validate_object(obj_fs, "", result)
+        result = validate_object(obj_fs, "")
         assert result.is_valid
 
     def test_version_info_preserved(self, tmp_path: Path):
@@ -450,8 +445,7 @@ class TestObjectUpdate:
         obj2 = update_object(obj_fs, obj2, stage2, created="2024-06-01T00:00:00Z")
         assert obj2.head == VNum(2)  # NOT v1
 
-        result = ValidationResult()
-        validate_object(obj_fs, "", result)
+        result = validate_object(obj_fs, "")
         assert result.is_valid
 
 
@@ -483,8 +477,7 @@ class TestTwoStepWrite:
         assert obj.exists
         assert obj.head == VNum(1)
 
-        result = ValidationResult()
-        validate_object(obj_fs, "", result)
+        result = validate_object(obj_fs, "")
         assert result.is_valid
 
     def test_plan_serializable(self, tmp_path: Path):
@@ -514,8 +507,7 @@ class TestTwoStepWrite:
         obj = apply_update_plan(obj_fs, obj, plan2, stage.content_source)
         assert obj.exists
 
-        result = ValidationResult()
-        validate_object(obj_fs, "", result)
+        result = validate_object(obj_fs, "")
         assert result.is_valid
 
     def test_no_auto_revert(self, tmp_path: Path):
@@ -580,8 +572,7 @@ class TestTwoStepWrite:
         obj = apply_update_plan(obj_fs, obj, plan, stage2.content_source)
 
         assert obj.head == VNum(2)
-        result = ValidationResult()
-        validate_object(obj_fs, "", result)
+        result = validate_object(obj_fs, "")
         assert result.is_valid
 
     def test_independently_built_stale_plan_cannot_publish(self, tmp_path: Path):
@@ -622,9 +613,8 @@ class TestTwoStepWrite:
             obj_b = apply_update_plan(obj_fs, obj_b, plan_b, stage_b.content_source)
 
         assert Object(obj_fs, "").head == VNum(2)
-        result = ValidationResult()
-        validate_object(obj_fs, "", result)
-        assert result.is_valid, f"errors: {[e.message for e in result.errors]}"
+        result = validate_object(obj_fs, "")
+        assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
 
     def test_stale_plan_revert_removes_copied_content(self, tmp_path: Path):
         """A stale plan can be reverted without leaving unmanifested content."""
@@ -659,6 +649,5 @@ class TestTwoStepWrite:
 
         assert not (obj_dir / "v2").exists()
         (obj_dir / "inventory.json.sha512").write_text(good_sidecar)
-        result = ValidationResult()
-        validate_object(obj_fs, "", result)
-        assert result.is_valid, f"errors: {[e.message for e in result.errors]}"
+        result = validate_object(obj_fs, "")
+        assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"

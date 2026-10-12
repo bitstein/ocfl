@@ -108,10 +108,10 @@ class TestValidateRoot:
         self, runner: CliRunner, storage_root: Path, monkeypatch
     ):
         from ocfl_cli.archive import validate as validate_module
-        from ocfl_lib.validation.root import RootValidationSummary
+        from ocfl_lib import ValidationReport
 
         def fake_validate_root(*args, **kwargs):
-            return RootValidationSummary(num_objects=1, truncated=True)
+            return ValidationReport(objects_checked=1, truncated=True)
 
         monkeypatch.setattr(validate_module, "validate_root", fake_validate_root)
 
@@ -198,7 +198,9 @@ class TestValidateObject:
             app, ["--root", str(storage_root), "--quiet", "validate"]
         )
         assert result.exit_code == 0
-        assert result.stderr == ""
+        # Only findings remain; valid objects' warnings are kept at root level.
+        lines = result.stderr.splitlines()
+        assert all(line.startswith("Warning: [W") for line in lines), lines
 
 
 def _inflate_head_message(storage_root: Path) -> None:

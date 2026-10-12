@@ -14,7 +14,6 @@ from ocfl_lib.root import StorageRoot
 from ocfl_lib.spec import Spec
 from ocfl_lib.update_plan import prepare_steps, revert_plan
 from ocfl_lib.validation.object import validate_object
-from ocfl_lib.validation.result import ValidationResult
 from ocfl_lib.validation.root import validate_root
 from ocfl_lib.version_state import VersionState, scan_dir
 
@@ -43,8 +42,7 @@ def _object_namastes(obj_dir: Path) -> list[str]:
 
 
 def _assert_valid_object(fsys: LocalFS, path: str) -> None:
-    r = ValidationResult()
-    validate_object(fsys, path, r)
+    r = validate_object(fsys, path)
     assert r.is_valid, [e.code for e in r.errors]
 
 
@@ -56,8 +54,7 @@ class TestE081RootRefusal:
             root.commit(fsys, "obj", _stage(tmp_path, "a"), spec=Spec.V1_1)
 
         assert not (tmp_path / "root" / "obj").exists()
-        r = ValidationResult()
-        validate_root(fsys, "", r)
+        r = validate_root(fsys, "")
         assert r.is_valid, [e.code for e in r.errors]
 
     def test_upgrade_to_1_1_in_1_0_root_refused(self, tmp_path: Path):
@@ -166,26 +163,23 @@ class TestE081Validation:
         fsys = self._root_with_object(tmp_path, Spec.V1_1)
         self._downgrade_root_namaste(tmp_path)
 
-        r = ValidationResult()
-        validate_root(fsys, "", r)
+        r = validate_root(fsys, "")
 
         e081 = [e for e in r.errors if e.code == "E081"]
         assert len(e081) == 1
-        assert "obj" in e081[0].message
+        assert "obj" in e081[0].render()
 
     def test_1_0_object_in_1_0_root_ok(self, tmp_path: Path):
         fsys = self._root_with_object(tmp_path, Spec.V1_0)
         self._downgrade_root_namaste(tmp_path)
 
-        r = ValidationResult()
-        validate_root(fsys, "", r)
+        r = validate_root(fsys, "")
 
         assert r.is_valid, [e.code for e in r.errors]
 
     def test_1_0_object_in_1_1_root_ok(self, tmp_path: Path):
         fsys = self._root_with_object(tmp_path, Spec.V1_0)
 
-        r = ValidationResult()
-        validate_root(fsys, "", r)
+        r = validate_root(fsys, "")
 
         assert r.is_valid, [e.code for e in r.errors]

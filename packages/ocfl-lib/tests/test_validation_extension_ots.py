@@ -8,7 +8,7 @@ import pytest
 
 from ocfl_lib.fs.local import LocalFS
 from ocfl_lib.validation.object import validate_object
-from ocfl_lib.validation.result import ValidationResult
+from ocfl_lib.validation.report import ValidationReport
 from tests.helpers.ots import build_attestation
 
 _EXT_NAME = "NNNN-ots-timestamps"
@@ -129,10 +129,9 @@ def _build_ots_object(
     return tmp_path
 
 
-def _validate(tmp_path: Path) -> ValidationResult:
+def _validate(tmp_path: Path) -> ValidationReport:
     fsys = LocalFS(tmp_path)
-    r = ValidationResult()
-    validate_object(fsys, "", r)
+    r = validate_object(fsys, "")
     return r
 
 
@@ -140,8 +139,8 @@ def test_ots_extension_is_known(tmp_path: Path) -> None:
     """Object with the extension config does NOT emit W013 (unknown ext)."""
     _build_ots_object(tmp_path)
     r = _validate(tmp_path)
-    w013 = [w for w in r.warnings if w.code == "W013" and _EXT_NAME in w.message]
-    assert not w013, f"W013 fired for known extension: {[w.message for w in w013]}"
+    w013 = [w for w in r.warnings if w.code == "W013" and _EXT_NAME in w.render()]
+    assert not w013, f"W013 fired for known extension: {[w.render() for w in w013]}"
 
 
 def test_sha512_with_ots_extension_rejected(tmp_path: Path) -> None:

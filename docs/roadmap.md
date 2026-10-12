@@ -26,7 +26,7 @@ Target architecture from the 2026-10-11 design session. Terms: [CONTEXT.md](../C
 - [x] `Object` only reads. Opening a root uses `StorageRoot.open(fs)`, and its constructor does no I/O.
 - [x] Rename `Stage` → `VersionState`. Move `ContentSource` and `FixitySource` to their own module.
 - [ ] Validators accept a recursive `JsonValue` type and narrowing helpers instead of `dict[str, Any]`.
-- [ ] A frozen `ValidationReport` holds `Finding(code, severity, object_id, path, detail)`. Messages are rendered only for display. Root validation must keep every object's findings: it now drops the warnings of valid objects (`validation/root.py` `_walk_and_validate`).
+- [x] A frozen `ValidationReport` holds `Finding(code, severity, object_id, path, detail)`. Messages are rendered only for display. Root validation must keep every object's findings: it now drops the warnings of valid objects (`validation/root.py` `_walk_and_validate`).
 - [x] The default layout registry is frozen, and custom registries are passed explicitly.
 - [x] Remove duplicates: `_join` ×6, the version-number regex ×3, the supported-version sets, the layout-config helpers in `StorageRoot`, the multi-digest copies, and `fs_utils.exists`.
 

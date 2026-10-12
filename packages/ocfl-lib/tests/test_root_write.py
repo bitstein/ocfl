@@ -13,7 +13,6 @@ from ocfl_lib.layout import FlatDirectLayout, HashedNTupleLayout
 from ocfl_lib.root import StorageRoot
 from ocfl_lib.spec import Spec, VNum
 from ocfl_lib.validation.object import validate_object
-from ocfl_lib.validation.result import ValidationResult
 from ocfl_lib.version_state import scan_dir
 
 if TYPE_CHECKING:
@@ -163,9 +162,8 @@ class TestStorageRootCommit:
 
         root.commit(fsys, "my-obj", stage, created="2024-01-01T00:00:00Z")
 
-        result = ValidationResult()
-        validate_object(fsys, "my-obj", result)
-        assert result.is_valid, f"errors: {[e.message for e in result.errors]}"
+        result = validate_object(fsys, "my-obj")
+        assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
 
     def test_commit_update_existing(self, tmp_path: Path):
         """Commit to same ID creates v2."""

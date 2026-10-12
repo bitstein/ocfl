@@ -2,17 +2,18 @@
 
 import json
 import re
-from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ocfl_lib._path import join_path
 from ocfl_lib.fs import utils as fs_utils
 from ocfl_lib.spec import Namaste, Spec
 from ocfl_lib.validation.object import validate_object
+from ocfl_lib.validation.report import FindingCollector
 
 if TYPE_CHECKING:
     from ocfl_lib.fs.protocols import FileWalker
-    from ocfl_lib.validation.result import ValidationResult
+    from ocfl_lib.validation.report import ValidationReport
 
 # Known OCFL community extensions (for storage root)
 _KNOWN_ROOT_EXTENSIONS = frozenset(
@@ -31,26 +32,54 @@ _OBJ_DECL_RE = re.compile(r"^0=ocfl_object_(\d+\.\d+)$")
 
 
 @dataclass
-class RootValidationSummary:
-    """Summary of storage root validation."""
-
-    num_objects: int = 0
-    valid_objects: int = 0
-    object_errors: list[tuple[str, Any]] = field(default_factory=list)
+class _RootSummary:
+    objects_checked: int = 0
+    objects_valid: int = 0
+    objects_invalid: int = 0
     truncated: bool = False
 
 
 def validate_root(
     fsys: FileWalker,
     path: str,
-    result: ValidationResult,
     *,
     validate_objects: bool = True,
     check_digests: bool = True,
     max_errors: int = 100,
-) -> RootValidationSummary:
-    """Validate an OCFL storage root."""
-    summary = RootValidationSummary()
+) -> ValidationReport:
+    """Validate an OCFL storage root and (optionally) every object in it.
+
+    Keeps every object's findings, valid or not. Stops after `max_errors`
+    invalid objects and sets `truncated`.
+    """
+    result = FindingCollector(path=path)
+    summary = _RootSummary()
+    _validate_root(
+        fsys,
+        path,
+        result,
+        summary,
+        validate_objects=validate_objects,
+        check_digests=check_digests,
+        max_errors=max_errors,
+    )
+    return result.report(
+        objects_checked=summary.objects_checked,
+        objects_valid=summary.objects_valid,
+        truncated=summary.truncated,
+    )
+
+
+def _validate_root(
+    fsys: FileWalker,
+    path: str,
+    result: FindingCollector,
+    summary: _RootSummary,
+    *,
+    validate_objects: bool,
+    check_digests: bool,
+    max_errors: int,
+) -> None:
     root_spec: Spec | None = None
 
     # 1. Root NAMASTE declaration
@@ -58,7 +87,7 @@ def validate_root(
         entries = list(fsys.read_dir(path))
     except OSError:
         result.error("E069a", assumed_version="1.1")
-        return summary
+        return
 
     raw_zero_files = [e for e in entries if e.name.startswith("0=")]
     root_decls = []
@@ -139,41 +168,29 @@ def validate_root(
             root_spec=root_spec,
         )
 
-    return summary
-
 
 def _walk_and_validate(
     fsys: FileWalker,
     root_path: str,
-    result: ValidationResult,
-    summary: RootValidationSummary,
+    result: FindingCollector,
+    summary: _RootSummary,
     *,
     check_digests: bool,
     max_errors: int,
     root_spec: Spec | None,
 ) -> None:
     """Walk storage root hierarchy, find objects, validate them."""
-    from ocfl_lib.validation.result import ValidationResult as VR
-
     obj_paths = _walk_hierarchy(fsys, root_path, result, root_spec)
 
     for obj_path in obj_paths:
-        summary.num_objects += 1
-        obj_result = VR()
-        validate_object(
-            fsys,
-            obj_path,
-            obj_result,
-            check_digests=check_digests,
-        )
-        # Infos never affect validity, so surface them for valid objects too.
-        for i in obj_result.infos:
-            result.infos.append(replace(i, message=f"{obj_path}: {i.message}"))
-        if obj_result.is_valid:
-            summary.valid_objects += 1
+        summary.objects_checked += 1
+        obj_report = validate_object(fsys, obj_path, check_digests=check_digests)
+        result.extend(obj_report.findings)
+        if obj_report.is_valid:
+            summary.objects_valid += 1
         else:
-            summary.object_errors.append((obj_path, obj_result))
-            if len(summary.object_errors) >= max_errors:
+            summary.objects_invalid += 1
+            if summary.objects_invalid >= max_errors:
                 summary.truncated = True
                 break
 
@@ -181,7 +198,7 @@ def _walk_and_validate(
 def _walk_hierarchy(
     fsys: FileWalker,
     root_path: str,
-    result: ValidationResult,
+    result: FindingCollector,
     root_spec: Spec | None,
 ) -> list[str]:
     """Walk root hierarchy via read_dir. Emit E073 (empty dirs) and E072

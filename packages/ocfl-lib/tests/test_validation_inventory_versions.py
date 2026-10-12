@@ -1,7 +1,7 @@
 """Tests for inventory validation — versions checks."""
 
 from ocfl_lib.validation.inventory import validate_inventory
-from ocfl_lib.validation.result import ValidationResult
+from ocfl_lib.validation.report import FindingCollector
 
 _D1 = "a" * 128
 _D2 = "b" * 128
@@ -28,7 +28,7 @@ def _inv(**overrides):
 
 class TestVersionKeys:
     def test_invalid_version_key(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(versions={"bad": {"created": "2024-01-01T00:00:00Z", "state": {}}}),
             r,
@@ -36,7 +36,7 @@ class TestVersionKeys:
         assert r.has_code("E046")
 
     def test_must_start_at_v1(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 head="v2",
@@ -52,7 +52,7 @@ class TestVersionKeys:
         assert r.has_code("E009")
 
     def test_contiguous_versions(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 head="v3",
@@ -78,13 +78,13 @@ class TestVersionKeys:
     def test_empty_versions_still_reported_when_head_missing(self):
         inv = _inv(versions={})
         del inv["head"]
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(inv, r)
         assert r.has_code("E008")
         assert r.has_code("E036")
 
     def test_zero_padded_warning(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 head="v001",
@@ -100,7 +100,7 @@ class TestVersionKeys:
         assert r.has_code("W001")
 
     def test_mixed_padding_emits_E011_E012_E013(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 head="v2",
@@ -126,7 +126,7 @@ class TestVersionKeys:
         assert r.has_code("E013")
 
     def test_inconsistent_pad_width_emits_E012(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 head="v002",
@@ -151,7 +151,7 @@ class TestVersionKeys:
         assert not r.has_code("E011")
 
     def test_consistent_padding_no_E012(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 head="v002",
@@ -178,7 +178,7 @@ class TestVersionKeys:
 
 class TestHead:
     def test_head_not_highest(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 head="v1",
@@ -204,12 +204,12 @@ class TestHead:
 
 class TestVersionBlock:
     def test_missing_created(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(_inv(versions={"v1": {"state": {_D1: ["file.txt"]}}}), r)
         assert r.has_code("E048")
 
     def test_non_string_created(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 versions={
@@ -224,7 +224,7 @@ class TestVersionBlock:
         assert r.has_code("E049d")
 
     def test_created_no_timezone(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 versions={
@@ -239,7 +239,7 @@ class TestVersionBlock:
         assert r.has_code("E049a")
 
     def test_created_invalid_iso_rejected(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 versions={
@@ -254,7 +254,7 @@ class TestVersionBlock:
         assert r.has_code("E049b")
 
     def test_created_with_offset_tz_accepted(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 versions={
@@ -270,7 +270,7 @@ class TestVersionBlock:
         assert not r.has_code("E049b")
 
     def test_created_with_offset_requires_seconds(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 versions={
@@ -285,14 +285,14 @@ class TestVersionBlock:
         assert r.has_code("E049b")
 
     def test_missing_state(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(versions={"v1": {"created": "2024-01-01T00:00:00Z"}}), r
         )
         assert r.has_code("E048c")
 
     def test_state_not_object(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 versions={
@@ -309,7 +309,7 @@ class TestVersionBlock:
 
 class TestStateDigests:
     def test_state_digest_not_in_manifest(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 versions={
@@ -324,7 +324,7 @@ class TestStateDigests:
         assert r.has_code("E050f") or r.has_code("E050a")
 
     def test_state_value_not_list(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 versions={
@@ -341,7 +341,7 @@ class TestStateDigests:
 
 class TestLogicalPaths:
     def test_dot_in_path(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 versions={
@@ -357,7 +357,7 @@ class TestLogicalPaths:
         assert not r.has_code("E053")
 
     def test_dotdot_in_path(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 versions={
@@ -373,7 +373,7 @@ class TestLogicalPaths:
         assert not r.has_code("E053")
 
     def test_leading_slash_path(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 versions={
@@ -389,7 +389,7 @@ class TestLogicalPaths:
         assert not r.has_code("E052")
 
     def test_duplicate_logical_path(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 manifest={_D1: ["v1/content/a.txt"], _D2: ["v1/content/b.txt"]},
@@ -405,7 +405,7 @@ class TestLogicalPaths:
         assert r.has_code("E095")
 
     def test_non_adjacent_prefix_conflict(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 manifest={_D1: ["v1/content/a", "v1/content/a!", "v1/content/a/b"]},
@@ -423,7 +423,7 @@ class TestLogicalPaths:
 
 class TestVersionMetadata:
     def test_no_message_warning(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 versions={
@@ -438,7 +438,7 @@ class TestVersionMetadata:
         assert r.has_code("W007a")
 
     def test_no_user_warning(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 versions={
@@ -453,7 +453,7 @@ class TestVersionMetadata:
         assert r.has_code("W007b")
 
     def test_user_not_object(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 versions={
@@ -469,7 +469,7 @@ class TestVersionMetadata:
         assert r.has_code("E054a")
 
     def test_user_address_not_uri(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 versions={
@@ -488,7 +488,7 @@ class TestVersionMetadata:
 
 class TestManifestUsage:
     def test_unreferenced_manifest_digest(self):
-        r = ValidationResult()
+        r = FindingCollector()
         validate_inventory(
             _inv(
                 manifest={

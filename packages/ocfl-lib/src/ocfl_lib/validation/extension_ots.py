@@ -11,7 +11,7 @@ from ocfl_lib.fs import utils as fs_utils
 if TYPE_CHECKING:
     from ocfl_lib.digest import DigestAlgorithm
     from ocfl_lib.fs.protocols import FS
-    from ocfl_lib.validation.result import ValidationResult
+    from ocfl_lib.validation.report import FindingCollector
 
 
 EXTENSION_NAME = "NNNN-ots-timestamps"
@@ -23,7 +23,7 @@ def validate_ots_extension(
     inv_data: dict[str, Any],
     alg: DigestAlgorithm,
     inv_versions: dict[str, int],
-    result: ValidationResult,
+    result: FindingCollector,
 ) -> None:
     """Validate the NNNN-ots-timestamps extension.
 
@@ -55,7 +55,7 @@ def validate_ots_extension(
 def _validate_version_state(
     vkey: str,
     vblock: Any,
-    result: ValidationResult,
+    result: FindingCollector,
 ) -> None:
     if not isinstance(vblock, dict):
         return
@@ -86,7 +86,7 @@ def _check_inventory_proof(
     obj_path: str,
     vkey: str,
     vots_rel: str,
-    result: ValidationResult,
+    result: FindingCollector,
 ) -> None:
     ext_root = join_path(obj_path, "extensions", EXTENSION_NAME)
     try:
@@ -119,7 +119,7 @@ def _check_embedded_digests(
     fsys: FS,
     obj_path: str,
     manifest: dict[str, Any],
-    result: ValidationResult,
+    result: FindingCollector,
 ) -> None:
     path_to_digest: dict[str, str] = {
         p: digest

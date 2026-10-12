@@ -30,7 +30,6 @@ from ocfl_lib.update_plan import (
     serialize,
 )
 from ocfl_lib.validation.object import validate_object
-from ocfl_lib.validation.result import ValidationResult
 
 
 def test_revert_plan_refuses_completed():
@@ -922,8 +921,7 @@ class TestRevertPlan:
         assert old_sidecar.read_text() == old_inv.sidecar_content
         assert not new_sidecar.exists()
 
-        result = ValidationResult()
-        validate_object(fsys, "obj1", result)
+        result = validate_object(fsys, "obj1")
         assert result.is_valid, result.errors
 
 
