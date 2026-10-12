@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from ocfl_lib._path import join_path
 from ocfl_lib.fs import utils as fs_utils
+from ocfl_lib.json_value import parse_json
 from ocfl_lib.spec import Namaste, Spec
 from ocfl_lib.validation.object import validate_object
 from ocfl_lib.validation.report import FindingCollector
@@ -130,7 +131,7 @@ def _validate_root(
     try:
         layout_bytes = fs_utils.read_all(fsys, layout_path)
         try:
-            layout_data = json.loads(layout_bytes)
+            layout_data = parse_json(layout_bytes)
         except (json.JSONDecodeError, ValueError) as e:
             result.error(
                 "E070",

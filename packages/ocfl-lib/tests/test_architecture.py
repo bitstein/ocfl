@@ -208,6 +208,28 @@ class TestVersionState:
         assert cs.__module__ != ocfl_lib.UpdatePlan.__module__
 
 
+# --- 5. JsonValue
+
+
+class TestJsonValue:
+    def test_json_value_exported(self):
+        import ocfl_lib
+
+        assert hasattr(ocfl_lib, "JsonValue")
+
+    def test_validators_use_no_any_or_cast(self):
+        bad = []
+        for p in _py_files(LIB_SRC / "validation"):
+            for node in ast.walk(_tree(p)):
+                if isinstance(node, ast.Name) and node.id in ("Any", "cast"):
+                    bad.append(f"{p.name}:{node.lineno} {node.id}")
+                if isinstance(node, ast.Attribute) and node.attr in ("Any", "cast"):
+                    bad.append(f"{p.name}:{node.lineno} {node.attr}")
+                if isinstance(node, ast.alias) and node.name in ("Any", "cast"):
+                    bad.append(f"{p.name}: import {node.name}")
+        assert not bad, bad
+
+
 # --- 6. ValidationReport
 
 

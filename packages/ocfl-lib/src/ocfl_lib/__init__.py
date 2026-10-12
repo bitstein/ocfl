@@ -35,6 +35,7 @@ from ocfl_lib.errors import (
 from ocfl_lib.fs import FS, CopyFS, FileWalker, LocalFS, WriteFS
 from ocfl_lib.inventory import Inventory, StoredInventory, UserInfo, VersionInfo
 from ocfl_lib.inventory_builder import InventoryBuilder
+from ocfl_lib.json_value import JsonObject, JsonValue
 from ocfl_lib.layout import (
     DEFAULT_LAYOUTS,
     FlatDirectLayout,
@@ -81,6 +82,8 @@ __all__ = [
     "InventoryBuildError",
     "InventoryBuilder",
     "InventorySidecarMismatch",
+    "JsonObject",
+    "JsonValue",
     "Layout",
     "LayoutNotConfigured",
     "LayoutRegistry",

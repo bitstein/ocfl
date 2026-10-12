@@ -1,16 +1,18 @@
 """Validation for the NNNN-ots-timestamps OCFL extension."""
 
 import hashlib
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ocfl_lib import ots
 from ocfl_lib._path import join_path
 from ocfl_lib.errors import OtsParseError
 from ocfl_lib.fs import utils as fs_utils
+from ocfl_lib.json_value import object_field
 
 if TYPE_CHECKING:
     from ocfl_lib.digest import DigestAlgorithm
     from ocfl_lib.fs.protocols import FS
+    from ocfl_lib.json_value import JsonObject, JsonValue
     from ocfl_lib.validation.report import FindingCollector
 
 
@@ -20,7 +22,7 @@ EXTENSION_NAME = "NNNN-ots-timestamps"
 def validate_ots_extension(
     fsys: FS,
     obj_path: str,
-    inv_data: dict[str, Any],
+    inv_data: JsonObject,
     alg: DigestAlgorithm,
     inv_versions: dict[str, int],
     result: FindingCollector,
@@ -37,8 +39,8 @@ def validate_ots_extension(
         result.error("E901")
         return
 
-    versions = inv_data.get("versions") or {}
-    manifest = inv_data.get("manifest") or {}
+    versions = object_field(inv_data, "versions")
+    manifest = object_field(inv_data, "manifest")
 
     for vkey in sorted(inv_versions):
         _validate_version_state(vkey, versions.get(vkey), result)
@@ -54,7 +56,7 @@ def validate_ots_extension(
 
 def _validate_version_state(
     vkey: str,
-    vblock: Any,
+    vblock: JsonValue,
     result: FindingCollector,
 ) -> None:
     if not isinstance(vblock, dict):
@@ -118,7 +120,7 @@ def _check_inventory_proof(
 def _check_embedded_digests(
     fsys: FS,
     obj_path: str,
-    manifest: dict[str, Any],
+    manifest: JsonObject,
     result: FindingCollector,
 ) -> None:
     path_to_digest: dict[str, str] = {

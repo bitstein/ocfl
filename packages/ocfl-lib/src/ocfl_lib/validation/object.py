@@ -3,11 +3,12 @@
 import contextlib
 import json
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ocfl_lib._path import join_path
 from ocfl_lib.digest import DigestAlgorithm, bytes_digest, stream_digest
 from ocfl_lib.fs import utils as fs_utils
+from ocfl_lib.json_value import as_str, object_field, parse_json
 from ocfl_lib.spec import VERSION_DIR_RE, Namaste
 from ocfl_lib.validation.extension_ots import validate_ots_extension
 from ocfl_lib.validation.inventory import (
@@ -17,7 +18,8 @@ from ocfl_lib.validation.inventory import (
 from ocfl_lib.validation.report import FindingCollector
 
 if TYPE_CHECKING:
-    from ocfl_lib.fs.protocols import FS, FileWalker
+    from ocfl_lib.fs.protocols import FS, FileWalker, FsEntry
+    from ocfl_lib.json_value import JsonObject
     from ocfl_lib.validation.report import ValidationReport
 
 _SIDECAR_RE = re.compile(r"^inventory\.json\.(\S+)$")
@@ -120,7 +122,7 @@ def _validate_object(
         return
 
     try:
-        inv_data = json.loads(inv_bytes)
+        inv_data = parse_json(inv_bytes)
     except (json.JSONDecodeError, ValueError) as e:
         result.error("E033", where="root", explanation=str(e))
         return
@@ -136,9 +138,8 @@ def _validate_object(
         return
 
     # 4. Validate root inventory sidecar
-    alg_name = inv_data.get("digestAlgorithm", "sha512")
     try:
-        alg = DigestAlgorithm.from_ocfl_name(alg_name)
+        alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
     except ValueError:
         return
 
@@ -147,11 +148,13 @@ def _validate_object(
     _validate_sidecar(fsys, sidecar_path, inv_bytes, alg, result, where="root")
 
     # 5. Determine content directory and version list
-    content_dir = inv_data.get("contentDirectory", "content")
+    content_dir = (
+        inv.content_directory if inv.content_directory is not None else "content"
+    )
 
     # Parse version numbers from inventory
     inv_versions: dict[str, int] = {}
-    for vkey in inv_data.get("versions", {}):
+    for vkey in inv.versions:
         m = VERSION_DIR_RE.match(vkey)
         if m:
             inv_versions[vkey] = int(vkey[1:])
@@ -219,7 +222,7 @@ def _validate_object(
     _check_spec_sequence(prev_spec, "root", _inventory_spec(inv_data), result)
 
     # 9. Validate content files against manifest
-    manifest = inv_data.get("manifest", {})
+    manifest = object_field(inv_data, "manifest")
     manifest_paths: set[str] = set()
     for paths in manifest.values():
         if isinstance(paths, list):
@@ -258,7 +261,7 @@ def _validate_version_dir(
     vdir: str,
     vkey: str,
     content_dir: str,
-    root_inv_data: dict[str, Any],
+    root_inv_data: JsonObject,
     root_inv_bytes: bytes,
     root_alg: DigestAlgorithm,
     result: FindingCollector,
@@ -332,7 +335,7 @@ def _validate_version_dir(
 
     # Parse version inventory
     try:
-        vinv_data = json.loads(vinv_bytes)
+        vinv_data = parse_json(vinv_bytes)
     except (json.JSONDecodeError, ValueError) as e:
         result.error("E033", where=vkey, explanation=str(e))
         return None
@@ -371,7 +374,7 @@ def _validate_version_dir(
     alg_differs = vinv_alg_name != root_inv_data.get("digestAlgorithm", "")
     if vkey != head and (check_digests or alg_differs):
         try:
-            vinv_alg = DigestAlgorithm.from_ocfl_name(vinv_alg_name)
+            vinv_alg = DigestAlgorithm.from_ocfl_name(as_str(vinv_alg_name) or "")
         except ValueError:
             vinv_alg = None
         if vinv_alg is not None:
@@ -393,15 +396,15 @@ def _validate_version_dir(
 
 
 def _check_version_metadata(
-    vinv_data: dict[str, Any],
-    root_inv_data: dict[str, Any],
+    vinv_data: JsonObject,
+    root_inv_data: JsonObject,
     result: FindingCollector,
     *,
     vkey: str,
 ) -> None:
     """W011: version metadata in prior inventory should match root."""
-    vinv_versions = vinv_data.get("versions", {})
-    root_versions = root_inv_data.get("versions", {})
+    vinv_versions = object_field(vinv_data, "versions")
+    root_versions = object_field(root_inv_data, "versions")
     prior_head = vinv_data.get("head", "")
 
     for ver_key in vinv_versions:
@@ -425,7 +428,9 @@ def _check_version_metadata(
                 )
 
 
-def _check_version_dir_sequence(entries: list[Any], result: FindingCollector) -> None:
+def _check_version_dir_sequence(
+    entries: list[FsEntry], result: FindingCollector
+) -> None:
     """E010: version directories present on disk must be sequential."""
     vnums: list[int] = []
     for entry in entries:
@@ -447,7 +452,7 @@ def _check_version_dir_sequence(entries: list[Any], result: FindingCollector) ->
 def _check_first_version_content_dir(
     fsys: FS,
     path: str,
-    root_inv_data: dict[str, Any],
+    root_inv_data: JsonObject,
     inv_versions: dict[str, int],
     result: FindingCollector,
 ) -> None:
@@ -459,7 +464,7 @@ def _check_first_version_content_dir(
     vinv_path = join_path(path, first_vkey, "inventory.json")
     try:
         vinv_bytes = fs_utils.read_all(fsys, vinv_path)
-        vinv_data = json.loads(vinv_bytes)
+        vinv_data = parse_json(vinv_bytes)
     except (OSError, json.JSONDecodeError, ValueError):
         return
 
@@ -475,7 +480,7 @@ def _check_first_version_content_dir(
 _SPEC_RE = re.compile(r"https://ocfl\.io/(\d+\.\d+)/spec/#inventory")
 
 
-def _inventory_spec(inv_data: dict[str, Any]) -> str | None:
+def _inventory_spec(inv_data: JsonObject) -> str | None:
     """Spec version ("1.1") from an inventory's type URI, or None."""
     itype = inv_data.get("type", "")
     m = _SPEC_RE.match(itype) if isinstance(itype, str) else None
@@ -551,7 +556,7 @@ def _validate_sidecar(
 def _verify_digests(
     fsys: FS,
     obj_path: str,
-    manifest: dict[str, Any],
+    manifest: JsonObject,
     alg: DigestAlgorithm,
     result: FindingCollector,
     *,
@@ -584,7 +589,7 @@ def _verify_digests(
 def _verify_fixity_digests(
     fsys: FS,
     obj_path: str,
-    fixity: dict[str, Any],
+    fixity: JsonObject,
     result: FindingCollector,
     *,
     where: str,

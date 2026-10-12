@@ -1,12 +1,13 @@
 """OCFL inventory validation — two-phase: raw dict then struct semantics."""
 
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import msgspec
 
 from ocfl_lib.digest import DigestAlgorithm
 from ocfl_lib.inventory import Inventory
+from ocfl_lib.json_value import object_field
 from ocfl_lib.spec import VERSION_DIR_RE, Spec
 from ocfl_lib.validation.limits import (
     MAX_MESSAGE,
@@ -17,6 +18,7 @@ from ocfl_lib.validation.limits import (
 )
 
 if TYPE_CHECKING:
+    from ocfl_lib.json_value import JsonObject, JsonValue
     from ocfl_lib.validation.report import FindingCollector
 
 _KNOWN_KEYS = frozenset(
@@ -42,7 +44,7 @@ _URI_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*:")
 
 
 def validate_inventory(
-    data: dict[str, Any],
+    data: JsonObject,
     result: FindingCollector,
     *,
     lax_digests: bool = False,
@@ -70,7 +72,7 @@ def validate_inventory(
 
 
 def _validate_structure(
-    data: dict[str, Any],
+    data: JsonObject,
     result: FindingCollector,
     *,
     where: str,
@@ -151,7 +153,8 @@ def _validate_structure(
             result.error("E018", where=where)
 
     # manifest must be object
-    if not isinstance(data["manifest"], dict):
+    manifest = data["manifest"]
+    if not isinstance(manifest, dict):
         result.error("E041c", where=where)
         return False
 
@@ -165,7 +168,7 @@ def _validate_structure(
     content_dir = data.get("contentDirectory", "content")
     if isinstance(alg_name, str) and alg_name in _ALLOWED_ALGORITHMS:
         _validate_manifest(
-            data["manifest"],
+            manifest,
             result,
             where=where,
             alg_name=alg_name,
@@ -180,7 +183,7 @@ def _validate_structure(
     if "fixity" in data:
         _validate_fixity(
             data["fixity"],
-            data["manifest"],
+            manifest,
             result,
             where=where,
             lax_digests=lax_digests,
@@ -190,12 +193,12 @@ def _validate_structure(
 
 
 def _validate_manifest(
-    manifest: dict[str, Any],
+    manifest: JsonObject,
     result: FindingCollector,
     *,
     where: str,
     alg_name: str,
-    content_dir: str,
+    content_dir: JsonValue,
     lax_digests: bool,
 ) -> None:
     """Validate manifest block: digest format, paths, duplicates."""
@@ -280,14 +283,14 @@ def _validate_manifest(
 
 
 def _validate_versions(
-    data: dict[str, Any],
+    data: JsonObject,
     result: FindingCollector,
     *,
     where: str,
 ) -> None:
     """Validate versions block: keys, sequencing, head, version blocks."""
-    versions = data["versions"]
-    manifest = data["manifest"]
+    versions = object_field(data, "versions")
+    manifest = object_field(data, "manifest")
     head = data["head"]
 
     # Parse and validate version keys
@@ -445,8 +448,8 @@ def _created_has_seconds(created: str) -> bool:
 
 
 def _validate_version_state(
-    state: dict[str, Any],
-    manifest: dict[str, Any],
+    state: JsonObject,
+    manifest: JsonObject,
     result: FindingCollector,
     *,
     where: str,
@@ -523,7 +526,7 @@ def _path_prefix_conflicts(paths: set[str]) -> list[str]:
 
 
 def _validate_user(
-    user: Any,
+    user: JsonValue,
     result: FindingCollector,
     *,
     where: str,
@@ -534,15 +537,16 @@ def _validate_user(
         result.error("E054a", where=where, version=version)
         return
 
-    if "name" not in user or not isinstance(user.get("name"), str):
+    name = user.get("name")
+    if not isinstance(name, str):
         result.error("E054b", where=where, version=version)
-    elif len(user["name"]) > MAX_USER_NAME:
+    elif len(name) > MAX_USER_NAME:
         result.info(
             "L002",
             where=where,
             field=f"{version} user name",
             limit=MAX_USER_NAME,
-            actual=len(user["name"]),
+            actual=len(name),
         )
 
     if "address" not in user:
@@ -555,8 +559,8 @@ def _validate_user(
 
 
 def _validate_fixity(
-    fixity: Any,
-    manifest: dict[str, Any],
+    fixity: JsonValue,
+    manifest: JsonObject,
     result: FindingCollector,
     *,
     where: str,
@@ -630,8 +634,8 @@ def _validate_fixity(
 
 
 def validate_inventory_against_prior(
-    current: dict[str, Any],
-    prior: dict[str, Any],
+    current: JsonObject,
+    prior: JsonObject,
     result: FindingCollector,
     *,
     where: str = "root",
