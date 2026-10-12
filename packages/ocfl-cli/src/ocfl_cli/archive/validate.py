@@ -10,23 +10,11 @@ from ocfl_cli import _style
 from ocfl_cli._common import open_root, output_json, resolve_root
 from ocfl_cli._exit import exit_for_error
 from ocfl_cli._io import err
-from ocfl_cli.errors import (
-    AttestationMismatchError,
-    BitcoinError,
-    ConfigError,
-    ReorgDetectedError,
-)
-from ocfl_cli.ots.bitcoin import (
-    PendingReason,
-    PendingVerification,
-    VerifiedAttestation,
-    verify_attestation,
-)
+from ocfl_cli.errors import BitcoinError, ConfigError
+from ocfl_cli.ots.bitcoin import block_source
 from ocfl_lib import (
     Finding,
     OcflError,
-    OtsParseError,
-    Severity,
     StorageRoot,
     ValidationReport,
     ots,
@@ -135,19 +123,20 @@ def _validate_object(
     if check_digests:
         _emit(ctx, "Verifying content digests...")
 
-    report = validate_object(fs, obj_path, check_digests=check_digests)
-
+    chain = None
     if verify_ots and _ots_extension_present(fs, obj_path):
-        cfg = appctx.config(ctx)
-        report = report.with_findings(
-            _verify_ots_walk(
-                fs,
-                obj_path,
-                cfg,
-                appctx.btc_rpc_factory(ctx),
-                emit_progress=_should_emit_progress(ctx),
-            )
+        chain = _chain_check(appctx.config(ctx), appctx.btc_rpc_factory(ctx))
+        _emit(
+            ctx,
+            f"Verifying OTS attestations (min {chain.confirmations} confirmations)...",
         )
+    try:
+        report = validate_object(fs, obj_path, check_digests=check_digests, chain=chain)
+        if chain is not None and _should_emit_progress(ctx):
+            _emit_chain_results(ots.check_object_chain(fs, obj_path, chain))
+    except (BitcoinError, OcflError) as e:
+        # The chain could not be checked: a failure, not a finding (no E906).
+        exit_for_error(e, message=f"cannot verify OTS attestations: {e}")
 
     _output_result(report, json_mode, suppress, show_paths=False)
     if not report.is_valid:
@@ -158,22 +147,8 @@ def _ots_extension_present(fs: FS, obj_path: str) -> bool:
     return fs.exists(_join(obj_path, ots.EXTENSION_DIR))
 
 
-def _verify_ots_walk(
-    fs: FS,
-    obj_path: str,
-    cfg: Config | None,
-    btc_factory: BtcRpcFactory,
-    *,
-    emit_progress: bool = False,
-) -> list[Finding]:
-    """Walk extension `inventory.json.{vkey}.ots` files through ``verify_attestation``.
-
-    The per-version inventory attestation anchors the inventory bytes to
-    Bitcoin; verifying it transitively covers the manifest digests of all
-    content files in that version. Scope is single-object validate of the
-    inventory chain; content `.ots` companions and root-level enumeration
-    are deferred.
-    """
+def _chain_check(cfg: Config | None, btc_factory: BtcRpcFactory) -> ots.ChainCheck:
+    """The Bitcoin checks of the OTS extension, against the configured node."""
     if cfg is None or cfg.bitcoin is None:
         where = (
             f"in {cfg.path}"
@@ -181,93 +156,40 @@ def _verify_ots_walk(
             else "in your ocfl config"
         )
         raise ConfigError(f"--verify-ots requires [bitcoin] section {where}")
+    source = _CachedBlocks(block_source(btc_factory(cfg)))
+    return ots.ChainCheck(source, cfg.bitcoin.confirmations)
 
-    findings: list[Finding] = []
 
-    def add(code: str, severity: Severity, **detail: str) -> None:
-        findings.append(
-            Finding(
-                code=code,
-                severity=severity,
-                object_id=None,
-                path=obj_path,
-                detail=detail,
-            )
-        )
+class _CachedBlocks:
+    """Asks the node once per height, so progress output costs no extra calls."""
 
-    try:
-        proofs = [p for p in ots.object_proofs(fs, obj_path) if p.kind == "inventory"]
-    except OcflError, OSError, ValueError:
-        return findings  # the local checks report it (E908, E063, E033)
-    if not proofs:
-        return findings
+    def __init__(self, source: ots.BlockHeaderSource) -> None:
+        self._source = source
+        self._blocks: dict[int, ots.ChainBlock | None] = {}
 
-    rpc = btc_factory(cfg)
-    min_confs = cfg.bitcoin.confirmations
-    if emit_progress:
-        version_word = "version" if len(proofs) == 1 else "versions"
-        _style.echo(
-            _style.dim(
-                "Verifying OTS attestations "
-                f"({len(proofs)} {version_word}, min {min_confs} confirmations)..."
-            ),
-            err=True,
-        )
+    def block_at(self, height: int) -> ots.ChainBlock | None:
+        if height not in self._blocks:
+            self._blocks[height] = self._source.block_at(height)
+        return self._blocks[height]
 
-    for ref in proofs:
-        vkey, proof = ref.version, ref.path
-        ots_rel = proof.rpartition("/")[2]
-        try:
-            ots_bytes = fs_utils.read_all(fs, _join(obj_path, proof))
-        except OSError:
-            _emit_ots_result(emit_progress, vkey, ots_rel, "skipped (missing files)")
-            continue
 
-        expected = bytes.fromhex(ref.digest)
-
-        try:
-            outcome = verify_attestation(
-                rpc=rpc,
-                ots_bytes=ots_bytes,
-                expected_digest=expected,
-                min_confirmations=min_confs,
-            )
-        except (
-            AttestationMismatchError,
-            BitcoinError,
-            ReorgDetectedError,
-            OtsParseError,
-        ) as exc:
-            _emit_ots_result(emit_progress, vkey, ots_rel, f"failed ({exc})")
-            add("E906", Severity.ERROR, proof=proof, reason=str(exc))
-            continue
-
-        match outcome:
-            case VerifiedAttestation(confirmations=confirmations, block_height=height):
-                _emit_ots_result(
-                    emit_progress,
-                    vkey,
-                    ots_rel,
-                    f"confirmed ({confirmations} confs, block {height})",
+def _emit_chain_results(results: tuple[ots.ProofChainResult, ...]) -> None:
+    for r in results:
+        name = r.proof.path.rpartition("/")[2]
+        verified = r.verified
+        match r.status:
+            case ots.AttestationStatus.VERIFIED if verified and verified.block:
+                outcome = (
+                    f"confirmed ({verified.block.confirmations} confs, "
+                    f"block {verified.height})"
                 )
-                continue
-            case PendingVerification(reason=PendingReason.PENDING_ATTESTATION):
-                _emit_ots_result(
-                    emit_progress, vkey, ots_rel, "pending (pending_attestation)"
-                )
-                add(
-                    "W903",
-                    Severity.WARNING,
-                    proof=proof,
-                    reason=PendingReason.PENDING_ATTESTATION.value,
-                )
-                continue
-            case PendingVerification(reason=reason):
-                _emit_ots_result(
-                    emit_progress, vkey, ots_rel, f"pending ({reason.value})"
-                )
-                add("W903", Severity.WARNING, proof=proof, reason=reason.value)
-    return findings
+            case ots.AttestationStatus.MISMATCH:
+                outcome = "mismatch"
+            case ots.AttestationStatus.SHALLOW:
+                outcome = "shallow"
+            case _:
+                outcome = "pending"
+        _style.echo(f"  {r.proof.version} ({name}): {outcome}", err=True)
 
 
 def _fail(msg: str, json_mode: bool) -> NoReturn:
@@ -344,13 +266,6 @@ def _emit_root_object_results(
             continue
         suffix = "error" if count == 1 else "errors"
         _style.echo(f"  {_read_object_id(fs, obj_path)}: {count} {suffix}", err=True)
-
-
-def _emit_ots_result(
-    emit_progress: bool, version: str, ots_rel: str, outcome: str
-) -> None:
-    if emit_progress:
-        _style.echo(f"  {version} ({ots_rel}): {outcome}", err=True)
 
 
 def _output_result(

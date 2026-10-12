@@ -42,9 +42,6 @@ _KNOWN_UNREACHED: frozenset[str] = frozenset(
         "E049c",
         # Unsupported file type — raised outside validation/ (fs layer)
         "L003",
-        # Verify-time OTS codes — raised by ocfl_cli/commands/validate.py
-        "E906",
-        "W903",
     },
 )
 

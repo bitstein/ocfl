@@ -37,6 +37,9 @@ from tests.helpers.ots import build_attestation
 
 _EXT_NAME = "NNNN-ots-timestamps"
 DIGEST_BLOCK_HEIGHT = 800_000
+# Content proofs sit in an earlier block than the inventory proof: one block
+# has one merkle root, and every proof is checked against Bitcoin.
+CONTENT_BLOCK_HEIGHT = DIGEST_BLOCK_HEIGHT - 10
 MIN_CONFS = 3
 
 _SP_OK = """\
@@ -99,6 +102,13 @@ def _register_attested(
     rpc.register_merkle_root(height, bytes.fromhex(digest_hex)[::-1].hex())
 
 
+def _anchor_content(rpc: FakeBitcoinRPC) -> None:
+    """Bury the content proof's block and register its merkle root."""
+    _grow_chain_to(rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+    digest_hex = hashlib.sha256(b"hello world").hexdigest()
+    _register_attested(rpc, digest_hex, CONTENT_BLOCK_HEIGHT)
+
+
 # --------------------------------------------------------------------------- #
 # OCFL-with-OTS object builder (test-side helper, cribbed from
 # ``packages/ocfl-lib/tests/test_validation_extension_ots.py::_build_ots_object``).
@@ -135,7 +145,9 @@ def _build_ots_object(
         _add(f"v1/content/{name}", name, data)
         if include_companions:
             file_sha256 = hashlib.sha256(data).digest()
-            ots_bytes = build_attestation(file_sha256, block_height=DIGEST_BLOCK_HEIGHT)
+            ots_bytes = build_attestation(
+                file_sha256, block_height=CONTENT_BLOCK_HEIGHT
+            )
             companion_bytes[name] = ots_bytes
             _add(f"v1/content/{name}.ots", f"{name}.ots", ots_bytes)
 
@@ -251,7 +263,7 @@ class TestDefaultOnVerifyOts:
         # Bury the attested height past MIN_CONFS, register matching merkle.
         digest_hex = hashlib.sha256(b"hello world").hexdigest()
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        _register_attested(btc_fake.rpc, digest_hex)
+        _register_attested(btc_fake.rpc, digest_hex, CONTENT_BLOCK_HEIGHT)
         # Inventory v1 attestation also needs its merkle in chain.
         inv_path = root / "obj-test" / "inventory.json"
         inv_digest_hex = hashlib.sha256(inv_path.read_bytes()).hexdigest()
@@ -353,7 +365,7 @@ class TestVerifyOtsProgress:
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
         digest_hex = hashlib.sha256(b"hello world").hexdigest()
-        _register_attested(btc_fake.rpc, digest_hex)
+        _register_attested(btc_fake.rpc, digest_hex, CONTENT_BLOCK_HEIGHT)
         inv_path = root / "obj-test" / "inventory.json"
         inv_digest_hex = hashlib.sha256(inv_path.read_bytes()).hexdigest()
         _register_attested(btc_fake.rpc, inv_digest_hex)
@@ -361,9 +373,11 @@ class TestVerifyOtsProgress:
         r = runner.invoke(app, ["--root", str(root), "validate", "obj-test"])
 
         assert r.exit_code == 0, r.output
-        assert "Verifying OTS attestations (1 version, min 3 confirmations)" in r.stderr
+        assert "Verifying OTS attestations (min 3 confirmations)" in r.stderr
         assert "  v1 (inventory.json.v1.ots): confirmed" in r.stderr
         assert "block 800000" in r.stderr
+        assert "  v1 (file.txt.ots): confirmed" in r.stderr
+        assert f"block {CONTENT_BLOCK_HEIGHT}" in r.stderr
 
 
 # =========================================================================== #
@@ -475,14 +489,14 @@ class TestVerifyTimeMismatchE906:
             f"verify-time merkle mismatch must surface E906; got codes={codes}"
         )
 
-    def test_default_on_corrupt_inventory_ots_reports_e906_json(
+    def test_default_on_corrupt_inventory_ots_reports_e905_json(
         self,
         runner: CliRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Corrupt extension inventory proofs must not escape as tracebacks."""
+        """A corrupt inventory proof is E905 (local), not a chain mismatch."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_btc(runner, btc_fake.rpc)
 
@@ -497,18 +511,19 @@ class TestVerifyTimeMismatchE906:
         assert isinstance(r.exception, SystemExit)
         data = json.loads(r.stdout)
         codes = {e["code"] for e in data["errors"]}
-        assert "E906" in codes
+        assert "E905" in codes
+        assert "E906" not in codes
 
-    def test_default_on_bitcoin_rpc_failure_reports_e906_json(
+    def test_default_on_bitcoin_rpc_failure_fails_without_e906_json(
         self,
         runner: CliRunner,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Bitcoin RPC failures during validation must keep JSON output valid."""
+        """An unreachable node is a failure to check, not a finding (no E906)."""
 
         class DownRPC(FakeBitcoinRPC):
-            def getblockchaininfo(self):
+            def getblockhash(self, height: int) -> str:
                 raise BitcoinRPCTransient("Bitcoin RPC transport error")
 
         _write_config(tmp_path, monkeypatch)
@@ -520,9 +535,8 @@ class TestVerifyTimeMismatchE906:
 
         assert r.exit_code == 1, r.output
         assert isinstance(r.exception, SystemExit)
-        data = json.loads(r.stdout)
-        codes = {e["code"] for e in data["errors"]}
-        assert "E906" in codes
+        assert "E906" not in r.stdout
+        assert "Bitcoin RPC transport error" in r.stderr
 
     def test_default_on_bitcoin_rpc_failure_reports_human_error(
         self,
@@ -533,7 +547,7 @@ class TestVerifyTimeMismatchE906:
         """Human output should include RPC context without a traceback."""
 
         class DownRPC(FakeBitcoinRPC):
-            def getblockchaininfo(self):
+            def getblockhash(self, height: int) -> str:
                 raise BitcoinRPCTransient("Bitcoin RPC transport error")
 
         _write_config(tmp_path, monkeypatch)
@@ -546,8 +560,9 @@ class TestVerifyTimeMismatchE906:
         assert r.exit_code == 1, r.output
         assert isinstance(r.exception, SystemExit)
         combined = r.output + (r.stderr or "")
-        assert "[E906]" in combined
+        assert "cannot verify OTS attestations" in combined
         assert "Bitcoin RPC transport error" in combined
+        assert "[E906]" not in combined
         assert "Traceback" not in combined
 
 
@@ -573,6 +588,8 @@ class TestVerifyPendingW903:
             include_inventory_v1_ots=False,
         )
 
+        _anchor_content(btc_fake.rpc)
+
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
 
         assert r.exit_code == 1, r.output
@@ -597,6 +614,8 @@ class TestVerifyPendingW903:
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
         (root / "obj-test" / "v1" / "inventory.json").unlink()
 
+        _anchor_content(btc_fake.rpc)
+
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
 
         # The extension requires vN/inventory.json (E909); OCFL only warns (W010).
@@ -610,17 +629,21 @@ class TestVerifyPendingW903:
         assert "E906" not in error_codes
         assert "W903" not in warning_codes
 
-    def test_default_on_pending_attestation_reports_w903_with_structural_warnings(
+    def test_default_on_pending_inventory_proof_is_w902_not_w903(
         self,
         runner: CliRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """A pending proof gets no Bitcoin finding; the local W902 reports it."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_btc(runner, btc_fake.rpc)
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        digest_hex = hashlib.sha256(b"hello world").hexdigest()
+        _register_attested(btc_fake.rpc, digest_hex, CONTENT_BLOCK_HEIGHT)
         inv_path = root / "obj-test" / "inventory.json"
         inv_digest = hashlib.sha256(inv_path.read_bytes()).digest()
         (
@@ -637,10 +660,8 @@ class TestVerifyPendingW903:
         assert data.keys() == {"valid", "errors", "warnings", "info"}
         assert data["errors"] == []
         warning_codes = {w["code"] for w in data["warnings"]}
-        assert {"W004", "W005", "W903"}.issubset(warning_codes)
-        w903 = [w for w in data["warnings"] if w["code"] == "W903"]
-        assert len(w903) == 1
-        assert "pending_attestation" in w903[0]["message"]
+        assert {"W004", "W005", "W902"}.issubset(warning_codes)
+        assert "W903" not in warning_codes
 
     def test_default_on_insufficient_confirmations_reports_w903(
         self,
@@ -654,6 +675,8 @@ class TestVerifyPendingW903:
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT)
+        content_hex = hashlib.sha256(b"hello world").hexdigest()
+        _register_attested(btc_fake.rpc, content_hex, CONTENT_BLOCK_HEIGHT)
         inv_path = root / "obj-test" / "inventory.json"
         inv_digest_hex = hashlib.sha256(inv_path.read_bytes()).hexdigest()
         _register_attested(btc_fake.rpc, inv_digest_hex)
@@ -665,7 +688,7 @@ class TestVerifyPendingW903:
         assert data["valid"] is True
         w903 = [w for w in data["warnings"] if w["code"] == "W903"]
         assert len(w903) == 1
-        assert "insufficient_confirmations" in w903[0]["message"]
+        assert "inventory.json.v1.ots" in w903[0]["message"]
 
     def test_default_on_missing_block_reports_w903(
         self,
@@ -679,6 +702,8 @@ class TestVerifyPendingW903:
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT - 1)
+        content_hex = hashlib.sha256(b"hello world").hexdigest()
+        _register_attested(btc_fake.rpc, content_hex, CONTENT_BLOCK_HEIGHT)
 
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
 
@@ -687,7 +712,7 @@ class TestVerifyPendingW903:
         assert data["valid"] is True
         w903 = [w for w in data["warnings"] if w["code"] == "W903"]
         assert len(w903) == 1
-        assert "block_missing" in w903[0]["message"]
+        assert "inventory.json.v1.ots" in w903[0]["message"]
 
 
 # =========================================================================== #

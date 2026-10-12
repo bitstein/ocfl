@@ -8,7 +8,7 @@ dependencies = [
     "filelock>=3.13",
     "httpx2>=2.0",
     "msgspec>=0.20.0",
-    "ocfl-lib",
+    "ocfl-lib[bitcoin]",
     "platformdirs>=4.9.6",
     "pydantic-settings>=2.6",
     "pyzmq>=26",

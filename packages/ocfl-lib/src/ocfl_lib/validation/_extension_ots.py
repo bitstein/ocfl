@@ -195,3 +195,27 @@ def _content_paths(manifest: JsonObject) -> dict[str, str]:
         if isinstance(plist, list) and plist and isinstance(plist[0], str):
             out[digest] = plist[0]
     return out
+
+
+def check_chain(
+    fsys: FS, obj_path: str, chain: ots.ChainCheck, result: FindingCollector
+) -> None:
+    """Bitcoin checks of every proof of the covered versions (E906, W903).
+
+    A proof that the local checks reject (E905, E908) or a pending one gets
+    no finding here.
+    """
+    try:
+        results = ots.check_object_chain(fsys, obj_path, chain)
+    except OtsConfigError, OSError, ValueError:
+        return
+    for r in results:
+        if r.status is ots.AttestationStatus.MISMATCH:
+            heights = ", ".join(
+                str(c.height)
+                for c in r.checks
+                if c.status is ots.AttestationStatus.MISMATCH
+            )
+            result.error("E906", proof=r.proof.path, reason=f"block {heights}")
+        elif r.status is ots.AttestationStatus.SHALLOW:
+            result.warning("W903", proof=r.proof.path)

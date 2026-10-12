@@ -512,7 +512,7 @@ dependencies = [
     { name = "filelock" },
     { name = "httpx2" },
     { name = "msgspec" },
-    { name = "ocfl-lib" },
+    { name = "ocfl-lib", extra = ["bitcoin"] },
     { name = "platformdirs" },
     { name = "pydantic-settings" },
     { name = "pyzmq" },
@@ -533,7 +533,7 @@ requires-dist = [
     { name = "httpx2", specifier = ">=2.0" },
     { name = "moto", extras = ["s3"], marker = "extra == 'test'", specifier = ">=5.0.0" },
     { name = "msgspec", specifier = ">=0.20.0" },
-    { name = "ocfl-lib", editable = "packages/ocfl-lib" },
+    { name = "ocfl-lib", extras = ["bitcoin"], editable = "packages/ocfl-lib" },
     { name = "ocfl-lib", extras = ["s3"], marker = "extra == 's3'", editable = "packages/ocfl-lib" },
     { name = "platformdirs", specifier = ">=4.9.6" },
     { name = "pydantic-settings", specifier = ">=2.6" },
@@ -571,11 +571,15 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+bitcoin = [
+    { name = "httpx2" },
+]
 s3 = [
     { name = "boto3" },
 ]
 test = [
     { name = "boto3" },
+    { name = "httpx2" },
     { name = "moto", extra = ["s3"] },
 ]
 
@@ -587,12 +591,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", marker = "extra == 's3'", specifier = ">=1.35.0" },
+    { name = "httpx2", marker = "extra == 'bitcoin'", specifier = ">=2.0" },
     { name = "moto", extras = ["s3"], marker = "extra == 'test'", specifier = ">=5.0.0" },
     { name = "msgspec", specifier = ">=0.20.0" },
-    { name = "ocfl-lib", extras = ["s3"], marker = "extra == 'test'", editable = "packages/ocfl-lib" },
+    { name = "ocfl-lib", extras = ["s3", "bitcoin"], marker = "extra == 'test'", editable = "packages/ocfl-lib" },
     { name = "opentimestamps", specifier = ">=0.4.5" },
 ]
-provides-extras = ["s3", "test"]
+provides-extras = ["s3", "bitcoin", "test"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "mypy-boto3-s3", specifier = ">=1.42.80" }]

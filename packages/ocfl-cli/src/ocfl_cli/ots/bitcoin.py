@@ -1,17 +1,17 @@
-"""Bitcoin RPC + ZMQ client and ``verify_attestation`` helper.
+"""Bitcoin for the CLI workflows: the lib's RPC client, ZMQ, ``verify_attestation``.
 
-The RPC client is a thin sync ``httpx2`` wrapper. Authorization headers are
-scrubbed from any propagated ``httpx2`` exception so credentials never leak
-through tracebacks or log handlers.
+The RPC client and the attestation check live in ``ocfl_lib`` (ADR-0002).
+Here the client raises the CLI's Bitcoin errors, ``block_source`` adapts any
+``BitcoinRPC`` to a ``BlockHeaderSource``, and ``verify_attestation`` maps the
+lib's check onto the staging workflow's results. ZMQ stays in the CLI.
 """
 
 import contextlib
 import time
 from base64 import b64encode
-from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Protocol
 
 import httpx2 as httpx
 import zmq
@@ -24,51 +24,41 @@ from ocfl_cli.errors import (
     BitcoinRPCTransient,
     ReorgDetectedError,
 )
-from ocfl_cli.ots._retry import retry
+from ocfl_lib import (
+    BitcoinNoBlockError,
+    BitcoinRpcAuthError,
+    BitcoinRpcError,
+    BitcoinRpcTransientError,
+)
+from ocfl_lib.bitcoin import BitcoinRpcClient, BlockchainInfo, BlockHeader
+from ocfl_lib.ots import (
+    AttestationStatus,
+    ChainBlock,
+    check_attestations,
+)
 from ocfl_lib.ots import parse as parse_ots
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from ocfl_cli.config import Config
+    from ocfl_lib.ots import BlockHeaderSource
 
-_REDACTED = "<redacted>"
-_SENSITIVE_HEADERS: tuple[str, ...] = (
-    "authorization",
-    "proxy-authorization",
-    "cookie",
-)
-
-
-def _scrub_exc_request(exc: BaseException) -> None:
-    # httpx2 stores the request on a private ``_request`` slot; the public
-    # ``request`` property raises RuntimeError when unset, so read directly.
-    request = getattr(exc, "_request", None)
-    if request is None:
-        return
-    headers = getattr(request, "headers", None)
-    if headers is None:
-        return
-    for name in _SENSITIVE_HEADERS:
-        if name in headers:
-            headers[name] = _REDACTED
-
-
-@dataclass(frozen=True, slots=True)
-class BlockchainInfo:
-    height: int
-    best_block_hash: str
-    initial_block_download: bool
-    verification_progress: float
-
-
-@dataclass(frozen=True, slots=True)
-class BlockHeader:
-    block_hash: str
-    height: int
-    confirmations: int
-    merkle_root: str
-    time: int
+__all__ = [
+    "BitcoinRPC",
+    "BitcoinRPCClient",
+    "BitcoinZmqSubscriber",
+    "BlockHeader",
+    "BlockchainInfo",
+    "HashBlockStream",
+    "PendingReason",
+    "PendingVerification",
+    "VerifiedAttestation",
+    "VerifyResult",
+    "block_source",
+    "default_btc_factory",
+    "verify_attestation",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,11 +94,28 @@ class HashBlockStream(Protocol):
     def wait_for_block(self, timeout_ms: int) -> bytes | None: ...
 
 
+_CLI_ERRORS: tuple[tuple[type[BitcoinRpcError], type[BitcoinError]], ...] = (
+    (BitcoinRpcAuthError, BitcoinAuthError),
+    (BitcoinNoBlockError, BitcoinBlockMissingError),
+    (BitcoinRpcTransientError, BitcoinRPCTransient),
+    (BitcoinRpcError, BitcoinError),
+)
+
+
+@contextlib.contextmanager
+def _cli_errors() -> Iterator[None]:
+    try:
+        yield
+    except BitcoinRpcError as e:
+        cls = next(cli for lib, cli in _CLI_ERRORS if isinstance(e, lib))
+        raise cls(str(e)) from e
+
+
 class BitcoinRPCClient:
-    """Sync JSON-RPC client for Bitcoin Core.
+    """The lib's ``BitcoinRpcClient``, raising ``ocfl_cli.errors`` Bitcoin errors.
 
     Callers inject a fully-configured ``httpx2.Client`` (auth + timeout) so
-    construction stays trivial and tests can swap in ``MockTransport``.
+    tests can swap in ``MockTransport``.
     """
 
     def __init__(
@@ -119,98 +126,47 @@ class BitcoinRPCClient:
         sleep: Callable[[float], None] = time.sleep,
         attempts: int = 3,
     ) -> None:
-        self._rpc_url = rpc_url
-        self._client = client
-        self._sleep = sleep
-        self._attempts = attempts
+        self._rpc = BitcoinRpcClient(
+            rpc_url, client=client, sleep=sleep, attempts=attempts
+        )
 
     def close(self) -> None:
-        self._client.close()
-
-    def _raise_rpc_error(self, method: str, error: object) -> None:
-        if isinstance(error, Mapping):
-            error_body = cast("Mapping[str, object]", error)
-            code = error_body.get("code")
-            if code == -28:
-                raise BitcoinRPCTransient(f"Bitcoin RPC loading: {error}") from None
-            if method == "getblockhash" and code == -8:
-                raise BitcoinBlockMissingError(
-                    f"Bitcoin RPC block missing: {error}"
-                ) from None
-        raise BitcoinError(f"Bitcoin RPC error: {error}") from None
-
-    def _call_once(self, method: str, params: list[Any]) -> Any:
-        payload = {
-            "jsonrpc": "1.0",
-            "id": 0,
-            "method": method,
-            "params": params,
-        }
-        try:
-            response = self._client.post(self._rpc_url, json=payload)
-            if not response.is_success:
-                with contextlib.suppress(ValueError):
-                    body = response.json()
-                    if isinstance(body, Mapping):
-                        body_map = cast("Mapping[str, object]", body)
-                        error = body_map.get("error")
-                        if error is not None:
-                            self._raise_rpc_error(method, error)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            _scrub_exc_request(exc)
-            status = exc.response.status_code
-            match status:
-                case 401 | 403:
-                    raise BitcoinAuthError(
-                        f"Bitcoin RPC auth failed: HTTP {status}"
-                    ) from exc
-                case 429:
-                    raise BitcoinRPCTransient(f"Bitcoin RPC HTTP {status}") from exc
-                case _ if 500 <= status < 600:
-                    raise BitcoinRPCTransient(f"Bitcoin RPC HTTP {status}") from exc
-                case _:
-                    raise BitcoinError(f"Bitcoin RPC HTTP {status}") from exc
-        except httpx.RequestError as exc:
-            _scrub_exc_request(exc)
-            raise BitcoinRPCTransient(
-                f"Bitcoin RPC transport error: {type(exc).__name__}"
-            ) from exc
-
-        body = response.json()
-        error = body.get("error")
-        if error is not None:
-            self._raise_rpc_error(method, error)
-        return body["result"]
-
-    def _call(self, method: str, params: list[Any]) -> Any:
-        return retry(
-            lambda: self._call_once(method, params),
-            sleep=self._sleep,
-            attempts=self._attempts,
-        )
+        self._rpc.close()
 
     def getblockchaininfo(self) -> BlockchainInfo:
-        result = self._call("getblockchaininfo", [])
-        return BlockchainInfo(
-            height=int(result["blocks"]),
-            best_block_hash=str(result["bestblockhash"]),
-            initial_block_download=bool(result["initialblockdownload"]),
-            verification_progress=float(result["verificationprogress"]),
-        )
+        with _cli_errors():
+            return self._rpc.getblockchaininfo()
 
     def getblockheader(self, block_hash: str) -> BlockHeader:
-        result = self._call("getblockheader", [block_hash, True])
-        return BlockHeader(
-            block_hash=str(result["hash"]),
-            height=int(result["height"]),
-            confirmations=int(result["confirmations"]),
-            merkle_root=str(result["merkleroot"]),
-            time=int(result["time"]),
-        )
+        with _cli_errors():
+            return self._rpc.getblockheader(block_hash)
 
     def getblockhash(self, height: int) -> str:
-        return str(self._call("getblockhash", [height]))
+        with _cli_errors():
+            return self._rpc.getblockhash(height)
+
+
+class _RpcBlocks:
+    def __init__(self, rpc: BitcoinRPC) -> None:
+        self._rpc = rpc
+
+    def block_at(self, height: int) -> ChainBlock | None:
+        try:
+            block_hash = self._rpc.getblockhash(height)
+        except BitcoinBlockMissingError:
+            return None
+        header = self._rpc.getblockheader(block_hash)
+        return ChainBlock.from_rpc(
+            height=header.height,
+            block_hash=header.block_hash,
+            merkleroot=header.merkle_root,
+            confirmations=header.confirmations,
+        )
+
+
+def block_source(rpc: BitcoinRPC) -> BlockHeaderSource:
+    """``rpc`` as a ``BlockHeaderSource``; a missing block is None."""
+    return _RpcBlocks(rpc)
 
 
 class BitcoinZmqSubscriber:
@@ -272,13 +228,14 @@ def verify_attestation(
     *,
     min_confirmations: int = 3,
 ) -> VerifyResult:
-    """Verify a ``.ots`` against the local chain.
+    """Verify a ``.ots`` against the local chain with the lib's check.
 
-    Raises :class:`AttestationMismatchError` if the parsed commitment digest
-    does not match ``expected_digest`` or if the attested merkle root does
-    not match the chain's block header. Raises :class:`ReorgDetectedError`
-    if the local tip is more than ``min_confirmations`` blocks behind the
-    attested height.
+    Raises :class:`AttestationMismatchError` if the proof commits to another
+    digest, or if an attestation at a block with ``min_confirmations``
+    confirmations does not match its merkle root. A block that is not yet
+    that deep is untrusted, so a mismatch there is pending, not an error.
+    Raises :class:`ReorgDetectedError` if the local tip is more than
+    ``min_confirmations`` blocks behind the lowest attested height.
     """
     parsed = parse_ots(ots_bytes)
 
@@ -297,36 +254,23 @@ def verify_attestation(
             f"blocks behind attested height {parsed.block_height}"
         )
 
-    try:
-        block_hash = rpc.getblockhash(parsed.block_height)
-    except BitcoinBlockMissingError:
-        return PendingVerification(PendingReason.BLOCK_MISSING)
-
-    header = rpc.getblockheader(block_hash)
-
-    # Confirmations BEFORE merkle: a block not yet buried min_confirmations
-    # deep is untrusted, so a merkle mismatch there is treated as PENDING (it
-    # self-heals on a shallow fork/reorg as the chain settles), not a
-    # HALT-worthy mismatch. Only a mismatch at trusted depth is a genuine
-    # (deep) divergence worth stopping for.
-    if header.confirmations < min_confirmations:
-        return PendingVerification(PendingReason.INSUFFICIENT_CONFIRMATIONS)
-
-    attested = parsed.attested_digest
-    # bitcoind's RPC returns ``merkleroot`` as hex of bytes in *reversed*
-    # (display) order; OTS Bitcoin attestations commit to the raw block-header
-    # field in internal (little-endian) byte order. Reverse before comparing.
-    chain_merkle = bytes.fromhex(header.merkle_root)[::-1]
-    if attested is None or chain_merkle != attested:
+    checks = check_attestations(
+        parsed, block_source(rpc), confirmations=min_confirmations
+    )
+    if any(c.status is AttestationStatus.MISMATCH for c in checks):
         raise AttestationMismatchError(
             "attested merkle root does not match block header"
         )
-
-    return VerifiedAttestation(
-        block_height=parsed.block_height,
-        block_hash=block_hash,
-        confirmations=header.confirmations,
-    )
+    for c in checks:
+        if c.status is AttestationStatus.VERIFIED and c.block is not None:
+            return VerifiedAttestation(
+                block_height=c.height,
+                block_hash=c.block.block_hash,
+                confirmations=c.block.confirmations,
+            )
+    if checks[0].block is None:
+        return PendingVerification(PendingReason.BLOCK_MISSING)
+    return PendingVerification(PendingReason.INSUFFICIENT_CONFIRMATIONS)
 
 
 def default_btc_factory(cfg: Config) -> BitcoinRPC:

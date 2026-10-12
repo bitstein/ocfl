@@ -13,9 +13,12 @@ dependencies = [
 s3 = [
     "boto3>=1.35.0",
 ]
+bitcoin = [
+    "httpx2>=2.0",
+]
 test = [
     "moto[s3]>=5.0.0",
-    "ocfl-lib[s3]",
+    "ocfl-lib[s3,bitcoin]",
 ]
 
 [build-system]

@@ -11,7 +11,7 @@ from ocfl_lib._json_value import as_str, object_field, parse_json
 from ocfl_lib._path import join_path
 from ocfl_lib._spec import VERSION_DIR_RE, Namaste
 from ocfl_lib.fs import _utils as fs_utils
-from ocfl_lib.validation._extension_ots import validate_ots_extension
+from ocfl_lib.validation._extension_ots import check_chain, validate_ots_extension
 from ocfl_lib.validation._inventory import (
     validate_inventory,
     validate_inventory_against_prior,
@@ -46,12 +46,19 @@ def validate_object(
     *,
     check_digests: bool = True,
     lax_digests: bool = False,
+    chain: ots.ChainCheck | None = None,
 ) -> ValidationReport:
-    """Validate an OCFL object at the given path."""
+    """Validate an OCFL object at the given path.
+
+    With `chain`, the proofs of the OTS extension are also checked against
+    Bitcoin (E906, W903); errors from its source propagate.
+    """
     result = FindingCollector(path=path)
     _validate_object(
         fsys, path, result, check_digests=check_digests, lax_digests=lax_digests
     )
+    if chain is not None:
+        check_chain(fsys, path, chain, result)
     return result.report()
 
 

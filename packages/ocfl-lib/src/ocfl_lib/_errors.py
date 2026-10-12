@@ -337,3 +337,32 @@ class OtsConfigError(OcflError, ValueError):
 
     code = "ots_config"
     error_class = ErrorClass.INVALID
+
+
+class BitcoinRpcError(OcflError):
+    """A Bitcoin node's RPC call failed (`ocfl_lib.bitcoin`)."""
+
+    code = "bitcoin_rpc"
+    error_class = ErrorClass.SERVICE
+
+
+class BitcoinRpcAuthError(BitcoinRpcError):
+    """The Bitcoin node refused the RPC credentials."""
+
+    code = "bitcoin_rpc_auth"
+    error_class = ErrorClass.CONFIG
+
+
+class BitcoinRpcTransientError(BitcoinRpcError):
+    """A retryable RPC failure (loading, 429, 5xx, transport) that outlasted
+    the retries."""
+
+    code = "bitcoin_rpc_transient"
+    error_class = ErrorClass.SERVICE
+
+
+class BitcoinNoBlockError(BitcoinRpcError):
+    """The node's best chain has no block at the requested height."""
+
+    code = "bitcoin_no_block"
+    error_class = ErrorClass.NOT_FOUND

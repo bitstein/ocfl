@@ -4,6 +4,10 @@ from ocfl_lib._commit_plan import CommitPlan
 from ocfl_lib._digest import DigestAlgorithm, bytes_digest, file_digest
 from ocfl_lib._digest_map import DigestMap, PathMap, to_path_map
 from ocfl_lib._errors import (
+    BitcoinNoBlockError,
+    BitcoinRpcAuthError,
+    BitcoinRpcError,
+    BitcoinRpcTransientError,
     ClaimLostError,
     ContentDigestMismatch,
     ContentNotFound,
@@ -75,6 +79,10 @@ from ocfl_lib.validation._root import validate_root
 __all__ = [
     "DEFAULT_LAYOUTS",
     "FS",
+    "BitcoinNoBlockError",
+    "BitcoinRpcAuthError",
+    "BitcoinRpcError",
+    "BitcoinRpcTransientError",
     "ClaimFS",
     "ClaimLostError",
     "CommitPlan",

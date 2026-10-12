@@ -140,6 +140,7 @@ class TestErrors:
 
 PUBLIC_MODULES = {
     "ocfl_lib",
+    "ocfl_lib.bitcoin",
     "ocfl_lib.fs",
     "ocfl_lib.fs.s3",
     "ocfl_lib.ots",
@@ -908,5 +909,84 @@ class TestOtsRulesInLib:
 
     def test_cli_validate_walks_lib_proofs(self):
         text = (CLI_SRC / "archive/validate.py").read_text()
-        assert "ots.object_proofs(" in text
+        assert "ots.check_object_chain(" in text or "ots.object_proofs(" in text
         assert "_enumerate_versions" not in text
+
+
+# --- 4.3 BlockHeaderSource, a pure attestation check, RPC client in [bitcoin]
+
+_NETWORK = {"httpx", "httpx2", "requests", "urllib3", "zmq", "socket", "http"}
+
+
+def _top_imports(p: Path) -> set[str]:
+    mods: set[str] = set()
+    for node in ast.walk(_tree(p)):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            mods.add(node.module.split(".")[0])
+        elif isinstance(node, ast.Import):
+            mods.update(a.name.split(".")[0] for a in node.names)
+    return mods
+
+
+class TestBitcoinBoundary:
+    def test_only_the_bitcoin_extra_has_network_code(self):
+        bad = {
+            p.relative_to(LIB_SRC).as_posix(): _top_imports(p) & _NETWORK
+            for p in _py_files(LIB_SRC)
+            if p != LIB_SRC / "bitcoin.py"
+        }
+        assert not {k: v for k, v in bad.items() if v}, bad
+        assert "zmq" not in _top_imports(LIB_SRC / "bitcoin.py")
+
+    def test_base_import_loads_no_network_package(self):
+        import subprocess
+        import sys
+
+        code = (
+            "import sys, ocfl_lib, ocfl_lib.ots, ocfl_lib.validation, ocfl_lib.fs;"
+            "print(sorted({m.split('.')[0] for m in sys.modules}"
+            " & {'httpx2', 'boto3', 'zmq', 'requests'}))"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, check=True
+        )
+        assert out.stdout.strip() == "[]"
+
+    def test_bitcoin_is_an_extra(self):
+        import tomllib
+
+        proj = tomllib.loads((REPO / "packages/ocfl-lib/pyproject.toml").read_text())[
+            "project"
+        ]
+        assert not any("httpx" in d for d in proj["dependencies"])
+        assert proj["optional-dependencies"]["bitcoin"] == ["httpx2>=2.0"]
+
+    def test_attestation_check_is_pure(self):
+        """The check reaches the chain only through the BlockHeaderSource."""
+        tree = _tree(LIB_SRC / "ots.py")
+        fn = next(
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == "check_attestations"
+        )
+        calls = {
+            n.func.attr
+            for n in ast.walk(fn)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        }
+        assert calls <= {"block_at", "append"}, calls
+
+    def test_rpc_client_is_a_block_header_source(self):
+        from ocfl_lib.bitcoin import BitcoinRpcClient
+        from ocfl_lib.ots import BlockHeaderSource
+
+        assert issubclass(BitcoinRpcClient, BlockHeaderSource)
+
+    def test_cli_keeps_zmq_and_reuses_the_lib(self):
+        text = (CLI_SRC / "ots/bitcoin.py").read_text()
+        assert "class BitcoinZmqSubscriber" in text
+        assert "check_attestations(" in text
+        assert "from ocfl_lib.bitcoin import BitcoinRpcClient" in text
+        cli = "".join(p.read_text() for p in _py_files(CLI_SRC))
+        assert '"merkleroot"' not in cli and "[::-1]" not in cli
+        assert "verify_attestation" not in (CLI_SRC / "archive/validate.py").read_text()

@@ -4,10 +4,11 @@ Source of truth: docs/ext/NNNN-ots-timestamps.md. Everything here is pure;
 the base install of ocfl-lib has no network code.
 """
 
+import enum
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from opentimestamps.core.notary import BitcoinBlockHeaderAttestation
 from opentimestamps.core.serialize import (
@@ -41,20 +42,33 @@ def inventory_proof_path(version: str) -> str:
 # --- proofs
 
 
+@dataclass(frozen=True, slots=True, order=True)
+class BitcoinAttestation:
+    """A proof's claim that `commitment` is the merkle root of block `height`.
+
+    `commitment` is in the block header's internal byte order.
+    """
+
+    height: int
+    commitment: bytes
+
+
 @dataclass(frozen=True, slots=True)
 class ParsedOts:
     """A parsed proof.
 
     `file_hash` names the proof's file-hash operation (`sha256`, `sha1`, ...);
-    `commitment_digest` is the file digest it commits to. `block_height` and
-    `attested_digest` are those of the lowest Bitcoin attestation, or None
-    for a pending proof.
+    `commitment_digest` is the file digest it commits to. `attestations` are
+    its Bitcoin attestations, lowest first; `block_height` and
+    `attested_digest` are those of the lowest one, or None for a pending
+    proof. Attestations of other types are not kept.
     """
 
     commitment_digest: bytes
     attested_digest: bytes | None
     block_height: int | None
     file_hash: str = "sha256"
+    attestations: tuple[BitcoinAttestation, ...] = ()
 
     @property
     def is_final(self) -> bool:
@@ -70,23 +84,101 @@ def parse(ots_bytes: bytes) -> ParsedOts:
     except (DeserializationError, ValueError) as exc:
         raise OtsParseError("failed to deserialize .ots bytes") from exc
 
-    bitcoin_attestations: list[tuple[int, bytes]] = []
-    for msg, attestation in detached.timestamp.all_attestations():
-        if isinstance(attestation, BitcoinBlockHeaderAttestation):
-            bitcoin_attestations.append((attestation.height, msg))
-
-    if bitcoin_attestations:
-        block_height, attested_digest = min(bitcoin_attestations, key=lambda x: x[0])
-    else:
-        block_height = None
-        attested_digest = None
-
+    attestations = tuple(
+        sorted(
+            {
+                BitcoinAttestation(attestation.height, msg)
+                for msg, attestation in detached.timestamp.all_attestations()
+                if isinstance(attestation, BitcoinBlockHeaderAttestation)
+            }
+        )
+    )
+    lowest = attestations[0] if attestations else None
     return ParsedOts(
         commitment_digest=detached.timestamp.msg,
-        attested_digest=attested_digest,
-        block_height=block_height,
+        attested_digest=lowest.commitment if lowest else None,
+        block_height=lowest.height if lowest else None,
         file_hash=detached.file_hash_op.TAG_NAME,
+        attestations=attestations,
     )
+
+
+# --- Bitcoin checks (spec "Bitcoin Checks")
+
+
+@dataclass(frozen=True, slots=True)
+class ChainBlock:
+    """The block at a height on a node's best chain.
+
+    `merkle_root` is in internal byte order, as attestations commit to it.
+    """
+
+    height: int
+    block_hash: str
+    merkle_root: bytes
+    confirmations: int
+
+    @classmethod
+    def from_rpc(
+        cls, *, height: int, block_hash: str, merkleroot: str, confirmations: int
+    ) -> ChainBlock:
+        """From bitcoind's header fields; its `merkleroot` hex is byte-reversed."""
+        return cls(height, block_hash, bytes.fromhex(merkleroot)[::-1], confirmations)
+
+
+@runtime_checkable
+class BlockHeaderSource(Protocol):
+    """Where block headers come from, such as a Bitcoin node."""
+
+    def block_at(self, height: int) -> ChainBlock | None:
+        """The block at `height` on the best chain, or None if there is none."""
+        ...
+
+
+class AttestationStatus(enum.StrEnum):
+    VERIFIED = "verified"
+    """The block has enough confirmations and its merkle root matches."""
+    SHALLOW = "shallow"
+    """No block at the height yet, or too few confirmations; not used."""
+    MISMATCH = "mismatch"
+    """The block has enough confirmations and another merkle root (E906)."""
+
+
+@dataclass(frozen=True, slots=True)
+class AttestationCheck:
+    height: int
+    commitment: bytes
+    status: AttestationStatus
+    block: ChainBlock | None
+
+
+def check_attestations(
+    proof: ParsedOts, source: BlockHeaderSource, *, confirmations: int
+) -> tuple[AttestationCheck, ...]:
+    """Check each Bitcoin attestation of `proof` against `source`.
+
+    Pure apart from `source.block_at`. A pending proof has no checks. A
+    proof passes when one check is VERIFIED and none is MISMATCH.
+    """
+    checks = []
+    for att in proof.attestations:
+        block = source.block_at(att.height)
+        if block is None or block.confirmations < confirmations:
+            status = AttestationStatus.SHALLOW
+        elif block.merkle_root == att.commitment:
+            status = AttestationStatus.VERIFIED
+        else:
+            status = AttestationStatus.MISMATCH
+        checks.append(AttestationCheck(att.height, att.commitment, status, block))
+    return tuple(checks)
+
+
+@dataclass(frozen=True, slots=True)
+class ChainCheck:
+    """The client option that turns on Bitcoin checks in validation."""
+
+    source: BlockHeaderSource
+    confirmations: int
 
 
 # --- config
@@ -273,3 +365,56 @@ def object_proofs(fsys: FS, obj_path: str) -> tuple[ProofRef, ...]:
             continue  # E909
         refs.append(ProofRef("inventory", v, path, hashlib.sha256(raw).hexdigest()))
     return tuple(refs)
+
+
+# --- Bitcoin checks of an object
+
+
+@dataclass(frozen=True, slots=True)
+class ProofChainResult:
+    """The Bitcoin checks of one proof of an object."""
+
+    proof: ProofRef
+    checks: tuple[AttestationCheck, ...]
+
+    @property
+    def status(self) -> AttestationStatus | None:
+        """MISMATCH if any check is; else VERIFIED if any; None when pending."""
+        statuses = {c.status for c in self.checks}
+        for status in (
+            AttestationStatus.MISMATCH,
+            AttestationStatus.VERIFIED,
+            AttestationStatus.SHALLOW,
+        ):
+            if status in statuses:
+                return status
+        return None
+
+    @property
+    def verified(self) -> AttestationCheck | None:
+        """The lowest verified attestation: the time of the proof."""
+        return next(
+            (c for c in self.checks if c.status is AttestationStatus.VERIFIED), None
+        )
+
+
+def check_object_chain(
+    fsys: FS, obj_path: str, chain: ChainCheck
+) -> tuple[ProofChainResult, ...]:
+    """Bitcoin checks of every proof of the covered versions of an object.
+
+    A proof that cannot be read or parsed is left out; the local checks
+    report it (E905). Raises OtsConfigError for an invalid config; errors
+    from `chain.source` propagate.
+    """
+    results = []
+    for ref in object_proofs(fsys, obj_path):
+        try:
+            parsed = parse(fs_utils.read_all(fsys, join_path(obj_path, ref.path)))
+        except OSError, OtsParseError:
+            continue
+        checks = check_attestations(
+            parsed, chain.source, confirmations=chain.confirmations
+        )
+        results.append(ProofChainResult(ref, checks))
+    return tuple(results)
