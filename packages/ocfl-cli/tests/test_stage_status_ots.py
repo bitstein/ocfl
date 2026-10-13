@@ -1007,7 +1007,7 @@ class TestStageStatusOts:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == 75, r.output  # still pending
         assert load_ots(sd).verify_jobs[0].status == "IN_PROGRESS"
 
         clock.set(fake_now)

@@ -19,6 +19,7 @@ from ocfl_cli.errors import (
     PhaseError,
     ReorgDetectedError,
 )
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.model.phase import TimestampTarget
 from ocfl_cli.stage._app import TimestampPreflight, require_timestamp_preflight
 from ocfl_cli.stage.render import pluralize, render_section, short_job_id
@@ -429,6 +430,8 @@ def upgrade_cmd(
         return
     result = _verb(run, lambda: timestamp.upgrade(run, expect=expect))
     _render(ctx, run, "upgrade", result, before=before)
+    if not result.done:
+        raise typer.Exit(ExitCode.PENDING)  # run again later (ADR-0006)
 
 
 def retry_cmd(

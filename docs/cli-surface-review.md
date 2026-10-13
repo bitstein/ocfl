@@ -1,6 +1,6 @@
 # CLI surface review (roadmap §7.4)
 
-The 37 issues of `ocfl-rs/docs/port/python-cli-surface.md` §6, one decision each. An issue is taken only when it is justified on its own; the `(7.n)` tag names the roadmap item whose commit carries it. Exit codes stay 0, 1, 2, 3, 4, 5, 6, 130. Terms: [CONTEXT.md](../CONTEXT.md).
+The 37 issues of `ocfl-rs/docs/port/python-cli-surface.md` §6, one decision each. An issue is taken only when it is justified on its own; the `(7.n)` tag names the roadmap item whose commit carries it, and `(follow-up)` a change made after §7. Exit codes are 0, 1, 2, 3, 4, 5, 6, 75 (ADR-0006), 130. Terms: [CONTEXT.md](../CONTEXT.md).
 
 | # | Issue | Decision | Why |
 |---|---|---|---|
@@ -30,7 +30,7 @@ The 37 issues of `ocfl-rs/docs/port/python-cli-surface.md` §6, one decision eac
 | 24 | Batch lock contention exits 1 with a traceback | adopt (phase 5, kept in 7.3) | Exit 4 since phase 5; the flock lease keeps it 4. |
 | 25 | Exit 5 also covers a missing or unverified proof | adopt (7.4) | At commit, a missing, unverified or uncached inventory proof, or a stale plan, is a state error (exit 3, `inventory_proof_missing`). Exit 5 stays for a cached proof that does not parse or commits to other bytes, and its help says "operator review" instead of "retry after re-fetch". |
 | 26 | Exit 2 is used for not found | adopt (7.4) | A missing batch is exit 1 (`batch_file_missing`); a commit of a content batch or of another root's batch is exit 3 (`batch_mismatch`). `ocfl-index` is unchanged (35). |
-| 27 | `upgrade` gives scripts no "still pending" exit | reject | A new exit code (75) changes the public contract and every caller's handling, and would need an ADR; `--json` now reports `done`, and `--watch` blocks until the proofs are final, which covers cron and scripts. |
+| 27 | `upgrade` gives scripts no "still pending" exit | adopt (follow-up) | ADR-0006: a one-shot `stage upgrade` / `stage batch upgrade` exits 75 while proofs are pending, so a cron job loops on the exit code alone. `stage timestamp` keeps 0 after a submit, so `&&` chains and `set -e` scripts still work. |
 | 28 | Mutators print nothing | reject | The exit status is the acknowledgement for `new`, `add`, `mv`, `rm`, `metadata` and `commit`, as in other Unix tools; scripts that need state read `stage status --json`. Verbs that move the Phase print it (7.1). |
 | 29 | No way to list Staging Areas | adopt (7.4) | `stage ls` with no object lists the storage root's Staging Areas and their Phase. |
 | 30 | No one-shot pipeline (`seal`) | reject | `stage timestamp OBJ --watch` twice, then `stage commit`, is three commands with no flag combinations; one command over a multi-hour run with two waits adds little. Can come later (ocfl-rs SPEC D17). |

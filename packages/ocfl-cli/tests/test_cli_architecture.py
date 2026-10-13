@@ -790,7 +790,7 @@ class TestSurfaceReview:
     def test_exit_codes_stay_the_public_contract(self):
         from ocfl_cli.exit_codes import EXIT_CODE_DOCS, ExitCode
 
-        assert {int(c) for c in ExitCode} == {0, 1, 2, 3, 4, 5, 6, 130}
+        assert {int(c) for c in ExitCode} == {0, 1, 2, 3, 4, 5, 6, 75, 130}
         (halt,) = [d for d in EXIT_CODE_DOCS if d.code is ExitCode.ATTESTATION]
         assert "retry" not in halt.description
 
@@ -846,3 +846,30 @@ class TestSurfaceReview:
         text = (CLI_SRC / "workflow/batch/report.py").read_text()
         assert "def resolve_batch_id(" in text
         assert "resolve_batch_id(staging_root, batch_id)" in text
+
+
+# --- ADR-0006: exit 75 "still pending", only from a one-shot upgrade
+
+
+class TestStillPending:
+    def test_only_the_upgrade_commands_exit_75(self):
+        homes = set()
+        for p in _py_files(CLI_SRC):
+            tree = _tree(p)
+            for fn in ast.walk(tree):
+                if not isinstance(fn, ast.FunctionDef):
+                    continue
+                for n in ast.walk(fn):
+                    if isinstance(n, ast.Attribute) and n.attr == "PENDING":
+                        homes.add(f"{_rel(p)}:{fn.name}")
+        assert homes == {
+            "stage/timestamp.py:upgrade_cmd",
+            "stage/batch.py:batch_upgrade",
+        }
+
+    def test_75_is_no_error_class(self):
+        from ocfl_cli.exit_codes import ExitCode, exit_code_for_class
+        from ocfl_lib import ErrorClass
+
+        assert ExitCode.PENDING == 75
+        assert ExitCode.PENDING not in {exit_code_for_class(c) for c in ErrorClass}

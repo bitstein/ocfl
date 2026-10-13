@@ -5,6 +5,10 @@ No release is published yet, so every entry below is unreleased and may still ch
 
 ## [Unreleased]
 
+### Exit 75 (ADR-0006)
+
+- New exit code 75, "still pending": a one-shot `stage upgrade` or `stage batch upgrade` (no `--watch`) whose pass left proofs not final exits 75 (was 0). It is a result, not an error: nothing on stderr, and `--json` prints the usual document. Everything else keeps its code: `stage timestamp` after a submit, a verb with nothing to do, and `--watch` exit 0. The exit codes are 0, 1, 2, 3, 4, 5, 6, 75, 130 (`ExitCode.PENDING`).
+
 ### Validate (issues 16 and 34 of docs/cli-surface-review.md)
 
 - `ocfl validate --ots=auto|local|chain` replaces default-on `--verify-ots`. `auto` (the default) checks the OTS proofs against Bitcoin when `[bitcoin]` is configured and otherwise runs the local checks and says so on stderr (it was exit 6). `chain` needs `[bitcoin]` (exit 6 without). `local` never asks a node. Every mode runs the extension's own checks; there is no mode that skips them. `--verify-ots`/`--no-verify-ots` still work (hidden) as `chain`/`local`; with `--ots` they are a usage error.

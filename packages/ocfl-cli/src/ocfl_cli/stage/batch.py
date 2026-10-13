@@ -13,6 +13,7 @@ import typer
 from ocfl_cli import _appctx as appctx
 from ocfl_cli._common import open_root, output_json
 from ocfl_cli.errors import ObjectsNotStagedError, UsageError
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.model.phase import TimestampTarget
 from ocfl_cli.stage._app import (
     require_bitcoin,
@@ -429,6 +430,8 @@ def batch_upgrade(
             f"batch upgraded: {batch.batch_id} submitted={counts['submitted']} "
             f"upgraded={counts['upgraded']} failed={counts['failed']}"
         )
+    if batch_counts(batch)["submitted"]:
+        raise typer.Exit(ExitCode.PENDING)  # rows still wait (ADR-0006)
 
 
 def batch_retry(ctx: typer.Context, batch_id: BatchArg) -> None:

@@ -2477,7 +2477,7 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
         "upgrade",
         batch_id,
     )
-    assert first.exit_code == 0, first.output
+    assert first.exit_code == 75, first.output  # still pending
     events = [json.loads(line) for line in first.output.splitlines()]
     assert [event["event"] for event in events] == [
         "batch_resumed",
@@ -2575,7 +2575,7 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
         "upgrade",
         batch_id,
     )
-    assert first.exit_code == 0, first.output
+    assert first.exit_code == 75, first.output  # still pending
     batch = batch_state.load_batch(staging, batch_id)
     assert len(batch.verify_jobs) == 1
     assert len(batch.verify_jobs[0].digests) == 2
@@ -2595,7 +2595,7 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
         "upgrade",
         batch_id,
     )
-    assert partial.exit_code == 0, partial.output
+    assert partial.exit_code == 75, partial.output  # still pending
     events = [json.loads(line) for line in partial.output.splitlines()]
     assert events[1]["event"] == "object_submitted"
     assert events[1]["last_error"] == "sp_partial_results"
@@ -2620,7 +2620,7 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
         "upgrade",
         batch_id,
     )
-    assert retry.exit_code == 0, retry.output
+    assert retry.exit_code == 75, retry.output  # still pending
     batch = batch_state.load_batch(staging, batch_id)
     assert [job.digests for job in batch.verify_jobs] == [
         (returned_digest, missing_digest),
@@ -3628,7 +3628,7 @@ def test_batch_upgrade_failed_verify_job_is_retryable(
         "upgrade",
         batch_id,
     )
-    assert first.exit_code == 0, first.output
+    assert first.exit_code == 75, first.output  # still pending
     failed_job_id = batch_state.load_batch(staging, batch_id).verify_jobs[0].job_id
     sp_fake.fail_job(failed_job_id)
 
@@ -3640,7 +3640,7 @@ def test_batch_upgrade_failed_verify_job_is_retryable(
         "upgrade",
         batch_id,
     )
-    assert failed.exit_code == 0, failed.output
+    assert failed.exit_code == 75, failed.output  # still pending
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.verify_jobs[0].status == "FAILED"
     assert batch.objects[0].status == "submitted"
@@ -3654,7 +3654,7 @@ def test_batch_upgrade_failed_verify_job_is_retryable(
         "upgrade",
         batch_id,
     )
-    assert retried.exit_code == 0, retried.output
+    assert retried.exit_code == 75, retried.output  # still pending
     batch = batch_state.load_batch(staging, batch_id)
     assert [job.status for job in batch.verify_jobs] == ["FAILED", "IN_PROGRESS"]
     assert len(sp_fake._jobs) == 2
@@ -3699,7 +3699,7 @@ def test_batch_upgrade_poll_transient_marks_retryable(
         batch_id,
     )
 
-    assert upgraded.exit_code == 0, upgraded.output
+    assert upgraded.exit_code == 75, upgraded.output  # still pending
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.verify_jobs[0].status == "FAILED"
     assert batch.verify_jobs[0].last_error == "SimpleProof HTTP 503"
@@ -3746,7 +3746,7 @@ def test_batch_upgrade_download_mismatch_marks_terminal(
         "upgrade",
         batch_id,
     )
-    assert first.exit_code == 0, first.output
+    assert first.exit_code == 75, first.output  # still pending
     batch = batch_state.load_batch(staging, batch_id)
     sp.advance_to_completed(batch.verify_jobs[0].job_id, {})
 
@@ -3805,7 +3805,7 @@ def test_batch_upgrade_bitcoin_transient_marks_retryable(
         "upgrade",
         batch_id,
     )
-    assert first.exit_code == 0, first.output
+    assert first.exit_code == 75, first.output  # still pending
     batch = batch_state.load_batch(staging, batch_id)
     digest = batch.objects[0].digests[0]
     sp_fake.advance_to_completed(
@@ -3821,7 +3821,7 @@ def test_batch_upgrade_bitcoin_transient_marks_retryable(
         batch_id,
     )
 
-    assert failed.exit_code == 0, failed.output
+    assert failed.exit_code == 75, failed.output  # still pending
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.verify_jobs[0].status == "COMPLETED"
     assert batch.objects[0].status == "submitted"
@@ -3866,7 +3866,7 @@ def test_batch_upgrade_expired_poll_gets_fresh_job(
         "upgrade",
         batch_id,
     )
-    assert first.exit_code == 0, first.output
+    assert first.exit_code == 75, first.output  # still pending
     assert batch_state.load_batch(staging, batch_id).verify_jobs[0].status == "EXPIRED"
 
     second = _invoke(
@@ -3878,7 +3878,7 @@ def test_batch_upgrade_expired_poll_gets_fresh_job(
         batch_id,
     )
 
-    assert second.exit_code == 0, second.output
+    assert second.exit_code == 75, second.output  # still pending
     batch = batch_state.load_batch(staging, batch_id)
     assert [job.status for job in batch.verify_jobs] == ["EXPIRED", "EXPIRED"]
     assert len(sp._jobs) == 2
@@ -3948,7 +3948,7 @@ def test_batch_inventory_upgrade_rejects_stale_plan_digest(
         "upgrade",
         batch_id,
     )
-    assert first.exit_code == 0, first.output
+    assert first.exit_code == 75, first.output  # still pending
     batch = batch_state.load_batch(staging, batch_id)
     ots_bytes = _ots_for(inv_digest)
     sp_fake.advance_to_completed(batch.verify_jobs[0].job_id, {inv_digest: ots_bytes})

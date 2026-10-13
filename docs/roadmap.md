@@ -70,6 +70,11 @@ Target architecture from the 2026-10-11 design session. Terms: [CONTEXT.md](../C
 - [x] Locks: flock, a 5 s wait, then exit 4. The batch flock is the lease, and the heartbeat `.driver` is removed.
 - [x] Review the 37 issues in `ocfl-rs/docs/port/python-cli-surface.md` §6 one by one. Adopt only the ones that are justified on their own. Decisions: [cli-surface-review.md](cli-surface-review.md).
 
+### Follow-ups to §7
+
+- [x] `validate --ots=auto|local|chain`, at root level too (review issues 16, 34).
+- [x] Exit 75 "still pending" for a one-shot upgrade (ADR-0006, review issue 27).
+
 ## Before launch
 
 - [ ] Choose permanent names for the OTS extension (now the `NNNN-` placeholder, which gives W013) and the work-dir extension. Register them with the OCFL community, or document them as local extensions in the storage root (§4.5).

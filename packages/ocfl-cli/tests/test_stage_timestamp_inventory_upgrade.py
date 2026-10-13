@@ -549,7 +549,7 @@ class TestInventoryUpgradeExpired:
                 "inventory",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == 75, r.output  # still pending
         # A fresh verify_batch was POSTed despite the EXPIRED job.
         assert len(sp_fake._jobs) == 2
         # State carries an active (non-terminal) job for the digest.
@@ -805,7 +805,7 @@ class TestInventoryPhaseAdvance:
                 "inventory",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == 75, r.output  # still pending
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_PENDING
         assert state.inventory is not None
@@ -851,7 +851,7 @@ class TestInventoryPhaseAdvance:
                 "inventory",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == 75, r.output  # still pending
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_PENDING
         assert state.inventory is not None

@@ -17,6 +17,8 @@ class ExitCode(IntEnum):
     LOCK_TIMEOUT = 4
     ATTESTATION = 5
     CONFIG = 6
+    # A result, not an error: the proofs are not final yet (ADR-0006).
+    PENDING = 75
     INTERRUPTED = 130
 
 
@@ -40,6 +42,9 @@ EXIT_CODE_DOCS: tuple[ExitCodeDoc, ...] = (
         "halt: attestation mismatch or deep Bitcoin reorg; operator review",
     ),
     ExitCodeDoc(ExitCode.CONFIG, "configuration error, including credentials"),
+    ExitCodeDoc(
+        ExitCode.PENDING, "still pending: proofs not final yet; run again later"
+    ),
     ExitCodeDoc(ExitCode.INTERRUPTED, "interrupted"),
 )
 

@@ -847,7 +847,7 @@ class TestUpgradeHappyPath:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == 75, r.output  # still pending
         assert "Content:" in r.output
         assert "Object: obj:multi" in r.output
         assert "Checked SimpleProof jobs" in r.output
@@ -924,7 +924,7 @@ class TestThreeConfGate:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == (0 if expect_advance else 75), r.output
 
         state = load_ots(sd)
         if expect_advance:
@@ -984,7 +984,7 @@ class TestPendingHeld:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == 75, r.output  # still pending
         assert "Waiting on 1 pending digest" in r.output
         assert "Phase: content-pending" in r.output
         state = load_ots(sd)
@@ -1338,7 +1338,7 @@ class TestContentUpgradeExpired:
             ),
         )
 
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == 75, r.output  # still pending
         assert len(sp_fake._jobs) == 2
         state = load_ots(sd)
         assert any(
@@ -1389,7 +1389,7 @@ class TestConfirmationsBeforeMerkleCli:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == 75, r.output  # still pending
         assert "Waiting on 1 pending digest" in r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
@@ -1660,7 +1660,7 @@ class TestOrphanGuard:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == 75, r.output  # still pending
         assert "Held by 1 orphan digest" in r.output
         assert "Phase: content-pending" in r.output
         state = load_ots(sd)
@@ -1764,7 +1764,7 @@ class TestPhaseAdvanceInvariant:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == 75, r.output  # still pending
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
         assert state.proofs[d].verified is False
@@ -1813,7 +1813,7 @@ class TestPhaseAdvanceInvariant:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == 75, r.output  # still pending
         state = load_ots(sd)
         # Cond (1) holds (a verified), but b is in stage state outside pending.
         assert state.proofs[da].verified is True
