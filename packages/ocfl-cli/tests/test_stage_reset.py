@@ -8,13 +8,13 @@ from typer.testing import CliRunner
 
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import (
-    InventoryProof,
     OtsState,
+    Proof,
+    StagedInventory,
     Submission,
-    VerifiedProof,
     VerifyJob,
 )
-from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store.ots_state import has_ots, load_ots, ots_cache_path, save_ots
 from ocfl_cli.store.staging import StagingStore
 
@@ -77,8 +77,9 @@ def _mk_ots_staging(
     return sd
 
 
-def _verified_proof(digest: str = "deadbeef" * 8) -> VerifiedProof:
-    return VerifiedProof(
+def _verified_proof(digest: str = "deadbeef" * 8) -> Proof:
+    return Proof(
+        target=TimestampTarget.CONTENT,
         ots_path=f"ots-cache/{digest}.ots",
         verified=True,
         block_height=800_000,
@@ -92,14 +93,20 @@ def _inv_proof(
     digest: str = "feedface" * 8,
     *,
     batch_id: str | None = None,
-) -> InventoryProof:
-    return InventoryProof(
+) -> StagedInventory:
+    return StagedInventory(
         version=version,
         digest=digest,
-        proof=_verified_proof(digest),
         job_id="job-inv",
         batch_id=batch_id,
     )
+
+
+INV_DIGEST = "feedface" * 8
+
+
+def _inv_proof_entry() -> Proof:
+    return replace(_verified_proof(INV_DIGEST), target=TimestampTarget.INVENTORY)
 
 
 def _submission(
@@ -109,6 +116,7 @@ def _submission(
         submitted_at="2026-04-25T14:00:00+00:00",
         digests=(digest,),
         status=status,
+        target=TimestampTarget.CONTENT,
         job_id="job-1",
         attempts=1,
         batch_id=batch_id,
@@ -143,22 +151,28 @@ class TestForceRequiredAtNonDraftingPhase:
                 {
                     "pending_digests": ("a" * 64,),
                     "submissions": (_submission("a" * 64),),
-                    "content_proofs": {"a" * 64: _verified_proof("a" * 64)},
+                    "proofs": {"a" * 64: _verified_proof("a" * 64)},
                 },
             ),
             (
                 Phase.INVENTORY_PENDING,
                 {
                     "submissions": (_submission("a" * 64), _submission("b" * 64)),
-                    "content_proofs": {"a" * 64: _verified_proof("a" * 64)},
-                    "inventory_proof": _inv_proof(),
+                    "proofs": {
+                        "a" * 64: _verified_proof("a" * 64),
+                        INV_DIGEST: _inv_proof_entry(),
+                    },
+                    "inventory": _inv_proof(),
                 },
             ),
             (
                 Phase.INVENTORY_UPGRADED,
                 {
-                    "content_proofs": {"a" * 64: _verified_proof("a" * 64)},
-                    "inventory_proof": _inv_proof(),
+                    "proofs": {
+                        "a" * 64: _verified_proof("a" * 64),
+                        INV_DIGEST: _inv_proof_entry(),
+                    },
+                    "inventory": _inv_proof(),
                 },
             ),
         ],
@@ -211,8 +225,11 @@ class TestForceRequiredAtNonDraftingPhase:
             (
                 Phase.INVENTORY_UPGRADED,
                 {
-                    "content_proofs": {"a" * 64: _verified_proof("a" * 64)},
-                    "inventory_proof": _inv_proof(),
+                    "proofs": {
+                        "a" * 64: _verified_proof("a" * 64),
+                        INV_DIGEST: _inv_proof_entry(),
+                    },
+                    "inventory": _inv_proof(),
                 },
             ),
         ],
@@ -243,7 +260,7 @@ class TestForceRequiredAtNonDraftingPhase:
 
 
 class TestForceRequiredAtDraftingAfterRegression:
-    def test_force_required_when_drafting_has_preserved_content_proofs(
+    def test_force_required_when_drafting_has_preserved_proofs(
         self,
         runner: CliRunner,
         storage_root: Path,
@@ -253,13 +270,13 @@ class TestForceRequiredAtDraftingAfterRegression:
         sd = _mk_ots_staging(runner, storage_root, staging, "obj:regressed")
 
         # Mirrors post-rm/mv regression shape: phase=drafting but
-        # content_proofs preserved — that still counts as progress.
+        # proofs preserved — that still counts as progress.
         da = "a" * 64
         _pin_state(
             sd,
             Phase.DRAFTING,
             pending_digests=(da,),
-            content_proofs={da: _verified_proof(da)},
+            proofs={da: _verified_proof(da)},
         )
 
         store = StagingStore(staging)
@@ -267,7 +284,7 @@ class TestForceRequiredAtDraftingAfterRegression:
 
         r = _invoke(runner, storage_root, staging, "reset", "obj:regressed")
         assert r.exit_code != 0, (
-            "drafting + preserved content_proofs must still require --force; "
+            "drafting + preserved proofs must still require --force; "
             f"got exit=0 output={r.output!r}"
         )
         assert "--force" in r.output
@@ -291,7 +308,7 @@ class TestForceNotRequiredAtFreshDrafting:
         assert s.phase is Phase.DRAFTING
         assert s.submissions == ()
         assert s.verify_jobs == ()
-        assert s.content_proofs == {}
+        assert s.proofs == {}
         assert s.inventory_proof is None
 
         store = StagingStore(staging)
@@ -320,7 +337,7 @@ class TestResetPurgesOtsCache:
             Phase.CONTENT_UPGRADED,
             pending_digests=(da,),
             submissions=(_submission(da),),
-            content_proofs={da: _verified_proof(da)},
+            proofs={da: _verified_proof(da)},
         )
 
         cache = ots_cache_path(sd, da)
@@ -380,7 +397,8 @@ class TestResetWarnMessage:
         _pin_state(
             sd,
             Phase.INVENTORY_PENDING,
-            inventory_proof=_inv_proof(batch_id=batch_id),
+            inventory=_inv_proof(batch_id=batch_id),
+            proofs={INV_DIGEST: _inv_proof_entry()},
         )
 
         r = _invoke(runner, storage_root, staging, "reset", "obj:inventory-batch")
@@ -405,8 +423,12 @@ class TestResetWarnMessage:
             pending_digests=(da, db),
             submissions=(_submission(da), _submission(db)),
             verify_jobs=(_verify_job(da),),
-            content_proofs={da: _verified_proof(da), db: _verified_proof(db)},
-            inventory_proof=_inv_proof(),
+            proofs={
+                da: _verified_proof(da),
+                db: _verified_proof(db),
+                INV_DIGEST: _inv_proof_entry(),
+            },
+            inventory=_inv_proof(),
         )
 
         r = _invoke(runner, storage_root, staging, "reset", "obj:warn", "--force")
@@ -420,8 +442,7 @@ class TestResetWarnMessage:
         for label, count in (
             ("submissions", 2),
             ("verify_jobs", 1),
-            ("content_proofs", 2),
-            ("inventory_proof", 1),
+            ("proofs", 3),
         ):
             assert str(count) in out, (
                 f"warn message must include count={count} for {label}; got {out!r}"
@@ -429,8 +450,7 @@ class TestResetWarnMessage:
         lower = out.lower()
         assert "submission" in lower
         assert "verify" in lower
-        assert "content_proof" in lower or "content proof" in lower
-        assert "inventory_proof" in lower or "inventory proof" in lower
+        assert "proofs=3" in lower
 
 
 class TestNonOtsResetUnchanged:

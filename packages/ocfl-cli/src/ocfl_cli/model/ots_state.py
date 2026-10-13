@@ -2,17 +2,23 @@
 
 import msgspec
 
-from ocfl_cli.model.phase import Phase  # noqa: TC001 - msgspec decodes this at runtime.
+from ocfl_cli.model.phase import (  # noqa: TC001 - msgspec decodes these at runtime.
+    Phase,
+    TimestampTarget,
+)
 
-OTS_STATE_VERSION = 1
+OTS_STATE_VERSION = 2
 
 
-class VerifiedProof(msgspec.Struct, frozen=True):
-    """Shared sub-shape: present in every `content_proofs` entry and in
-    `inventory_proof`. Optional additions must preserve both wire shapes;
-    breaking changes require a schema bump.
+class Proof(msgspec.Struct, frozen=True, kw_only=True):
+    """One requested or received proof, keyed by its digest in `OtsState.proofs`.
+
+    `verified` is False while the proof is requested or pending, True once it
+    is final and checked against Bitcoin. A proof outlives the paths that
+    asked for it: a staged file with the same digest reuses it (ADR-0004).
     """
 
+    target: TimestampTarget
     ots_path: str | None = None
     verified: bool = False
     block_height: int | None = None
@@ -27,6 +33,7 @@ class Submission(msgspec.Struct, frozen=True):
     submitted_at: str
     digests: tuple[str, ...]
     status: str  # "submitting" | "submitted" | "failed"
+    target: TimestampTarget
     job_id: str | None = None
     attempts: int = 0
     batch_id: str | None = None
@@ -65,15 +72,18 @@ VERIFY_JOB_STATUSES = frozenset(
 )
 
 
-class InventoryProof(msgspec.Struct, frozen=True):
-    """`inventory_proof`: inventory digest + version + verify job_id plus a
-    nested shared `VerifiedProof`. The JSON wire shape flattens `proof`
-    into the top level of `inventory_proof` (see plan §`ots.json` schema)."""
+class StagedInventory(msgspec.Struct, frozen=True):
+    """`inventory`: the staged inventory being timestamped (`plan.json`).
+
+    Its proof is `OtsState.proofs[digest]`. Cleared when the Staging Area
+    moves back before inventory-pending; the proof stays.
+    """
 
     version: str
     digest: str
-    proof: VerifiedProof = msgspec.field(default_factory=VerifiedProof)
     job_id: str | None = None
+    batch_id: str | None = None
+    record_id: str | None = None
     batch_id: str | None = None
     record_id: str | None = None
 
@@ -93,5 +103,19 @@ class OtsState(msgspec.Struct, frozen=True):
     pending_digests: tuple[str, ...] = ()
     submissions: tuple[Submission, ...] = ()
     verify_jobs: tuple[VerifyJob, ...] = ()
-    content_proofs: dict[str, VerifiedProof] = msgspec.field(default_factory=dict)
-    inventory_proof: InventoryProof | None = None
+    proofs: dict[str, Proof] = msgspec.field(default_factory=dict)
+    inventory: StagedInventory | None = None
+
+    def proof(self, digest: str) -> Proof | None:
+        return self.proofs.get(digest)
+
+    def verified(self, digest: str) -> bool:
+        proof = self.proofs.get(digest)
+        return proof is not None and proof.verified
+
+    @property
+    def inventory_proof(self) -> Proof | None:
+        """The proof of the staged inventory, if one is requested or received."""
+        return (
+            None if self.inventory is None else self.proofs.get(self.inventory.digest)
+        )

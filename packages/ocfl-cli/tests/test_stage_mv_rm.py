@@ -8,8 +8,8 @@ from msgspec.structs import replace
 from typer.testing import CliRunner
 
 from ocfl_cli.main import app
-from ocfl_cli.model.ots_state import InventoryProof, VerifiedProof
-from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.ots_state import Proof, StagedInventory
+from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store.ots_state import (
     has_ots,
     load_ots,
@@ -173,10 +173,11 @@ class TestStageRm:
 # rm/mv pair `<path>.ots` companion in stage state when extension is active.
 # Phase regression rules per `OTS workflow contract` transition matrix:
 #   - drafting / content-pending  : stay
-#   - content-upgraded            : regress to drafting (preserve content_proofs;
+#   - content-upgraded            : regress to drafting (preserve proofs;
 #                                   intersect pending_digests with new state)
-#   - inventory-pending/-upgraded : regress to drafting + discard inventory_proof
-#                                   + delete plan.json
+#   - inventory-pending/-upgraded : regress to drafting + drop the staged
+#                                   inventory; its proof and plan.json stay
+#                                   (ADR-0004)
 #   - ots-cache/ entries          : never purged on regression
 # =========================================================================== #
 
@@ -297,8 +298,9 @@ def _state_digest_for(
     return None
 
 
-def _verified_proof() -> VerifiedProof:
-    return VerifiedProof(
+def _verified_proof() -> Proof:
+    return Proof(
+        target=TimestampTarget.CONTENT,
         ots_path="ots-cache/whatever.ots",
         verified=True,
         block_height=800_000,
@@ -394,7 +396,7 @@ class TestMvCompanionPairing:
 
 
 # --------------------------------------------------------------------------- #
-# 3 & 4. Regression from CONTENT_UPGRADED preserves content_proofs
+# 3 & 4. Regression from CONTENT_UPGRADED preserves proofs
 # --------------------------------------------------------------------------- #
 
 
@@ -405,7 +407,7 @@ def _pin_content_upgraded(sd: Path, da: str, db: str) -> None:
         state,
         phase=Phase.CONTENT_UPGRADED,
         pending_digests=(da, db),
-        content_proofs={
+        proofs={
             da: _verified_proof(),
             db: _verified_proof(),
         },
@@ -436,16 +438,16 @@ class TestRegressionFromContentUpgraded:
         assert post.phase is Phase.DRAFTING, (
             "rm at content-upgraded must regress to drafting"
         )
-        # content_proofs preserved across regression (per regression_rules).
-        assert da in post.content_proofs
-        assert db in post.content_proofs
+        # proofs preserved across regression (per regression_rules).
+        assert da in post.proofs
+        assert db in post.proofs
         # pending_digests intersected with non_ots_digests of new state.
         assert set(post.pending_digests) == {db}, (
             f"pending_digests must be trimmed to digests still in state; "
             f"got {set(post.pending_digests)!r}"
         )
 
-    def test_mv_regresses_to_drafting_preserves_content_proofs(
+    def test_mv_regresses_to_drafting_preserves_proofs(
         self,
         runner: CliRunner,
         storage_root: Path,
@@ -466,13 +468,13 @@ class TestRegressionFromContentUpgraded:
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
         # mv keeps digests unchanged → both proofs and pending_digests carry.
-        assert da in post.content_proofs
-        assert db in post.content_proofs
+        assert da in post.proofs
+        assert db in post.proofs
         assert set(post.pending_digests) == {da, db}, (
             "mv keeps digests; pending_digests should still contain da and db"
         )
 
-    def test_add_regresses_to_drafting_preserves_content_proofs(
+    def test_add_regresses_to_drafting_preserves_proofs(
         self,
         runner: CliRunner,
         storage_root: Path,
@@ -494,40 +496,39 @@ class TestRegressionFromContentUpgraded:
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
-        assert da in post.content_proofs
-        assert db in post.content_proofs
+        assert da in post.proofs
+        assert db in post.proofs
         assert set(post.pending_digests) == {da, db}
 
 
 # --------------------------------------------------------------------------- #
-# 5 & 6. Regression from inventory-* discards inventory_proof + plan.json
+# 5 & 6. Regression from inventory-* drops the staged inventory, keeps proofs
 # --------------------------------------------------------------------------- #
+
+
+INV_DIGEST = "deadbeef" * 8
 
 
 def _pin_inventory_state(sd: Path, da: str, db: str, *, phase: Phase) -> None:
     """Mutate ots.json to *phase* (inventory-pending or -upgraded) with an
-    inventory_proof set and content_proofs/pending_digests populated."""
+    staged inventory set and proofs/pending_digests populated."""
     state = load_ots(sd)
     state = replace(
         state,
         phase=phase,
         pending_digests=(da, db),
-        content_proofs={
+        proofs={
             da: _verified_proof(),
             db: _verified_proof(),
+            INV_DIGEST: replace(_verified_proof(), target=TimestampTarget.INVENTORY),
         },
-        inventory_proof=InventoryProof(
-            version="v1",
-            digest="deadbeef" * 8,
-            job_id="job-xyz",
-            proof=_verified_proof(),
-        ),
+        inventory=StagedInventory(version="v1", digest=INV_DIGEST, job_id="job-xyz"),
     )
     save_ots(sd, state)
 
 
 class TestRegressionFromInventoryPending:
-    def test_rm_discards_inventory_proof_and_deletes_plan_json(
+    def test_rm_drops_staged_inventory_and_keeps_plan_json(
         self,
         runner: CliRunner,
         storage_root: Path,
@@ -551,19 +552,19 @@ class TestRegressionFromInventoryPending:
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
-        assert post.inventory_proof is None, (
-            "regression from inventory-* must discard inventory_proof"
+        assert post.inventory is None, (
+            "regression from inventory-* must drop the staged inventory"
         )
-        assert not plan_path(sd).exists(), (
-            "regression from inventory-* must delete plan.json"
-        )
-        # content_proofs preserved (carry-forward).
-        assert da in post.content_proofs
-        assert db in post.content_proofs
+        assert INV_DIGEST in post.proofs, "the inventory proof stays (ADR-0004)"
+        assert plan_path(sd).exists(), "plan.json stays for a byte-identical rebuild"
+
+        # proofs preserved (carry-forward).
+        assert da in post.proofs
+        assert db in post.proofs
         # pending_digests trimmed to digests still in state (a.txt removed).
         assert set(post.pending_digests) == {db}
 
-    def test_add_discards_inventory_proof_and_deletes_plan_json(
+    def test_add_drops_staged_inventory_and_keeps_plan_json(
         self,
         runner: CliRunner,
         storage_root: Path,
@@ -588,14 +589,15 @@ class TestRegressionFromInventoryPending:
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
-        assert post.inventory_proof is None
-        assert not plan_path(sd).exists()
-        assert da in post.content_proofs
-        assert db in post.content_proofs
+        assert post.inventory is None
+        assert INV_DIGEST in post.proofs
+        assert plan_path(sd).exists()
+        assert da in post.proofs
+        assert db in post.proofs
 
 
 class TestRegressionFromInventoryUpgraded:
-    def test_mv_discards_inventory_proof_and_deletes_plan_json(
+    def test_mv_drops_staged_inventory_and_keeps_plan_json(
         self,
         runner: CliRunner,
         storage_root: Path,
@@ -618,13 +620,14 @@ class TestRegressionFromInventoryUpgraded:
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
-        assert post.inventory_proof is None
-        assert not plan_path(sd).exists()
-        # content_proofs preserved across regression.
-        assert da in post.content_proofs
-        assert db in post.content_proofs
+        assert post.inventory is None
+        assert INV_DIGEST in post.proofs
+        assert plan_path(sd).exists()
+        # proofs preserved across regression.
+        assert da in post.proofs
+        assert db in post.proofs
 
-    def test_add_discards_inventory_proof_and_deletes_plan_json(
+    def test_add_drops_staged_inventory_and_keeps_plan_json(
         self,
         runner: CliRunner,
         storage_root: Path,
@@ -649,10 +652,11 @@ class TestRegressionFromInventoryUpgraded:
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
-        assert post.inventory_proof is None
-        assert not plan_path(sd).exists()
-        assert da in post.content_proofs
-        assert db in post.content_proofs
+        assert post.inventory is None
+        assert INV_DIGEST in post.proofs
+        assert plan_path(sd).exists()
+        assert da in post.proofs
+        assert db in post.proofs
 
 
 # --------------------------------------------------------------------------- #

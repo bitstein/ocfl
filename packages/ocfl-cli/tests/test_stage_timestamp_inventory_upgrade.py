@@ -8,8 +8,9 @@ the content `--upgrade`/`--watch`/`--retry` shape:
   atomic cache write at ``ots-cache/<inv_digest>.ots``; step (2) ingest
   is VACUOUS for inventory (the extension-file entry is queued at
   commit time, not now); step (3) atomic ``ots.json`` update sets
-  ``inventory_proof.proof = VerifiedProof(verified=True, block_height,
-  confirmations_at_verify, verified_at, ots_path=ots-cache/<d>.ots)``
+  ``proofs[<inventory digest>] = Proof(target=INVENTORY, verified=True,
+  block_height, confirmations_at_verify, verified_at,
+  ots_path=ots-cache/<d>.ots)``
   and advances phase to ``inventory-upgraded``.
 - ``--watch``: ZMQ-driven loop that runs an upgrade pass per Bitcoin
   block; exits 0 when phase advances to ``inventory-upgraded`` or 130
@@ -42,8 +43,8 @@ from typer.testing import CliRunner
 from ocfl_cli.config import BitcoinConfig, Config
 from ocfl_cli.config.ots import SimpleProofConfig
 from ocfl_cli.main import app
-from ocfl_cli.model.ots_state import VerifiedProof, VerifyJob
-from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.ots_state import Proof, VerifyJob
+from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.ports import BlockStream
 from ocfl_cli.store.ots_state import load_ots, ots_cache_path, save_ots
 from ocfl_cli.store.staging import StagingStore
@@ -240,8 +241,9 @@ def _setup_at_inventory_pending(
         state,
         phase=Phase.CONTENT_UPGRADED,
         pending_digests=(da,),
-        content_proofs={
-            da: VerifiedProof(
+        proofs={
+            da: Proof(
+                target=TimestampTarget.CONTENT,
                 ots_path=f"ots-cache/{da}.ots",
                 verified=True,
                 block_height=DIGEST_BLOCK_HEIGHT,
@@ -259,8 +261,9 @@ def _setup_at_inventory_pending(
 
     state = load_ots(sd)
     assert state.phase is Phase.INVENTORY_PENDING
+    assert state.inventory is not None
     assert state.inventory_proof is not None
-    return sd, da, state.inventory_proof.digest
+    return sd, da, state.inventory.digest
 
 
 def _seed_inv_completed_verify_job(
@@ -275,7 +278,7 @@ def _seed_inv_completed_verify_job(
     has latitude (per the spec's "implementer chooses the storage
     location" note):
       - ``state.verify_jobs`` (mirrors content --upgrade shape)
-      - ``state.inventory_proof.job_id`` (single-digest convenience)
+      - ``state.inventory.job_id`` (single-digest convenience)
 
     The upgrade pass should detect the existing job, poll, see
     COMPLETED, then download + verify.
@@ -284,11 +287,12 @@ def _seed_inv_completed_verify_job(
     sp_fake.advance_to_completed(job_id, {inv_digest: ots_bytes})
 
     state = load_ots(sd)
+    assert state.inventory is not None
     assert state.inventory_proof is not None
-    new_inv = replace(state.inventory_proof, job_id=job_id)
+    new_inv = replace(state.inventory, job_id=job_id)
     state = replace(
         state,
-        inventory_proof=new_inv,
+        inventory=new_inv,
         verify_jobs=(
             *state.verify_jobs,
             VerifyJob(job_id=job_id, digests=(inv_digest,), status="IN_PROGRESS"),
@@ -322,10 +326,11 @@ class TestInventoryUpgradePrimitives:
         job_id = sp_fake.verify_batch([inv_digest]).job_id
         sp_fake.advance_to_processing(job_id, {inv_digest: ()})
         state = load_ots(sd)
+        assert state.inventory is not None
         assert state.inventory_proof is not None
         state = replace(
             state,
-            inventory_proof=replace(state.inventory_proof, job_id=job_id),
+            inventory=replace(state.inventory, job_id=job_id),
             verify_jobs=(
                 *state.verify_jobs,
                 VerifyJob(job_id=job_id, digests=(inv_digest,), status="IN_PROGRESS"),
@@ -406,8 +411,9 @@ class TestInventoryUpgradePrimitives:
         )
 
         assert state.phase is Phase.INVENTORY_UPGRADED
+        assert state.inventory is not None
         assert state.inventory_proof is not None
-        assert state.inventory_proof.proof.verified
+        assert state.inventory_proof.verified
         assert ots_cache_path(sd, inv_digest).is_file()
 
 
@@ -466,8 +472,9 @@ class TestInventoryUpgradeHappyPath:
 
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_UPGRADED
+        assert state.inventory is not None
         assert state.inventory_proof is not None
-        proof = state.inventory_proof.proof
+        proof = state.inventory_proof
         assert proof.verified is True
         assert proof.block_height == DIGEST_BLOCK_HEIGHT
         assert proof.block_hash == btc_fake.rpc.getblockhash(DIGEST_BLOCK_HEIGHT)
@@ -517,10 +524,11 @@ class TestInventoryUpgradeExpired:
         dead_id = sp_fake.verify_batch([inv_digest]).job_id
         sp_fake.expire_job(dead_id)
         state = load_ots(sd)
+        assert state.inventory is not None
         assert state.inventory_proof is not None
         state = replace(
             state,
-            inventory_proof=replace(state.inventory_proof, job_id=dead_id),
+            inventory=replace(state.inventory, job_id=dead_id),
             verify_jobs=(
                 *state.verify_jobs,
                 VerifyJob(job_id=dead_id, digests=(inv_digest,), status="EXPIRED"),
@@ -618,7 +626,7 @@ class TestInventoryCrashRecovery:
             # (the implication direction of the three-step invariant).
             if (
                 post_crash.inventory_proof is not None
-                and post_crash.inventory_proof.proof.verified is True
+                and post_crash.inventory_proof.verified is True
             ):
                 assert ots_cache_path(sd, inv_digest).is_file()
 
@@ -639,8 +647,9 @@ class TestInventoryCrashRecovery:
         assert r.exit_code == 0, r.output
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_UPGRADED
+        assert state.inventory is not None
         assert state.inventory_proof is not None
-        assert state.inventory_proof.proof.verified is True
+        assert state.inventory_proof.verified is True
         assert ots_cache_path(sd, inv_digest).read_bytes() == ots_bytes
 
 
@@ -671,8 +680,8 @@ def _install_inv_crash_fault(
       - ``before_cache``: the inventory proof's ots-cache entry is never
         written.
       - ``during_ots_save``: saving the verified ``ots.json`` fails and a
-        dead process's temp file is left next to it. The wire format
-        flattens ``inventory_proof.proof`` into ``inventory_proof``.
+        dead process's temp file is left next to it. The proof sits in
+        ``proofs[<inventory digest>]``.
     """
     cache_path = ots_cache_path(sd, inv_digest)
     ots_json_path = sd / "ots.json"
@@ -682,12 +691,9 @@ def _install_inv_crash_fault(
             parsed = json.loads(Path(str(src)).read_bytes())
         except OSError, json.JSONDecodeError:
             return False
-        ip = parsed.get("inventory_proof") or {}
-        return (
-            isinstance(ip, dict)
-            and ip.get("verified") is True
-            and ip.get("digest") == inv_digest
-        )
+        proofs = parsed.get("proofs") or {}
+        ip = proofs.get(inv_digest) if isinstance(proofs, dict) else None
+        return isinstance(ip, dict) and ip.get("verified") is True
 
     real_replace = os.replace
 
@@ -758,8 +764,9 @@ class TestInventoryPhaseAdvance:
         assert r.exit_code == 0, r.output
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_UPGRADED
+        assert state.inventory is not None
         assert state.inventory_proof is not None
-        assert state.inventory_proof.proof.verified is True
+        assert state.inventory_proof.verified is True
 
     def test_no_advance_when_pending_attestation_held(
         self,
@@ -800,8 +807,9 @@ class TestInventoryPhaseAdvance:
         assert r.exit_code == 0, r.output
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_PENDING
+        assert state.inventory is not None
         assert state.inventory_proof is not None
-        assert state.inventory_proof.proof.verified is False
+        assert state.inventory_proof.verified is False
         # Cache bytes still written even on pending attestation.
         assert ots_cache_path(sd, inv_digest).is_file()
 
@@ -845,8 +853,9 @@ class TestInventoryPhaseAdvance:
         assert r.exit_code == 0, r.output
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_PENDING
+        assert state.inventory is not None
         assert state.inventory_proof is not None
-        assert state.inventory_proof.proof.verified is False
+        assert state.inventory_proof.verified is False
 
 
 # =========================================================================== #
@@ -1232,7 +1241,7 @@ class TestInventoryRetryHappyPath:
         stays INVENTORY_PENDING. Single-digest semantics: the inventory
         side has no ``submissions`` list — a re-POST at INVENTORY_PENDING
         IS the "retry" (mirrors content --retry's "re-POST FAILED"
-        intent). InventoryProof is not required to grow a status field."""
+        intent). StagedInventory is not required to grow a status field."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -1265,8 +1274,9 @@ class TestInventoryRetryHappyPath:
 
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_PENDING
+        assert state.inventory is not None
         assert state.inventory_proof is not None
-        assert state.inventory_proof.digest == inv_digest
+        assert state.inventory.digest == inv_digest
 
 
 # =========================================================================== #
@@ -1323,8 +1333,9 @@ class TestRegtestEndToEndInventoryUpgrade:
 
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_UPGRADED
+        assert state.inventory is not None
         assert state.inventory_proof is not None
-        proof = state.inventory_proof.proof
+        proof = state.inventory_proof
         assert proof.verified is True
         assert proof.block_height == attest_height
         assert proof.confirmations_at_verify is not None

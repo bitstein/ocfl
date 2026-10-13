@@ -12,8 +12,8 @@ from typer.testing import CliRunner
 
 from ocfl_cli.main import app
 from ocfl_cli.model.metadata import StagedMetadata, StagedUser
-from ocfl_cli.model.ots_state import InventoryProof, VerifiedProof, VerifyJob
-from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.ots_state import Proof, StagedInventory, VerifyJob
+from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store.ots_state import load_ots, plan_path, save_ots, with_lock
 from ocfl_cli.store.staging import StagingStore
 
@@ -461,12 +461,17 @@ class TestStageMetadata:
             digests=(content_digest,),
             status="IN_PROGRESS",
         )
-        content_proof = VerifiedProof(
+        content_proof = Proof(
+            target=TimestampTarget.CONTENT,
             ots_path=f"ots-cache/{content_digest}.ots",
             verified=True,
             block_height=800_000,
             confirmations_at_verify=3,
             verified_at="2026-04-23T16:30:00+00:00",
+        )
+        inv_proof = Proof(
+            target=TimestampTarget.INVENTORY,
+            verified=phase is Phase.INVENTORY_UPGRADED,
         )
         state = load_ots(staging_dir)
         save_ots(
@@ -476,11 +481,10 @@ class TestStageMetadata:
                 phase=phase,
                 pending_digests=(content_digest,),
                 verify_jobs=(content_job, inventory_job),
-                content_proofs={content_digest: content_proof},
-                inventory_proof=InventoryProof(
+                proofs={content_digest: content_proof, inventory_digest: inv_proof},
+                inventory=StagedInventory(
                     version="v1",
                     digest=inventory_digest,
-                    proof=VerifiedProof(verified=phase is Phase.INVENTORY_UPGRADED),
                     job_id="inventory-job",
                 ),
             ),
@@ -500,11 +504,16 @@ class TestStageMetadata:
         assert result.exit_code == 0, result.output
         updated_state = load_ots(staging_dir)
         assert updated_state.phase is Phase.CONTENT_UPGRADED
+        assert updated_state.inventory is None
         assert updated_state.inventory_proof is None
-        assert updated_state.verify_jobs == (content_job,)
-        assert updated_state.content_proofs == {content_digest: content_proof}
+        # ADR-0004: moving back keeps every proof, job and plan.json.
+        assert updated_state.verify_jobs == (content_job, inventory_job)
+        assert updated_state.proofs == {
+            content_digest: content_proof,
+            inventory_digest: inv_proof,
+        }
         assert updated_state.pending_digests == (content_digest,)
-        assert not plan_path(staging_dir).exists()
+        assert plan_path(staging_dir).exists()
 
     def test_metadata_edit_invalidates_ots_state_before_metadata_write(
         self,
@@ -542,12 +551,16 @@ class TestStageMetadata:
             replace(
                 state,
                 phase=Phase.INVENTORY_UPGRADED,
-                inventory_proof=InventoryProof(
+                inventory=StagedInventory(
                     version="v1",
                     digest=inventory_digest,
-                    proof=VerifiedProof(verified=True),
                     job_id="inventory-job",
                 ),
+                proofs={
+                    inventory_digest: Proof(
+                        target=TimestampTarget.INVENTORY, verified=True
+                    )
+                },
                 verify_jobs=(
                     VerifyJob(
                         job_id="inventory-job",
@@ -572,7 +585,6 @@ class TestStageMetadata:
             if save_object_id == "obj:ots":
                 observed_safe_order = True
                 assert load_ots(staging_dir).phase is Phase.CONTENT_UPGRADED
-                assert not plan_path(staging_dir).exists()
                 raise RuntimeError("injected metadata write failure")
             original_save_metadata(self, save_root_path, save_object_id, metadata)
 
@@ -593,94 +605,6 @@ class TestStageMetadata:
         assert _metadata(storage_root, staging, "obj:ots").message == "Initial"
         updated_state = load_ots(staging_dir)
         assert updated_state.phase is Phase.CONTENT_UPGRADED
-        assert updated_state.inventory_proof is None
-        assert updated_state.verify_jobs == ()
-        assert not plan_path(staging_dir).exists()
-
-    def test_metadata_invalidation_saves_ots_state_before_plan_delete(
-        self,
-        runner: CliRunner,
-        storage_root: Path,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        _write_ots_config(tmp_path, monkeypatch)
-        staging = tmp_path / "staging"
-        assert (
-            _invoke(
-                runner,
-                storage_root,
-                staging,
-                "new",
-                "obj:ots",
-                "--ots",
-                "-m",
-                "Initial",
-                "--name",
-                "Alice",
-                "--address",
-                "mailto:alice@example.org",
-            ).exit_code
-            == 0
-        )
-        store = StagingStore(staging)
-        root_path = str(storage_root.resolve())
-        staging_dir = store.staging_path(root_path, "obj:ots")
-        plan = plan_path(staging_dir)
-        inventory_digest = "b" * 64
-        state = load_ots(staging_dir)
-        save_ots(
-            staging_dir,
-            replace(
-                state,
-                phase=Phase.INVENTORY_UPGRADED,
-                inventory_proof=InventoryProof(
-                    version="v1",
-                    digest=inventory_digest,
-                    proof=VerifiedProof(verified=True),
-                    job_id="inventory-job",
-                ),
-                verify_jobs=(
-                    VerifyJob(
-                        job_id="inventory-job",
-                        digests=(inventory_digest,),
-                        status="IN_PROGRESS",
-                    ),
-                ),
-            ),
-        )
-        plan.write_bytes(b'{"stale":true}')
-
-        original_unlink = Path.unlink
-        observed_regressed_before_unlink = False
-
-        def fail_plan_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
-            nonlocal observed_regressed_before_unlink
-            if self == plan:
-                observed_regressed_before_unlink = True
-                state_at_unlink = load_ots(staging_dir)
-                assert state_at_unlink.phase is Phase.CONTENT_UPGRADED
-                assert state_at_unlink.inventory_proof is None
-                raise RuntimeError("injected plan delete failure")
-            original_unlink(self, *args, **kwargs)
-
-        monkeypatch.setattr(Path, "unlink", fail_plan_unlink)
-
-        result = _invoke(
-            runner,
-            storage_root,
-            staging,
-            "metadata",
-            "obj:ots",
-            "--message",
-            "Updated",
-        )
-
-        assert result.exit_code != 0
-        assert observed_regressed_before_unlink
-        assert _metadata(storage_root, staging, "obj:ots").message == "Initial"
-        assert plan.exists()
-        updated_state = load_ots(staging_dir)
-        assert updated_state.phase is Phase.CONTENT_UPGRADED
-        assert updated_state.inventory_proof is None
-        assert updated_state.verify_jobs == ()
+        assert updated_state.inventory is None
+        assert [j.job_id for j in updated_state.verify_jobs] == ["inventory-job"]
+        assert plan_path(staging_dir).exists()

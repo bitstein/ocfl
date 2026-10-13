@@ -10,7 +10,9 @@ from ocfl_cli.errors import (
     StagingError,
 )
 from ocfl_cli.model import batch as batch_model
-from ocfl_cli.model.ots_state import OtsState, VerifiedProof
+from ocfl_cli.model.ots_state import (  # noqa: TC001 - get_type_hints reads it.
+    OtsState,
+)
 from ocfl_cli.store import batch as batch_state
 from ocfl_cli.store.ots_state import (
     has_ots,
@@ -286,7 +288,7 @@ def submitted_count_from_object(
                 if digest in wanted and record_id is not None:
                     submitted.add(digest)
         return len(submitted)
-    proof = state.inventory_proof
+    proof = state.inventory
     if (
         proof is not None
         and proof.batch_id == batch.batch_id
@@ -314,7 +316,7 @@ def object_record_ids_by_digest(
                 if digest in wanted:
                     record_ids[digest] = record_id
         return record_ids
-    proof = state.inventory_proof
+    proof = state.inventory
     if (
         proof is not None
         and proof.batch_id == batch.batch_id
@@ -401,18 +403,7 @@ def verified_count_for_row(
 ) -> int:
     if state is None:
         return 0
-    wanted = set(row.digests)
-    if batch.target == "content":
-        return sum(
-            1
-            for digest in wanted
-            if state.content_proofs.get(digest, None) is not None
-            and state.content_proofs[digest].verified
-        )
-    proof = state.inventory_proof
-    if proof is None or proof.digest not in wanted:
-        return 0
-    return int(proof.proof.verified)
+    return sum(1 for digest in set(row.digests) if state.verified(digest))
 
 
 def verbose_digest_rows(
@@ -424,16 +415,11 @@ def verbose_digest_rows(
     batch_ids = batch_record_ids_by_digest(batch, row)
     submit_statuses = submit_status_by_digest(batch, row)
     verify_statuses = verify_status_by_digest(batch, row)
-    verified: set[str] = set()
-    if state is not None:
-        if batch.target == "content":
-            verified = {
-                digest
-                for digest in row.digests
-                if state.content_proofs.get(digest, VerifiedProof()).verified
-            }
-        elif state.inventory_proof is not None and state.inventory_proof.proof.verified:
-            verified = {state.inventory_proof.digest}
+    verified = (
+        set()
+        if state is None
+        else {digest for digest in row.digests if state.verified(digest)}
+    )
     rows: list[BatchVerboseDigestOutput] = []
     for digest in row.digests:
         rows.append(

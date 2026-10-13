@@ -14,29 +14,34 @@ from ocfl_cli.errors import (
 from ocfl_cli.model.ots_state import (
     CalendarAttestation,
     OtsState,
-    VerifiedProof,
+    Proof,
     VerifyJob,
 )
+from ocfl_cli.store.ingest import ingest_file
 from ocfl_cli.store.ots_state import (
+    ots_cache_path,
     save_ots,
 )
 from ocfl_lib import (
     VersionInfo,
+    ots,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ocfl_cli.model.phase import Phase
+    from ocfl_cli.model.content import ContentMap
+    from ocfl_cli.model.phase import Phase, TimestampTarget
     from ocfl_cli.model.simpleproof import (
         CalendarAttestation as WireCalendarAttestation,
     )
     from ocfl_cli.model.simpleproof import VerifyBatchAck
+    from ocfl_cli.ots.bitcoin import VerifiedAttestation
     from ocfl_cli.ports import (
         Runtime,
         SimpleProofClient,
     )
-    from ocfl_lib import Inventory
+    from ocfl_lib import DigestAlgorithm, Inventory, StorageRoot
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +69,114 @@ def log_phase(prev: Phase, new: Phase) -> None:
         logger.info("phase: %s -> %s", prev.value, new.value)
 
 
-def non_ots_digests(state: StateMap) -> set[str]:
-    """Digests with at least one logical path not ending in `.ots`."""
-    return {
-        d for d, paths in state.items() if any(not p.endswith(".ots") for p in paths)
-    }
+def ordinary_paths(state: StateMap) -> dict[str, str]:
+    """`{ordinary path: digest}` of a state; the rest are content proofs.
+
+    `X.ots` is a content proof only when `X` is in the same state
+    (`ocfl_lib.ots.split_state`); a standalone `x.ots` is ordinary.
+    """
+    digest_of = {p: d for d, paths in state.items() for p in paths}
+    ordinary, _proofs = ots.split_state(digest_of)
+    return {p: digest_of[p] for p in sorted(ordinary)}
+
+
+def ordinary_digests(state: StateMap) -> set[str]:
+    """Digests with at least one ordinary logical path."""
+    return set(ordinary_paths(state).values())
+
+
+type CarriedProofs = dict[str, str]
+
+
+def carried_proofs(sr: StorageRoot, object_id: str) -> CarriedProofs:
+    """`{content digest: proof digest}` of the content proofs the object holds.
+
+    Read from every covered version, so a file that comes back in a later
+    version keeps its committed proof: those bytes are already in the
+    manifest, final and checked by the commit that added them. A plain object
+    proves nothing yet: its first covered version needs a proof for every
+    file (`timestampFrom`).
+    """
+    obj = sr.get_object(object_id)
+    if not obj.exists:
+        return {}
+    cfg = ots.read_config(obj.fs, obj.path)
+    if cfg is None or not cfg.timestamp_content:
+        return {}
+    inv = obj.inventory.inventory
+    carried: CarriedProofs = {}
+    for v in ots.covered_versions(cfg, inv.versions):
+        digest_of = {p: d for d, ps in inv.versions[v].state.items() for p in ps}
+        _ordinary, proofs = ots.split_state(digest_of)
+        for proof_path, companion in proofs.items():
+            carried.setdefault(digest_of[companion], digest_of[proof_path])
+    return carried
+
+
+def required_content(state: StateMap) -> dict[str, list[str]]:
+    """`{digest: ordinary paths}`: every ordinary path needs its companion `P.ots`."""
+    need: dict[str, list[str]] = {}
+    for p, d in ordinary_paths(state).items():
+        need.setdefault(d, []).append(p)
+    return need
+
+
+def proof_cache_ready(state: OtsState, staging_dir: Path, digest: str) -> bool:
+    """Whether `digest` has a verified proof with its bytes in `ots-cache/`."""
+    return state.verified(digest) and ots_cache_path(staging_dir, digest).is_file()
+
+
+def proof_ready(
+    state: OtsState, staging_dir: Path, carried: CarriedProofs, digest: str
+) -> bool:
+    """Whether `digest` has a final proof: the object's or a verified, cached one."""
+    return digest in carried or proof_cache_ready(state, staging_dir, digest)
+
+
+def place_companions(
+    state: StateMap,
+    need: dict[str, list[str]],
+    ots_state: OtsState,
+    carried: CarriedProofs,
+    *,
+    staging_dir: Path,
+    content_map: ContentMap,
+    alg: DigestAlgorithm,
+) -> bool:
+    """Give every path of a proved digest its companion `P.ots`; True if any changed.
+
+    The companion is the object's committed proof of the digest, or else the
+    cached verified one. A path keeps the proof of its digest wherever it
+    moves, so a renamed or re-added file needs no new submission. Idempotent:
+    it runs on every pass, so a crash after the proof was recorded and before
+    its companions were placed heals on the next one.
+    """
+    changed = False
+    for d, paths in need.items():
+        if d in carried:
+            ots_digest = carried[d]
+        elif proof_cache_ready(ots_state, staging_dir, d):
+            ots_digest = ingest_file(
+                ots_cache_path(staging_dir, d),
+                f"{paths[0]}{ots.PROOF_SUFFIX}",
+                staging_dir=staging_dir,
+                content_map=content_map,
+                digest_alg=alg,
+            ).digest
+        else:
+            continue
+        for p in paths:
+            companion = f"{p}{ots.PROOF_SUFFIX}"
+            if companion in state.get(ots_digest, ()):
+                continue
+            for other in list(state):
+                if companion in state[other]:
+                    state[other].remove(companion)
+                    if not state[other]:
+                        del state[other]
+            state.setdefault(ots_digest, []).append(companion)
+            changed = True
+    return changed
 
 
 def is_failed_verify_job(status: str) -> bool:
@@ -97,9 +205,7 @@ def verify_job_from_ack(
 
 def unverified_digests(state: OtsState, digests: tuple[str, ...]) -> list[str]:
     """Subset of *digests* that do not yet have a verified=True proof."""
-    return [
-        d for d in digests if not state.content_proofs.get(d, VerifiedProof()).verified
-    ]
+    return [d for d in digests if not state.verified(d)]
 
 
 def require_verified_content_before_inventory(state: OtsState) -> None:
@@ -260,7 +366,7 @@ def compute_job_progress(
 def compute_inventory_job_progress(
     state: OtsState, *, runtime: Runtime
 ) -> JobProgress | None:
-    inv = state.inventory_proof
+    inv = state.inventory
     if inv is None:
         return None
     progress = {job.job_id: job for job in compute_job_progress(state, runtime=runtime)}
@@ -270,7 +376,42 @@ def compute_inventory_job_progress(
     return None
 
 
-def record_proof(state: OtsState, digest: str, proof: VerifiedProof) -> OtsState:
-    proofs = dict(state.content_proofs)
+def record_proof(state: OtsState, digest: str, proof: Proof) -> OtsState:
+    proofs = dict(state.proofs)
     proofs[digest] = proof
-    return replace(state, content_proofs=proofs)
+    return replace(state, proofs=proofs)
+
+
+def request_proofs(
+    state: OtsState, digests: tuple[str, ...], target: TimestampTarget
+) -> OtsState:
+    """Record a requested (unverified) proof for each digest that has none."""
+    missing = [d for d in digests if d not in state.proofs]
+    if not missing:
+        return state
+    proofs = dict(state.proofs)
+    for d in missing:
+        proofs[d] = Proof(target=target)
+    return replace(state, proofs=proofs)
+
+
+def unverify(proof: Proof) -> Proof:
+    """`proof` reset to requested: re-verified or re-downloaded on the next pass."""
+    return Proof(target=proof.target, ots_path=proof.ots_path)
+
+
+def verified_proof(
+    target: TimestampTarget,
+    ots_path: str | None,
+    result: VerifiedAttestation,
+    verified_at: str | None,
+) -> Proof:
+    return Proof(
+        target=target,
+        ots_path=ots_path,
+        verified=True,
+        block_height=result.block_height,
+        block_hash=result.block_hash,
+        confirmations_at_verify=result.confirmations,
+        verified_at=verified_at,
+    )

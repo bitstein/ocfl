@@ -43,7 +43,7 @@ What a timestamp proves: either a version's content files or its inventory.
 _Avoid_: Timestamp kind, mode
 
 **Proof**:
-An OpenTimestamps `.ots` file for one digest. **Final** when it carries a Bitcoin attestation; **pending** when it only has calendar commitments.
+An OpenTimestamps `.ots` file for one digest. **Final** when it carries a Bitcoin attestation; **pending** when it only has calendar commitments. A Staging Area keeps every proof it requested or received, keyed by digest, until commit or discard (ADR-0004).
 _Avoid_: Timestamp file, receipt
 
 **Attestation**:

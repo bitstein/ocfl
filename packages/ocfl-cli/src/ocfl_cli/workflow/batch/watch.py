@@ -10,7 +10,6 @@ from ocfl_cli.errors import (
     AttestationMismatchError,
     ReorgDetectedError,
 )
-from ocfl_cli.model.ots_state import OtsState, VerifiedProof
 from ocfl_cli.model.phase import Phase
 from ocfl_cli.ots.bitcoin import (
     PendingVerification,
@@ -29,9 +28,11 @@ from ocfl_cli.workflow.batch.reasons import (
 from ocfl_cli.workflow.batch.upgrade import (
     save_batch_upgrade,
 )
+from ocfl_cli.workflow.common import unverify, verified_proof
 
 if TYPE_CHECKING:
     from ocfl_cli.model import batch as batch_model
+    from ocfl_cli.model.ots_state import OtsState
     from ocfl_cli.ports import Runtime
     from ocfl_cli.store.staging import StagingStore
 
@@ -52,7 +53,7 @@ def batch_watch_successful(batch: batch_model.BatchFile) -> bool:
     )
 
 
-def reverify_batch_content_row(
+def reverify_batch_row(
     *,
     btc,
     staging_dir: Path,
@@ -60,7 +61,8 @@ def reverify_batch_content_row(
     row: batch_model.BatchObject,
     min_confirmations: int,
 ) -> tuple[OtsState, set[str], set[str]]:
-    proofs = dict(state.content_proofs)
+    """Re-verify the row's verified proofs; `(state, reset, reorged)` digests."""
+    proofs = dict(state.proofs)
     reset: set[str] = set()
     reorg: set[str] = set()
     for digest in row.digests:
@@ -78,96 +80,24 @@ def reverify_batch_content_row(
                 min_confirmations=min_confirmations,
             )
         except AttestationMismatchError:
-            proofs[digest] = VerifiedProof(ots_path=proof.ots_path, verified=False)
+            proofs[digest] = unverify(proof)
             reset.add(digest)
             continue
         except ReorgDetectedError:
-            proofs[digest] = VerifiedProof(ots_path=proof.ots_path, verified=False)
+            proofs[digest] = unverify(proof)
             reorg.add(digest)
             continue
         match result:
-            case VerifiedAttestation(block_height=h, confirmations=c):
-                proofs[digest] = VerifiedProof(
-                    ots_path=proof.ots_path,
-                    verified=True,
-                    block_height=h,
-                    block_hash=result.block_hash,
-                    confirmations_at_verify=c,
-                    verified_at=proof.verified_at,
+            case VerifiedAttestation():
+                proofs[digest] = verified_proof(
+                    proof.target, proof.ots_path, result, proof.verified_at
                 )
             case PendingVerification():
-                proofs[digest] = VerifiedProof(ots_path=proof.ots_path, verified=False)
+                proofs[digest] = unverify(proof)
                 reset.add(digest)
-    if proofs == state.content_proofs:
+    if proofs == state.proofs:
         return state, reset, reorg
-    return msgspec.structs.replace(state, content_proofs=proofs), reset, reorg
-
-
-def reverify_batch_inventory_row(
-    *,
-    btc,
-    staging_dir: Path,
-    state: OtsState,
-    row: batch_model.BatchObject,
-    min_confirmations: int,
-) -> tuple[OtsState, set[str], set[str]]:
-    inv = state.inventory_proof
-    if inv is None or inv.digest not in row.digests or not inv.proof.verified:
-        return state, set(), set()
-    cache = ots_cache_path(staging_dir, inv.digest)
-    if not cache.is_file():
-        return state, set(), set()
-    try:
-        result = verify_attestation(
-            rpc=btc,
-            ots_bytes=cache.read_bytes(),
-            expected_digest=bytes.fromhex(inv.digest),
-            min_confirmations=min_confirmations,
-        )
-    except AttestationMismatchError:
-        proof = VerifiedProof(ots_path=inv.proof.ots_path, verified=False)
-        return (
-            msgspec.structs.replace(
-                state, inventory_proof=msgspec.structs.replace(inv, proof=proof)
-            ),
-            {inv.digest},
-            set(),
-        )
-    except ReorgDetectedError:
-        proof = VerifiedProof(ots_path=inv.proof.ots_path, verified=False)
-        return (
-            msgspec.structs.replace(
-                state, inventory_proof=msgspec.structs.replace(inv, proof=proof)
-            ),
-            set(),
-            {inv.digest},
-        )
-    match result:
-        case VerifiedAttestation(block_height=h, confirmations=c):
-            proof = VerifiedProof(
-                ots_path=inv.proof.ots_path,
-                verified=True,
-                block_height=h,
-                block_hash=result.block_hash,
-                confirmations_at_verify=c,
-                verified_at=inv.proof.verified_at,
-            )
-            return (
-                msgspec.structs.replace(
-                    state, inventory_proof=msgspec.structs.replace(inv, proof=proof)
-                ),
-                set(),
-                set(),
-            )
-        case PendingVerification():
-            proof = VerifiedProof(ots_path=inv.proof.ots_path, verified=False)
-            return (
-                msgspec.structs.replace(
-                    state, inventory_proof=msgspec.structs.replace(inv, proof=proof)
-                ),
-                {inv.digest},
-                set(),
-            )
+    return msgspec.structs.replace(state, proofs=proofs), reset, reorg
 
 
 def reset_batch_row_phase(target: batch_model.BatchTarget, state: OtsState) -> OtsState:
@@ -197,22 +127,13 @@ def reverify_batch_watch_rows(
         staging_dir = store.staging_path(batch.root_path, row.object_id)
         with with_lock(staging_dir, timeout=runtime.lock_timeout):
             state = load_ots(staging_dir)
-            if target == "content":
-                state, row_reset, row_reorg = reverify_batch_content_row(
-                    btc=btc,
-                    staging_dir=staging_dir,
-                    state=state,
-                    row=row,
-                    min_confirmations=cfg.bitcoin.confirmations,
-                )
-            else:
-                state, row_reset, row_reorg = reverify_batch_inventory_row(
-                    btc=btc,
-                    staging_dir=staging_dir,
-                    state=state,
-                    row=row,
-                    min_confirmations=cfg.bitcoin.confirmations,
-                )
+            state, row_reset, row_reorg = reverify_batch_row(
+                btc=btc,
+                staging_dir=staging_dir,
+                state=state,
+                row=row,
+                min_confirmations=cfg.bitcoin.confirmations,
+            )
             if row_reorg:
                 state = reset_batch_row_phase(target, state)
                 row = msgspec.structs.replace(

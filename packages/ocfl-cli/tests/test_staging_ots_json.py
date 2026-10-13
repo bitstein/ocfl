@@ -2,7 +2,8 @@
 
 Pins:
 - atomic write-temp + fsync + os.replace
-- schema_version=1 round-trip; >current => StagingError; migrations chain
+- schema_version=2 round-trip; v1 refused (no migration); >current =>
+  StagingError; migrations chain
 - bare-hex digest convention (no `sha256:` prefix on disk)
 - crash-safe submit intent durability ("submitting" entry persisted before POST)
 - helpers: ots_cache_path, plan_path, has_ots, remove_ots
@@ -20,13 +21,13 @@ import pytest
 
 from ocfl_cli.errors import StagingError
 from ocfl_cli.model.ots_state import (
-    InventoryProof,
     OtsState,
+    Proof,
+    StagedInventory,
     Submission,
-    VerifiedProof,
     VerifyJob,
 )
-from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.model.simpleproof import JobStatus
 from ocfl_cli.ports import SimpleProofClient
 from ocfl_cli.store import ots_state as st_mod
@@ -51,14 +52,14 @@ def _bare_hex(prefix: str) -> str:
 @pytest.fixture
 def empty_state() -> OtsState:
     return OtsState(
-        schema_version=1,
+        schema_version=2,
         phase=Phase.DRAFTING,
         category_id=641,
         pending_digests=(),
         submissions=(),
         verify_jobs=(),
-        content_proofs={},
-        inventory_proof=None,
+        proofs={},
+        inventory=None,
     )
 
 
@@ -67,7 +68,7 @@ def populated_state() -> OtsState:
     d1 = _bare_hex("a")
     d2 = _bare_hex("b")
     return OtsState(
-        schema_version=1,
+        schema_version=2,
         phase=Phase.CONTENT_PENDING,
         category_id=641,
         pending_digests=(d1, d2),
@@ -76,13 +77,15 @@ def populated_state() -> OtsState:
                 submitted_at="2026-04-23T16:30:00+00:00",
                 digests=(d1, d2),
                 status="submitted",
+                target=TimestampTarget.CONTENT,
                 job_id="job-1",
                 attempts=1,
             ),
         ),
         verify_jobs=(VerifyJob(job_id="vj-1", digests=(d1,), status="IN_PROGRESS"),),
-        content_proofs={
-            d1: VerifiedProof(
+        proofs={
+            d1: Proof(
+                target=TimestampTarget.CONTENT,
                 ots_path=f"ots-cache/{d1}.ots",
                 verified=True,
                 block_height=923451,
@@ -90,7 +93,8 @@ def populated_state() -> OtsState:
                 confirmations_at_verify=3,
                 verified_at="2026-04-23T16:45:12+00:00",
             ),
-            d2: VerifiedProof(
+            d2: Proof(
+                target=TimestampTarget.CONTENT,
                 ots_path=None,
                 verified=False,
                 block_height=None,
@@ -98,7 +102,7 @@ def populated_state() -> OtsState:
                 verified_at=None,
             ),
         },
-        inventory_proof=None,
+        inventory=None,
     )
 
 
@@ -109,14 +113,14 @@ class TestRoundTrip:
         assert loaded == empty_state
         raw = json.loads((tmp_path / "ots.json").read_bytes())
         assert raw == {
-            "schema_version": 1,
+            "schema_version": 2,
             "phase": "drafting",
             "category_id": 641,
             "pending_digests": [],
             "submissions": [],
             "verify_jobs": [],
-            "content_proofs": {},
-            "inventory_proof": None,
+            "proofs": {},
+            "inventory": None,
         }
 
     def test_populated_round_trip(self, tmp_path: Path, populated_state: OtsState):
@@ -133,7 +137,8 @@ class TestRoundTrip:
 
     def test_inventory_proof_round_trip(self, tmp_path: Path):
         inv_d = _bare_hex("c")
-        proof = VerifiedProof(
+        proof = Proof(
+            target=TimestampTarget.INVENTORY,
             ots_path=f"ots-cache/{inv_d}.ots",
             verified=True,
             block_height=923500,
@@ -142,33 +147,29 @@ class TestRoundTrip:
             verified_at="2026-04-23T17:02:08+00:00",
         )
         state = OtsState(
-            schema_version=1,
+            schema_version=2,
             phase=Phase.INVENTORY_UPGRADED,
             category_id=641,
             pending_digests=(),
             submissions=(),
             verify_jobs=(),
-            content_proofs={},
-            inventory_proof=InventoryProof(
-                version="v3",
-                digest=inv_d,
-                proof=proof,
-                job_id="job-inv-1",
-            ),
+            proofs={inv_d: proof},
+            inventory=StagedInventory(version="v3", digest=inv_d, job_id="job-inv-1"),
         )
         save_ots(tmp_path, state)
         loaded = load_ots(tmp_path)
         assert loaded == state
-        assert loaded.inventory_proof is not None
-        assert loaded.inventory_proof.digest == inv_d
-        assert loaded.inventory_proof.proof.verified is True
-        assert loaded.inventory_proof.proof.block_height == 923500
-        assert loaded.inventory_proof.proof.block_hash == "11" * 32
+        assert loaded.inventory is not None
+        assert loaded.inventory.digest == inv_d
+        assert loaded.inventory_proof == proof
         raw = json.loads((tmp_path / "ots.json").read_bytes())
-        assert raw["inventory_proof"] == {
+        assert raw["inventory"] == {
             "version": "v3",
             "digest": inv_d,
             "job_id": "job-inv-1",
+        }
+        assert raw["proofs"][inv_d] == {
+            "target": "inventory",
             "ots_path": f"ots-cache/{inv_d}.ots",
             "verified": True,
             "block_height": 923500,
@@ -176,7 +177,6 @@ class TestRoundTrip:
             "confirmations_at_verify": 3,
             "verified_at": "2026-04-23T17:02:08+00:00",
         }
-        assert "proof" not in raw["inventory_proof"]
 
 
 class TestTypedDecoding:
@@ -185,14 +185,15 @@ class TestTypedDecoding:
         (tmp_path / "ots.json").write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "phase": "inventory-pending",
                     "category_id": 641,
                     "pending_digests": [],
                     "submissions": [],
                     "verify_jobs": [],
-                    "content_proofs": {
+                    "proofs": {
                         digest: {
+                            "target": "content",
                             "ots_path": f"ots-cache/{digest}.ots",
                             "verified": True,
                             "block_height": 923451,
@@ -201,11 +202,10 @@ class TestTypedDecoding:
                             "future_proof_field": "ignored",
                         }
                     },
-                    "inventory_proof": {
+                    "inventory": {
                         "version": "v3",
                         "digest": digest,
                         "job_id": "job-inv-1",
-                        "verified": False,
                         "future_inventory_field": "ignored",
                     },
                     "future_top_level_field": "ignored",
@@ -215,9 +215,9 @@ class TestTypedDecoding:
 
         state = load_ots(tmp_path)
 
-        assert state.content_proofs[digest].verified is True
-        assert state.inventory_proof is not None
-        assert state.inventory_proof.digest == digest
+        assert state.proofs[digest].verified is True
+        assert state.inventory is not None
+        assert state.inventory.digest == digest
 
     def test_load_warns_on_unknown_verify_job_status(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -226,7 +226,7 @@ class TestTypedDecoding:
         (tmp_path / "ots.json").write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "phase": "content-pending",
                     "category_id": 641,
                     "pending_digests": [digest],
@@ -238,8 +238,8 @@ class TestTypedDecoding:
                             "status": "QUEUED",
                         }
                     ],
-                    "content_proofs": {},
-                    "inventory_proof": None,
+                    "proofs": {},
+                    "inventory": None,
                 }
             )
         )
@@ -258,7 +258,7 @@ class TestTypedDecoding:
     def test_expired_verify_job_status_is_canonical(self, tmp_path: Path):
         digest = _bare_hex("a")
         state = OtsState(
-            schema_version=1,
+            schema_version=2,
             phase=Phase.CONTENT_PENDING,
             category_id=641,
             pending_digests=(digest,),
@@ -277,7 +277,7 @@ class TestTypedDecoding:
     ):
         digest = _bare_hex("a")
         state = OtsState(
-            schema_version=1,
+            schema_version=2,
             phase=Phase.CONTENT_PENDING,
             category_id=641,
             pending_digests=(digest,),
@@ -325,7 +325,7 @@ class TestTypedDecoding:
         (tmp_path / "ots.json").write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "phase": "content-pending",
                     "category_id": 641,
                     "pending_digests": [],
@@ -334,13 +334,14 @@ class TestTypedDecoding:
                             "submitted_at": "2026-04-23T16:30:00+00:00",
                             "digests": "abc",
                             "status": "submitted",
+                            "target": "content",
                             "job_id": "job-1",
                             "attempts": 1,
                         }
                     ],
                     "verify_jobs": [],
-                    "content_proofs": {},
-                    "inventory_proof": None,
+                    "proofs": {},
+                    "inventory": None,
                 }
             )
         )
@@ -353,14 +354,15 @@ class TestTypedDecoding:
         (tmp_path / "ots.json").write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "phase": "content-pending",
                     "category_id": 641,
                     "pending_digests": [],
                     "submissions": [],
                     "verify_jobs": [],
-                    "content_proofs": {
+                    "proofs": {
                         digest: {
+                            "target": "content",
                             "ots_path": f"ots-cache/{digest}.ots",
                             "verified": "yes",
                             "block_height": 923451,
@@ -368,41 +370,30 @@ class TestTypedDecoding:
                             "verified_at": "2026-04-23T16:45:12+00:00",
                         }
                     },
-                    "inventory_proof": None,
+                    "inventory": None,
                 }
             )
         )
 
-        with pytest.raises(StagingError, match="content_proofs"):
+        with pytest.raises(StagingError, match="proofs"):
             load_ots(tmp_path)
 
-    def test_rejects_string_inventory_verified_flag(self, tmp_path: Path):
+    def test_rejects_unknown_proof_target(self, tmp_path: Path):
         digest = _bare_hex("c")
         (tmp_path / "ots.json").write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "phase": "inventory-upgraded",
                     "category_id": 641,
-                    "pending_digests": [],
-                    "submissions": [],
-                    "verify_jobs": [],
-                    "content_proofs": {},
-                    "inventory_proof": {
-                        "version": "v3",
-                        "digest": digest,
-                        "job_id": "job-inv-1",
-                        "ots_path": f"ots-cache/{digest}.ots",
-                        "verified": "true",
-                        "block_height": 923500,
-                        "confirmations_at_verify": 3,
-                        "verified_at": "2026-04-23T17:02:08+00:00",
+                    "proofs": {
+                        digest: {"target": "manifest", "verified": True},
                     },
                 }
             )
         )
 
-        with pytest.raises(StagingError, match="inventory_proof"):
+        with pytest.raises(StagingError, match="proofs"):
             load_ots(tmp_path)
 
 
@@ -417,12 +408,10 @@ class TestBareHexConvention:
             assert d == d.lower()
             assert len(d) == 64
 
-    def test_content_proofs_keys_bare_hex(
-        self, tmp_path: Path, populated_state: OtsState
-    ):
+    def test_proofs_keys_bare_hex(self, tmp_path: Path, populated_state: OtsState):
         save_ots(tmp_path, populated_state)
         raw = json.loads((tmp_path / "ots.json").read_bytes())
-        for k in raw["content_proofs"]:
+        for k in raw["proofs"]:
             assert ":" not in k
             assert k == k.lower()
             assert len(k) == 64
@@ -473,78 +462,10 @@ class TestAtomicWrites:
 
 class TestSchemaMigration:
     def test_constants(self):
-        assert st_mod.OTS_STATE_VERSION == 1
+        assert st_mod.OTS_STATE_VERSION == 2
         assert st_mod.MIGRATIONS == {}
 
-    def test_v1_loads_cleanly(self, tmp_path: Path):
-        (tmp_path / "ots.json").write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "phase": "drafting",
-                    "category_id": 641,
-                    "pending_digests": [],
-                    "submissions": [],
-                    "verify_jobs": [],
-                    "content_proofs": {},
-                    "inventory_proof": None,
-                }
-            )
-        )
-        state = load_ots(tmp_path)
-        assert state.schema_version == 1
-        assert state.phase is Phase.DRAFTING
-
-    def test_v1_submission_and_inventory_batch_fields_default_absent(
-        self, tmp_path: Path
-    ):
-        digest = _bare_hex("a")
-        (tmp_path / "ots.json").write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "phase": "inventory-pending",
-                    "category_id": 641,
-                    "pending_digests": [digest],
-                    "submissions": [
-                        {
-                            "submitted_at": "2026-04-23T16:30:00+00:00",
-                            "digests": [digest],
-                            "status": "submitted",
-                            "job_id": "job-1",
-                            "attempts": 1,
-                        }
-                    ],
-                    "verify_jobs": [],
-                    "content_proofs": {},
-                    "inventory_proof": {
-                        "version": "v3",
-                        "digest": digest,
-                        "job_id": "job-inv-1",
-                        "verified": False,
-                    },
-                }
-            )
-        )
-
-        state = load_ots(tmp_path)
-
-        assert state.schema_version == 1
-        assert state.submissions[0].batch_id is None
-        assert state.submissions[0].record_ids is None
-        assert state.inventory_proof is not None
-        assert state.inventory_proof.batch_id is None
-        assert state.inventory_proof.record_id is None
-
-        save_ots(tmp_path, state)
-        raw = json.loads((tmp_path / "ots.json").read_bytes())
-        assert "batch_id" not in raw["submissions"][0]
-        assert "record_ids" not in raw["submissions"][0]
-        assert "batch_id" not in raw["inventory_proof"]
-        assert "record_id" not in raw["inventory_proof"]
-        assert load_ots(tmp_path) == state
-
-    def test_newer_version_rejected(self, tmp_path: Path):
+    def test_v2_loads_cleanly(self, tmp_path: Path):
         (tmp_path / "ots.json").write_text(
             json.dumps(
                 {
@@ -554,8 +475,92 @@ class TestSchemaMigration:
                     "pending_digests": [],
                     "submissions": [],
                     "verify_jobs": [],
+                    "proofs": {},
+                    "inventory": None,
+                }
+            )
+        )
+        state = load_ots(tmp_path)
+        assert state.schema_version == 2
+        assert state.phase is Phase.DRAFTING
+
+    def test_v1_is_refused_without_migration(self, tmp_path: Path):
+        (tmp_path / "ots.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "phase": "drafting",
+                    "category_id": 641,
+                    "pending_digests": [],
+                    "submissions": [],
+                    "verify_jobs": [],
                     "content_proofs": {},
                     "inventory_proof": None,
+                }
+            )
+        )
+        with pytest.raises(StagingError, match="no migration registered"):
+            load_ots(tmp_path)
+
+    def test_submission_and_inventory_batch_fields_default_absent(self, tmp_path: Path):
+        digest = _bare_hex("a")
+        (tmp_path / "ots.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "phase": "inventory-pending",
+                    "category_id": 641,
+                    "pending_digests": [digest],
+                    "submissions": [
+                        {
+                            "submitted_at": "2026-04-23T16:30:00+00:00",
+                            "digests": [digest],
+                            "status": "submitted",
+                            "target": "content",
+                            "job_id": "job-1",
+                            "attempts": 1,
+                        }
+                    ],
+                    "verify_jobs": [],
+                    "proofs": {},
+                    "inventory": {
+                        "version": "v3",
+                        "digest": digest,
+                        "job_id": "job-inv-1",
+                    },
+                }
+            )
+        )
+
+        state = load_ots(tmp_path)
+
+        assert state.schema_version == 2
+        assert state.submissions[0].batch_id is None
+        assert state.submissions[0].record_ids is None
+        assert state.inventory is not None
+        assert state.inventory.batch_id is None
+        assert state.inventory.record_id is None
+
+        save_ots(tmp_path, state)
+        raw = json.loads((tmp_path / "ots.json").read_bytes())
+        assert "batch_id" not in raw["submissions"][0]
+        assert "record_ids" not in raw["submissions"][0]
+        assert "batch_id" not in raw["inventory"]
+        assert "record_id" not in raw["inventory"]
+        assert load_ots(tmp_path) == state
+
+    def test_newer_version_rejected(self, tmp_path: Path):
+        (tmp_path / "ots.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 3,
+                    "phase": "drafting",
+                    "category_id": 641,
+                    "pending_digests": [],
+                    "submissions": [],
+                    "verify_jobs": [],
+                    "proofs": {},
+                    "inventory": None,
                 }
             )
         )
@@ -563,21 +568,21 @@ class TestSchemaMigration:
             load_ots(tmp_path)
 
     def test_migration_chain_walks_old_forward(self, tmp_path: Path, monkeypatch):
-        """Future-bump pattern: register a fake MIGRATIONS[0] to walk v0 → v1."""
+        """Future-bump pattern: register a fake MIGRATIONS[1] to walk v1 → v2."""
 
-        def v0_to_v1(raw: dict) -> dict:
-            # Pretend v0 lacked verify_jobs; populate it and bump.
+        def v1_to_v2(raw: dict) -> dict:
             new = dict(raw)
+            new.pop("content_proofs", None)
+            new.pop("inventory_proof", None)
             new.setdefault("verify_jobs", [])
             return new
 
-        # Register a v0->v1 step; the built-in v1->v2 step finishes the walk.
-        monkeypatch.setitem(st_mod.MIGRATIONS, 0, v0_to_v1)
+        monkeypatch.setitem(st_mod.MIGRATIONS, 1, v1_to_v2)
 
         (tmp_path / "ots.json").write_text(
             json.dumps(
                 {
-                    "schema_version": 0,
+                    "schema_version": 1,
                     "phase": "drafting",
                     "category_id": 641,
                     "pending_digests": [],
@@ -590,7 +595,7 @@ class TestSchemaMigration:
         )
 
         state = load_ots(tmp_path)
-        assert state.schema_version == 1
+        assert state.schema_version == 2
         assert state.verify_jobs == ()
 
 
@@ -600,7 +605,7 @@ class TestSubmitIntentDurability:
     def test_submitting_entry_persists(self, tmp_path: Path):
         d1 = _bare_hex("a")
         intent = OtsState(
-            schema_version=1,
+            schema_version=2,
             phase=Phase.CONTENT_PENDING,
             category_id=641,
             pending_digests=(d1,),
@@ -609,13 +614,14 @@ class TestSubmitIntentDurability:
                     submitted_at="2026-04-23T16:30:00+00:00",
                     digests=(d1,),
                     status="submitting",
+                    target=TimestampTarget.CONTENT,
                     job_id=None,
                     attempts=0,
                 ),
             ),
             verify_jobs=(),
-            content_proofs={},
-            inventory_proof=None,
+            proofs={},
+            inventory=None,
         )
         save_ots(tmp_path, intent)
         loaded = load_ots(tmp_path)
@@ -627,7 +633,7 @@ class TestSubmitIntentDurability:
         valid OtsState — never a torn file."""
         d1 = _bare_hex("a")
         intent = OtsState(
-            schema_version=1,
+            schema_version=2,
             phase=Phase.CONTENT_PENDING,
             category_id=641,
             pending_digests=(d1,),
@@ -636,20 +642,21 @@ class TestSubmitIntentDurability:
                     submitted_at="2026-04-23T16:30:00+00:00",
                     digests=(d1,),
                     status="submitting",
+                    target=TimestampTarget.CONTENT,
                     job_id=None,
                     attempts=0,
                 ),
             ),
             verify_jobs=(),
-            content_proofs={},
-            inventory_proof=None,
+            proofs={},
+            inventory=None,
         )
         save_ots(tmp_path, intent)
         loaded_a = load_ots(tmp_path)
         assert loaded_a == intent
 
         finalized = OtsState(
-            schema_version=1,
+            schema_version=2,
             phase=Phase.CONTENT_PENDING,
             category_id=641,
             pending_digests=(d1,),
@@ -658,13 +665,14 @@ class TestSubmitIntentDurability:
                     submitted_at="2026-04-23T16:30:00+00:00",
                     digests=(d1,),
                     status="submitted",
+                    target=TimestampTarget.CONTENT,
                     job_id="job-x",
                     attempts=1,
                 ),
             ),
             verify_jobs=(),
-            content_proofs={},
-            inventory_proof=None,
+            proofs={},
+            inventory=None,
         )
         save_ots(tmp_path, finalized)
         loaded_b = load_ots(tmp_path)
@@ -729,7 +737,7 @@ class TestCategoryIdDrift:
 
 
 class TestSubmissionShape:
-    """Submissions / VerifyJobs / VerifiedProof / InventoryProof are frozen
+    """Submissions / VerifyJobs / Proof / StagedInventory are frozen
     sub-records. Their `digests` field is always a tuple — submission rounds
     are immutable once recorded."""
 
@@ -738,6 +746,7 @@ class TestSubmissionShape:
             submitted_at="2026-04-23T16:30:00+00:00",
             digests=(_bare_hex("a"),),
             status="submitted",
+            target=TimestampTarget.CONTENT,
         )
         attr = "status"
         with pytest.raises(AttributeError):
@@ -750,7 +759,7 @@ class TestSubmissionShape:
             setattr(job, attr, "COMPLETED")
 
     def test_verified_proof_frozen(self):
-        proof = VerifiedProof(verified=False)
+        proof = Proof(target=TimestampTarget.CONTENT, verified=False)
         attr = "verified"
         with pytest.raises(AttributeError):
             setattr(proof, attr, True)
@@ -760,6 +769,7 @@ class TestSubmissionShape:
             submitted_at="2026-04-23T16:30:00+00:00",
             digests=(_bare_hex("a"),),
             status="submitted",
+            target=TimestampTarget.CONTENT,
             job_id="j",
             attempts=1,
         )

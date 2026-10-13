@@ -7,7 +7,7 @@ Pins the build-submit-serialize contract from `OTS workflow contract`:
 - Build the staged inventory via ``StorageRoot.plan`` (same path as
   ``stage commit``); the inventory's manifest now contains the ``<file>.ots``
   companion content files ingested by the prior ``--upgrade`` pass.
-- Compute ``plan.inventory.digest`` and write an ``InventoryProof`` intent
+- Compute ``plan.inventory.digest`` and write an ``StagedInventory`` intent
   (``version=<head>``, ``digest=<inv_digest>``, ``job_id=None``) into
   ``ots.json``.
 - POST a single-digest payload (the inventory digest) to SimpleProof via
@@ -39,8 +39,8 @@ from ocfl_cli.config import Config
 from ocfl_cli.config.ots import SimpleProofConfig
 from ocfl_cli.main import app
 from ocfl_cli.model.metadata import StagedMetadata, StagedUser
-from ocfl_cli.model.ots_state import VerifiedProof, VerifyJob
-from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.ots_state import Proof, VerifyJob
+from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store.ots_state import load_ots, ots_cache_path, plan_path, save_ots
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow import inventory as wf_inventory
@@ -182,15 +182,16 @@ def _setup_content_upgraded(
     r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(ots_src)))
     assert r.exit_code == 0, r.output
 
-    # Pin phase + populate pending_digests + content_proofs to mimic the
+    # Pin phase + populate pending_digests + proofs to mimic the
     # state the prior ``--upgrade`` pass would have left behind.
     state = load_ots(sd)
     state = replace(
         state,
         phase=Phase.CONTENT_UPGRADED,
         pending_digests=(da,),
-        content_proofs={
-            da: VerifiedProof(
+        proofs={
+            da: Proof(
+                target=TimestampTarget.CONTENT,
                 ots_path=f"ots-cache/{da}.ots",
                 verified=True,
                 block_height=800_000,
@@ -255,6 +256,7 @@ class TestInventoryBuild:
 
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_PENDING
+        assert state.inventory is not None
         assert state.inventory_proof is not None
 
         # Re-load the on-disk plan and inspect its inventory's manifest.
@@ -267,10 +269,10 @@ class TestInventoryBuild:
         )
 
         # inventory_proof.digest matches the plan digest; version matches head.
-        assert state.inventory_proof.digest == plan2.inventory.digest
-        assert state.inventory_proof.version == plan2.version
+        assert state.inventory.digest == plan2.inventory.digest
+        assert state.inventory.version == plan2.version
         # job_id stays None here; verify-batches is the upgrade pass's job.
-        assert state.inventory_proof.job_id is None
+        assert state.inventory.job_id is None
 
     def test_inventory_build_uses_staged_metadata(
         self,
@@ -350,8 +352,8 @@ class TestInventorySubmissionPrimitives:
 
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_PENDING
-        assert state.inventory_proof is not None
-        assert state.inventory_proof.digest == prepared.digest
+        assert state.inventory is not None
+        assert state.inventory.digest == prepared.digest
         assert not sp_fake._submissions
         assert not plan_path(sd).exists()
 
@@ -436,7 +438,7 @@ class TestUnverifiedContentGate:
         state = load_ots(sd)
         state = replace(
             state,
-            content_proofs={da: replace(state.content_proofs[da], verified=False)},
+            proofs={da: replace(state.proofs[da], verified=False)},
         )
         save_ots(sd, state)
 
@@ -489,8 +491,9 @@ class TestUnverifiedContentGate:
             verify_jobs=(
                 VerifyJob(job_id="old-job", digests=(d,), status="COMPLETED"),
             ),
-            content_proofs={
-                d: VerifiedProof(
+            proofs={
+                d: Proof(
+                    target=TimestampTarget.CONTENT,
                     ots_path=f"ots-cache/{d}.ots",
                     verified=True,
                     block_height=800_000,
@@ -515,7 +518,7 @@ class TestUnverifiedContentGate:
             ),
         )
         assert r.exit_code == 0, r.output
-        assert load_ots(sd).content_proofs[d].verified is False
+        assert load_ots(sd).proofs[d].verified is False
 
         r = runner.invoke(
             app,
@@ -729,9 +732,9 @@ class TestPlanRoundTrip:
         plan2 = CommitPlan.from_json(raw)
 
         state = load_ots(sd)
-        assert state.inventory_proof is not None
+        assert state.inventory is not None
         # Round-trips the inventory digest exactly.
-        assert plan2.inventory.digest == state.inventory_proof.digest
+        assert plan2.inventory.digest == state.inventory.digest
         # The inventory proof is attached at `stage commit`, not at this step.
         assert plan2.inventory_proof is None
 
@@ -850,9 +853,9 @@ class TestResubmitAtInventoryPending:
         assert r.exit_code == 0, r.output
         s1 = load_ots(sd)
         assert s1.phase is Phase.INVENTORY_PENDING
-        assert s1.inventory_proof is not None
+        assert s1.inventory is not None
         assert len(sp_fake._submissions) == 1
-        first_inv_digest = s1.inventory_proof.digest
+        first_inv_digest = s1.inventory.digest
         assert sp_fake._submissions[0].digests == (first_inv_digest,)
 
         # Second call: stays at inventory-pending; re-POSTs.

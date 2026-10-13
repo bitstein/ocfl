@@ -16,17 +16,17 @@ from ocfl_cli.store.ingest import ingest_file
 from ocfl_cli.store.ots_state import (
     has_ots,
     load_ots,
-    plan_path,
     save_ots,
     with_lock,
 )
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow.common import (
     StateMap,
-    non_ots_digests,
+    ordinary_digests,
+    ordinary_paths,
     update_head_state,
 )
-from ocfl_lib import DigestAlgorithm, InventoryBuilder
+from ocfl_lib import DigestAlgorithm, InventoryBuilder, ots
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -159,12 +159,17 @@ def update_metadata(
     return updated
 
 
-def pair_ots_companion_remove(state: StateMap, removed_paths: list[str]) -> None:
-    """Remove `<path>.ots` companions from *state* for each non-`.ots` path removed."""
-    for p in removed_paths:
-        if p.endswith(".ots"):
+def pair_ots_companion_remove(state: StateMap, removed: dict[str, str]) -> None:
+    """Remove the companion `P.ots` of each removed ordinary path `P`.
+
+    `removed` maps each removed path to whether it was ordinary or a content
+    proof in the state before the removal (`ordinary_paths`); removing a
+    proof leaves its file to be proved again.
+    """
+    for p, kind in removed.items():
+        if kind != "ordinary":
             continue
-        companion = f"{p}.ots"
+        companion = f"{p}{ots.PROOF_SUFFIX}"
         for d in list(state):
             if companion in state[d]:
                 state[d].remove(companion)
@@ -175,15 +180,19 @@ def pair_ots_companion_remove(state: StateMap, removed_paths: list[str]) -> None
 
 def pair_ots_companion_rename(state: StateMap, src: str, dst: str) -> None:
     """Rename `<src>.ots` to `<dst>.ots` within *state* if present."""
-    if src.endswith(".ots"):
-        return
-    src_ots = f"{src}.ots"
-    dst_ots = f"{dst}.ots"
+    src_ots = f"{src}{ots.PROOF_SUFFIX}"
+    dst_ots = f"{dst}{ots.PROOF_SUFFIX}"
     for d in state:
         if src_ots in state[d]:
             state[d].remove(src_ots)
             state[d].append(dst_ots)
             return
+
+
+def path_kinds(state: StateMap, paths: list[str]) -> dict[str, str]:
+    """`{path: "ordinary" | "proof"}` for `paths` in `state`."""
+    ordinary = ordinary_paths(state)
+    return {p: "ordinary" if p in ordinary else "proof" for p in paths}
 
 
 def apply_rm_mv_regression(
@@ -192,23 +201,27 @@ def apply_rm_mv_regression(
     command: str,
     cause: str,
 ) -> None:
-    """Update `ots.json` per regression rules for stage rm/mv. Caller holds the lock."""
+    """Update `ots.json` for stage add/rm/mv regressions. Caller holds the lock.
+
+    Proofs stay (ADR-0004): a path whose digest has one reuses it. The staged
+    inventory is dropped; `plan.json` stays so a rebuilt inventory with the
+    same bytes keeps its proof.
+    """
     state = load_ots(staging_dir)
     new_phase = check_transition(state.phase, command)
     new_pending = tuple(
-        d for d in state.pending_digests if d in non_ots_digests(new_inv_state)
+        d for d in state.pending_digests if d in ordinary_digests(new_inv_state)
     )
-    new_inv_proof = state.inventory_proof
+    inventory = state.inventory
     if state.phase in (Phase.INVENTORY_PENDING, Phase.INVENTORY_UPGRADED):
-        new_inv_proof = None
-        plan_path(staging_dir).unlink(missing_ok=True)
+        inventory = None
     save_ots(
         staging_dir,
         replace(
             state,
             phase=new_phase,
             pending_digests=new_pending,
-            inventory_proof=new_inv_proof,
+            inventory=inventory,
         ),
     )
     if new_phase is not state.phase:
@@ -221,38 +234,20 @@ def apply_rm_mv_regression(
 
 
 def apply_metadata_ots_regression(staging_dir: Path) -> None:
-    """Invalidate stale inventory timestamp state after staged metadata changes.
+    """Move back to content-upgraded after a staged metadata change.
 
     Metadata affects the inventory bytes but not staged content bytes. Once an
-    inventory timestamp exists, regress only the inventory side of the workflow
-    so verified content proofs remain reusable.
+    inventory timestamp exists, regress only the inventory side of the
+    workflow. Every proof stays (ADR-0004): reverting the edit rebuilds the
+    same inventory bytes, which reuse their proof.
     """
     state = load_ots(staging_dir)
     if state.phase not in (Phase.INVENTORY_PENDING, Phase.INVENTORY_UPGRADED):
         return
-
-    inventory_digest = (
-        state.inventory_proof.digest if state.inventory_proof is not None else None
-    )
-    inventory_job_id = (
-        state.inventory_proof.job_id if state.inventory_proof is not None else None
-    )
-    kept_jobs = tuple(
-        job
-        for job in state.verify_jobs
-        if (inventory_digest is None or inventory_digest not in job.digests)
-        and (inventory_job_id is None or job.job_id != inventory_job_id)
-    )
     save_ots(
         staging_dir,
-        replace(
-            state,
-            phase=Phase.CONTENT_UPGRADED,
-            verify_jobs=kept_jobs,
-            inventory_proof=None,
-        ),
+        replace(state, phase=Phase.CONTENT_UPGRADED, inventory=None),
     )
-    plan_path(staging_dir).unlink(missing_ok=True)
     logger.info(
         "phase regression %s→%s (cause: staged metadata edit)",
         state.phase.value,
@@ -554,9 +549,12 @@ def move_path(
     if dst_path != src_path and _path_exists(dst_path):
         raise CLIError(f"path already exists: {dst_path!r}")
 
-    if has_ots(staging_dir) and not src_path.endswith(".ots"):
-        src_ots = f"{src_path}.ots"
-        dst_ots = f"{dst_path}.ots"
+    moves_companion = (
+        has_ots(staging_dir) and path_kinds(state, [src_path])[src_path] == "ordinary"
+    )
+    if moves_companion:
+        src_ots = f"{src_path}{ots.PROOF_SUFFIX}"
+        dst_ots = f"{dst_path}{ots.PROOF_SUFFIX}"
         if src_ots != dst_ots and _path_exists(src_ots) and _path_exists(dst_ots):
             raise CLIError(f"path already exists: {dst_ots!r}")
 
@@ -565,7 +563,8 @@ def move_path(
 
     if has_ots(staging_dir):
         with with_lock(staging_dir, timeout=runtime.lock_timeout):
-            pair_ots_companion_rename(state, src_path, dst_path)
+            if moves_companion:
+                pair_ots_companion_rename(state, src_path, dst_path)
             store.save_inventory(root_path, object_id, update_head_state(inv, state))
             apply_rm_mv_regression(
                 staging_dir, state, "mv", f"stage mv {src_path} {dst_path}"
@@ -589,6 +588,7 @@ def remove_paths(
 
     inv = store.load_inventory(root_path, object_id)
     state = {d: list(ps) for d, ps in inv.versions[inv.head].state.items()}
+    before = {d: list(ps) for d, ps in state.items()}
     content_map = store.load_content_map(root_path, object_id)
 
     removed_paths: list[str] = []
@@ -630,7 +630,7 @@ def remove_paths(
 
     if has_ots(staging_dir):
         with with_lock(staging_dir, timeout=runtime.lock_timeout):
-            pair_ots_companion_remove(state, removed_paths)
+            pair_ots_companion_remove(state, path_kinds(before, removed_paths))
             _finalize()
             apply_rm_mv_regression(
                 staging_dir, state, "rm", f"stage rm {' '.join(paths)}"
@@ -656,8 +656,8 @@ def _active_reset_batch_ids(state: OtsState) -> tuple[str, ...]:
         ),
         *(
             ()
-            if state.inventory_proof is None or state.inventory_proof.batch_id is None
-            else (state.inventory_proof.batch_id,)
+            if state.inventory is None or state.inventory.batch_id is None
+            else (state.inventory.batch_id,)
         ),
     )
     return tuple(dict.fromkeys(batch_ids))
@@ -679,8 +679,7 @@ def reset_staging(
         counts = (
             ("submissions", len(state.submissions)),
             ("verify_jobs", len(state.verify_jobs)),
-            ("content_proofs", len(state.content_proofs)),
-            ("inventory_proof", 1 if state.inventory_proof is not None else 0),
+            ("proofs", len(state.proofs)),
         )
         if any(n for _, n in counts):
             phase = state.phase.value

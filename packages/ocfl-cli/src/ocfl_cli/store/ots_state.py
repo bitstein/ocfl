@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 # `MIGRATIONS[i]` upgrades schema v=i to v=i+1. `load_ots` composes them
 # to walk any supported prior version forward to `OTS_STATE_VERSION`.
 # Each migration is a single forward step; pure dict-to-dict.
+# Schema 2 (proofs keyed by digest, ADR-0004) has no migration from 1: there
+# is no production archive yet, so a v1 staging is discarded and restaged.
 MIGRATIONS: dict[int, Callable[[dict], dict]] = {}
 
 
@@ -97,7 +99,8 @@ def load_ots(staging: Path) -> OtsState:
             migrate = MIGRATIONS[i]
         except KeyError:
             raise StagingError(
-                f"{path}: no migration registered for schema v{i} → v{i + 1}"
+                f"{path}: no migration registered for schema v{i} → v{i + 1}; "
+                "discard the staging (stage reset --force) and stage again"
             ) from None
         raw = migrate(raw)
         raw["schema_version"] = i + 1

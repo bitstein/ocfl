@@ -11,18 +11,17 @@ from ocfl_cli.errors import (
 )
 from ocfl_cli.model.ots_state import (
     OtsState,
+    Proof,
     Submission,
-    VerifiedProof,
     VerifyJob,
 )
-from ocfl_cli.model.phase import Phase, check_transition
+from ocfl_cli.model.phase import Phase, TimestampTarget, check_transition
 from ocfl_cli.ots.bitcoin import (
     PendingVerification,
     VerifiedAttestation,
     verify_attestation,
 )
 from ocfl_cli.store import staging as _store_mod
-from ocfl_cli.store.ingest import ingest_file
 from ocfl_cli.store.ots_state import (
     apply_category_id,
     load_ots,
@@ -32,17 +31,24 @@ from ocfl_cli.store.ots_state import (
     with_lock,
 )
 from ocfl_cli.workflow.common import (
+    CarriedProofs,
     JobProgress,
     StateMap,
+    carried_proofs,
     compute_job_progress,
     is_failed_verify_job,
     log_phase,
-    non_ots_digests,
+    place_companions,
     poll_outstanding_jobs,
+    proof_ready,
     record_proof,
+    request_proofs,
+    required_content,
     snapshot_results,
     unverified_digests,
+    unverify,
     update_head_state,
+    verified_proof,
     verify_job_from_ack,
 )
 
@@ -58,7 +64,6 @@ if TYPE_CHECKING:
         SpClientFactory,
     )
     from ocfl_cli.store.staging import StagingStore
-    from ocfl_lib import DigestAlgorithm, Inventory
 
 logger = logging.getLogger(__name__)
 
@@ -108,20 +113,20 @@ def reverify_content_proofs(
     min_confirmations: int,
     category_id: int,
 ) -> OtsState:
-    """Re-verify every `verified=True` content_proof against the local chain.
+    """Re-verify every verified content proof against the local chain.
 
     Uses cached `.ots` bytes (which embed attested block_height + merkle
     path); `verify_attestation` resolves the current block_hash at that
     height via `getblockhash` and checks the merkle root. On mismatch or
-    insufficient-confs the proof resets to `verified=False` and the
-    covering VerifyJobs are dropped, so a fresh `verify-batches` is POSTed
-    and the next pass re-fetches bytes from SP. `ReorgDetectedError`
-    propagates to HALT.
+    insufficient-confs the proof resets to unverified and the covering
+    VerifyJobs are dropped, so a fresh `verify-batches` is POSTed and the
+    next pass re-fetches bytes from SP. `ReorgDetectedError` propagates to
+    HALT.
     """
-    new_proofs = dict(state.content_proofs)
+    new_proofs = dict(state.proofs)
     needs_resubmit: list[str] = []
-    for d, proof in state.content_proofs.items():
-        if not proof.verified:
+    for d, proof in state.proofs.items():
+        if proof.target is not TimestampTarget.CONTENT or not proof.verified:
             continue
         cache = ots_cache_path(staging_dir, d)
         if not cache.is_file():
@@ -134,25 +139,20 @@ def reverify_content_proofs(
                 min_confirmations=min_confirmations,
             )
         except AttestationMismatchError:
-            new_proofs[d] = VerifiedProof(ots_path=proof.ots_path, verified=False)
+            new_proofs[d] = unverify(proof)
             needs_resubmit.append(d)
             continue
         match result:
-            case VerifiedAttestation(block_height=h, confirmations=c):
-                new_proofs[d] = VerifiedProof(
-                    ots_path=proof.ots_path,
-                    verified=True,
-                    block_height=h,
-                    block_hash=result.block_hash,
-                    confirmations_at_verify=c,
-                    verified_at=proof.verified_at,
+            case VerifiedAttestation():
+                new_proofs[d] = verified_proof(
+                    proof.target, proof.ots_path, result, proof.verified_at
                 )
             case PendingVerification():
-                new_proofs[d] = VerifiedProof(ots_path=proof.ots_path, verified=False)
+                new_proofs[d] = unverify(proof)
                 needs_resubmit.append(d)
 
     if not needs_resubmit:
-        return replace(state, content_proofs=new_proofs)
+        return replace(state, proofs=new_proofs)
 
     affected = set(needs_resubmit)
     kept_jobs = tuple(j for j in state.verify_jobs if affected.isdisjoint(j.digests))
@@ -162,7 +162,7 @@ def reverify_content_proofs(
     )
     return replace(
         state,
-        content_proofs=new_proofs,
+        proofs=new_proofs,
         verify_jobs=(*kept_jobs, new_job),
     )
 
@@ -191,32 +191,23 @@ def _submit_new_verify_batches(
     return replace(state, verify_jobs=(*state.verify_jobs, *new_jobs))
 
 
-def verify_and_ingest_digest(
+def verify_content_digest(
     d: str,
     ots_bytes: bytes,
     state: OtsState,
-    inv: Inventory,
-    head_state: StateMap,
-    alg: DigestAlgorithm,
     *,
     btc: BitcoinRPC,
-    store: StagingStore,
-    root_path: str,
-    object_id: str,
     staging_dir: Path,
     min_confirmations: int,
     runtime: Runtime,
-) -> tuple[OtsState, Inventory]:
-    """Apply the three-step crash-recovery invariant for one digest.
+) -> OtsState:
+    """Check one downloaded proof, cache its bytes and record it.
 
-    Ordering (must not change):
-      1. atomic cache write `ots-cache/<d>.ots`,
-      2. `ingest_file` the cached bytes as `<obj_rel>.ots` (stage-state mutation),
-      3. atomic `ots.json` update recording VerifiedProof.
-
-    On `PendingVerification` only step (1) runs plus a `verified=False`
-    proof record; the next pass re-downloads and re-verifies. `head_state`
-    is mutated in place to track accumulated ingests across digests.
+    Ordering (must not change): atomic cache write `ots-cache/<d>.ots`, then
+    the atomic `ots.json` update. The companions `P.ots` are placed from the
+    cache afterwards (`place_content_companions`), on every pass, so a crash
+    between the steps heals on the next one. A pending result records an
+    unverified proof; the next pass re-downloads and re-verifies.
     """
     result = verify_attestation(
         rpc=btc,
@@ -230,70 +221,65 @@ def verify_and_ingest_digest(
     _store_mod.atomic_write_bytes(cache_file, ots_bytes)
     ots_path_rel = f"ots-cache/{d}.ots"
 
-    if not isinstance(result, VerifiedAttestation):
-        state = record_proof(
-            state, d, VerifiedProof(ots_path=ots_path_rel, verified=False)
+    if isinstance(result, VerifiedAttestation):
+        proof = verified_proof(
+            TimestampTarget.CONTENT,
+            ots_path_rel,
+            result,
+            utc_iso(runtime.clock.now()),
         )
-        save_ots(staging_dir, state)
-        return state, inv
+    else:
+        proof = Proof(target=TimestampTarget.CONTENT, ots_path=ots_path_rel)
+    state = record_proof(state, d, proof)
+    save_ots(staging_dir, state)
+    return state
 
-    paths = head_state.get(d, [])
-    if not paths:
-        return state, inv
-    logical = f"{paths[0]}.ots"
 
+def place_content_companions(
+    state: OtsState,
+    store: StagingStore,
+    root_path: str,
+    object_id: str,
+    staging_dir: Path,
+    carried: CarriedProofs,
+) -> dict[str, list[str]]:
+    """Place `P.ots` for every staged path whose digest has a verified proof.
+
+    Returns the digests the staged version needs proofs for (see
+    `required_content`).
+    """
+    from ocfl_lib import DigestAlgorithm
+
+    inv = store.load_inventory(root_path, object_id)
+    head_state: StateMap = {
+        d: list(ps) for d, ps in inv.versions[inv.head].state.items()
+    }
+    need = required_content(head_state)
     content_map = store.load_content_map(root_path, object_id)
-    ots_digest = ingest_file(
-        cache_file,
-        logical,
+    if place_companions(
+        head_state,
+        need,
+        state,
+        carried,
         staging_dir=staging_dir,
         content_map=content_map,
-        digest_alg=alg,
-    ).digest
-    logicals = head_state.setdefault(ots_digest, [])
-    if logical not in logicals:
-        logicals.append(logical)
-    store.save_inventory(root_path, object_id, update_head_state(inv, head_state))
-    store.save_content_map(root_path, object_id, content_map)
-    inv = store.load_inventory(root_path, object_id)
-
-    state = record_proof(
-        state,
-        d,
-        VerifiedProof(
-            ots_path=ots_path_rel,
-            verified=True,
-            block_height=result.block_height,
-            block_hash=result.block_hash,
-            confirmations_at_verify=result.confirmations,
-            verified_at=utc_iso(runtime.clock.now()),
-        ),
-    )
-    save_ots(staging_dir, state)
-    return state, inv
+        alg=DigestAlgorithm.from_ocfl_name(inv.digest_algorithm),
+    ):
+        store.save_content_map(root_path, object_id, content_map)
+        store.save_inventory(root_path, object_id, update_head_state(inv, head_state))
+    return need
 
 
 def _process_completed_jobs(
     state: OtsState,
     sp: SimpleProofClient,
     btc: BitcoinRPC,
-    store: StagingStore,
-    root_path: str,
-    object_id: str,
     staging_dir: Path,
     min_confirmations: int,
     *,
     runtime: Runtime,
 ) -> OtsState:
-    """Download + verify + ingest every completed verify_job's digests."""
-    from ocfl_lib import DigestAlgorithm
-
-    inv = store.load_inventory(root_path, object_id)
-    alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
-    head_state: StateMap = {
-        d: list(ps) for d, ps in inv.versions[inv.head].state.items()
-    }
-
+    """Download + verify + cache every completed verify_job's digests."""
     for j in state.verify_jobs:
         if j.status != "COMPLETED":
             continue
@@ -305,22 +291,36 @@ def _process_completed_jobs(
             continue
         downloads = sp.download_results(poll.results_url, set(unverified))
         for d, ots_bytes in downloads.items():
-            state, inv = verify_and_ingest_digest(
+            state = verify_content_digest(
                 d,
                 ots_bytes,
                 state,
-                inv,
-                head_state,
-                alg,
                 btc=btc,
-                store=store,
-                root_path=root_path,
-                object_id=object_id,
                 staging_dir=staging_dir,
                 min_confirmations=min_confirmations,
                 runtime=runtime,
             )
     return state
+
+
+def content_progress(
+    state: OtsState,
+    staging_dir: Path,
+    need: dict[str, list[str]],
+    carried: CarriedProofs,
+) -> tuple[list[str], list[str]]:
+    """`(unverified, unrequested)` among the digests the staged version needs.
+
+    The phase advances when both are empty: every needed digest has a final
+    proof (and so its companions).
+    """
+    unverified = [
+        d
+        for d in need
+        if d in state.proofs and not proof_ready(state, staging_dir, carried, d)
+    ]
+    unrequested = [d for d in need if d not in state.proofs and d not in carried]
+    return unverified, unrequested
 
 
 def phase_advance_ready(
@@ -329,23 +329,19 @@ def phase_advance_ready(
     sr,
     root_path: str,
     object_id: str,
-) -> tuple[bool, list[str], set[str]]:
-    """Evaluate the phase-advance invariant.
+    staging_dir: Path,
+) -> tuple[bool, list[str], list[str]]:
+    """Place companions, then evaluate the phase-advance invariant.
 
-    Returns `(ready, unverified_pending, orphans)`:
-      - cond1 (all pending verified): `unverified_pending` is empty
-      - cond2 (no orphan non-.ots digests outside pending): `orphans` is empty
-      - `ready` iff both conditions hold
+    Returns `(ready, unverified, unrequested)`: `ready` iff every digest the
+    staged version needs has a verified proof and every path its companion.
     """
-    final_inv = store.load_inventory(root_path, object_id)
-    final_state = {
-        d: list(ps) for d, ps in final_inv.versions[final_inv.head].state.items()
-    }
-    obj = sr.get_object(object_id)
-    carry = set(obj.inventory.inventory.manifest) if obj.exists else set()
-    unverified_pending = unverified_digests(state, state.pending_digests)
-    orphans = (non_ots_digests(final_state) - carry) - set(state.pending_digests)
-    return (not unverified_pending and not orphans, unverified_pending, orphans)
+    carried = carried_proofs(sr, object_id)
+    need = place_content_companions(
+        state, store, root_path, object_id, staging_dir, carried
+    )
+    unverified, unrequested = content_progress(state, staging_dir, need, carried)
+    return (not unverified and not unrequested, unverified, unrequested)
 
 
 def upgrade_content_locked(
@@ -387,9 +383,6 @@ def upgrade_content_locked(
 
     state = ingest_content_verifications_locked(
         state,
-        store,
-        root_path,
-        object_id,
         staging_dir,
         sp=sp,
         btc=btc,
@@ -398,7 +391,7 @@ def upgrade_content_locked(
     )
 
     ready, unverified_pending, orphans = phase_advance_ready(
-        state, store, sr, root_path, object_id
+        state, store, sr, root_path, object_id, staging_dir
     )
     if ready and state.phase is not Phase.CONTENT_UPGRADED:
         state = replace(state, phase=Phase.CONTENT_UPGRADED)
@@ -472,9 +465,6 @@ def snapshot_content_results_locked(
 
 def ingest_content_verifications_locked(
     state: OtsState,
-    store: StagingStore,
-    root_path: str,
-    object_id: str,
     staging_dir: Path,
     *,
     sp: SimpleProofClient,
@@ -482,17 +472,9 @@ def ingest_content_verifications_locked(
     min_confirmations: int,
     runtime: Runtime,
 ) -> OtsState:
-    """Download completed content verify results and ingest verified proofs."""
+    """Download completed content verify results and record their proofs."""
     return _process_completed_jobs(
-        state,
-        sp,
-        btc,
-        store,
-        root_path,
-        object_id,
-        staging_dir,
-        min_confirmations,
-        runtime=runtime,
+        state, sp, btc, staging_dir, min_confirmations, runtime=runtime
     )
 
 
@@ -541,27 +523,29 @@ def prepare_content_submission_locked(
     target_phase = check_transition(state.phase, "timestamp content")
     category_id = apply_category_id(state, sp_cfg.proof_category_id)
 
-    inv = store.load_inventory(root_path, object_id)
-    head_state = inv.versions[inv.head].state
-    non_ots = {
-        d
-        for d, paths in head_state.items()
-        if not any(p.endswith(".ots") for p in paths)
-    }
-
-    obj = sr.get_object(object_id)
-    carry = set(obj.inventory.inventory.manifest) if obj.exists else set()
+    carried = carried_proofs(sr, object_id)
+    need = place_content_companions(
+        state, store, root_path, object_id, staging_dir, carried
+    )
+    # The digests this Staging Area proves itself; the object proves the rest.
+    needed = tuple(sorted(d for d in need if d not in carried))
 
     in_flight = [s for s in state.submissions if s.status == "submitting"]
     submitting_digests = {d for s in in_flight for d in s.digests}
     max_attempts = max((s.attempts for s in in_flight), default=0)
 
-    already_handled = set(state.pending_digests) | set(state.content_proofs)
-    submission_set = (non_ots - carry - already_handled) | submitting_digests
+    # A digest with a proof, requested or received, is never sent again.
+    submission_set = {
+        d for d in need if d not in state.proofs and d not in carried
+    } | submitting_digests
 
     if not submission_set:
-        if not state.pending_digests and non_ots <= carry:
-            save_ots(staging_dir, replace(state, phase=Phase.CONTENT_UPGRADED))
+        unverified, _unrequested = content_progress(state, staging_dir, need, carried)
+        if not unverified:
+            save_ots(
+                staging_dir,
+                replace(state, phase=Phase.CONTENT_UPGRADED, pending_digests=needed),
+            )
             log_phase(state.phase, Phase.CONTENT_UPGRADED)
             return PreparedContentSubmission(
                 digests=(),
@@ -570,9 +554,10 @@ def prepare_content_submission_locked(
                 target_phase=Phase.CONTENT_UPGRADED,
                 noop_advanced=True,
             )
-        if target_phase is not state.phase:
-            save_ots(staging_dir, replace(state, phase=target_phase))
-            log_phase(state.phase, target_phase)
+        save_ots(
+            staging_dir, replace(state, phase=target_phase, pending_digests=needed)
+        )
+        log_phase(state.phase, target_phase)
         return PreparedContentSubmission(
             digests=(),
             category_id=category_id,
@@ -582,21 +567,21 @@ def prepare_content_submission_locked(
 
     ordered = tuple(sorted(submission_set))
     kept = tuple(s for s in state.submissions if s.status != "submitting")
-    merged_pending = tuple(dict.fromkeys((*state.pending_digests, *ordered)))
 
     intent = Submission(
         submitted_at=utc_iso(runtime.clock.now()),
         digests=ordered,
         status="submitting",
+        target=TimestampTarget.CONTENT,
         attempts=max_attempts + 1,
     )
     save_ots(
         staging_dir,
         replace(
-            state,
+            request_proofs(state, ordered, TimestampTarget.CONTENT),
             category_id=category_id,
             submissions=(*kept, intent),
-            pending_digests=merged_pending,
+            pending_digests=tuple(dict.fromkeys((*needed, *ordered))),
         ),
     )
     return PreparedContentSubmission(

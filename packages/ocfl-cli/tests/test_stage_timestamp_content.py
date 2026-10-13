@@ -5,7 +5,7 @@ Pins step 10 of `OTS workflow contract`:
 - Compute candidate digests:
   ``non_ots_digests(stage.state) - set(obj.inventory.manifest)``.
 - Subtract already-submitted/already-upgraded
-  (``ots.json.pending_digests`` + ``content_proofs`` keys). Remainder is
+  (``ots.json.pending_digests`` + ``proofs`` keys). Remainder is
   this round's submission set.
 - Extend ``ots.json.pending_digests`` with the submission set.
 - Delete/rename-only no-op: empty submission set AND empty
@@ -41,7 +41,7 @@ from ocfl_cli.config import Config
 from ocfl_cli.config.ots import SimpleProofConfig
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Submission
-from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store.ots_state import load_ots, save_ots, utc_iso
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.system import SYSTEM_CLOCK
@@ -212,7 +212,7 @@ class TestFullSubmitFlow:
         assert set(recorded.digests) == {d1, d2}
         assert recorded.category_id == 641
 
-    def test_carry_forward_digests_excluded_from_submission(
+    def test_plain_object_digests_are_submitted_for_first_covered_version(
         self,
         runner: CliRunner,
         sha256_root_with_v1: Path,
@@ -220,7 +220,9 @@ class TestFullSubmitFlow:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Digest already in committed `obj.inventory.manifest` not resubmitted."""
+        """A plain object proves nothing yet (ADR-0004, `timestampFrom`): a
+        digest already in its manifest still needs a proof in the first
+        covered version, so it is submitted with the new one."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -258,14 +260,13 @@ class TestFullSubmitFlow:
         new_d = hashlib.sha256(b"brand-new").hexdigest()
         carry_d = hashlib.sha256(b"carry-over").hexdigest()
 
+        both = tuple(sorted((new_d, carry_d)))
         assert state.phase is Phase.CONTENT_PENDING
-        assert state.pending_digests == (new_d,)
-        assert carry_d not in state.pending_digests
+        assert state.pending_digests == both
         assert len(state.submissions) == 1
-        assert state.submissions[0].digests == (new_d,)
-        # SP saw exactly the new digest, never the carry-forward one.
+        assert state.submissions[0].digests == both
         assert len(sp_fake._submissions) == 1
-        assert sp_fake._submissions[0].digests == (new_d,)
+        assert sp_fake._submissions[0].digests == both
 
 
 # --------------------------------------------------------------------------- #
@@ -274,7 +275,7 @@ class TestFullSubmitFlow:
 
 
 class TestDeleteRenameOnlyNoop:
-    def test_empty_submission_and_empty_pending_advances_to_upgraded(
+    def test_renamed_plain_object_file_still_needs_a_proof(
         self,
         runner: CliRunner,
         sha256_root_with_v1: Path,
@@ -282,9 +283,9 @@ class TestDeleteRenameOnlyNoop:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Stage state ⊆ obj.inventory.manifest, pending_digests=() →
-        prints `Nothing to timestamp` and the phase transition,
-        advances phase to ``content-upgraded``, no SP calls."""
+        """Stage state ⊆ manifest of a *plain* object: the object proves
+        nothing, so the digest is submitted (the no-op advance applies only
+        when every digest already has a proof)."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -322,18 +323,17 @@ class TestDeleteRenameOnlyNoop:
         assert r.exit_code == 0, r.output
         combined = (r.output + (r.stderr or "")).lower()
         assert "object: obj:test" in combined
-        assert "nothing to timestamp" in combined
-        assert "phase: drafting -> content-upgraded" in combined
-        assert "next: stage timestamp inventory" in combined
+        assert "submitted 1 digest" in combined
+        assert "phase: drafting -> content-pending" in combined
         assert "INFO " not in r.output
 
+        carry_d = hashlib.sha256(b"carry-over").hexdigest()
         sd = _staging_dir(sha256_root_with_v1, staging, "obj:test")
         state = load_ots(sd)
-        assert state.phase is Phase.CONTENT_UPGRADED
-        assert state.pending_digests == ()
-        assert state.submissions == ()
-        # No SP traffic.
-        assert sp_fake._submissions == []
+        assert state.phase is Phase.CONTENT_PENDING
+        assert state.pending_digests == (carry_d,)
+        assert [s.digests for s in state.submissions] == [(carry_d,)]
+        assert [s.digests for s in sp_fake._submissions] == [(carry_d,)]
 
 
 # --------------------------------------------------------------------------- #
@@ -520,6 +520,7 @@ def _seed_submitting_intent(staging_dir: Path, digests: tuple[str, ...]) -> None
                 submitted_at=utc_iso(SYSTEM_CLOCK.now()),
                 digests=digests,
                 status="submitting",
+                target=TimestampTarget.CONTENT,
                 job_id=None,
                 attempts=0,
             ),

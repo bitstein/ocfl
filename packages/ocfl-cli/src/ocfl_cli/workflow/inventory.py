@@ -12,11 +12,11 @@ from ocfl_cli.errors import (
     PhaseError,
 )
 from ocfl_cli.model.ots_state import (
-    InventoryProof,
     OtsState,
-    VerifiedProof,
+    Proof,
+    StagedInventory,
 )
-from ocfl_cli.model.phase import Phase, check_transition
+from ocfl_cli.model.phase import Phase, TimestampTarget, check_transition
 from ocfl_cli.ots.bitcoin import (
     PendingVerification,
     VerifiedAttestation,
@@ -44,8 +44,13 @@ from ocfl_cli.workflow.common import (
     is_failed_verify_job,
     log_phase,
     poll_outstanding_jobs,
+    proof_cache_ready,
+    record_proof,
+    request_proofs,
     require_verified_content_before_inventory,
     snapshot_results,
+    unverify,
+    verified_proof,
     verify_job_from_ack,
 )
 
@@ -53,6 +58,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ocfl_cli.config import Config
+    from ocfl_cli.model.metadata import StagedMetadata
     from ocfl_cli.ports import (
         BitcoinRPC,
         BtcRpcFactory,
@@ -95,21 +101,20 @@ def _reset_inv_proof_and_resubmit(
     state: OtsState,
     sp: SimpleProofClient,
     *,
-    ots_path: str | None,
     category_id: int,
 ) -> OtsState:
-    """Reset `inventory_proof.proof` to unverified and queue a fresh verify_batch."""
-    if state.inventory_proof is None:
+    """Reset the inventory proof to unverified and queue a fresh verify_batch."""
+    proof = state.inventory_proof
+    if state.inventory is None or proof is None:
         return state
-    inv_digest = state.inventory_proof.digest
-    new_proof = VerifiedProof(ots_path=ots_path, verified=False)
-    new_inv = replace(state.inventory_proof, proof=new_proof)
+    inv_digest = state.inventory.digest
     kept_jobs = tuple(j for j in state.verify_jobs if inv_digest not in j.digests)
     new_job = verify_job_from_ack(
         sp.verify_batch([inv_digest], category_id),
         (inv_digest,),
     )
-    return replace(state, inventory_proof=new_inv, verify_jobs=(*kept_jobs, new_job))
+    state = record_proof(state, inv_digest, unverify(proof))
+    return replace(state, verify_jobs=(*kept_jobs, new_job))
 
 
 def reverify_inventory_proof(
@@ -120,18 +125,16 @@ def reverify_inventory_proof(
     min_confirmations: int,
     category_id: int,
 ) -> OtsState:
-    """Re-verify a `verified=True` ``inventory_proof.proof`` against the chain.
+    """Re-verify the staged inventory's verified proof against the chain.
 
     Single-digest mirror of `reverify_content_proofs`. On mismatch /
-    pending the proof resets to `verified=False` and a fresh verify_batch
-    is queued; `ReorgDetectedError` propagates.
+    pending the proof resets to unverified and a fresh verify_batch is
+    queued; `ReorgDetectedError` propagates.
     """
-    if state.inventory_proof is None:
+    proof = state.inventory_proof
+    if state.inventory is None or proof is None or not proof.verified:
         return state
-    proof = state.inventory_proof.proof
-    if not proof.verified:
-        return state
-    inv_digest = state.inventory_proof.digest
+    inv_digest = state.inventory.digest
     cache = ots_cache_path(staging_dir, inv_digest)
     if not cache.is_file():
         return state
@@ -143,26 +146,17 @@ def reverify_inventory_proof(
             min_confirmations=min_confirmations,
         )
     except AttestationMismatchError:
-        return _reset_inv_proof_and_resubmit(
-            state, sp, ots_path=proof.ots_path, category_id=category_id
-        )
+        return _reset_inv_proof_and_resubmit(state, sp, category_id=category_id)
 
     match result:
-        case VerifiedAttestation(block_height=h, confirmations=c):
-            new_proof = VerifiedProof(
-                ots_path=proof.ots_path,
-                verified=True,
-                block_height=h,
-                block_hash=result.block_hash,
-                confirmations_at_verify=c,
-                verified_at=proof.verified_at,
+        case VerifiedAttestation():
+            return record_proof(
+                state,
+                inv_digest,
+                verified_proof(proof.target, proof.ots_path, result, proof.verified_at),
             )
-            new_inv = replace(state.inventory_proof, proof=new_proof)
-            return replace(state, inventory_proof=new_inv)
         case PendingVerification():
-            return _reset_inv_proof_and_resubmit(
-                state, sp, ots_path=proof.ots_path, category_id=category_id
-            )
+            return _reset_inv_proof_and_resubmit(state, sp, category_id=category_id)
 
 
 def verify_inventory_digest(
@@ -174,18 +168,17 @@ def verify_inventory_digest(
     *,
     runtime: Runtime,
 ) -> OtsState:
-    """Apply the three-step crash-recovery invariant for the inventory digest.
+    """Apply the crash-recovery invariant for the inventory digest.
 
     Step 1: atomic cache write `ots-cache/<inv_digest>.ots`.
-    Step 2: vacuous (extension-file is queued at `stage commit`).
-    Step 3: atomic ots.json update — `inventory_proof.proof` set; on
+    Step 2: atomic ots.json update: the proof is recorded; on
     `VerifiedAttestation` `phase` advances to INVENTORY_UPGRADED in the
-    same write so readers never see torn state.
+    same write so readers never see torn state. (The extension file is
+    written by the commit.)
     """
-    inv_proof = state.inventory_proof
-    if inv_proof is None:
-        raise RuntimeError("inventory_proof missing")
-    inv_digest = inv_proof.digest
+    if state.inventory is None:
+        raise RuntimeError("staged inventory missing")
+    inv_digest = state.inventory.digest
 
     result = verify_attestation(
         rpc=btc,
@@ -200,23 +193,24 @@ def verify_inventory_digest(
     ots_path_rel = f"ots-cache/{inv_digest}.ots"
 
     match result:
-        case VerifiedAttestation(block_height=h, confirmations=c):
-            new_proof = VerifiedProof(
-                ots_path=ots_path_rel,
-                verified=True,
-                block_height=h,
-                block_hash=result.block_hash,
-                confirmations_at_verify=c,
-                verified_at=utc_iso(runtime.clock.now()),
-            )
-            state = replace(
+        case VerifiedAttestation():
+            state = record_proof(
                 state,
-                inventory_proof=replace(inv_proof, proof=new_proof),
-                phase=Phase.INVENTORY_UPGRADED,
+                inv_digest,
+                verified_proof(
+                    TimestampTarget.INVENTORY,
+                    ots_path_rel,
+                    result,
+                    utc_iso(runtime.clock.now()),
+                ),
             )
+            state = replace(state, phase=Phase.INVENTORY_UPGRADED)
         case PendingVerification():
-            new_proof = VerifiedProof(ots_path=ots_path_rel, verified=False)
-            state = replace(state, inventory_proof=replace(inv_proof, proof=new_proof))
+            state = record_proof(
+                state,
+                inv_digest,
+                Proof(target=TimestampTarget.INVENTORY, ots_path=ots_path_rel),
+            )
 
     save_ots(staging_dir, state)
     return state
@@ -232,10 +226,9 @@ def _process_completed_inventory_job(
     runtime: Runtime,
 ) -> OtsState:
     """Download + verify any completed verify_job covering the inventory digest."""
-    inv_proof = state.inventory_proof
-    if inv_proof is None or inv_proof.proof.verified:
+    if state.inventory is None or state.verified(state.inventory.digest):
         return state
-    inv_digest = inv_proof.digest
+    inv_digest = state.inventory.digest
 
     for j in state.verify_jobs:
         if j.status != "COMPLETED" or inv_digest not in j.digests:
@@ -272,9 +265,8 @@ def prepare_inventory_upgrade_locked(
     )
     save_ots(staging_dir, state)
 
-    inv_proof = state.inventory_proof
-    if inv_proof is not None and not inv_proof.proof.verified:
-        inv_digest = inv_proof.digest
+    if state.inventory is not None and not state.verified(state.inventory.digest):
+        inv_digest = state.inventory.digest
         has_job = any(
             inv_digest in j.digests and not is_failed_verify_job(j.status)
             for j in state.verify_jobs
@@ -345,8 +337,8 @@ def upgrade_inventory_locked(
     check_transition(state.phase, "timestamp inventory --upgrade")
     category_id = apply_category_id(state, cfg.simpleproof.proof_category_id)
 
-    if state.inventory_proof is None:
-        raise PhaseError(f"inventory_proof missing in phase {state.phase.value!r}")
+    if state.inventory is None:
+        raise PhaseError(f"staged inventory missing in phase {state.phase.value!r}")
 
     sp = sp_factory(cfg)
     btc = btc_factory(cfg)
@@ -437,43 +429,38 @@ def prepare_inventory_submission_locked(
     metadata = store.load_metadata(root_path, object_id)
     require_staged_metadata(metadata, allow_missing_metadata=allow_missing_metadata)
 
-    # On resubmit, preserve `created` from the prior plan so the new
-    # inventory digest stays identical across retries.
-    prior_created: str | None = None
-    prior_plan = load_plan(staging_dir) if state.inventory_proof is not None else None
-    if prior_plan is not None:
-        prior_inv = prior_plan.inventory.inventory
-        prior_created = prior_inv.versions[prior_inv.head].created
-
-    plan, _cs = build_inventory_plan(
-        store,
-        sr,
-        root_path,
-        object_id,
-        message=metadata.message,
-        user=version_user_from_staged(metadata),
-        created=prior_created,
+    plan = build_reusable_inventory_plan(
+        store, sr, root_path, object_id, staging_dir, state, metadata
     )
     inv_digest = plan.inventory.digest
     head_version = plan.version
 
-    existing = state.inventory_proof
-    intent_proof = InventoryProof(
+    existing = state.inventory
+    staged = StagedInventory(
         version=head_version,
         digest=inv_digest,
-        proof=existing.proof if existing is not None else VerifiedProof(),
-        job_id=existing.job_id if existing is not None else None,
+        job_id=existing.job_id
+        if existing is not None and existing.digest == inv_digest
+        else None,
     )
     prev_phase = state.phase
-    save_ots(
-        staging_dir,
-        replace(
-            state,
-            category_id=category_id,
-            inventory_proof=intent_proof,
-            phase=target_phase,
-        ),
+    state = request_proofs(
+        replace(state, category_id=category_id, inventory=staged),
+        (inv_digest,),
+        TimestampTarget.INVENTORY,
     )
+    if proof_cache_ready(state, staging_dir, inv_digest):
+        # The same inventory bytes were timestamped before: reuse the proof.
+        plan_path(staging_dir).write_bytes(plan.to_json())
+        save_ots(staging_dir, replace(state, phase=Phase.INVENTORY_UPGRADED))
+        log_phase(prev_phase, Phase.INVENTORY_UPGRADED)
+        return PreparedInventorySubmission(
+            digest=None,
+            category_id=category_id,
+            previous_phase=prev_phase,
+            target_phase=Phase.INVENTORY_UPGRADED,
+        )
+    save_ots(staging_dir, replace(state, phase=target_phase))
 
     return PreparedInventorySubmission(
         digest=inv_digest,
@@ -482,6 +469,46 @@ def prepare_inventory_submission_locked(
         target_phase=target_phase,
         plan=plan,
     )
+
+
+def build_reusable_inventory_plan(
+    store: StagingStore,
+    sr,
+    root_path: str,
+    object_id: str,
+    staging_dir: Path,
+    state: OtsState,
+    metadata: StagedMetadata,
+) -> CommitPlan:
+    """Build the staged inventory's plan, keeping a proved one's bytes.
+
+    The last plan's `created` is tried first: when the inventory built with
+    it already has a proof (requested or received), the bytes are the same
+    and so is the proof; a resubmit keeps its digest too. Otherwise the
+    version is created now.
+    """
+    prior = load_plan(staging_dir)
+    prior_created = None
+    if prior is not None:
+        prior_inv = prior.inventory.inventory
+        prior_created = prior_inv.versions[prior_inv.head].created
+
+    def build(created: str | None) -> CommitPlan:
+        plan, _cs = build_inventory_plan(
+            store,
+            sr,
+            root_path,
+            object_id,
+            message=metadata.message,
+            user=version_user_from_staged(metadata),
+            created=created,
+        )
+        return plan
+
+    plan = build(prior_created)
+    if prior_created is None or plan.inventory.digest in state.proofs:
+        return plan
+    return build(None)
 
 
 def submit_prepared_inventory_locked(
@@ -557,9 +584,9 @@ def retry_inventory_locked(
     state = load_ots(staging_dir)
     check_transition(state.phase, "timestamp inventory --retry")
     category_id = apply_category_id(state, sp_cfg.proof_category_id)
-    if state.inventory_proof is None:
+    if state.inventory is None:
         raise InventoryProofMissingError("inventory_proof missing")
-    inv_digest = state.inventory_proof.digest
+    inv_digest = state.inventory.digest
     sp = sp_factory(cfg)
     sp.submit_hashes([inv_digest], category_id)
     logger.info("retried inventory submission for %s", object_id)

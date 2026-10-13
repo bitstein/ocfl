@@ -1,9 +1,8 @@
 """ots.json wire-shape conversion.
 
-The in-memory `InventoryProof` keeps a nested `VerifiedProof`, while the v1
-JSON shape flattens those proof fields into the top-level `inventory_proof`
-object. Keep that compatibility boundary here so future schema migrations have
-one serialization file to update.
+Schema 2 is the msgspec shape of `OtsState` with absent optional fields
+omitted. Keep that boundary here so future schema migrations have one
+serialization file to update.
 """
 
 import copy
@@ -24,7 +23,6 @@ logger = logging.getLogger(__name__)
 def encode_ots_state(state: OtsState) -> dict[str, Any]:
     """Encode an in-memory OTS state into the current ots.json wire shape."""
     raw = msgspec.to_builtins(state)
-    _flatten_inventory_proof(raw)
     _omit_absent_proof_fields(raw)
     _omit_absent_batch_fields(raw)
     _omit_absent_verify_job_fields(raw)
@@ -36,7 +34,6 @@ def decode_ots_state(raw: dict[str, Any]) -> OtsState:
     from ocfl_cli.model.ots_state import VERIFY_JOB_STATUSES, OtsState
 
     raw = copy.deepcopy(raw)
-    _nest_inventory_proof(raw)
     try:
         state = msgspec.convert(raw, OtsState)
     except msgspec.ValidationError as e:
@@ -51,43 +48,12 @@ def decode_ots_state(raw: dict[str, Any]) -> OtsState:
     return state
 
 
-def _flatten_inventory_proof(raw: dict[str, Any]) -> None:
-    inv = raw.get("inventory_proof")
-    if not isinstance(inv, dict):
-        return
-    proof = inv.pop("proof", None)
-    if isinstance(proof, dict):
-        inv.update(proof)
-
-
-def _nest_inventory_proof(raw: dict[str, Any]) -> None:
-    inv = raw.get("inventory_proof")
-    if not isinstance(inv, dict):
-        return
-    proof = {}
-    for key in (
-        "ots_path",
-        "verified",
-        "block_height",
-        "block_hash",
-        "confirmations_at_verify",
-        "verified_at",
-    ):
-        if key in inv:
-            proof[key] = inv.pop(key)
-    inv["proof"] = proof
-
-
 def _omit_absent_proof_fields(raw: dict[str, Any]) -> None:
-    proofs = raw.get("content_proofs")
+    proofs = raw.get("proofs")
     if isinstance(proofs, dict):
         for proof in proofs.values():
             if isinstance(proof, dict):
                 _pop_none(proof, "block_hash")
-
-    inv = raw.get("inventory_proof")
-    if isinstance(inv, dict):
-        _pop_none(inv, "block_hash")
 
 
 def _omit_absent_batch_fields(raw: dict[str, Any]) -> None:
@@ -98,7 +64,7 @@ def _omit_absent_batch_fields(raw: dict[str, Any]) -> None:
                 _pop_none(submission, "batch_id")
                 _pop_none(submission, "record_ids")
 
-    inv = raw.get("inventory_proof")
+    inv = raw.get("inventory")
     if isinstance(inv, dict):
         _pop_none(inv, "batch_id")
         _pop_none(inv, "record_id")

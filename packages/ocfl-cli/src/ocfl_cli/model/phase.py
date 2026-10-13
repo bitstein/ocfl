@@ -6,6 +6,13 @@ from typing import Any
 from ocfl_cli.errors import PhaseError
 
 
+class TimestampTarget(enum.StrEnum):
+    """What a timestamp proves: a version's content files or its inventory."""
+
+    CONTENT = "content"
+    INVENTORY = "inventory"
+
+
 class Phase(enum.StrEnum):
     """Lifecycle phase of an OTS-enabled staging directory.
 
@@ -19,6 +26,21 @@ class Phase(enum.StrEnum):
     INVENTORY_PENDING = "inventory-pending"
     INVENTORY_UPGRADED = "inventory-upgraded"
     COMMITTED = "committed"
+
+
+_TARGETS: dict[Phase, TimestampTarget | None] = {
+    Phase.DRAFTING: TimestampTarget.CONTENT,
+    Phase.CONTENT_PENDING: TimestampTarget.CONTENT,
+    Phase.CONTENT_UPGRADED: TimestampTarget.INVENTORY,
+    Phase.INVENTORY_PENDING: TimestampTarget.INVENTORY,
+    Phase.INVENTORY_UPGRADED: TimestampTarget.INVENTORY,
+    Phase.COMMITTED: None,
+}
+
+
+def target_for(phase: Phase) -> TimestampTarget | None:
+    """The Timestamp Target a Staging Area in `phase` works on (None once committed)."""
+    return _TARGETS[phase]
 
 
 # Sentinels for the transition matrix.

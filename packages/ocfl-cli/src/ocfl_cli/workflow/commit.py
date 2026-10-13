@@ -323,12 +323,12 @@ def commit_ots(
 
 def _timestamped_plan(staging_dir: Path, state: OtsState) -> CommitPlan:
     """The staged plan with its verified inventory proof attached."""
-    if state.inventory_proof is None or not state.inventory_proof.proof.verified:
+    if state.inventory is None or not state.verified(state.inventory.digest):
         raise AttestationMismatchError(
             "inventory_proof missing or unverified; "
             "re-run `stage timestamp inventory --upgrade`"
         )
-    inv_digest = state.inventory_proof.digest
+    inv_digest = state.inventory.digest
     plan = load_plan(staging_dir)
     if plan is None:
         raise PhaseError(

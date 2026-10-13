@@ -475,3 +475,42 @@ class TestOneCommitBlock:
                 if isinstance(n, ast.Call)
             }
             assert "_commit_staging" in calls, name
+
+
+# --- 6.2 proofs keyed by digest, kept when a Staging Area moves back (ADR-0004)
+
+
+class TestProofsByDigest:
+    def test_one_proof_table_for_both_targets(self):
+        import msgspec
+
+        from ocfl_cli.model.ots_state import OTS_STATE_VERSION, OtsState, Submission
+        from ocfl_cli.model.phase import TimestampTarget
+
+        assert OTS_STATE_VERSION == 2
+        fields = {f.name for f in msgspec.structs.fields(OtsState)}
+        assert "proofs" in fields
+        assert not {"content_proofs", "inventory_proof"} & fields
+        target = {f.name: f.type for f in msgspec.structs.fields(Submission)}["target"]
+        assert target is TimestampTarget
+
+    def test_workflow_classifies_paths_with_split_state(self):
+        bad = [
+            f"{_rel(p)}:{n.lineno}"
+            for p in _py_files(CLI_SRC / "workflow")
+            for n in ast.walk(_tree(p))
+            if isinstance(n, ast.Call)
+            and ast.unparse(n.func).endswith(".endswith")
+            and "ots" in ast.unparse(n.args[0]).lower()
+        ]
+        assert not bad, bad
+        assert "ots.split_state(" in (CLI_SRC / "workflow/common.py").read_text()
+
+    def test_moving_back_keeps_proofs_and_the_plan(self):
+        """Regressions clear the staged inventory only; no proof is dropped."""
+        tree = _tree(CLI_SRC / "workflow/staging.py")
+        fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        for name in ("apply_rm_mv_regression", "apply_metadata_ots_regression"):
+            src = ast.unparse(fns[name])
+            assert "unlink" not in src, name
+            assert "proofs=" not in src and "verify_jobs=" not in src, name

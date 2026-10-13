@@ -38,12 +38,12 @@ from typer.testing import CliRunner
 
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import (
-    InventoryProof,
+    Proof,
+    StagedInventory,
     Submission,
-    VerifiedProof,
     VerifyJob,
 )
-from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store.ots_state import load_ots, save_ots
 from ocfl_cli.store.staging import StagingStore
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
@@ -174,8 +174,8 @@ def _set_phase(
     pending_digests: tuple[str, ...] = (),
     submissions: tuple[Submission, ...] = (),
     verify_jobs: tuple[VerifyJob, ...] = (),
-    content_proofs: dict[str, VerifiedProof] | None = None,
-    inventory_proof: InventoryProof | None = None,
+    proofs: dict[str, Proof] | None = None,
+    inventory: StagedInventory | None = None,
 ) -> None:
     state = load_ots(sd)
     state = replace(
@@ -184,14 +184,15 @@ def _set_phase(
         pending_digests=pending_digests,
         submissions=submissions,
         verify_jobs=verify_jobs,
-        content_proofs=content_proofs if content_proofs is not None else {},
-        inventory_proof=inventory_proof,
+        proofs=proofs if proofs is not None else {},
+        inventory=inventory,
     )
     save_ots(sd, state)
 
 
-def _verified_content_proof(digest: str) -> VerifiedProof:
-    return VerifiedProof(
+def _verified_content_proof(digest: str) -> Proof:
+    return Proof(
+        target=TimestampTarget.CONTENT,
         ots_path=f"ots-cache/{digest}.ots",
         verified=True,
         block_height=800_000,
@@ -200,13 +201,8 @@ def _verified_content_proof(digest: str) -> VerifiedProof:
     )
 
 
-def _verified_inv_proof(version: str, inv_digest: str) -> InventoryProof:
-    return InventoryProof(
-        version=version,
-        digest=inv_digest,
-        proof=_verified_content_proof(inv_digest),
-        job_id=None,
-    )
+def _verified_inv_proof(version: str, inv_digest: str) -> StagedInventory:
+    return StagedInventory(version=version, digest=inv_digest, job_id=None)
 
 
 # =========================================================================== #
@@ -394,6 +390,7 @@ class TestStageStatusOts:
                     submitted_at="2026-04-25T14:00:00+00:00",
                     digests=(da,),
                     status="submitted",
+                    target=TimestampTarget.CONTENT,
                     attempts=1,
                 ),
             ),
@@ -453,6 +450,7 @@ class TestStageStatusOts:
                     submitted_at="2026-04-25T14:00:00+00:00",
                     digests=(da,),
                     status="failed",
+                    target=TimestampTarget.CONTENT,
                     job_id="job-fail",
                     attempts=1,
                 ),
@@ -496,7 +494,7 @@ class TestStageStatusOts:
             sd,
             Phase.CONTENT_UPGRADED,
             pending_digests=(da,),
-            content_proofs={da: _verified_content_proof(da)},
+            proofs={da: _verified_content_proof(da)},
         )
 
         r = runner.invoke(
@@ -532,21 +530,20 @@ class TestStageStatusOts:
         )
         da = digests["a.txt"]
         inv_d = "f" * 64
-        unverified_inv = InventoryProof(
+        unverified_inv = StagedInventory(
             version="v1",
             digest=inv_d,
-            proof=VerifiedProof(verified=False),
             job_id="job-inv",
         )
         _set_phase(
             sd,
             Phase.INVENTORY_PENDING,
             pending_digests=(da,),
-            content_proofs={da: _verified_content_proof(da)},
+            proofs={da: _verified_content_proof(da)},
             verify_jobs=(
                 VerifyJob(job_id="job-inv", digests=(inv_d,), status="IN_PROGRESS"),
             ),
-            inventory_proof=unverified_inv,
+            inventory=unverified_inv,
         )
 
         r = runner.invoke(
@@ -580,21 +577,20 @@ class TestStageStatusOts:
         )
         da = digests["a.txt"]
         inv_d = "e" * 64
-        unverified_inv = InventoryProof(
+        unverified_inv = StagedInventory(
             version="v1",
             digest=inv_d,
-            proof=VerifiedProof(verified=False),
             job_id="job-inv-fail",
         )
         _set_phase(
             sd,
             Phase.INVENTORY_PENDING,
             pending_digests=(da,),
-            content_proofs={da: _verified_content_proof(da)},
+            proofs={da: _verified_content_proof(da)},
             verify_jobs=(
                 VerifyJob(job_id="job-inv-fail", digests=(inv_d,), status="FAILED"),
             ),
-            inventory_proof=unverified_inv,
+            inventory=unverified_inv,
         )
 
         r = runner.invoke(
@@ -633,8 +629,8 @@ class TestStageStatusOts:
             sd,
             Phase.INVENTORY_UPGRADED,
             pending_digests=(da,),
-            content_proofs={da: _verified_content_proof(da)},
-            inventory_proof=_verified_inv_proof("v1", inv_d),
+            proofs={da: _verified_content_proof(da)},
+            inventory=_verified_inv_proof("v1", inv_d),
         )
 
         r = runner.invoke(
@@ -672,8 +668,8 @@ class TestStageStatusOts:
             sd,
             Phase.COMMITTED,
             pending_digests=(da,),
-            content_proofs={da: _verified_content_proof(da)},
-            inventory_proof=_verified_inv_proof("v1", inv_d),
+            proofs={da: _verified_content_proof(da)},
+            inventory=_verified_inv_proof("v1", inv_d),
         )
 
         r = runner.invoke(
@@ -859,6 +855,7 @@ class TestStageStatusOts:
                     submitted_at="2026-04-25T12:00:00+00:00",
                     digests=(da,),
                     status="submitted",
+                    target=TimestampTarget.CONTENT,
                     job_id="job-h",
                     attempts=1,
                 ),
@@ -932,6 +929,7 @@ class TestStageStatusOts:
                     submitted_at=submitted_iso,
                     digests=(da,),
                     status="submitted",
+                    target=TimestampTarget.CONTENT,
                     job_id="job-sec",
                     attempts=1,
                 ),

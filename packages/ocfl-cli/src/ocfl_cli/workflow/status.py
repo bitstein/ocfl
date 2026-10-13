@@ -13,7 +13,7 @@ from ocfl_cli.workflow.common import (
     StateMap,
     is_failed_verify_job,
     is_terminal_verify_job,
-    non_ots_digests,
+    ordinary_digests,
 )
 from ocfl_lib import (
     BitcoinRpcError,
@@ -100,7 +100,7 @@ def next_action_for(state: OtsState, has_files: bool) -> tuple[NextActionKind, s
                 else NextActionKind.ADD_CONTENT
             )
         case Phase.CONTENT_PENDING:
-            verified = {d for d, p in state.content_proofs.items() if p.verified}
+            verified = {d for d in state.pending_digests if state.verified(d)}
             still_pending = set(state.pending_digests) - verified
             failed_covers = any(
                 is_failed_verify_job(j.status) and (set(j.digests) & still_pending)
@@ -114,7 +114,7 @@ def next_action_for(state: OtsState, has_files: bool) -> tuple[NextActionKind, s
         case Phase.CONTENT_UPGRADED:
             kind = NextActionKind.TIMESTAMP_INVENTORY
         case Phase.INVENTORY_PENDING:
-            ip = state.inventory_proof
+            ip = state.inventory
             kind = (
                 NextActionKind.RETRY_INVENTORY
                 if ip is not None
@@ -183,7 +183,7 @@ def _build_outstanding_jobs(
 
 def _build_counts(state: OtsState, non_ots: set[str]) -> dict[str, int]:
     total = len(non_ots)
-    upgraded_set = {d for d, p in state.content_proofs.items() if p.verified}
+    upgraded_set = {d for d in non_ots if state.verified(d)}
     upgraded = len(upgraded_set & non_ots) if non_ots else 0
 
     non_failed_set: set[str] = set()
@@ -247,7 +247,7 @@ def status_ots_dict(
     inv = store.load_inventory(root_path, object_id)
     head_state = inv.versions[inv.head].state
 
-    non_ots = non_ots_digests(head_state)
+    non_ots = ordinary_digests(head_state)
     counts = _build_counts(state, non_ots)
     has_files = counts["total"] > 0
 

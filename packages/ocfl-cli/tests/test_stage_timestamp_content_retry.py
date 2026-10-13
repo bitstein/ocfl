@@ -33,7 +33,7 @@ from typer.testing import CliRunner
 
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Submission
-from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store.ots_state import load_ots, save_ots
 from ocfl_cli.store.staging import StagingStore
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
@@ -187,6 +187,7 @@ class TestRetryResubmitsOnlyFailed:
             submitted_at="2026-04-23T16:30:00+00:00",
             digests=(d1, d2),
             status="failed",
+            target=TimestampTarget.CONTENT,
             job_id=None,
             attempts=1,
         )
@@ -194,6 +195,7 @@ class TestRetryResubmitsOnlyFailed:
             submitted_at="2026-04-23T16:31:00+00:00",
             digests=(d3,),
             status="submitted",
+            target=TimestampTarget.CONTENT,
             job_id=None,
             attempts=1,
         )
@@ -201,6 +203,7 @@ class TestRetryResubmitsOnlyFailed:
             submitted_at="2026-04-23T16:32:00+00:00",
             digests=(d4,),
             status="submitting",
+            target=TimestampTarget.CONTENT,
             job_id=None,
             attempts=2,
         )
@@ -282,6 +285,7 @@ class TestRetryEmptyFailedNoop:
             submitted_at="2026-04-23T16:30:00+00:00",
             digests=(d,),
             status="submitted",
+            target=TimestampTarget.CONTENT,
             job_id=None,
             attempts=1,
         )
@@ -352,6 +356,7 @@ class TestRetryMultipleFailedIndependent:
             submitted_at="2026-04-23T16:30:00+00:00",
             digests=(da,),
             status="failed",
+            target=TimestampTarget.CONTENT,
             job_id=None,
             attempts=1,
         )
@@ -359,6 +364,7 @@ class TestRetryMultipleFailedIndependent:
             submitted_at="2026-04-23T16:31:00+00:00",
             digests=(db,),
             status="failed",
+            target=TimestampTarget.CONTENT,
             job_id=None,
             attempts=2,
         )
@@ -442,6 +448,7 @@ class TestRetryPhaseGate:
             submitted_at="2026-04-23T16:30:00+00:00",
             digests=(d,),
             status="failed",
+            target=TimestampTarget.CONTENT,
             job_id=None,
             attempts=1,
         )
@@ -510,6 +517,7 @@ class TestRetryFlagCombinationGuards:
             submitted_at="2026-04-23T16:30:00+00:00",
             digests=(d,),
             status="failed",
+            target=TimestampTarget.CONTENT,
             job_id=None,
             attempts=1,
         )
@@ -582,6 +590,7 @@ class TestRetryCrashSafeShape:
             submitted_at="2026-04-23T16:30:00+00:00",
             digests=(d,),
             status="failed",
+            target=TimestampTarget.CONTENT,
             job_id=None,
             attempts=1,
         )

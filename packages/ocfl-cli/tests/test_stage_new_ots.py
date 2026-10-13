@@ -6,9 +6,9 @@ Pins step 9 of `OTS workflow contract`:
 - `--ots` requires `[simpleproof]` + `[bitcoin]` config to be present and
   valid; missing sections fail early with actionable hints (config error
   → exit 6 per the canonical exit-code mapping).
-- On success, writes initial `<staging>/ots.json` at schema_version=1
+- On success, writes initial `<staging>/ots.json` at schema_version=2
   with phase=drafting, category_id=[simpleproof].proof_category_id,
-  empty submissions/verify_jobs/content_proofs/pending_digests, and
+  empty submissions/verify_jobs/proofs/pending_digests, and
   inventory_proof=None. Staging inventory uses sha256 digest algorithm.
 - Extension config (`extensions/NNNN-ots-timestamps/config.json`) is NOT
   written here — that lands at first commit (step 9 deliverable bullet).
@@ -283,14 +283,14 @@ class TestInitialOtsJson:
         assert has_ots(staging_dir)
         state = load_ots(staging_dir)
 
-        assert state.schema_version == 1
+        assert state.schema_version == 2
         assert state.phase is Phase.DRAFTING
         # Matches [simpleproof].proof_category_id from _SP_OK.
         assert state.category_id == 641
         assert state.pending_digests == ()
         assert state.submissions == ()
         assert state.verify_jobs == ()
-        assert state.content_proofs == {}
+        assert state.proofs == {}
         assert state.inventory_proof is None
 
     def test_staging_inventory_uses_sha256(

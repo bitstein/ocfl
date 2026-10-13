@@ -60,8 +60,8 @@ from typer.testing import CliRunner
 
 from ocfl_cli.main import app
 from ocfl_cli.model.metadata import StagedMetadata, StagedUser
-from ocfl_cli.model.ots_state import VerifiedProof
-from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.ots_state import Proof
+from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store import locks as locks
 from ocfl_cli.store.ots_state import (
     has_ots,
@@ -168,8 +168,9 @@ def _setup_missing_metadata_inventory_upgraded(
         state,
         phase=Phase.CONTENT_UPGRADED,
         pending_digests=(da,),
-        content_proofs={
-            da: VerifiedProof(
+        proofs={
+            da: Proof(
+                target=TimestampTarget.CONTENT,
                 ots_path=f"ots-cache/{da}.ots",
                 verified=True,
                 block_height=DIGEST_BLOCK_HEIGHT,
@@ -194,8 +195,8 @@ def _setup_missing_metadata_inventory_upgraded(
     assert r.exit_code == 0, r.output
 
     state = load_ots(sd)
-    assert state.inventory_proof is not None
-    inv_digest = state.inventory_proof.digest
+    assert state.inventory is not None
+    inv_digest = state.inventory.digest
     ots_bytes = _ots_for(inv_digest)
     _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
     _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
@@ -308,7 +309,7 @@ class TestStageCommitOtsHappyPath:
         state = load_ots(sd)
         state = replace(
             state,
-            content_proofs={da: replace(state.content_proofs[da], verified=False)},
+            proofs={da: replace(state.proofs[da], verified=False)},
         )
         save_ots(sd, state)
 
@@ -367,7 +368,9 @@ class TestStageCommitOtsAfterMetadataInvalidation:
         )
         assert r.exit_code == 0, r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
-        assert not plan_path(sd).exists()
+        # ADR-0004: plan.json stays; the staged inventory is dropped.
+        assert plan_path(sd).exists()
+        assert load_ots(sd).inventory is None
 
         r = runner.invoke(
             app,

@@ -14,14 +14,16 @@ Pins step 11 of `OTS workflow contract`:
   (1) atomic write ``ots-cache/<d>.ots``,
   (2) ``ingest_file`` cached bytes into stage state at ``<obj_rel>.ots``
       (updating ``content_map``),
-  (3) atomic update ``ots.json.content_proofs[d] = VerifiedProof(verified=True,
-      block_height=..., confirmations_at_verify=..., verified_at=...)``.
-- On ``PendingVerification`` cache bytes (step 1), record ``content_proofs[d]
-  = VerifiedProof(verified=False)`` (no ingest, no advance).
+  (3) atomic update ``ots.json.proofs[d] = Proof(target=CONTENT,
+      verified=True, block_height=..., confirmations_at_verify=...,
+      verified_at=...)``; companions ``P.ots`` are placed from the cache
+      on every pass.
+- On ``PendingVerification`` cache bytes (step 1), record ``proofs[d]
+  = Proof(target=TimestampTarget.CONTENT, verified=False)`` (no ingest, no advance).
 - ``ReorgDetectedError`` / ``AttestationMismatchError`` HALT the upgrade
   (CLI exit 5); ``ots.json`` left intact.
 - Phase advances to ``content-upgraded`` only when both:
-  (1) ∀ d ∈ pending_digests: content_proofs[d].verified is True
+  (1) ∀ d ∈ pending_digests: proofs[d].verified is True
   (2) non_ots_digests(stage.state) ⊆ pending_digests
 - Reorg reconciliation (`reverify_content_proofs`) at head of every
   --upgrade pass: for each verified=True proof, re-parse cached `.ots`
@@ -50,11 +52,11 @@ from ocfl_cli.errors import AttestationMismatchError
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import (
     CalendarAttestation,
+    Proof,
     Submission,
-    VerifiedProof,
     VerifyJob,
 )
-from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.model.simpleproof import CalendarAttestation as WireCalendarAttestation
 from ocfl_cli.stage import timestamp as stage_timestamp
 from ocfl_cli.store.ots_state import load_ots, ots_cache_path, save_ots
@@ -214,6 +216,7 @@ def _force_content_pending(sd: Path, digests: tuple[str, ...]) -> None:
                 submitted_at="2026-04-23T16:30:00+00:00",
                 digests=digests,
                 status="submitted",
+                target=TimestampTarget.CONTENT,
                 job_id=None,
                 attempts=1,
             ),
@@ -450,7 +453,7 @@ class TestMidflightProgressSnapshots:
 
         job = state.verify_jobs[0]
         assert digest in job.attestation_snapshots
-        assert state.content_proofs == {}
+        assert state.proofs == {}
         progress = wf_common.compute_job_progress(state, runtime=runtime)
         assert progress[0].anchored_digests == 1
         assert progress[0].pending_digests == 0
@@ -647,8 +650,9 @@ class TestMidflightProgressSnapshots:
                     },
                 ),
             ),
-            content_proofs={
-                digest: VerifiedProof(
+            proofs={
+                digest: Proof(
+                    target=TimestampTarget.CONTENT,
                     ots_path=f"ots-cache/{digest}.ots",
                     verified=True,
                 )
@@ -717,9 +721,6 @@ class TestMidflightProgressSnapshots:
 
         state = wf_content.ingest_content_verifications_locked(
             state,
-            StagingStore(staging),
-            str(empty_sha256_root.resolve()),
-            "obj:preserve",
             sd,
             sp=sp_fake,
             btc=btc_fake.rpc,
@@ -727,7 +728,7 @@ class TestMidflightProgressSnapshots:
             runtime=runtime,
         )
 
-        assert state.content_proofs[digest].verified is True
+        assert state.proofs[digest].verified is True
         assert state.verify_jobs[0].attestation_snapshots == snapshot
 
 
@@ -785,7 +786,7 @@ class TestUpgradeHappyPath:
 
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
-        proof = state.content_proofs[d]
+        proof = state.proofs[d]
         assert proof.verified is True
         assert proof.block_height == DIGEST_BLOCK_HEIGHT
         assert proof.block_hash == btc_fake.rpc.getblockhash(DIGEST_BLOCK_HEIGHT)
@@ -865,8 +866,8 @@ class TestUpgradeHappyPath:
 
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
-        assert state.content_proofs[da].verified is True
-        assert state.content_proofs[db].verified is False
+        assert state.proofs[da].verified is True
+        assert state.proofs[db].verified is False
         # Both .ots bytes cached, even the pending one.
         assert ots_cache_path(sd, da).is_file()
         assert ots_cache_path(sd, db).is_file()
@@ -936,13 +937,13 @@ class TestThreeConfGate:
         state = load_ots(sd)
         if expect_advance:
             assert state.phase is Phase.CONTENT_UPGRADED
-            assert state.content_proofs[d].verified is True
+            assert state.proofs[d].verified is True
         else:
             assert state.phase is Phase.CONTENT_PENDING
             # Insufficient-confs path still records a (verified=False) proof
             # entry alongside the cached bytes.
             assert ots_cache_path(sd, d).is_file()
-            assert state.content_proofs[d].verified is False
+            assert state.proofs[d].verified is False
 
 
 # =========================================================================== #
@@ -996,7 +997,7 @@ class TestPendingHeld:
         assert "Phase: content-pending" in r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
-        assert state.content_proofs[d].verified is False
+        assert state.proofs[d].verified is False
         assert ots_cache_path(sd, d).is_file()
 
         # Round 2: SP now serves a Bitcoin-anchored .ots; re-poll converges.
@@ -1019,7 +1020,7 @@ class TestPendingHeld:
         assert "Phase: content-pending -> content-upgraded" in r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
-        assert state.content_proofs[d].verified is True
+        assert state.proofs[d].verified is True
 
 
 # =========================================================================== #
@@ -1077,7 +1078,7 @@ class TestReorgShallow:
             ),
         )
         assert r.exit_code == 0, r.output
-        assert load_ots(sd).content_proofs[d].verified is True
+        assert load_ots(sd).proofs[d].verified is True
 
         # Reorg the attested height: block_hash changes, height still in chain
         # (within N). The cached .ots's embedded merkle path is now stale.
@@ -1101,7 +1102,7 @@ class TestReorgShallow:
         assert "Waiting on 1 pending digest" in r.output
         state = load_ots(sd)
         # Reorg absorbed: proof was reset, no HALT.
-        assert state.content_proofs[d].verified is False
+        assert state.proofs[d].verified is False
 
 
 # =========================================================================== #
@@ -1208,8 +1209,8 @@ class TestMerkleMismatch:
         assert r.exit_code == 5, r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
-        # ots.json's content_proofs unchanged for d (no verified=True written).
-        assert d not in state.content_proofs or not state.content_proofs[d].verified
+        # ots.json's proofs unchanged for d (no verified=True written).
+        assert d not in state.proofs or not state.proofs[d].verified
 
 
 class TestReorgMerkleMismatch:
@@ -1268,7 +1269,7 @@ class TestReorgMerkleMismatch:
             ),
         )
         assert r.exit_code == 0, r.output
-        assert load_ots(sd).content_proofs[d].verified is True
+        assert load_ots(sd).proofs[d].verified is True
 
         # Reorg the attested height to different content, then re-bury it to
         # MIN_CONFS. The replacement block reports a deterministic non-stale
@@ -1292,7 +1293,7 @@ class TestReorgMerkleMismatch:
         assert r.exit_code == 0, r.output
         state = load_ots(sd)
         # The merkle no longer matches → proof reset (fidelity guard).
-        assert state.content_proofs[d].verified is False
+        assert state.proofs[d].verified is False
         # A fresh verify job was queued to re-anchor the reset digest.
         assert any(
             d in j.digests and j.status == "IN_PROGRESS" for j in state.verify_jobs
@@ -1400,7 +1401,7 @@ class TestConfirmationsBeforeMerkleCli:
         assert "Waiting on 1 pending digest" in r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
-        assert state.content_proofs[d].verified is False
+        assert state.proofs[d].verified is False
 
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
         r = runner.invoke(
@@ -1433,7 +1434,7 @@ class TestCrashRecovery:
       - ``during_ots_save``: ots.json save raises mid-write (atomicity guards)
 
     For each: first --upgrade pass crashes (non-zero exit); a second pass
-    with no fault converges to phase=content-upgraded, content_proofs[d]
+    with no fault converges to phase=content-upgraded, proofs[d]
     .verified=True, cached bytes intact, .ots companion ingested.
     """
 
@@ -1489,18 +1490,13 @@ class TestCrashRecovery:
         assert r.exit_code != 0, r.output
         # Crash-recovery invariant: ots.json is never torn (always parses).
         load_ots(sd)
-        # If verified=True is recorded for d, both cache + ingest must have
-        # completed (the implication direction of the invariant).
+        # If verified=True is recorded for d, the cache write completed (the
+        # implication direction of the invariant). The companion `a.txt.ots`
+        # is placed from the cache on every pass, so it may still be missing
+        # here; the converging pass below places it.
         post_crash = load_ots(sd)
-        if (
-            d in post_crash.content_proofs
-            and post_crash.content_proofs[d].verified is True
-        ):
+        if d in post_crash.proofs and post_crash.proofs[d].verified is True:
             assert ots_cache_path(sd, d).is_file()
-            store = StagingStore(staging)
-            inv = store.load_inventory(str(empty_sha256_root.resolve()), "obj:crash")
-            paths = {p for ps in inv.versions[inv.head].state.values() for p in ps}
-            assert "a.txt.ots" in paths
 
         # Remove the fault; a second pass must converge.
         _uninstall_crash_fault(monkeypatch)
@@ -1519,7 +1515,7 @@ class TestCrashRecovery:
         assert r.exit_code == 0, r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
-        assert state.content_proofs[d].verified is True
+        assert state.proofs[d].verified is True
         # Cache bytes are correct (digest-keyed; survives multiple writes).
         assert ots_cache_path(sd, d).read_bytes() == ots_bytes
         # .ots companion present in staged inventory.
@@ -1574,7 +1570,7 @@ def _install_crash_fault(
             parsed = json.loads(Path(str(src)).read_bytes())
         except OSError, json.JSONDecodeError:
             return False
-        entry = (parsed.get("content_proofs") or {}).get(digest)
+        entry = (parsed.get("proofs") or {}).get(digest)
         return bool(entry and entry.get("verified") is True)
 
     def fails(src: object, dst: Path) -> bool:
@@ -1679,7 +1675,7 @@ class TestOrphanGuard:
         # Orphan-guard: phase MUST NOT advance even though d verifies.
         assert state.phase is Phase.CONTENT_PENDING
         # Existing digest still verifies (work isn't wasted).
-        assert state.content_proofs[d].verified is True
+        assert state.proofs[d].verified is True
         # Orphan digest absent from pending_digests (it never joined).
         d_b = hashlib.sha256(b"bravo").hexdigest()
         assert d_b not in state.pending_digests
@@ -1779,7 +1775,7 @@ class TestPhaseAdvanceInvariant:
         assert r.exit_code == 0, r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
-        assert state.content_proofs[d].verified is False
+        assert state.proofs[d].verified is False
 
     def test_no_advance_when_condition2_fails_orphan_present(
         self,
@@ -1828,7 +1824,7 @@ class TestPhaseAdvanceInvariant:
         assert r.exit_code == 0, r.output
         state = load_ots(sd)
         # Cond (1) holds (a verified), but b is in stage state outside pending.
-        assert state.content_proofs[da].verified is True
+        assert state.proofs[da].verified is True
         assert state.phase is Phase.CONTENT_PENDING
 
 
@@ -1958,8 +1954,8 @@ class TestRegtestEndToEnd:
         assert r.exit_code == 0, r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
-        assert state.content_proofs[d].verified is True
-        assert state.content_proofs[d].block_height == attest_height
+        assert state.proofs[d].verified is True
+        assert state.proofs[d].block_height == attest_height
 
         # Reorg: invalidate the attestation block. Mine a longer fork so
         # the chain advances past it without the OP_RETURN tx — the cached
@@ -1988,9 +1984,8 @@ class TestRegtestEndToEnd:
         # Reorg reconciliation marks proof unverified; phase regresses.
         post = load_ots(sd)
         assert (
-            post.content_proofs[d].verified is False
-            or post.phase is not Phase.CONTENT_UPGRADED
+            post.proofs[d].verified is False or post.phase is not Phase.CONTENT_UPGRADED
         ), (
             f"reorg should have invalidated the proof; phase={post.phase} "
-            f"verified={post.content_proofs[d].verified} exit={r.exit_code}"
+            f"verified={post.proofs[d].verified} exit={r.exit_code}"
         )

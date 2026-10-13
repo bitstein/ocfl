@@ -61,7 +61,7 @@ def object_has_other_batch(
     state: OtsState, batch_id: str, target: batch_model.BatchTarget
 ) -> str | None:
     if target == "inventory":
-        proof = state.inventory_proof
+        proof = state.inventory
         if (
             proof is not None
             and proof.batch_id is not None
@@ -166,7 +166,7 @@ def prepare_batch_object(
                     skipped_reason=fixed_batch_reason("noop"),
                 )
             state = load_ots(staging_dir)
-            if state.inventory_proof is None:
+            if state.inventory is None:
                 return batch_model.BatchObject(
                     object_id=object_id,
                     status="failed",
@@ -176,8 +176,8 @@ def prepare_batch_object(
                 staging_dir,
                 msgspec.structs.replace(
                     state,
-                    inventory_proof=msgspec.structs.replace(
-                        state.inventory_proof,
+                    inventory=msgspec.structs.replace(
+                        state.inventory,
                         batch_id=batch.batch_id,
                         record_id=None,
                     ),
@@ -287,7 +287,7 @@ def recover_content_intent(
 def recover_inventory_intent(
     batch: batch_model.BatchFile, object_id: str, state: OtsState
 ) -> batch_model.BatchObject | None:
-    proof = state.inventory_proof
+    proof = state.inventory
     if proof is None or proof.batch_id != batch.batch_id:
         return None
     return batch_model.BatchObject(

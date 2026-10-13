@@ -87,14 +87,14 @@ def test_load_ots_does_not_acquire_lock(staging: Path):
     (staging / "ots.json").write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "phase": "drafting",
                 "category_id": 641,
                 "pending_digests": [],
                 "submissions": [],
                 "verify_jobs": [],
-                "content_proofs": {},
-                "inventory_proof": None,
+                "proofs": {},
+                "inventory": None,
             }
         )
     )

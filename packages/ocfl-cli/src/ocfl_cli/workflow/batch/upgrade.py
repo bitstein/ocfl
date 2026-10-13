@@ -29,7 +29,7 @@ from ocfl_cli.workflow import inventory as wf_inventory
 from ocfl_cli.workflow.batch.reasons import (
     fixed_batch_reason,
 )
-from ocfl_lib import BitcoinRpcError, DigestAlgorithm
+from ocfl_lib import BitcoinRpcError
 
 if TYPE_CHECKING:
     from ocfl_cli.model.ots_state import OtsState
@@ -39,13 +39,15 @@ if TYPE_CHECKING:
 
 
 def content_digest_verified(state: OtsState, digest: str) -> bool:
-    proof = state.content_proofs.get(digest)
-    return proof is not None and proof.verified
+    return state.verified(digest)
 
 
 def inventory_digest_verified(state: OtsState, digest: str) -> bool:
-    proof = state.inventory_proof
-    return proof is not None and proof.digest == digest and proof.proof.verified
+    return (
+        state.inventory is not None
+        and state.inventory.digest == digest
+        and state.verified(digest)
+    )
 
 
 def batch_digest_verified(
@@ -295,30 +297,21 @@ def ingest_batch_content_downloads(
     staging_dir = store.staging_path(batch.root_path, row.object_id)
     with with_lock(staging_dir, timeout=runtime.lock_timeout):
         state = load_ots(staging_dir)
-        inv = store.load_inventory(batch.root_path, row.object_id)
-        alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
-        head_state = {d: list(ps) for d, ps in inv.versions[inv.head].state.items()}
         for digest in row.digests:
             ots_bytes = downloads.get(digest)
             if ots_bytes is None or content_digest_verified(state, digest):
                 continue
-            state, inv = wf_content.verify_and_ingest_digest(
+            state = wf_content.verify_content_digest(
                 digest,
                 ots_bytes,
                 state,
-                inv,
-                head_state,
-                alg,
                 btc=btc,
-                store=store,
-                root_path=batch.root_path,
-                object_id=row.object_id,
                 staging_dir=staging_dir,
                 min_confirmations=min_confirmations,
                 runtime=runtime,
             )
         ready, _unverified_pending, _orphans = wf_content.phase_advance_ready(
-            state, store, sr, batch.root_path, row.object_id
+            state, store, sr, batch.root_path, row.object_id, staging_dir
         )
         if ready and state.phase is not Phase.CONTENT_UPGRADED:
             state = msgspec.structs.replace(state, phase=Phase.CONTENT_UPGRADED)
@@ -345,7 +338,7 @@ def ingest_batch_inventory_downloads(
     staging_dir = store.staging_path(batch.root_path, row.object_id)
     with with_lock(staging_dir, timeout=runtime.lock_timeout):
         state = load_ots(staging_dir)
-        proof = state.inventory_proof
+        proof = state.inventory
         if proof is None or proof.batch_id != batch.batch_id:
             return (
                 msgspec.structs.replace(
@@ -368,7 +361,7 @@ def ingest_batch_inventory_downloads(
                 True,
             )
         ots_bytes = downloads.get(proof.digest)
-        if ots_bytes is None or proof.proof.verified:
+        if ots_bytes is None or state.verified(proof.digest):
             return row, False
         state = wf_inventory.verify_inventory_digest(
             state, ots_bytes, btc, staging_dir, min_confirmations, runtime=runtime
@@ -390,7 +383,7 @@ def inventory_plan_matches_submission(
     staging_dir: Path,
     state: OtsState,
 ) -> bool:
-    proof = state.inventory_proof
+    proof = state.inventory
     if proof is None or proof.digest not in row.digests:
         return False
     prior_plan = wf_commit.load_plan(staging_dir)

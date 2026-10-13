@@ -108,7 +108,7 @@ def mirror_chunk_to_object(
             )
             return completed
 
-        proof = state.inventory_proof
+        proof = state.inventory
         if proof is None or proof.batch_id != batch.batch_id:
             return False
         record_id = ids_by_digest.get(proof.digest)
@@ -118,7 +118,7 @@ def mirror_chunk_to_object(
             staging_dir,
             msgspec.structs.replace(
                 state,
-                inventory_proof=msgspec.structs.replace(proof, record_id=record_id),
+                inventory=msgspec.structs.replace(proof, record_id=record_id),
             ),
         )
         return True
@@ -330,7 +330,7 @@ def revalidate_content_submission(
 def revalidate_inventory_submission(
     state: OtsState, batch_id: str, row: batch_model.BatchObject
 ) -> set[str] | None:
-    proof = state.inventory_proof
+    proof = state.inventory
     if proof is None or proof.batch_id != batch_id or proof.digest not in row.digests:
         return None
     if proof.record_id is not None:

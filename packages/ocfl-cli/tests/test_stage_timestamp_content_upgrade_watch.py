@@ -59,7 +59,7 @@ from typer.testing import CliRunner
 
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Submission, VerifyJob
-from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.ports import BlockStream
 from ocfl_cli.store.ots_state import load_ots, save_ots
 from ocfl_cli.store.staging import StagingStore
@@ -203,6 +203,7 @@ def _force_content_pending(sd: Path, digests: tuple[str, ...]) -> None:
                 submitted_at="2026-04-23T16:30:00+00:00",
                 digests=digests,
                 status="submitted",
+                target=TimestampTarget.CONTENT,
                 job_id=None,
                 attempts=1,
             ),
@@ -862,7 +863,7 @@ class TestTwoWatchersSerializeSafely:
         # Final state: phase advanced; proof verified; no torn writes.
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
-        assert state.content_proofs[d].verified is True
+        assert state.proofs[d].verified is True
 
 
 # =========================================================================== #

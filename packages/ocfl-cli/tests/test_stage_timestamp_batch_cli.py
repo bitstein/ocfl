@@ -36,13 +36,13 @@ from ocfl_cli.model.batch import (
 )
 from ocfl_cli.model.metadata import StagedMetadata, StagedUser
 from ocfl_cli.model.ots_state import (
-    InventoryProof,
     OtsState,
+    Proof,
+    StagedInventory,
     Submission,
-    VerifiedProof,
     VerifyJob,
 )
-from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.model.simpleproof import (
     JobStatus,
     SimpleProofDownloadResult,
@@ -620,7 +620,7 @@ def test_batch_inventory_new_batch_submits_and_mirrors_record_id(
         replace(
             state,
             phase=Phase.CONTENT_UPGRADED,
-            content_proofs={digest: VerifiedProof(verified=True)},
+            proofs={digest: Proof(target=TimestampTarget.CONTENT, verified=True)},
         ),
     )
 
@@ -647,12 +647,12 @@ def test_batch_inventory_new_batch_submits_and_mirrors_record_id(
     assert batch.submissions[0].record_ids == ("rec-1",)
     updated = load_ots(staging_dir)
     assert updated.phase is Phase.INVENTORY_PENDING
-    assert updated.inventory_proof is not None
-    assert batch.objects[0].digests == (updated.inventory_proof.digest,)
-    assert batch.submissions[0].digests == (updated.inventory_proof.digest,)
-    assert sp_fake._submissions[0].digests == (updated.inventory_proof.digest,)
-    assert updated.inventory_proof.batch_id == batch_id
-    assert updated.inventory_proof.record_id == "rec-1"
+    assert updated.inventory is not None
+    assert batch.objects[0].digests == (updated.inventory.digest,)
+    assert batch.submissions[0].digests == (updated.inventory.digest,)
+    assert sp_fake._submissions[0].digests == (updated.inventory.digest,)
+    assert updated.inventory.batch_id == batch_id
+    assert updated.inventory.record_id == "rec-1"
 
 
 def test_batch_inventory_same_object_skips_until_content_upgraded(
@@ -743,7 +743,7 @@ def test_batch_inventory_after_content_upgraded_ignores_content_batch_owner(
         replace(
             state,
             phase=Phase.CONTENT_UPGRADED,
-            content_proofs={digest: VerifiedProof(verified=True)},
+            proofs={digest: Proof(target=TimestampTarget.CONTENT, verified=True)},
         ),
     )
 
@@ -769,9 +769,9 @@ def test_batch_inventory_after_content_upgraded_ignores_content_batch_owner(
     inventory_batch = next(batch for batch in batches if batch.target == "inventory")
     assert inventory_batch.objects[0].status == "submitted"
     updated = load_ots(staging_dir)
-    assert updated.inventory_proof is not None
-    assert updated.inventory_proof.batch_id == inventory_batch.batch_id
-    assert updated.inventory_proof.record_id is not None
+    assert updated.inventory is not None
+    assert updated.inventory.batch_id == inventory_batch.batch_id
+    assert updated.inventory.record_id is not None
 
 
 def test_batch_content_shape_mismatch_fails_chunk_closed(
@@ -1076,6 +1076,7 @@ def test_batch_content_recovers_object_intent_without_batch_row(
                     submitted_at="2026-05-12T10:00:00Z",
                     digests=(digest,),
                     status="submitting",
+                    target=TimestampTarget.CONTENT,
                     batch_id=batch_id,
                     record_ids=(None,),
                 ),
@@ -1576,7 +1577,7 @@ def test_batch_retry_inventory_propagates_batch_record_id(
         OtsState(
             phase=Phase.CONTENT_UPGRADED,
             category_id=641,
-            inventory_proof=InventoryProof(
+            inventory=StagedInventory(
                 version="v1",
                 digest=digest,
                 batch_id=batch_id,
@@ -1632,8 +1633,8 @@ def test_batch_retry_inventory_propagates_batch_record_id(
     state = load_ots(
         StagingStore(staging).staging_path(root_path, "obj:inventory-retry")
     )
-    assert state.inventory_proof is not None
-    assert state.inventory_proof.record_id == "batch-rec-inv"
+    assert state.inventory is not None
+    assert state.inventory.record_id == "batch-rec-inv"
 
 
 def test_batch_retry_pending_chunk_posts_after_crash_before_post(
@@ -1810,6 +1811,7 @@ def test_batch_retry_object_record_id_wins_for_non_failed_chunk(
                     submitted_at="2026-05-12T10:00:00Z",
                     digests=(digest,),
                     status="submitting",
+                    target=TimestampTarget.CONTENT,
                     batch_id=batch_id,
                     record_ids=("object-rec",),
                 ),
@@ -1986,6 +1988,7 @@ def test_batch_status_json_contract_uses_canonical_next(
                     submitted_at="2026-05-12T10:01:00Z",
                     digests=(digest_a, digest_b),
                     status="submitted",
+                    target=TimestampTarget.CONTENT,
                     batch_id=batch_id,
                     record_ids=("rec-a", "rec-b"),
                 ),
@@ -1997,7 +2000,7 @@ def test_batch_status_json_contract_uses_canonical_next(
                     status="IN_PROGRESS",
                 ),
             ),
-            content_proofs={digest_a: VerifiedProof(verified=True)},
+            proofs={digest_a: Proof(target=TimestampTarget.CONTENT, verified=True)},
         ),
     )
     save_batch(
@@ -2338,11 +2341,12 @@ def test_batch_status_verbose_json_adds_per_digest_state(
                     submitted_at="2026-05-12T10:01:00Z",
                     digests=(digest_a, digest_b),
                     status="submitting",
+                    target=TimestampTarget.CONTENT,
                     batch_id=batch_id,
                     record_ids=("rec-a", None),
                 ),
             ),
-            content_proofs={digest_a: VerifiedProof(verified=True)},
+            proofs={digest_a: Proof(target=TimestampTarget.CONTENT, verified=True)},
         ),
     )
     save_batch(
@@ -2576,7 +2580,7 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
         )
     )
     assert state.phase is Phase.CONTENT_UPGRADED
-    assert state.content_proofs[digest].verified is True
+    assert state.proofs[digest].verified is True
     assert (
         ots_cache_path(
             StagingStore(staging).staging_path(
@@ -2668,8 +2672,8 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
             str(empty_sha256_root.resolve()), "obj:batch-partial-results"
         )
     )
-    assert state.content_proofs[returned_digest].verified is True
-    missing_proof = state.content_proofs.get(missing_digest)
+    assert state.proofs[returned_digest].verified is True
+    missing_proof = state.proofs.get(missing_digest)
     assert missing_proof is None or missing_proof.verified is False
 
     retry = _invoke(
@@ -3054,12 +3058,14 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
                     submitted_at="2026-05-12T10:00:00Z",
                     digests=(verified_digest, unverified_digest),
                     status="submitted",
+                    target=TimestampTarget.CONTENT,
                     batch_id=batch_id,
                     record_ids=("rec-a", "rec-b"),
                 ),
             ),
-            content_proofs={
-                verified_digest: VerifiedProof(
+            proofs={
+                verified_digest: Proof(
+                    target=TimestampTarget.CONTENT,
                     ots_path=f"ots-cache/{verified_digest}.ots",
                     verified=True,
                 )
@@ -3121,7 +3127,7 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
     assert len(sp_fake._jobs) == 2
     assert any(job.digests == (verified_digest,) for job in batch.verify_jobs)
     state = load_ots(staging_dir)
-    assert state.content_proofs[verified_digest].verified is False
+    assert state.proofs[verified_digest].verified is False
 
 
 def test_batch_watch_revalidates_mixed_upgraded_content_row(
@@ -3154,12 +3160,14 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
                     submitted_at="2026-05-12T10:00:00Z",
                     digests=(upgraded_digest,),
                     status="submitted",
+                    target=TimestampTarget.CONTENT,
                     batch_id=batch_id,
                     record_ids=("rec-upgraded",),
                 ),
             ),
-            content_proofs={
-                upgraded_digest: VerifiedProof(
+            proofs={
+                upgraded_digest: Proof(
+                    target=TimestampTarget.CONTENT,
                     ots_path=f"ots-cache/{upgraded_digest}.ots",
                     verified=True,
                 )
@@ -3178,6 +3186,7 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
                     submitted_at="2026-05-12T10:00:00Z",
                     digests=(waiting_digest,),
                     status="submitted",
+                    target=TimestampTarget.CONTENT,
                     batch_id=batch_id,
                     record_ids=("rec-waiting",),
                 ),
@@ -3248,7 +3257,7 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
     assert any(job.digests == (upgraded_digest,) for job in batch.verify_jobs)
     upgraded_state = load_ots(upgraded_dir)
     assert upgraded_state.phase is Phase.CONTENT_PENDING
-    assert upgraded_state.content_proofs[upgraded_digest].verified is False
+    assert upgraded_state.proofs[upgraded_digest].verified is False
     assert load_ots(waiting_dir).phase is Phase.CONTENT_PENDING
 
 
@@ -3277,16 +3286,19 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
         OtsState(
             phase=Phase.INVENTORY_UPGRADED,
             category_id=641,
-            inventory_proof=InventoryProof(
+            inventory=StagedInventory(
                 version="v1",
                 digest=upgraded_digest,
-                proof=VerifiedProof(
-                    ots_path=f"ots-cache/{upgraded_digest}.ots",
-                    verified=True,
-                ),
                 batch_id=batch_id,
                 record_id="rec-upgraded",
             ),
+            proofs={
+                upgraded_digest: Proof(
+                    target=TimestampTarget.INVENTORY,
+                    ots_path=f"ots-cache/{upgraded_digest}.ots",
+                    verified=True,
+                )
+            },
         ),
     )
     waiting_dir = _ots_staging(
@@ -3296,13 +3308,15 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
         OtsState(
             phase=Phase.INVENTORY_PENDING,
             category_id=641,
-            inventory_proof=InventoryProof(
+            inventory=StagedInventory(
                 version="v1",
                 digest=waiting_digest,
-                proof=VerifiedProof(verified=False),
                 batch_id=batch_id,
                 record_id="rec-waiting",
             ),
+            proofs={
+                waiting_digest: Proof(target=TimestampTarget.INVENTORY, verified=False)
+            },
         ),
     )
     ots_cache_path(upgraded_dir, upgraded_digest).parent.mkdir(parents=True)
@@ -3370,7 +3384,7 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
     upgraded_state = load_ots(upgraded_dir)
     assert upgraded_state.phase is Phase.INVENTORY_PENDING
     assert upgraded_state.inventory_proof is not None
-    assert upgraded_state.inventory_proof.proof.verified is False
+    assert upgraded_state.inventory_proof.verified is False
     assert load_ots(waiting_dir).phase is Phase.INVENTORY_PENDING
 
 
@@ -3405,12 +3419,14 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
                     submitted_at="2026-05-12T10:00:00Z",
                     digests=(failed_digest,),
                     status="submitted",
+                    target=TimestampTarget.CONTENT,
                     batch_id=batch_id,
                     record_ids=("rec-failed",),
                 ),
             ),
-            content_proofs={
-                failed_digest: VerifiedProof(
+            proofs={
+                failed_digest: Proof(
+                    target=TimestampTarget.CONTENT,
                     ots_path=f"ots-cache/{failed_digest}.ots",
                     verified=True,
                 )
@@ -3429,6 +3445,7 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
                     submitted_at="2026-05-12T10:00:00Z",
                     digests=(waiting_digest,),
                     status="submitted",
+                    target=TimestampTarget.CONTENT,
                     batch_id=batch_id,
                     record_ids=("rec-waiting",),
                 ),
@@ -3501,7 +3518,7 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
     assert any(job.digests == (waiting_digest,) for job in batch.verify_jobs)
     state = load_ots(failed_dir)
     assert state.phase is Phase.CONTENT_PENDING
-    assert state.content_proofs[failed_digest].verified is False
+    assert state.proofs[failed_digest].verified is False
 
 
 def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
@@ -3530,16 +3547,19 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
         OtsState(
             phase=Phase.INVENTORY_UPGRADED,
             category_id=641,
-            inventory_proof=InventoryProof(
+            inventory=StagedInventory(
                 version="v1",
                 digest=failed_digest,
-                proof=VerifiedProof(
-                    ots_path=f"ots-cache/{failed_digest}.ots",
-                    verified=True,
-                ),
                 batch_id=batch_id,
                 record_id="rec-failed",
             ),
+            proofs={
+                failed_digest: Proof(
+                    target=TimestampTarget.INVENTORY,
+                    ots_path=f"ots-cache/{failed_digest}.ots",
+                    verified=True,
+                )
+            },
         ),
     )
     _ots_staging(
@@ -3549,13 +3569,15 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
         OtsState(
             phase=Phase.INVENTORY_PENDING,
             category_id=641,
-            inventory_proof=InventoryProof(
+            inventory=StagedInventory(
                 version="v1",
                 digest=waiting_digest,
-                proof=VerifiedProof(verified=False),
                 batch_id=batch_id,
                 record_id="rec-waiting",
             ),
+            proofs={
+                waiting_digest: Proof(target=TimestampTarget.INVENTORY, verified=False)
+            },
         ),
     )
     ots_cache_path(failed_dir, failed_digest).parent.mkdir(parents=True)
@@ -3625,7 +3647,7 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
     state = load_ots(failed_dir)
     assert state.phase is Phase.INVENTORY_PENDING
     assert state.inventory_proof is not None
-    assert state.inventory_proof.proof.verified is False
+    assert state.inventory_proof.verified is False
 
 
 def test_batch_watch_node_halt_exits_operational_error(
@@ -4030,7 +4052,7 @@ def test_batch_inventory_upgrade_rejects_stale_plan_digest(
         replace(
             state,
             phase=Phase.CONTENT_UPGRADED,
-            content_proofs={digest: VerifiedProof(verified=True)},
+            proofs={digest: Proof(target=TimestampTarget.CONTENT, verified=True)},
         ),
     )
 
@@ -4094,7 +4116,7 @@ def test_batch_inventory_upgrade_rejects_stale_plan_digest(
     assert batch.objects[0].last_error == "regressed"
     state = load_ots(staging_dir)
     assert state.inventory_proof is not None
-    assert state.inventory_proof.proof.verified is False
+    assert state.inventory_proof.verified is False
 
 
 def test_batch_rm_refuses_non_terminal_without_force(
