@@ -1,7 +1,7 @@
-"""_style helpers added for OTS: _format_digest + humanize_age.
+"""_style helpers added for OTS: format_digest + humanize_age.
 
 Pinned behavior:
-- _format_digest(d) returns f"sha256:{d}" — human-facing prefix only.
+- format_digest(d) returns f"sha256:{d}" — human-facing prefix only.
 - humanize_age: 20-LOC, ASCII, single-unit, floor-rounded.
     <60s         => "{n}s ago"
     <60m         => "{n}m ago"
@@ -13,7 +13,7 @@ Pinned behavior:
 
 import pytest
 
-from ocfl_cli._style import _format_digest, humanize_age
+from ocfl_cli._style import format_digest, humanize_age
 
 DAY = 86400
 HOUR = 3600
@@ -22,14 +22,14 @@ HOUR = 3600
 class TestFormatDigest:
     def test_adds_sha256_prefix(self):
         d = "abcd" * 16  # 64-char bare hex
-        assert _format_digest(d) == f"sha256:{d}"
+        assert format_digest(d) == f"sha256:{d}"
 
     def test_does_not_double_prefix(self):
         # If a caller already passed a prefixed digest, formatter must not
         # produce "sha256:sha256:..." — bare-hex is the wire convention; this
         # test pins that callers don't accidentally double-stamp.
         d = "ab" * 32
-        formatted = _format_digest(d)
+        formatted = format_digest(d)
         assert formatted.count("sha256:") == 1
 
 

@@ -61,7 +61,7 @@ def _batch_verify_job_transitions(
     return tuple(transitions)
 
 
-def _short_block_hash(block_hash: str) -> str:
+def short_block_hash(block_hash: str) -> str:
     if len(block_hash) <= 12:
         return block_hash
     return block_hash[-12:]
@@ -161,7 +161,7 @@ class _CliBatchEvents:
         jobs = batch_verify_job_status_counts(after)
         reverify_text = " reverified" if reverified else ""
         typer.echo(
-            f"block {height} {_short_block_hash(block_hash)}: "
+            f"block {height} {short_block_hash(block_hash)}: "
             f"submitted={counts['submitted']} "
             f"upgraded={counts['upgraded']} failed={counts['failed']} "
             f"verified={verified}/{total} jobs={jobs}{reverify_text}"

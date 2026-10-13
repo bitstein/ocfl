@@ -658,13 +658,13 @@ def test_cli_version_is_cached(monkeypatch: pytest.MonkeyPatch):
         assert distribution == "ocfl-cli"
         return "1.2.3"
 
-    batch_state._cli_version.cache_clear()
+    batch_state.installed_cli_version.cache_clear()
     monkeypatch.setattr(importlib.metadata, "version", fake_version)
     try:
-        assert batch_state._cli_version() == "1.2.3"
-        assert batch_state._cli_version() == "1.2.3"
+        assert batch_state.installed_cli_version() == "1.2.3"
+        assert batch_state.installed_cli_version() == "1.2.3"
     finally:
-        batch_state._cli_version.cache_clear()
+        batch_state.installed_cli_version.cache_clear()
 
     assert calls == 1
 
@@ -678,12 +678,12 @@ def test_cli_version_cache_preserves_unknown(monkeypatch: pytest.MonkeyPatch):
         assert distribution == "ocfl-cli"
         raise importlib.metadata.PackageNotFoundError(distribution)
 
-    batch_state._cli_version.cache_clear()
+    batch_state.installed_cli_version.cache_clear()
     monkeypatch.setattr(importlib.metadata, "version", missing_version)
     try:
-        assert batch_state._cli_version() == "unknown"
-        assert batch_state._cli_version() == "unknown"
+        assert batch_state.installed_cli_version() == "unknown"
+        assert batch_state.installed_cli_version() == "unknown"
     finally:
-        batch_state._cli_version.cache_clear()
+        batch_state.installed_cli_version.cache_clear()
 
     assert calls == 1

@@ -289,7 +289,7 @@ def save_driver_lease(
         started_at=_format_datetime(_coerce_utc(started_at)),
         heartbeat_at=_format_datetime(_coerce_utc(heartbeat_at)),
         command=_format_command(command),
-        cli_version=_cli_version(),
+        cli_version=installed_cli_version(),
     )
     _write_driver_lease_exclusive(staging_root, lease, replace=True)
     return lease
@@ -384,7 +384,7 @@ def _new_driver_lease(
         started_at=stamp,
         heartbeat_at=stamp,
         command=_format_command(command),
-        cli_version=_cli_version(),
+        cli_version=installed_cli_version(),
     )
 
 
@@ -495,7 +495,7 @@ def _format_command(command: tuple[str, ...]) -> str:
 
 
 @cache
-def _cli_version() -> str:
+def installed_cli_version() -> str:
     try:
         return importlib.metadata.version("ocfl-cli")
     except importlib.metadata.PackageNotFoundError:

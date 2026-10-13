@@ -474,7 +474,7 @@ class TestAtomicWrites:
 class TestSchemaMigration:
     def test_constants(self):
         assert st_mod.OTS_STATE_VERSION == 1
-        assert st_mod._MIGRATIONS == {}
+        assert st_mod.MIGRATIONS == {}
 
     def test_v1_loads_cleanly(self, tmp_path: Path):
         (tmp_path / "ots.json").write_text(
@@ -563,7 +563,7 @@ class TestSchemaMigration:
             load_ots(tmp_path)
 
     def test_migration_chain_walks_old_forward(self, tmp_path: Path, monkeypatch):
-        """Future-bump pattern: register a fake _MIGRATIONS[0] to walk v0 → v1."""
+        """Future-bump pattern: register a fake MIGRATIONS[0] to walk v0 → v1."""
 
         def v0_to_v1(raw: dict) -> dict:
             # Pretend v0 lacked verify_jobs; populate it and bump.
@@ -572,7 +572,7 @@ class TestSchemaMigration:
             return new
 
         # Register a v0->v1 step; the built-in v1->v2 step finishes the walk.
-        monkeypatch.setitem(st_mod._MIGRATIONS, 0, v0_to_v1)
+        monkeypatch.setitem(st_mod.MIGRATIONS, 0, v0_to_v1)
 
         (tmp_path / "ots.json").write_text(
             json.dumps(

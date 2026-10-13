@@ -120,7 +120,7 @@ class TestValidateRoot:
         report = ValidationReport(objects_checked=1, truncated=True)
         out = Console(file=io.StringIO(), color_system=None)
 
-        validate_module._emit_root_object_results(
+        validate_module.emit_root_object_results(
             out, True, fs, {obj_path: "obj:test"}, report
         )
 

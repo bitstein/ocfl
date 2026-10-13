@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from rich.console import Console
 
 
-def _render_watch_start(
+def render_watch_start(
     out: Console,
     object_id: str,
     jobs: tuple[wf_common.JobProgress, ...] = (),
@@ -127,7 +127,7 @@ def _render_sp_submit_warning(jobs: tuple[wf_common.JobProgress, ...]) -> None:
             return
 
 
-def _render_watch_progress(
+def render_watch_progress(
     out: Console, kind: str, data: dict, *, next_action: str
 ) -> None:
     if kind == "already_advanced":
@@ -150,7 +150,7 @@ def _render_watch_progress(
         typer.echo(f"  Next: {next_action}")
 
 
-def _render_content_upgrade_result(
+def render_content_upgrade_result(
     out: Console, object_id: str, result: wf_content.UpgradeContentResult
 ) -> None:
     render_section(out, "Content")
@@ -216,7 +216,7 @@ def timestamp_content(
 
     if watch_flag:
         state = wf_staging.ots_state(resolved.staging_dir)
-        _render_watch_start(
+        render_watch_start(
             out,
             object_id,
             wf_common.compute_job_progress(state, runtime=appctx.runtime(ctx)),
@@ -232,7 +232,7 @@ def timestamp_content(
                 resolved.staging_dir,
                 sp_factory=preflight.sp_factory,
                 btc_factory=preflight.btc_factory,
-                progress=lambda kind, data: _render_watch_progress(
+                progress=lambda kind, data: render_watch_progress(
                     out, kind, data, next_action="stage timestamp inventory"
                 ),
                 runtime=appctx.runtime(ctx),
@@ -256,7 +256,7 @@ def timestamp_content(
             )
         except (ReorgDetectedError, AttestationMismatchError) as e:
             raise ErrorContext(e, prefix="halt: ") from e
-        _render_content_upgrade_result(out, object_id, result)
+        render_content_upgrade_result(out, object_id, result)
         return
 
     if retry:
@@ -355,7 +355,7 @@ def timestamp_inventory(
 
     if watch_flag:
         state = wf_staging.ots_state(resolved.staging_dir)
-        _render_watch_start(
+        render_watch_start(
             out,
             object_id,
             wf_common.compute_job_progress(state, runtime=appctx.runtime(ctx)),
@@ -367,7 +367,7 @@ def timestamp_inventory(
                 resolved.staging_dir,
                 sp_factory=preflight.sp_factory,
                 btc_factory=preflight.btc_factory,
-                progress=lambda kind, data: _render_watch_progress(
+                progress=lambda kind, data: render_watch_progress(
                     out, kind, data, next_action="stage commit"
                 ),
                 runtime=appctx.runtime(ctx),

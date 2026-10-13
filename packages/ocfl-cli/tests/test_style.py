@@ -107,7 +107,7 @@ def test_non_tty_no_color(monkeypatch, capsys):
 def test_should_color_no_color_beats_force_color(monkeypatch):
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.setenv("FORCE_COLOR", "1")
-    assert _style._should_color(io.StringIO()) is False
+    assert _style.should_color(io.StringIO()) is False
 
 
 def test_should_color_handles_stream_without_isatty(monkeypatch):
@@ -117,7 +117,7 @@ def test_should_color_handles_stream_without_isatty(monkeypatch):
     class NoIsatty:
         pass
 
-    assert _style._should_color(NoIsatty()) is False
+    assert _style.should_color(NoIsatty()) is False
 
 
 def test_should_color_handles_closed_stream(monkeypatch):
@@ -125,7 +125,7 @@ def test_should_color_handles_closed_stream(monkeypatch):
     monkeypatch.delenv("FORCE_COLOR", raising=False)
     stream = io.StringIO()
     stream.close()
-    assert _style._should_color(stream) is False
+    assert _style.should_color(stream) is False
 
 
 def test_stderr_console_routes_to_stderr(monkeypatch, capsys):

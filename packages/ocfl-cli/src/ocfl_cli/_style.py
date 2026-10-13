@@ -29,7 +29,7 @@ _STYLES: dict[str, str] = {
 }
 
 
-def _should_color(stream: Any) -> bool:
+def should_color(stream: Any) -> bool:
     """Honor NO_COLOR (disable), FORCE_COLOR (enable), else TTY detection."""
     if os.environ.get("NO_COLOR"):
         return False
@@ -44,7 +44,7 @@ def _should_color(stream: Any) -> bool:
 def make_console(*, stderr: bool = False, no_color: bool = False) -> Console:
     """A console for stdout (or stderr), coloured per flag, env and TTY now."""
     stream: IO = sys.stderr if stderr else sys.stdout
-    if not no_color and _should_color(stream):
+    if not no_color and should_color(stream):
         return Console(
             color_system="truecolor",
             highlight=False,
@@ -114,7 +114,7 @@ def date(text: str) -> Text:
 # ---------------------------------------------------------------------------
 
 
-def _format_digest(d: str) -> str:
+def format_digest(d: str) -> str:
     """Render a digest with the algorithm prefix for human output.
 
     Internally (`ots.json`, content_map, SP API payloads, `--json` output)

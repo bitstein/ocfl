@@ -46,7 +46,7 @@ class _JsonFormatter(logging.Formatter):
         return json.dumps(payload)
 
 
-def _configure_logging(json_mode: bool, verbose: bool, quiet: bool) -> None:
+def configure_logging(json_mode: bool, verbose: bool, quiet: bool) -> None:
     root = logging.getLogger()
     for h in list(root.handlers):
         if getattr(h, "_ocfl_handler", False):
@@ -120,7 +120,7 @@ def main(
     ] = False,
 ) -> None:
     """CLI for managing an OCFL archive."""
-    _configure_logging(
+    configure_logging(
         json_mode=log_json or os.environ.get("OCFL_LOG_JSON") == "1",
         verbose=verbose,
         quiet=quiet,

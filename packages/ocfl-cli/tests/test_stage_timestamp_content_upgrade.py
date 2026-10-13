@@ -294,7 +294,7 @@ class TestProgressRendering:
             ),
         )
 
-        stage_timestamp._render_content_upgrade_result(
+        stage_timestamp.render_content_upgrade_result(
             make_console(), "obj:render", result
         )
 
@@ -357,7 +357,7 @@ class TestProgressRendering:
             ),
         )
 
-        stage_timestamp._render_watch_progress(
+        stage_timestamp.render_watch_progress(
             make_console(),
             "block",
             {
@@ -384,7 +384,7 @@ class TestProgressRendering:
         assert "      pending: 150 digests" in out
 
     def test_watch_start_renders_submit_mismatch_warning_once(self, capsys):
-        stage_timestamp._render_watch_start(
+        stage_timestamp.render_watch_start(
             make_console(),
             "obj:watch",
             (

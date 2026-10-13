@@ -2813,7 +2813,7 @@ def test_batch_watch_human_output_reports_observed_blocks(
     )
 
     assert result.exit_code == 130, result.output
-    assert f"block 1 {stage_batch._short_block_hash(btc.getblockhash(1))}" in (
+    assert f"block 1 {stage_batch.short_block_hash(btc.getblockhash(1))}" in (
         result.output
     )
     assert "submitted=1 upgraded=0 failed=0" in result.output

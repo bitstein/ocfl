@@ -131,6 +131,38 @@ class TestLayers:
                     )
         assert not bad, "\n".join(bad)
 
+    def test_tests_use_no_private_names(self):
+        """Tests reach only public names. They may import a package's `_module`:
+        they are white-box tests of the CLI package."""
+        bad: list[str] = []
+        for p in _py_files(CLI_TESTS):
+            tree = _tree(p)
+            aliases: dict[str, str] = {}
+            for node in ast.walk(tree):
+                if not (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module
+                    and node.module.split(".")[0] == "ocfl_cli"
+                ):
+                    continue
+                for a in node.names:
+                    full = f"{node.module}.{a.name}"
+                    if _is_module(full):
+                        aliases[a.asname or a.name] = full
+                    elif a.name.startswith("_") and not a.name.startswith("__"):
+                        bad.append(f"{p.name}:{node.lineno} {full}")
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Attribute)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id in aliases
+                    and node.attr.startswith("_")
+                    and not node.attr.startswith("__")
+                ):
+                    full = f"{aliases[node.value.id]}.{node.attr}"
+                    bad.append(f"{p.name}:{node.lineno} {full}")
+        assert not bad, "\n".join(bad)
+
     def test_below_the_commands_there_is_no_ui(self):
         ui = {"typer", "click", "rich"}
         bad = []

@@ -85,7 +85,7 @@ def _validate_root(
     _emit(ctx, f"Validating objects ({digest_status})...")
 
     report = validate_root(fs, "", check_digests=check_digests)
-    _emit_root_object_results(
+    emit_root_object_results(
         appctx.err_console(ctx), emit_progress, fs, object_ids, report
     )
     _output_result(
@@ -219,7 +219,7 @@ def _read_object_id(fs: FS, obj_path: str) -> str:
     return obj_path
 
 
-def _emit_root_object_results(
+def emit_root_object_results(
     err_out: Console,
     emit_progress: bool,
     fs: FS,
