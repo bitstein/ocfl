@@ -5,6 +5,10 @@ No release is published yet, so every entry below is unreleased and may still ch
 
 ## [Unreleased]
 
+### Merged timestamp workflow (docs/roadmap.md §6)
+
+- `commit_bare` and `commit_ots` share one execute/revert block (`workflow.commit`): object lock, staging lock, prepare, commit, purge. The OTS path now holds the staging lock through the commit and purge, as the plain path did, so staging cannot change between the checks and the purge; a `--watch` on the same object waits for the lock and retries on the next block.
+
 ### Layers (ADR-0003)
 
 - `ocfl_cli` is layered commands → use cases → adapters, and import-linter enforces it (`uv run lint-imports`; contracts in the root `pyproject.toml`). Commands: `main`, `archive`, `stage`; use cases: `workflow`; adapters: `ots`, `store`; base: `model`, `ports`, `config`, `errors`. No behavior or output change.

@@ -61,7 +61,7 @@ Target architecture from the 2026-10-11 design session. Terms: [CONTEXT.md](../C
 
 - [ ] One workflow, parameterized by the Timestamp Target, which is taken from the Phase. This replaces the content/inventory copies in `service`, `watch` and the batch engine.
 - [ ] Proofs keyed by digest and kept when a Staging Area moves back to an earlier Phase. An `X.ots` counts only when `X` is in the same state.
-- [ ] Share one execute/revert block between `commit_bare` and `commit_ots`.
+- [x] Share one execute/revert block between `commit_bare` and `commit_ots`.
 
 ## 7. CLI surface
 

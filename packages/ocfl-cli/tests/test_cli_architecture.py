@@ -454,3 +454,24 @@ class TestConsolesPerRun:
         assert plain.exit_code == coloured.exit_code == 0
         assert "\x1b[" not in plain.stdout
         assert "\x1b[" in coloured.stdout
+
+
+# --- 6.3 one execute/revert block for commit_bare and commit_ots
+
+
+class TestOneCommitBlock:
+    def test_lock_commit_and_purge_happen_once(self):
+        text = (CLI_SRC / "workflow/commit.py").read_text()
+        for needle in ("object_commit_lock(", "with_lock(", ".purge(", "sr.commit("):
+            assert text.count(needle) == 1, needle
+
+    def test_both_paths_delegate_to_the_block(self):
+        tree = _tree(CLI_SRC / "workflow/commit.py")
+        fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        for name in ("commit_bare", "commit_ots"):
+            calls = {
+                ast.unparse(n.func)
+                for n in ast.walk(fns[name])
+                if isinstance(n, ast.Call)
+            }
+            assert "_commit_staging" in calls, name
