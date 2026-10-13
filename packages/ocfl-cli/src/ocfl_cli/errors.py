@@ -168,7 +168,7 @@ class SimpleProofAuthError(SimpleProofError):
     """401/403 from SimpleProof — fail fast, operator must fix credentials."""
 
     code = "simpleproof_auth"
-    error_class = ErrorClass.SERVICE
+    error_class = ErrorClass.CONFIG
 
 
 class SimpleProofBadRequest(SimpleProofError):

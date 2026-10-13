@@ -20,6 +20,8 @@ from ocfl_cli.errors import (
     LockTimeoutError,
     PhaseError,
     ReorgDetectedError,
+    SimpleProofAuthError,
+    SimpleProofTransient,
     UsageError,
 )
 from ocfl_cli.exit_codes import ExitCode, exit_code_for_class
@@ -73,6 +75,8 @@ def test_class_to_exit_code_follows_adr_0004(
         (ObjectLockedError("o"), ExitCode.LOCK_TIMEOUT),
         (BitcoinRpcTransientError("down"), ExitCode.GENERIC),
         (BitcoinRpcAuthError("401"), ExitCode.CONFIG),
+        (SimpleProofAuthError("401"), ExitCode.CONFIG),
+        (SimpleProofTransient("503"), ExitCode.GENERIC),
         (
             ErrorContext(ReorgDetectedError("reorg"), prefix="halt: "),
             ExitCode.ATTESTATION,
