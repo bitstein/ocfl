@@ -73,8 +73,8 @@ def object_has_other_batch(
     return None
 
 
-def batch_command_tuple(target: str, batch_id: str) -> tuple[str, ...]:
-    return ("stage", "timestamp", "batch", target, "--batch", batch_id)
+def batch_command_tuple(verb: str, batch_id: str) -> tuple[str, ...]:
+    return ("stage", "batch", verb, batch_id)
 
 
 def prepare_batch_object(

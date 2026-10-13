@@ -65,7 +65,7 @@ Target architecture from the 2026-10-11 design session. Terms: [CONTEXT.md](../C
 
 ## 7. CLI surface
 
-- [ ] `stage timestamp|upgrade|retry OBJ [--expect]`. Batches become `stage batch create content|inventory …` plus `submit/upgrade/retry/commit/status/rm/ls`.
+- [x] `stage timestamp|upgrade|retry OBJ [--expect]`. Batches become `stage batch create content|inventory …` plus `submit/upgrade/retry/commit/status/rm/ls`.
 - [ ] `reset` → `discard`. Add `config path|show|check`.
 - [ ] Locks: flock, a 5 s wait, then exit 4. The batch flock is the lease, and the heartbeat `.driver` is removed.
 - [ ] Review the 37 issues in `ocfl-rs/docs/port/python-cli-surface.md` §6 one by one. Adopt only the ones that are justified on their own.

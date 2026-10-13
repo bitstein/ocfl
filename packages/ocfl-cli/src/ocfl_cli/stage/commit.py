@@ -5,28 +5,17 @@ from typing import Annotated
 import typer
 
 from ocfl_cli import _appctx as appctx
-from ocfl_cli import errors as errors
 from ocfl_cli._common import open_root
-from ocfl_cli.errors import (
-    ErrorContext,
-    PhaseError,
-    UsageError,
-)
-from ocfl_cli.stage._app import (
-    require_existing_staging,
-)
-from ocfl_cli.stage.batch import commit_batch
+from ocfl_cli.errors import ErrorContext, PhaseError
+from ocfl_cli.stage._app import require_existing_staging
 from ocfl_cli.workflow import commit as wf_commit
 from ocfl_cli.workflow import staging as wf_staging
+from ocfl_cli.workflow import status as wf_status
 
 
 def commit(
     ctx: typer.Context,
-    object_id: Annotated[str | None, typer.Argument(help="Object ID.")] = None,
-    batch_id: Annotated[
-        str | None,
-        typer.Option("--batch", help="Commit every object in an inventory batch."),
-    ] = None,
+    object_id: Annotated[str, typer.Argument(help="Object ID.")],
     allow_missing_metadata: Annotated[
         bool,
         typer.Option(
@@ -36,17 +25,6 @@ def commit(
     ] = False,
 ) -> None:
     """Commit staged changes to the storage root."""
-    if (object_id is None) == (batch_id is None):
-        raise UsageError("exactly one of OBJECT_ID or --batch is required")
-    if batch_id is not None:
-        if allow_missing_metadata:
-            raise UsageError(
-                "--allow-missing-metadata is not supported with --batch; "
-                "commit those objects individually"
-            )
-        commit_batch(ctx, batch_id)
-        return
-    assert object_id is not None
     sr, fs = open_root(ctx)
     resolved = require_existing_staging(ctx, object_id)
     store = resolved.store
@@ -68,14 +46,8 @@ def commit(
                 runtime=appctx.runtime(ctx),
             )
         except PhaseError as e:
-            raise ErrorContext(
-                e,
-                suffix=(
-                    "; run 'stage timestamp inventory' and then "
-                    "'stage timestamp inventory --upgrade' to refresh the "
-                    "timestamped inventory plan"
-                ),
-            ) from e
+            next_action = wf_status.next_step(store, root_path, object_id, staging_dir)
+            raise ErrorContext(e, suffix=f"; next: {next_action}") from e
         return
 
     wf_commit.commit_bare(

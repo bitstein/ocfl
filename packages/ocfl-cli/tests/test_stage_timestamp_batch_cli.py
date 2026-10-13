@@ -429,12 +429,10 @@ def test_batch_content_new_batch_submits_one_union_call(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
+            "create",
             "content",
-            "--object",
             "obj:one",
-            "--object",
             "obj:two",
         ),
     )
@@ -489,10 +487,9 @@ def test_batch_content_new_batch_json_emits_batch_id_before_submit(
             "stage",
             "--staging-root",
             str(staging),
-            "timestamp",
             "batch",
+            "create",
             "content",
-            "--object",
             "obj:json",
         ],
     )
@@ -527,10 +524,9 @@ def test_batch_content_new_batch_json_is_ndjson_driving_output(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:json",
     )
 
@@ -566,10 +562,9 @@ def test_batch_content_bare_batch_mirrors_persisted_chunk_without_repost(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
+            "create",
             "content",
-            "--object",
             "obj:resume",
         ),
     )
@@ -596,10 +591,8 @@ def test_batch_content_bare_batch_mirrors_persisted_chunk_without_repost(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
-            "content",
-            "--batch",
+            "submit",
             batch_id,
         ),
     )
@@ -641,10 +634,9 @@ def test_batch_inventory_new_batch_submits_and_mirrors_record_id(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
+            "create",
             "inventory",
-            "--object",
             "obj:inv",
             "--allow-missing-metadata",
         ),
@@ -689,10 +681,9 @@ def test_batch_inventory_same_object_skips_until_content_upgraded(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
+            "create",
             "content",
-            "--object",
             "obj:overlap",
         ),
     )
@@ -703,10 +694,9 @@ def test_batch_inventory_same_object_skips_until_content_upgraded(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
+            "create",
             "inventory",
-            "--object",
             "obj:overlap",
             "--allow-missing-metadata",
         ),
@@ -740,10 +730,9 @@ def test_batch_inventory_after_content_upgraded_ignores_content_batch_owner(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
+            "create",
             "content",
-            "--object",
             "obj:after-content",
         ),
     )
@@ -768,10 +757,9 @@ def test_batch_inventory_after_content_upgraded_ignores_content_batch_owner(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
+            "create",
             "inventory",
-            "--object",
             "obj:after-content",
             "--allow-missing-metadata",
         ),
@@ -815,10 +803,9 @@ def test_batch_content_shape_mismatch_fails_chunk_closed(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
+            "create",
             "content",
-            "--object",
             "obj:mismatch",
         ),
     )
@@ -857,10 +844,9 @@ def test_batch_content_bare_batch_does_not_repost_failed_chunk(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
+            "create",
             "content",
-            "--object",
             "obj:failed",
         ),
     )
@@ -873,10 +859,8 @@ def test_batch_content_bare_batch_does_not_repost_failed_chunk(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
-            "content",
-            "--batch",
+            "submit",
             batch_id,
         ),
     )
@@ -917,10 +901,9 @@ def test_batch_content_new_batch_acquires_lease_before_file_is_visible(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
+            "create",
             "content",
-            "--object",
             "obj:lease",
         ),
     )
@@ -945,7 +928,7 @@ def test_batch_content_competing_batch_driver_refuses_live_lease(
     first, first_out = _start_batch_process(
         empty_sha256_root,
         staging,
-        ("timestamp", "batch", "content", "--object", "obj:driver"),
+        ("batch", "create", "content", "obj:driver"),
         marker=marker,
         release=release,
     )
@@ -955,7 +938,7 @@ def test_batch_content_competing_batch_driver_refuses_live_lease(
     second, second_out = _start_batch_process(
         empty_sha256_root,
         staging,
-        ("timestamp", "batch", "content", "--batch", batch_id),
+        ("batch", "submit", batch_id),
     )
     second_code, second_output = _process_result(second, second_out)
     release.write_text("go")
@@ -982,7 +965,7 @@ def test_batch_content_competing_same_object_batch_skips_in_batch(
     first, first_out = _start_batch_process(
         empty_sha256_root,
         staging,
-        ("timestamp", "batch", "content", "--object", "obj:same"),
+        ("batch", "create", "content", "obj:same"),
         marker=marker,
         release=release,
     )
@@ -991,7 +974,7 @@ def test_batch_content_competing_same_object_batch_skips_in_batch(
     second, second_out = _start_batch_process(
         empty_sha256_root,
         staging,
-        ("timestamp", "batch", "content", "--object", "obj:same"),
+        ("batch", "create", "content", "obj:same"),
     )
     second_code, second_output = _process_result(second, second_out)
     release.write_text("go")
@@ -1034,14 +1017,14 @@ def test_batch_content_competing_cross_object_batches_both_submit(
     left, left_out = _start_batch_process(
         empty_sha256_root,
         staging,
-        ("timestamp", "batch", "content", "--object", "obj:left"),
+        ("batch", "create", "content", "obj:left"),
         marker=left_marker,
         release=left_release,
     )
     right, right_out = _start_batch_process(
         empty_sha256_root,
         staging,
-        ("timestamp", "batch", "content", "--object", "obj:right"),
+        ("batch", "create", "content", "obj:right"),
         marker=right_marker,
         release=right_release,
     )
@@ -1142,10 +1125,8 @@ def test_batch_content_recovers_object_intent_without_batch_row(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
-            "content",
-            "--batch",
+            "submit",
             batch_id,
         ),
     )
@@ -1179,10 +1160,9 @@ def test_batch_content_resume_empty_after_revalidation_skips_post(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
+            "create",
             "content",
-            "--object",
             "obj:empty",
         ),
     )
@@ -1206,10 +1186,8 @@ def test_batch_content_resume_empty_after_revalidation_skips_post(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
-            "content",
-            "--batch",
+            "submit",
             batch_id,
         ),
     )
@@ -1250,10 +1228,9 @@ def test_batch_content_chunked_multi_chunk_object_completes(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
+            "create",
             "content",
-            "--object",
             "obj:chunked",
         ),
     )
@@ -1298,10 +1275,9 @@ def test_batch_content_transient_submit_failure_is_persisted(
         _stage_args(
             empty_sha256_root,
             staging,
-            "timestamp",
             "batch",
+            "create",
             "content",
-            "--object",
             "obj:transient",
         ),
     )
@@ -1333,10 +1309,9 @@ def test_batch_retry_no_resubmit_if_id_present(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:no-retry",
     )
     assert create.exit_code == 0, create.output
@@ -1347,12 +1322,9 @@ def test_batch_retry_no_resubmit_if_id_present(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "retry",
         batch_id,
-        "--retry",
     )
 
     assert result.exit_code == 0, result.output
@@ -1384,10 +1356,9 @@ def test_batch_retry_bidirectional_record_id_propagation(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:bidirectional",
     )
     assert create.exit_code == 0, create.output
@@ -1441,12 +1412,9 @@ def test_batch_retry_bidirectional_record_id_propagation(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "retry",
         batch_id,
-        "--retry",
     )
 
     assert result.exit_code == 0, result.output
@@ -1485,10 +1453,9 @@ def test_batch_retry_failed_chunk_partial_repair(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:partial-repair",
     )
     assert create.exit_code == 0, create.output
@@ -1542,12 +1509,9 @@ def test_batch_retry_failed_chunk_partial_repair(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "retry",
         batch_id,
-        "--retry",
     )
 
     assert result.exit_code == 0, result.output
@@ -1631,12 +1595,9 @@ def test_batch_retry_inventory_propagates_batch_record_id(
         runner,
         storage_root,
         staging,
-        "timestamp",
         "batch",
-        "inventory",
-        "--batch",
+        "retry",
         batch_id,
-        "--retry",
     )
 
     assert result.exit_code == 0, result.output
@@ -1668,10 +1629,9 @@ def test_batch_retry_pending_chunk_posts_after_crash_before_post(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:pending-retry",
     )
     assert create.exit_code == 0, create.output
@@ -1712,12 +1672,9 @@ def test_batch_retry_pending_chunk_posts_after_crash_before_post(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "retry",
         batch_id,
-        "--retry",
     )
 
     assert result.exit_code == 0, result.output
@@ -1747,10 +1704,9 @@ def test_batch_retry_revalidates_before_post_and_marks_regressed(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:retry-regressed",
     )
     assert create.exit_code == 0, create.output
@@ -1784,12 +1740,9 @@ def test_batch_retry_revalidates_before_post_and_marks_regressed(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "retry",
         batch_id,
-        "--retry",
     )
 
     assert result.exit_code == 0, result.output
@@ -1865,12 +1818,9 @@ def test_batch_retry_object_record_id_wins_for_non_failed_chunk(
         runner,
         storage_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "retry",
         batch_id,
-        "--retry",
     )
 
     assert result.exit_code == 0, result.output
@@ -1887,11 +1837,9 @@ def _status_json_and_human(
     runner: CliRunner, storage_root: Path, staging: Path, batch_id: str
 ) -> tuple[dict, str]:
     json_result = _invoke_json(
-        runner, storage_root, staging, "timestamp", "batch", "status", batch_id
+        runner, storage_root, staging, "batch", "status", batch_id
     )
-    human_result = _invoke(
-        runner, storage_root, staging, "timestamp", "batch", "status", batch_id
-    )
+    human_result = _invoke(runner, storage_root, staging, "batch", "status", batch_id)
     assert json_result.exit_code == 0, json_result.output
     assert human_result.exit_code == 0, human_result.output
     return json.loads(json_result.output), human_result.output
@@ -1940,7 +1888,7 @@ def test_batch_ls_json_orders_by_updated_at(
         ),
     )
 
-    result = _invoke_json(runner, storage_root, staging, "timestamp", "batch", "ls")
+    result = _invoke_json(runner, storage_root, staging, "batch", "ls")
 
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
@@ -1975,7 +1923,7 @@ def test_batch_ls_human_includes_created_at(
         ),
     )
 
-    result = _invoke(runner, storage_root, staging, "timestamp", "batch", "ls")
+    result = _invoke(runner, storage_root, staging, "batch", "ls")
 
     assert result.exit_code == 0, result.output
     assert batch_id.split("-", 1)[0] in result.output
@@ -2055,9 +2003,7 @@ def test_batch_status_json_contract_uses_canonical_next(
         ),
     )
 
-    result = _invoke_json(
-        runner, storage_root, staging, "timestamp", "batch", "status", batch_id
-    )
+    result = _invoke_json(runner, storage_root, staging, "batch", "status", batch_id)
 
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
@@ -2077,7 +2023,7 @@ def test_batch_status_json_contract_uses_canonical_next(
             "digests_submitted": 2,
             "last_error": None,
             "skipped_reason": None,
-            "next": "Re-run --upgrade later",
+            "next": f"ocfl stage batch upgrade {batch_id} (later)",
             "batch_id": batch_id,
         }
     ]
@@ -2189,25 +2135,25 @@ def test_batch_status_healthy_next_strings_are_canonical(
         data,
         output,
         object_id="obj:prepared",
-        expected=f"Run --batch {batch_id} to submit",
+        expected=f"ocfl stage batch submit {batch_id}",
     )
     _assert_next_consistent(
         data,
         output,
         object_id="obj:partial",
-        expected=f"Run --batch {batch_id} --retry",
+        expected=f"ocfl stage batch retry {batch_id}",
     )
     _assert_next_consistent(
         data,
         output,
         object_id="obj:needs-upgrade",
-        expected=f"Run --batch {batch_id} --upgrade",
+        expected=f"ocfl stage batch upgrade {batch_id} --watch",
     )
     _assert_next_consistent(
         data,
         output,
         object_id="obj:in-progress",
-        expected="Re-run --upgrade later",
+        expected=f"ocfl stage batch upgrade {batch_id} (later)",
     )
     _assert_next_consistent(
         data,
@@ -2223,54 +2169,61 @@ def test_batch_status_healthy_next_strings_are_canonical(
         complete_data,
         complete_output,
         object_id="obj:batch-complete",
-        expected=f"Batch complete; batch rm {complete_batch_id} to clean up",
+        expected=(
+            f"Batch complete; ocfl stage batch rm {complete_batch_id} to clean up"
+        ),
     )
 
 
 @pytest.mark.parametrize(
     ("reason", "status", "expected_template"),
     [
-        ("regressed", "failed", "stage status OBJECT; reset or restart timestamp flow"),
+        ("regressed", "failed", "ocfl stage status obj:reason"),
         (
             "missing_record_ids",
             "failed",
-            "stage timestamp batch content --batch {batch_id} --retry",
+            "ocfl stage batch retry {batch_id}",
         ),
         (
             "lock_contended",
             "skipped",
-            "Re-run --batch {batch_id} after the other process exits",
+            "ocfl stage batch submit {batch_id} (after the other process exits)",
         ),
         (
             "in_batch=018f1f7e-7b4a-7c6a-8a2b-4a7f4c2e9d10",
             "skipped",
-            "stage timestamp batch status 018f1f7e-7b4a-7c6a-8a2b-4a7f4c2e9d10",
+            "ocfl stage batch status 018f1f7e-7b4a-7c6a-8a2b-4a7f4c2e9d10",
         ),
         (
             "category_mismatch=642",
             "skipped",
-            "Start a separate batch for that category or reset/recreate the "
-            "staging session",
+            "Start a separate batch for that category, or discard the "
+            "staging and stage the object again",
         ),
         ("committed", "skipped", "None"),
         ("no_new_digests", "skipped", "None"),
         ("noop", "skipped", "None"),
-        ("content_not_upgraded", "skipped", "Upgrade content first"),
+        ("content_not_upgraded", "skipped", "ocfl stage upgrade obj:reason --watch"),
         (
             "missing_metadata",
             "skipped",
-            "Add staged metadata or rerun with --allow-missing-metadata",
+            "ocfl stage metadata obj:reason ... "
+            "(or create the batch with --allow-missing-metadata)",
         ),
-        ("sp_partial_results", "submitted", "Re-run --upgrade later"),
-        ("results_expired", "submitted", "Re-run --upgrade"),
-        ("verify_job_failed", "submitted", "Re-run --upgrade"),
+        (
+            "sp_partial_results",
+            "submitted",
+            "ocfl stage batch upgrade {batch_id} (later)",
+        ),
+        ("results_expired", "submitted", "ocfl stage batch upgrade {batch_id}"),
+        ("verify_job_failed", "submitted", "ocfl stage batch upgrade {batch_id}"),
         (
             "transient_sp_error",
             "prepared",
-            "stage timestamp batch content --batch {batch_id} --retry",
+            "ocfl stage batch retry {batch_id}",
         ),
-        ("transient_sp_error", "submitted", "Re-run --upgrade"),
-        ("transient_rpc_error", "submitted", "Re-run --upgrade"),
+        ("transient_sp_error", "submitted", "ocfl stage batch upgrade {batch_id}"),
+        ("transient_rpc_error", "submitted", "ocfl stage batch upgrade {batch_id}"),
         (
             "reorg_deeper_than_min_conf",
             "failed",
@@ -2280,12 +2233,12 @@ def test_batch_status_healthy_next_strings_are_canonical(
         (
             "batch_file_missing",
             "failed",
-            "Operate per-object via stage timestamp content/inventory",
+            "work per object: ocfl stage status OBJECT",
         ),
         (
             "submit_pending",
             "submitted",
-            "stage timestamp batch content --batch {batch_id} --retry",
+            "ocfl stage batch retry {batch_id}",
         ),
     ],
 )
@@ -2394,11 +2347,10 @@ def test_batch_status_verbose_json_adds_per_digest_state(
         runner,
         storage_root,
         staging,
-        "timestamp",
         "batch",
         "status",
         batch_id,
-        "--verbose",
+        "--detail",
     )
 
     assert result.exit_code == 0, result.output
@@ -2429,16 +2381,14 @@ def test_batch_status_missing_file_exits_2(
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
 
-    result = _invoke_json(
-        runner, storage_root, staging, "timestamp", "batch", "status", batch_id
-    )
+    result = _invoke_json(runner, storage_root, staging, "batch", "status", batch_id)
 
     assert result.exit_code == 2
     assert result.stdout == ""
     error = json.loads(result.stderr)["error"]
     assert error["code"] == "batch_file_missing"
     assert error["exit"] == 2
-    assert "stage timestamp content/inventory" in error["message"]
+    assert "ocfl stage status OBJECT" in error["message"]
 
 
 def test_batch_status_corrupt_existing_file_is_not_missing(
@@ -2450,9 +2400,7 @@ def test_batch_status_corrupt_existing_file_is_not_missing(
     path.parent.mkdir(parents=True)
     path.write_text("{not-json")
 
-    result = _invoke(
-        runner, storage_root, staging, "timestamp", "batch", "status", batch_id
-    )
+    result = _invoke(runner, storage_root, staging, "batch", "status", batch_id)
 
     assert result.exit_code == 1
     assert "batch_file_missing" not in result.output
@@ -2488,16 +2436,12 @@ def test_batch_status_next_distinguishes_transient_sp_context(
         ),
     )
 
-    result = _invoke_json(
-        runner, storage_root, staging, "timestamp", "batch", "status", batch_id
-    )
+    result = _invoke_json(runner, storage_root, staging, "batch", "status", batch_id)
 
     assert result.exit_code == 0, result.output
     rows = {row["object_id"]: row for row in json.loads(result.output)["objects"]}
-    assert rows["obj:1"]["next"] == (
-        f"stage timestamp batch content --batch {batch_id} --retry"
-    )
-    assert rows["obj:2"]["next"] == "Re-run --upgrade"
+    assert rows["obj:1"]["next"] == f"ocfl stage batch retry {batch_id}"
+    assert rows["obj:2"]["next"] == f"ocfl stage batch upgrade {batch_id}"
 
 
 def test_batch_content_upgrade_posts_then_ingests_per_digest(
@@ -2523,10 +2467,9 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:batch-upgrade",
     )
     assert submitted.exit_code == 0, submitted.output
@@ -2538,12 +2481,9 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
     assert first.exit_code == 0, first.output
     events = [json.loads(line) for line in first.output.splitlines()]
@@ -2552,7 +2492,7 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
         "object_submitted",
         "summary",
     ]
-    assert events[1]["next"] == "Re-run --upgrade later"
+    assert events[1]["next"] == f"ocfl stage batch upgrade {batch_id} (later)"
     batch = batch_state.load_batch(staging, batch_id)
     assert len(batch.verify_jobs) == 1
     assert batch.verify_jobs[0].digests == (digest,)
@@ -2568,12 +2508,9 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
     assert second.exit_code == 0, second.output
     events = [json.loads(line) for line in second.output.splitlines()]
@@ -2630,10 +2567,9 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:batch-partial-results",
     )
     assert submitted.exit_code == 0, submitted.output
@@ -2643,12 +2579,9 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
     assert first.exit_code == 0, first.output
     batch = batch_state.load_batch(staging, batch_id)
@@ -2666,18 +2599,15 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
     assert partial.exit_code == 0, partial.output
     events = [json.loads(line) for line in partial.output.splitlines()]
     assert events[1]["event"] == "object_submitted"
     assert events[1]["last_error"] == "sp_partial_results"
-    assert events[1]["next"] == "Re-run --upgrade later"
+    assert events[1]["next"] == f"ocfl stage batch upgrade {batch_id} (later)"
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.objects[0].status == "submitted"
     assert batch.objects[0].last_error == "sp_partial_results"
@@ -2694,12 +2624,9 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
     assert retry.exit_code == 0, retry.output
     batch = batch_state.load_batch(staging, batch_id)
@@ -2716,12 +2643,9 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
     assert completed.exit_code == 0, completed.output
     batch = batch_state.load_batch(staging, batch_id)
@@ -2766,10 +2690,9 @@ def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:batch-watch",
         "--watch",
     )
@@ -2822,10 +2745,9 @@ def test_batch_watch_human_output_reports_observed_blocks(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:batch-watch-block",
         "--watch",
     )
@@ -2890,10 +2812,9 @@ def test_batch_watch_polls_during_quiet_periods(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:batch-watch-quiet",
         "--watch",
     )
@@ -2934,10 +2855,9 @@ def test_batch_watch_empty_submitted_subset_exits_without_subscriber(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:batch-watch-empty",
         "--watch",
     )
@@ -2970,10 +2890,9 @@ def test_batch_watch_all_skipped_exits_without_subscriber(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:not-staged",
         "--watch",
     )
@@ -3023,12 +2942,10 @@ def test_batch_watch_enters_upgrade_for_submitted_subset_after_submit_failure(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:watch-partial-a",
-        "--object",
         "obj:watch-partial-b",
         "--watch",
     )
@@ -3128,10 +3045,8 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
         runner,
         storage_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
         "--watch",
     )
@@ -3254,10 +3169,8 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
         runner,
         storage_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
         "--watch",
     )
@@ -3372,10 +3285,8 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
         runner,
         storage_root,
         staging,
-        "timestamp",
         "batch",
-        "inventory",
-        "--batch",
+        "upgrade",
         batch_id,
         "--watch",
     )
@@ -3505,10 +3416,8 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
         runner,
         storage_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
         "--watch",
     )
@@ -3625,10 +3534,8 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
         runner,
         storage_root,
         staging,
-        "timestamp",
         "batch",
-        "inventory",
-        "--batch",
+        "upgrade",
         batch_id,
         "--watch",
     )
@@ -3676,10 +3583,9 @@ def test_batch_watch_node_halt_exits_operational_error(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:batch-watch-halt",
         "--watch",
     )
@@ -3714,10 +3620,9 @@ def test_batch_upgrade_failed_verify_job_is_retryable(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:batch-failed-job",
     )
     assert submitted.exit_code == 0, submitted.output
@@ -3727,12 +3632,9 @@ def test_batch_upgrade_failed_verify_job_is_retryable(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
     assert first.exit_code == 0, first.output
     failed_job_id = batch_state.load_batch(staging, batch_id).verify_jobs[0].job_id
@@ -3742,12 +3644,9 @@ def test_batch_upgrade_failed_verify_job_is_retryable(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
     assert failed.exit_code == 0, failed.output
     batch = batch_state.load_batch(staging, batch_id)
@@ -3759,12 +3658,9 @@ def test_batch_upgrade_failed_verify_job_is_retryable(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
     assert retried.exit_code == 0, retried.output
     batch = batch_state.load_batch(staging, batch_id)
@@ -3794,10 +3690,9 @@ def test_batch_upgrade_poll_transient_marks_retryable(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:batch-poll-fails",
     )
     assert submitted.exit_code == 0, submitted.output
@@ -3807,12 +3702,9 @@ def test_batch_upgrade_poll_transient_marks_retryable(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
 
     assert upgraded.exit_code == 0, upgraded.output
@@ -3846,10 +3738,9 @@ def test_batch_upgrade_download_mismatch_marks_terminal(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:batch-mismatch",
     )
     assert submitted.exit_code == 0, submitted.output
@@ -3859,12 +3750,9 @@ def test_batch_upgrade_download_mismatch_marks_terminal(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
     assert first.exit_code == 0, first.output
     batch = batch_state.load_batch(staging, batch_id)
@@ -3874,12 +3762,9 @@ def test_batch_upgrade_download_mismatch_marks_terminal(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
 
     assert mismatched.exit_code == 0, mismatched.output
@@ -3912,10 +3797,9 @@ def test_batch_upgrade_bitcoin_transient_marks_retryable(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:batch-rpc-fails",
     )
     assert submitted.exit_code == 0, submitted.output
@@ -3925,12 +3809,9 @@ def test_batch_upgrade_bitcoin_transient_marks_retryable(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
     assert first.exit_code == 0, first.output
     batch = batch_state.load_batch(staging, batch_id)
@@ -3943,12 +3824,9 @@ def test_batch_upgrade_bitcoin_transient_marks_retryable(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
 
     assert failed.exit_code == 0, failed.output
@@ -3980,10 +3858,9 @@ def test_batch_upgrade_expired_poll_gets_fresh_job(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "content",
-        "--object",
         "obj:batch-expired",
     )
     assert submitted.exit_code == 0, submitted.output
@@ -3993,12 +3870,9 @@ def test_batch_upgrade_expired_poll_gets_fresh_job(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
     assert first.exit_code == 0, first.output
     assert batch_state.load_batch(staging, batch_id).verify_jobs[0].status == "EXPIRED"
@@ -4007,12 +3881,9 @@ def test_batch_upgrade_expired_poll_gets_fresh_job(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "content",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
 
     assert second.exit_code == 0, second.output
@@ -4058,10 +3929,9 @@ def test_batch_inventory_upgrade_rejects_stale_plan_digest(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
+        "create",
         "inventory",
-        "--object",
         "obj:inv-stale",
         "--allow-missing-metadata",
     )
@@ -4082,12 +3952,9 @@ def test_batch_inventory_upgrade_rejects_stale_plan_digest(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "inventory",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
     assert first.exit_code == 0, first.output
     batch = batch_state.load_batch(staging, batch_id)
@@ -4100,12 +3967,9 @@ def test_batch_inventory_upgrade_rejects_stale_plan_digest(
         runner,
         empty_sha256_root,
         staging,
-        "timestamp",
         "batch",
-        "inventory",
-        "--batch",
+        "upgrade",
         batch_id,
-        "--upgrade",
     )
 
     assert upgraded.exit_code == 0, upgraded.output
@@ -4135,16 +3999,12 @@ def test_batch_rm_refuses_non_terminal_without_force(
         ),
     )
 
-    result = _invoke(
-        runner, storage_root, staging, "timestamp", "batch", "rm", batch_id
-    )
+    result = _invoke(runner, storage_root, staging, "batch", "rm", batch_id)
 
     assert result.exit_code == 1
     assert batch_file_path(staging, batch_id).is_file()
 
-    forced = _invoke(
-        runner, storage_root, staging, "timestamp", "batch", "rm", batch_id, "--force"
-    )
+    forced = _invoke(runner, storage_root, staging, "batch", "rm", batch_id, "--force")
 
     assert forced.exit_code == 0, forced.output
     assert not batch_file_path(staging, batch_id).exists()

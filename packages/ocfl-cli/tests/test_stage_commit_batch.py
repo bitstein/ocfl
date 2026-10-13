@@ -1,4 +1,4 @@
-"""Tests for `ocfl stage commit --batch`."""
+"""Tests for `ocfl stage batch commit`."""
 
 import json
 import shutil
@@ -63,7 +63,7 @@ def _commit_batch(
     commit_object: Callable[..., None],
     runtime: Runtime,
 ) -> tuple[int, list[dict]]:
-    """`stage commit --batch` through its use case, with a fake object commit.
+    """`stage batch commit` through its use case, with a fake object commit.
 
     Returns the command's exit code and the events it would print.
     """
@@ -392,7 +392,7 @@ def test_content_target_batch_is_rejected_before_commit_attempt(
         target=TimestampTarget.CONTENT,
         rows=(BatchObject(object_id="obj:content", status="upgraded"),),
     )
-    result = _invoke(runner, storage_root, staging, "commit", "--batch", batch.batch_id)
+    result = _invoke(runner, storage_root, staging, "batch", "commit", batch.batch_id)
 
     assert result.exit_code == 2
     assert "commit batches must target inventory; got content" in result.output
@@ -412,7 +412,7 @@ def test_batch_commit_rejects_wrong_archive_root_before_commit_attempt(
         storage_root,
         rows=(BatchObject(object_id="obj:wrong-root", status="upgraded"),),
     )
-    result = _invoke(runner, other_root, staging, "commit", "--batch", batch.batch_id)
+    result = _invoke(runner, other_root, staging, "batch", "commit", batch.batch_id)
 
     assert result.exit_code == 2
     assert f"batch {batch.batch_id} belongs to root" in result.output
@@ -441,12 +441,9 @@ def test_batch_commit_does_not_require_batch_driver_lease(
         batch.batch_id,
         command=(
             "stage",
-            "timestamp",
             "batch",
-            "inventory",
-            "--batch",
+            "retry",
             batch.batch_id,
-            "--retry",
         ),
         heartbeat_interval=None,
     ):
@@ -458,35 +455,23 @@ def test_batch_commit_does_not_require_batch_driver_lease(
 
 
 @pytest.mark.parametrize(
-    ("args", "message"),
+    "args",
     [
-        ((), "exactly one of OBJECT_ID or --batch is required"),
-        (
-            ("obj:one", "--batch", "018f63de-0000-7000-8000-000000000001"),
-            "exactly one of OBJECT_ID or --batch is required",
-        ),
-        (
-            (
-                "--batch",
-                "018f63de-0000-7000-8000-000000000001",
-                "--allow-missing-metadata",
-            ),
-            "--allow-missing-metadata is not supported with --batch; "
-            "commit those objects individually",
-        ),
+        (),
+        ("--batch", "018f63de-0000-7000-8000-000000000001"),
+        ("obj:one", "--batch", "018f63de-0000-7000-8000-000000000001"),
     ],
 )
-def test_batch_commit_usage_errors(
+def test_commit_takes_one_object_and_no_batch(
     runner: CliRunner,
     storage_root: Path,
     tmp_path: Path,
     args: tuple[str, ...],
-    message: str,
 ) -> None:
+    """Batches commit with `stage batch commit BATCH`."""
     result = _invoke(runner, storage_root, tmp_path / "staging", "commit", *args)
 
     assert result.exit_code == 2
-    assert message in result.output
 
 
 def test_snapshot_row_invalidated_mid_run_is_reported_as_failed(

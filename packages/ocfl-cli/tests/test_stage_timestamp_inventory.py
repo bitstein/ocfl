@@ -1,4 +1,4 @@
-"""Tests for `stage timestamp inventory`.
+"""Tests for `stage timestamp` on the inventory target.
 
 Pins the build-submit-serialize contract from `OTS workflow contract`:
 
@@ -248,8 +248,9 @@ class TestInventoryBuild:
                 empty_sha256_root,
                 staging,
                 "timestamp",
-                "inventory",
                 "obj:inv",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -296,8 +297,9 @@ class TestInventoryBuild:
                 empty_sha256_root,
                 staging,
                 "timestamp",
-                "inventory",
                 "obj:metadata",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -464,8 +466,9 @@ class TestUnverifiedContentGate:
                 empty_sha256_root,
                 staging,
                 "timestamp",
-                "inventory",
                 "obj:reorg-gate",
+                "--expect",
+                "inventory",
             ),
         )
 
@@ -527,10 +530,10 @@ class TestUnverifiedContentGate:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:reorg-real",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -542,8 +545,9 @@ class TestUnverifiedContentGate:
                 empty_sha256_root,
                 staging,
                 "timestamp",
-                "inventory",
                 "obj:reorg-real",
+                "--expect",
+                "inventory",
             ),
         )
 
@@ -582,8 +586,9 @@ class TestMetadataGate:
                 empty_sha256_root,
                 staging,
                 "timestamp",
-                "inventory",
                 "obj:missing-metadata",
+                "--expect",
+                "inventory",
             ),
         )
 
@@ -617,8 +622,9 @@ class TestMetadataGate:
                 empty_sha256_root,
                 staging,
                 "timestamp",
-                "inventory",
                 "obj:missing-metadata-file",
+                "--expect",
+                "inventory",
             ),
         )
 
@@ -658,9 +664,10 @@ class TestMetadataGate:
                 empty_sha256_root,
                 staging,
                 "timestamp",
-                "inventory",
                 "obj:allow-metadata",
                 "--allow-missing-metadata",
+                "--expect",
+                "inventory",
             ),
         )
 
@@ -669,21 +676,21 @@ class TestMetadataGate:
         assert plan_path(sd).is_file()
 
     @pytest.mark.parametrize(
-        "mode_args",
+        "verb_args",
         [
-            ("--upgrade",),
-            ("--upgrade", "--watch"),
-            ("--retry",),
+            ("upgrade",),
+            ("upgrade", "--watch"),
+            ("retry",),
         ],
     )
-    def test_allow_missing_metadata_is_rejected_for_non_submit_modes(
+    def test_allow_missing_metadata_is_only_a_timestamp_option(
         self,
         runner: CliRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        mode_args: tuple[str, ...],
+        verb_args: tuple[str, ...],
     ) -> None:
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
@@ -693,21 +700,21 @@ class TestMetadataGate:
             runner, empty_sha256_root, staging, "obj:irrelevant-flag"
         )
 
+        verb, *flags = verb_args
         r = runner.invoke(
             app,
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "inventory",
+                verb,
                 "obj:irrelevant-flag",
+                *flags,
                 "--allow-missing-metadata",
-                *mode_args,
             ),
         )
 
         assert r.exit_code == 2
-        assert "only valid when submitting an inventory timestamp" in r.output
+        assert "--allow-missing-metadata" in r.output
 
 
 # =========================================================================== #
@@ -738,8 +745,9 @@ class TestPlanRoundTrip:
                 empty_sha256_root,
                 staging,
                 "timestamp",
-                "inventory",
                 "obj:rt",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -784,8 +792,9 @@ class TestPhaseGate:
                 empty_sha256_root,
                 staging,
                 "timestamp",
-                "inventory",
                 "obj:err-draft",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 3, r.output
@@ -821,8 +830,9 @@ class TestPhaseGate:
                 empty_sha256_root,
                 staging,
                 "timestamp",
-                "inventory",
                 "obj:err-pend",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 3, r.output
@@ -862,8 +872,9 @@ class TestResubmitAtInventoryPending:
                 empty_sha256_root,
                 staging,
                 "timestamp",
-                "inventory",
                 "obj:resubmit",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -881,8 +892,9 @@ class TestResubmitAtInventoryPending:
                 empty_sha256_root,
                 staging,
                 "timestamp",
-                "inventory",
                 "obj:resubmit",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -924,8 +936,9 @@ class TestNoopAtInventoryUpgraded:
                 empty_sha256_root,
                 staging,
                 "timestamp",
-                "inventory",
                 "obj:noop",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -940,8 +953,9 @@ class TestNoopAtInventoryUpgraded:
                 empty_sha256_root,
                 staging,
                 "timestamp",
-                "inventory",
                 "obj:noop",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 0, r.output

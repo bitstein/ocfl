@@ -1,4 +1,4 @@
-"""Tests for `ocfl stage timestamp content --upgrade` (OTS workflow step 11).
+"""Tests for `ocfl stage upgrade` on the content target (OTS workflow step 11).
 
 Pins step 11 of `OTS workflow contract`:
 
@@ -298,9 +298,7 @@ class TestProgressRendering:
             ),
         )
 
-        stage_timestamp.render_content_upgrade_result(
-            make_console(), "obj:render", result
-        )
+        stage_timestamp.render_upgrade_result(make_console(), "obj:render", result)
 
         out = capsys.readouterr().out
         assert "Content:" in out
@@ -313,7 +311,6 @@ class TestProgressRendering:
         assert "        alice.btc.calendar.opentimestamps.org: 184" in out
         assert "      pending: 63 digests" in out
         assert "  Waiting on 63 pending digests" in out
-        assert "  Next: stage timestamp content --upgrade --watch" in out
 
     def test_watch_progress_renders_deltas_and_no_change(self, capsys):
         prior = (
@@ -371,7 +368,7 @@ class TestProgressRendering:
                 "jobs": current,
                 "prior_jobs": prior,
             },
-            next_action="stage timestamp inventory",
+            next_action=lambda: "ocfl stage timestamp obj:render",
         )
 
         out = capsys.readouterr().out
@@ -765,10 +762,10 @@ class TestUpgradeHappyPath:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:up",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -777,7 +774,7 @@ class TestUpgradeHappyPath:
         assert "Checked SimpleProof jobs" in r.output
         assert "Workflow:" in r.output
         assert "Phase: content-pending -> content-upgraded" in r.output
-        assert "Next: stage timestamp inventory" in r.output
+        assert "Next: ocfl stage timestamp obj:up" in r.output
 
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
@@ -844,10 +841,10 @@ class TestUpgradeHappyPath:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:multi",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -857,7 +854,7 @@ class TestUpgradeHappyPath:
         assert "Waiting on 1 pending digest" in r.output
         assert "Workflow:" in r.output
         assert "Phase: content-pending" in r.output
-        assert "Next: stage timestamp content --upgrade --watch" in r.output
+        assert "Next: ocfl stage upgrade obj:multi --watch" in r.output
 
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
@@ -921,10 +918,10 @@ class TestThreeConfGate:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:gate",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -981,10 +978,10 @@ class TestPendingHeld:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:pend",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1005,10 +1002,10 @@ class TestPendingHeld:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:pend",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1066,10 +1063,10 @@ class TestReorgShallow:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:reorg-s",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1087,10 +1084,10 @@ class TestReorgShallow:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:reorg-s",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1141,10 +1138,10 @@ class TestReorgDeep:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:reorg-d",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 5, r.output
@@ -1195,10 +1192,10 @@ class TestMerkleMismatch:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:mm",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 5, r.output
@@ -1257,10 +1254,10 @@ class TestReorgMerkleMismatch:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:reorg-mm",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1279,10 +1276,10 @@ class TestReorgMerkleMismatch:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:reorg-mm",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1334,10 +1331,10 @@ class TestContentUpgradeExpired:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:content-exp",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
 
@@ -1386,10 +1383,10 @@ class TestConfirmationsBeforeMerkleCli:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:shallow-mm",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1404,10 +1401,10 @@ class TestConfirmationsBeforeMerkleCli:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:shallow-mm",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 5, r.output
@@ -1476,10 +1473,10 @@ class TestCrashRecovery:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:crash",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code != 0, r.output
@@ -1501,10 +1498,10 @@ class TestCrashRecovery:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:crash",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1657,10 +1654,10 @@ class TestOrphanGuard:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:orphan",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1717,10 +1714,10 @@ class TestPhaseAdvanceInvariant:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:inv-ok",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1761,10 +1758,10 @@ class TestPhaseAdvanceInvariant:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:inv-1",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1810,10 +1807,10 @@ class TestPhaseAdvanceInvariant:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:inv-2",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1865,10 +1862,10 @@ class TestReverifyIdempotent:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:idem",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1880,10 +1877,10 @@ class TestReverifyIdempotent:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:idem",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1940,10 +1937,10 @@ class TestRegtestEndToEnd:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:rt",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -1970,10 +1967,10 @@ class TestRegtestEndToEnd:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:rt",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         # Reorg reconciliation marks proof unverified; phase regresses.

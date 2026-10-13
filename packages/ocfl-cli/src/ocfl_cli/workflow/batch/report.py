@@ -22,6 +22,7 @@ from ocfl_cli.store.ots_state import (
     load_ots,
 )
 from ocfl_cli.store.staging import StagingStore
+from ocfl_cli.workflow import hints
 from ocfl_cli.workflow.batch.reasons import BATCH_MISSING_NEXT, reason_next
 
 BATCH_STATUSES = ("prepared", "submitted", "upgraded", "failed", "skipped")
@@ -435,18 +436,21 @@ def next_for_row(
     reason = row.last_error or row.skipped_reason
     if row.status in {"failed", "skipped"} or reason is not None:
         if reason == "transient_sp_error" and row.status == "submitted":
-            return "Re-run --upgrade"
-        return reason_next(reason, batch=batch) or "Inspect batch status"
+            return hints.batch("upgrade", batch.batch_id)
+        return (
+            reason_next(reason, batch=batch, object_id=row.object_id)
+            or "Inspect batch status"
+        )
     if batch_complete(batch):
-        return f"Batch complete; batch rm {batch.batch_id} to clean up"
+        return f"Batch complete; {hints.batch('rm', batch.batch_id)} to clean up"
     if row.status == "prepared":
-        return f"Run --batch {batch.batch_id} to submit"
+        return hints.batch("submit", batch.batch_id)
     if row.status == "submitted":
         if digests_submitted < len(row.digests):
-            return f"Run --batch {batch.batch_id} --retry"
+            return hints.batch("retry", batch.batch_id)
         if verify_job_covers(batch, row):
-            return "Re-run --upgrade later"
-        return f"Run --batch {batch.batch_id} --upgrade"
+            return f"{hints.batch('upgrade', batch.batch_id)} (later)"
+        return hints.batch("upgrade", batch.batch_id, "--watch")
     if row.status == "upgraded":
         return "Object complete"
     return "Inspect batch status"

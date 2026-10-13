@@ -7,7 +7,7 @@ Pins attaching the inventory proof at commit time:
   ``<staging>/ots-cache/<inv_digest>.ots`` bytes, re-parse, and assert
   ``parsed.commitment_digest == plan.inventory.digest``. On mismatch /
   parse / missing → ``AttestationMismatchError`` with an actionable hint
-  to re-run ``stage timestamp inventory --upgrade`` (HALT, exit 5).
+  to run ``stage upgrade`` (HALT, exit 5).
 - Set ``plan.inventory_proof`` to the cached bytes BEFORE the commit; the
   lib writes it to
   ``extensions/NNNN-ots-timestamps/inventory.json.v<head>.ots``.
@@ -119,7 +119,7 @@ def _setup_at_inventory_upgraded(
 
     r = runner.invoke(
         app,
-        _stage_args(root, staging, "timestamp", "inventory", object_id, "--upgrade"),
+        _stage_args(root, staging, "upgrade", object_id, "--expect", "inventory"),
     )
     assert r.exit_code == 0, r.output
     state = load_ots(sd)
@@ -187,9 +187,10 @@ def _setup_missing_metadata_inventory_upgraded(
             root,
             staging,
             "timestamp",
-            "inventory",
             object_id,
             "--allow-missing-metadata",
+            "--expect",
+            "inventory",
         ),
     )
     assert r.exit_code == 0, r.output
@@ -204,7 +205,7 @@ def _setup_missing_metadata_inventory_upgraded(
 
     r = runner.invoke(
         app,
-        _stage_args(root, staging, "timestamp", "inventory", object_id, "--upgrade"),
+        _stage_args(root, staging, "upgrade", object_id, "--expect", "inventory"),
     )
     assert r.exit_code == 0, r.output
     assert load_ots(sd).phase is Phase.INVENTORY_UPGRADED
@@ -384,8 +385,7 @@ class TestStageCommitOtsAfterMetadataInvalidation:
 
         assert r.exit_code == 3, r.output
         out = (r.output or "").lower()
-        assert "stage timestamp inventory" in out, r.output
-        assert "stage timestamp inventory --upgrade" in out, r.output
+        assert "next: ocfl stage timestamp obj:commit-invalidated" in out, r.output
 
         store = StagingStore(staging)
         root_path = str(empty_sha256_root.resolve())
@@ -542,8 +542,8 @@ class TestStageCommitOtsCorruptedCache:
         assert r.exit_code == 5, r.output
         out = (r.output or "").lower()
         assert "does not match verified inventory digest" in out, r.output
-        assert "stage timestamp inventory" in out, r.output
-        assert "stage timestamp inventory --upgrade" in out, r.output
+        assert "ocfl stage timestamp obj:commit-plan-mismatch" in out, r.output
+        assert "ocfl stage upgrade obj:commit-plan-mismatch" in out, r.output
 
         store = StagingStore(staging)
         root_path = str(empty_sha256_root.resolve())
@@ -588,8 +588,7 @@ class TestStageCommitOtsCorruptedCache:
         )
         assert r.exit_code == 5, r.output
         out = (r.output or "").lower()
-        assert "re-run" in out, r.output
-        assert "stage timestamp inventory --upgrade" in out, r.output
+        assert "ocfl stage upgrade" in out, r.output
 
         # Staging preserved for the operator to act on the hint.
         store = StagingStore(staging)
@@ -637,8 +636,7 @@ class TestStageCommitOtsMissingCache:
         )
         assert r.exit_code == 5, r.output
         out = (r.output or "").lower()
-        assert "re-run" in out, r.output
-        assert "stage timestamp inventory --upgrade" in out, r.output
+        assert "ocfl stage upgrade" in out, r.output
 
         # Staging preserved.
         store = StagingStore(staging)

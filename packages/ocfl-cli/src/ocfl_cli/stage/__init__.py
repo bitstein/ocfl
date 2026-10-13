@@ -1,17 +1,20 @@
 """The `stage` command group: commands only; the work is in `ocfl_cli.workflow`."""
 
-from ocfl_cli.stage._app import OTS_HELP_PANEL, batch_app, stage_app, timestamp_app
+from ocfl_cli.stage._app import OTS_HELP_PANEL, batch_app, stage_app
 from ocfl_cli.stage.batch import (
-    timestamp_batch_content,
-    timestamp_batch_inventory,
-    timestamp_batch_ls,
-    timestamp_batch_rm,
-    timestamp_batch_status,
+    batch_commit,
+    batch_create,
+    batch_ls,
+    batch_retry,
+    batch_rm,
+    batch_status,
+    batch_submit,
+    batch_upgrade,
 )
 from ocfl_cli.stage.commit import commit
 from ocfl_cli.stage.edit import add, ls_cmd, metadata, mv, new, reset, rm
 from ocfl_cli.stage.status import status
-from ocfl_cli.stage.timestamp import timestamp_content, timestamp_inventory
+from ocfl_cli.stage.timestamp import retry_cmd, timestamp_cmd, upgrade_cmd
 
 # Registration order is the order `--help` lists the commands in.
 stage_app.command()(new)
@@ -22,15 +25,18 @@ stage_app.command()(rm)
 stage_app.command("ls")(ls_cmd)
 stage_app.command()(status)
 stage_app.command()(commit)
-stage_app.add_typer(timestamp_app, rich_help_panel=OTS_HELP_PANEL)
-timestamp_app.add_typer(batch_app)
-batch_app.command("content")(timestamp_batch_content)
-batch_app.command("inventory")(timestamp_batch_inventory)
-batch_app.command("ls")(timestamp_batch_ls)
-batch_app.command("status")(timestamp_batch_status)
-batch_app.command("rm")(timestamp_batch_rm)
-timestamp_app.command("content")(timestamp_content)
-timestamp_app.command("inventory")(timestamp_inventory)
+stage_app.command("timestamp", rich_help_panel=OTS_HELP_PANEL)(timestamp_cmd)
+stage_app.command("upgrade", rich_help_panel=OTS_HELP_PANEL)(upgrade_cmd)
+stage_app.command("retry", rich_help_panel=OTS_HELP_PANEL)(retry_cmd)
+stage_app.add_typer(batch_app, rich_help_panel=OTS_HELP_PANEL)
+batch_app.command("create")(batch_create)
+batch_app.command("submit")(batch_submit)
+batch_app.command("upgrade")(batch_upgrade)
+batch_app.command("retry")(batch_retry)
+batch_app.command("commit")(batch_commit)
+batch_app.command("status")(batch_status)
+batch_app.command("ls")(batch_ls)
+batch_app.command("rm")(batch_rm)
 stage_app.command()(reset)
 
 __all__ = ["stage_app"]

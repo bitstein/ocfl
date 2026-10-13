@@ -376,7 +376,7 @@ class TestResetWarnMessage:
 
         assert r.exit_code != 0, r.output
         assert batch_id in r.output
-        assert f"stage timestamp batch status {batch_id}" in r.output
+        assert f"ocfl stage batch status {batch_id}" in r.output
 
     def test_refusal_message_names_active_inventory_batch_status_command(
         self,
@@ -405,7 +405,7 @@ class TestResetWarnMessage:
 
         assert r.exit_code != 0, r.output
         assert batch_id in r.output
-        assert f"stage timestamp batch status {batch_id}" in r.output
+        assert f"ocfl stage batch status {batch_id}" in r.output
 
     def test_warn_message_names_phase_and_counts(
         self,

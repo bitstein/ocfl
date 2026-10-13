@@ -1,10 +1,10 @@
-"""Tests for `ocfl stage timestamp inventory --upgrade / --watch / --retry`.
+"""Tests for `ocfl stage upgrade [--watch]` and `stage retry` on the inventory.
 
 Pins step 15 of `OTS workflow contract` — the inventory-side mirror of
-the content `--upgrade`/`--watch`/`--retry` shape:
+the content upgrade / watch / retry shape:
 
-- ``--upgrade``: single-digest (the inventory digest) verify pass with
-  the same crash-recovery invariant as content ``--upgrade``. Step (1)
+- ``upgrade``: single-digest (the inventory digest) verify pass with
+  the same crash-recovery invariant as the content upgrade. Step (1)
   atomic cache write at ``ots-cache/<inv_digest>.ots``; step (2) ingest
   is VACUOUS for inventory (the extension-file entry is queued at
   commit time, not now); step (3) atomic ``ots.json`` update sets
@@ -12,16 +12,11 @@ the content `--upgrade`/`--watch`/`--retry` shape:
   block_height, confirmations_at_verify, verified_at,
   ots_path=ots-cache/<d>.ots)``
   and advances phase to ``inventory-upgraded``.
-- ``--watch``: ZMQ-driven loop that runs an upgrade pass per Bitcoin
+- ``upgrade --watch``: ZMQ-driven loop that runs an upgrade pass per Bitcoin
   block; exits 0 when phase advances to ``inventory-upgraded`` or 130
   on SIGINT/SIGTERM.
-- ``--retry``: re-POST the inventory digest at phase
+- ``retry``: re-POST the inventory digest at phase
   ``INVENTORY_PENDING``; ``PhaseError`` (exit 3) at any other phase.
-  Mutually exclusive with ``--upgrade`` / ``--watch``.
-
-These tests are RED until the three flags + corresponding code paths
-land. Expected diagnostics include ``no such option: '--upgrade'``,
-``KeyError`` on ``inventory_proof.proof``, or ``NotImplementedError``.
 """
 
 import hashlib
@@ -259,7 +254,7 @@ def _setup_at_inventory_pending(
     save_ots(sd, state)
 
     r = runner.invoke(
-        app, _stage_args(root, staging, "timestamp", "inventory", object_id)
+        app, _stage_args(root, staging, "timestamp", object_id, "--expect", "inventory")
     )
     assert r.exit_code == 0, r.output
 
@@ -467,10 +462,10 @@ class TestInventoryUpgradeHappyPath:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "inventory",
+                "upgrade",
                 "obj:inv-up",
-                "--upgrade",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -547,10 +542,10 @@ class TestInventoryUpgradeExpired:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "inventory",
+                "upgrade",
                 "obj:inv-exp",
-                "--upgrade",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -618,10 +613,10 @@ class TestInventoryCrashRecovery:
                 _stage_args(
                     empty_sha256_root,
                     staging,
-                    "timestamp",
-                    "inventory",
+                    "upgrade",
                     "obj:inv-crash",
-                    "--upgrade",
+                    "--expect",
+                    "inventory",
                 ),
             )
             assert r.exit_code != 0, r.output
@@ -643,10 +638,10 @@ class TestInventoryCrashRecovery:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "inventory",
+                "upgrade",
                 "obj:inv-crash",
-                "--upgrade",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -760,10 +755,10 @@ class TestInventoryPhaseAdvance:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "inventory",
+                "upgrade",
                 "obj:inv-adv",
-                "--upgrade",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -803,10 +798,10 @@ class TestInventoryPhaseAdvance:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "inventory",
+                "upgrade",
                 "obj:inv-pend",
-                "--upgrade",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -849,10 +844,10 @@ class TestInventoryPhaseAdvance:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "inventory",
+                "upgrade",
                 "obj:inv-shallow",
-                "--upgrade",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -917,11 +912,11 @@ class TestInventoryWatchLoop:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "inventory",
+                "upgrade",
                 "obj:inv-watch-delay",
-                "--upgrade",
                 "--watch",
+                "--expect",
+                "inventory",
             ),
         )
 
@@ -975,11 +970,11 @@ class TestInventoryWatchLoop:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "inventory",
+                "upgrade",
                 "obj:inv-watch-ok",
-                "--upgrade",
                 "--watch",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -992,7 +987,7 @@ class TestInventoryWatchLoop:
         assert "Phase: inventory-pending" in r.output
         assert "Workflow:" in r.output
         assert "Phase: inventory-pending -> inventory-upgraded" in r.output
-        assert "Next: stage commit" in r.output
+        assert "Next: ocfl stage commit obj:inv-watch-ok" in r.output
         assert load_ots(sd).phase is Phase.INVENTORY_UPGRADED
 
     def test_watch_sigint_exits_130_without_torn_checkpoint(
@@ -1031,11 +1026,11 @@ class TestInventoryWatchLoop:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "inventory",
+                "upgrade",
                 "obj:inv-watch-sigint",
-                "--upgrade",
                 "--watch",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 130, r.output
@@ -1100,11 +1095,11 @@ class TestInventoryWatchLoop:
                     _stage_args(
                         empty_sha256_root,
                         staging,
-                        "timestamp",
-                        "inventory",
+                        "upgrade",
                         "obj:inv-watch-lock",
-                        "--upgrade",
                         "--watch",
+                        "--expect",
+                        "inventory",
                     ),
                 )
         finally:
@@ -1119,61 +1114,6 @@ class TestInventoryWatchLoop:
             if rec.levelno == logging.WARNING
         ]
         assert any("lock" in m for m in warn_msgs), warn_msgs
-
-
-# =========================================================================== #
-# Layer-2: --retry  (mutually exclusive flag guards)
-# =========================================================================== #
-
-
-class TestInventoryRetryFlagCombinationGuards:
-    @pytest.mark.parametrize("extra_flag", ["--upgrade", "--watch"])
-    def test_retry_with_upgrade_or_watch_rejects(
-        self,
-        runner: CliRunner,
-        empty_sha256_root: Path,
-        sp_fake: FakeSimpleProof,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        extra_flag: str,
-    ) -> None:
-        """``--retry --upgrade`` and ``--retry --watch`` rejected at CLI
-        surface with non-zero exit and an actionable message naming both
-        conflicting flags."""
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-
-        staging = tmp_path / "staging"
-        sd, _da, _inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-retry-combo"
-        )
-
-        pre_calls = len(sp_fake._submissions)
-
-        r = runner.invoke(
-            app,
-            _stage_args(
-                empty_sha256_root,
-                staging,
-                "timestamp",
-                "inventory",
-                "obj:inv-retry-combo",
-                "--retry",
-                extra_flag,
-            ),
-        )
-        assert r.exit_code != 0, r.output
-        assert "--retry" in r.output, r.output
-        assert extra_flag in r.output, r.output
-        # Rejected before any SP POST.
-        assert len(sp_fake._submissions) == pre_calls
-        # Phase unchanged.
-        assert load_ots(sd).phase is Phase.INVENTORY_PENDING
-
-
-# =========================================================================== #
-# Layer-2: --retry phase gate  (only legal at INVENTORY_PENDING)
-# =========================================================================== #
 
 
 class TestInventoryRetryPhaseGate:
@@ -1215,10 +1155,10 @@ class TestInventoryRetryPhaseGate:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "inventory",
+                "retry",
                 "obj:inv-retry-phase",
-                "--retry",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 3, r.output
@@ -1236,7 +1176,7 @@ class TestInventoryRetryHappyPath:
     def _retry(self, runner: CliRunner, root: Path, staging: Path, oid: str):
         return runner.invoke(
             app,
-            _stage_args(root, staging, "timestamp", "inventory", oid, "--retry"),
+            _stage_args(root, staging, "retry", oid, "--expect", "inventory"),
         )
 
     def test_retry_resends_a_failed_inventory_submission(
@@ -1346,10 +1286,10 @@ class TestRegtestEndToEndInventoryUpgrade:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "inventory",
+                "upgrade",
                 "obj:rt-inv",
-                "--upgrade",
+                "--expect",
+                "inventory",
             ),
         )
         assert r.exit_code == 0, r.output

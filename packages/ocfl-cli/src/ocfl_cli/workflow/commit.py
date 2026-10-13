@@ -26,6 +26,7 @@ from ocfl_cli.store.ots_state import (
     with_lock,
 )
 from ocfl_cli.store.staging import StagingStore
+from ocfl_cli.workflow import hints
 from ocfl_cli.workflow.common import (
     log_phase,
     require_verified_content_before_inventory,
@@ -103,7 +104,7 @@ def build_inventory_plan(
 ) -> tuple[CommitPlan, ContentSource]:
     """Build a CommitPlan from the staged inventory + content map.
 
-    Used by both `stage commit` (which commits it) and `stage timestamp
+    Used by both `stage commit` (which commits it) and `stage timestamp`
     inventory` (which saves it as `plan.json` for a later commit). Returns
     the plan and the `_StagingContentSource` the commit reads content from.
     """
@@ -170,7 +171,7 @@ def require_timestamped_plan_metadata(
         fields = ", ".join(missing)
         raise MissingStagedMetadataError(
             f"timestamped inventory plan missing metadata: {fields} "
-            "(rerun stage timestamp inventory after fixing staged metadata, "
+            "(fix the staged metadata and timestamp the inventory again, "
             "or use --allow-missing-metadata to bypass)"
         )
 
@@ -298,7 +299,7 @@ def commit_ots(
         state = load_ots(staging_dir)
         target_phase = check_transition(state.phase, "commit (ots path)")
         require_verified_content_before_inventory(state)
-        plan = _timestamped_plan(staging_dir, state)
+        plan = _timestamped_plan(staging_dir, state, object_id)
         version = plan.inventory.inventory.versions[plan.version]
         require_timestamped_plan_metadata(
             version, allow_missing_metadata=allow_missing_metadata
@@ -321,45 +322,46 @@ def commit_ots(
     )
 
 
-def _timestamped_plan(staging_dir: Path, state: OtsState) -> CommitPlan:
+def _timestamped_plan(staging_dir: Path, state: OtsState, object_id: str) -> CommitPlan:
     """The staged plan with its verified inventory proof attached."""
     if state.inventory is None or not state.verified(state.inventory.digest):
         raise AttestationMismatchError(
             "inventory_proof missing or unverified; "
-            "re-run `stage timestamp inventory --upgrade`"
+            f"run '{hints.stage('upgrade', object_id)}'"
         )
     inv_digest = state.inventory.digest
     plan = load_plan(staging_dir)
     if plan is None:
         raise PhaseError(
-            "inventory timestamp plan missing or stale; run `stage timestamp inventory`"
+            "inventory timestamp plan missing or stale; "
+            f"run '{hints.stage('timestamp', object_id)}'"
         )
     if plan.inventory.digest != inv_digest:
         raise AttestationMismatchError(
             f"inventory timestamp plan digest {plan.inventory.digest} "
             f"does not match verified inventory digest {inv_digest}; "
-            "re-run `stage timestamp inventory` and "
-            "`stage timestamp inventory --upgrade`"
+            f"run '{hints.stage('timestamp', object_id)}' and "
+            f"'{hints.stage('upgrade', object_id)}'"
         )
     try:
         inv_ots = ots_cache_path(staging_dir, inv_digest).read_bytes()
     except FileNotFoundError:
         raise AttestationMismatchError(
             f"ots-cache/{inv_digest}.ots missing; "
-            f"re-run `stage timestamp inventory --upgrade`"
+            f"run '{hints.stage('upgrade', object_id)}'"
         ) from None
     try:
         parsed = parse_ots(inv_ots)
     except OtsParseError as exc:
         raise AttestationMismatchError(
             f"failed to parse cached inventory .ots ({exc}); "
-            f"re-run `stage timestamp inventory --upgrade`"
+            f"run '{hints.stage('upgrade', object_id)}'"
         ) from None
     if parsed.commitment_digest.hex() != inv_digest:
         raise AttestationMismatchError(
             f"cached inventory .ots commits to "
             f"{parsed.commitment_digest.hex()}, plan expects "
-            f"{inv_digest}; re-run `stage timestamp inventory --upgrade`"
+            f"{inv_digest}; run '{hints.stage('upgrade', object_id)}'"
         )
     return dataclasses.replace(plan, inventory_proof=inv_ots)
 

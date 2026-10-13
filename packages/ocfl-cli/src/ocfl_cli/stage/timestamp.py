@@ -1,24 +1,26 @@
-"""stage timestamp content and inventory."""
+"""stage timestamp, upgrade and retry: one verb each, the target from the Phase.
 
-from typing import TYPE_CHECKING, Annotated, NoReturn
+Each verb works on the Timestamp Target the Phase is at; `--expect` asserts
+which one (a mismatch is exit 3). A verb with nothing to do says what to run
+next and exits 0. Under `--json` a one-shot verb prints one document and
+`--watch` prints NDJSON events ending in a `summary` event.
+"""
+
+import json
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 
 from ocfl_cli import _appctx as appctx
-from ocfl_cli import errors as errors
-from ocfl_cli._common import open_root
+from ocfl_cli._common import open_root, output_json
 from ocfl_cli.errors import (
     AttestationMismatchError,
     ErrorContext,
     PhaseError,
     ReorgDetectedError,
 )
-from ocfl_cli.model.phase import Phase, TimestampTarget
-from ocfl_cli.stage._app import (
-    TimestampPreflight,
-    require_timestamp_preflight,
-    validate_inventory_metadata_flag,
-)
+from ocfl_cli.model.phase import TimestampTarget
+from ocfl_cli.stage._app import TimestampPreflight, require_timestamp_preflight
 from ocfl_cli.stage.render import pluralize, render_section, short_job_id
 from ocfl_cli.workflow import common as wf_common
 from ocfl_cli.workflow import staging as wf_staging
@@ -30,6 +32,31 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from rich.console import Console
+
+    from ocfl_cli.model.phase import Phase
+
+type Outcome = (
+    timestamp.SubmitResult
+    | timestamp.UpgradeResult
+    | timestamp.RetryResult
+    | timestamp.Idle
+)
+
+ObjectArg = Annotated[str, typer.Argument(help="Object ID.")]
+ExpectOption = Annotated[
+    TimestampTarget | None,
+    typer.Option(
+        "--expect",
+        help="Fail (exit 3) unless the Phase is at this Timestamp Target.",
+    ),
+]
+WatchOption = Annotated[
+    bool,
+    typer.Option(
+        "--watch",
+        help="Then upgrade on each Bitcoin block until the proofs are final.",
+    ),
+]
 
 
 def render_watch_start(
@@ -130,12 +157,12 @@ def _render_sp_submit_warning(jobs: tuple[wf_common.JobProgress, ...]) -> None:
 
 
 def render_watch_progress(
-    out: Console, kind: str, data: dict, *, next_action: str
+    out: Console, kind: str, data: dict, *, next_action: Callable[[], str]
 ) -> None:
     if kind == "already_advanced":
         render_section(out, "Workflow", leading_blank=True)
         typer.echo(f"  Phase: {data['phase']}")
-        typer.echo(f"  Next: {next_action}")
+        typer.echo(f"  Next: {next_action()}")
         return
     if kind == "block":
         render_section(out, "Block", leading_blank=True)
@@ -149,13 +176,13 @@ def render_watch_progress(
     if kind == "advanced":
         render_section(out, "Workflow", leading_blank=True)
         typer.echo(f"  Phase: {data['previous_phase']} -> {data['phase']}")
-        typer.echo(f"  Next: {next_action}")
+        typer.echo(f"  Next: {next_action()}")
 
 
-def render_content_upgrade_result(
+def render_upgrade_result(
     out: Console, object_id: str, result: timestamp.UpgradeResult
 ) -> None:
-    render_section(out, "Content")
+    render_section(out, result.target.value.title())
     typer.echo(f"  Object: {object_id}")
     typer.echo("  Checked SimpleProof jobs")
     _render_sp_submit_warning(result.jobs)
@@ -167,151 +194,95 @@ def render_content_upgrade_result(
         count = result.orphan_count
         typer.echo(f"  Held by {count} orphan {pluralize(count, 'digest')}")
 
-    render_section(out, "Workflow", leading_blank=True)
-    if result.previous_phase is result.phase:
-        typer.echo(f"  Phase: {result.phase.value}")
+
+def _render_workflow(before: Phase, after: Phase, next_action: str) -> None:
+    if before is after:
+        typer.echo(f"  Phase: {after.value}")
     else:
-        typer.echo(f"  Phase: {result.previous_phase.value} -> {result.phase.value}")
-    next_action = (
-        "stage timestamp inventory"
-        if result.phase is Phase.CONTENT_UPGRADED
-        else "stage timestamp content --upgrade --watch"
-    )
+        typer.echo(f"  Phase: {before.value} -> {after.value}")
     typer.echo(f"  Next: {next_action}")
 
 
-def timestamp_content(
+def _document(
+    run: timestamp.TimestampRun,
+    verb: str,
+    outcome: Outcome,
+    *,
+    before: Phase,
+    next_action: str,
+) -> dict[str, Any]:
+    after = outcome.phase
+    doc: dict[str, Any] = {
+        "object_id": run.object_id,
+        "verb": verb,
+        "target": outcome.target.value,
+        "phase_before": before.value,
+        "phase_after": after.value,
+        "done": outcome.done,
+        "idle": isinstance(outcome, timestamp.Idle),
+        "next": next_action,
+    }
+    match outcome:
+        case timestamp.SubmitResult():
+            doc["submitted"] = outcome.submitted_count
+        case timestamp.UpgradeResult():
+            doc["pending"] = outcome.unverified_pending_count
+            doc["unrequested"] = outcome.orphan_count
+        case timestamp.RetryResult():
+            doc["retried"] = outcome.retried
+        case timestamp.Idle():
+            pass
+    return doc
+
+
+def _render(
     ctx: typer.Context,
-    object_id: Annotated[str, typer.Argument(help="Object ID.")],
-    upgrade: Annotated[
-        bool,
-        typer.Option(
-            "--upgrade",
-            help="Poll SP, verify .ots against Bitcoin, ingest companion files.",
-        ),
-    ] = False,
-    watch_flag: Annotated[
-        bool,
-        typer.Option(
-            "--watch",
-            help="ZMQ-driven loop; runs an upgrade pass per Bitcoin block.",
-        ),
-    ] = False,
-    retry: Annotated[
-        bool,
-        typer.Option("--retry", help="Resubmit FAILED submissions only."),
-    ] = False,
+    run: timestamp.TimestampRun,
+    verb: str,
+    outcome: Outcome,
+    *,
+    before: Phase,
 ) -> None:
-    """Submit staged content digests to SimpleProof."""
+    next_action = timestamp.next_step(run)
+    if appctx.json_mode(ctx):
+        output_json(
+            _document(run, verb, outcome, before=before, next_action=next_action)
+        )
+        return
     out = appctx.console(ctx)
-    preflight = require_timestamp_preflight(
-        ctx,
-        object_id,
-        upgrade=upgrade,
-        watch=watch_flag,
-        retry=retry,
-    )
-    run = _timestamp_run(ctx, preflight, object_id)
-    target = TimestampTarget.CONTENT
-
-    if watch_flag:
-        _watch(ctx, run, target, next_action="stage timestamp inventory")
-
-    if upgrade:
-        result = _halting(lambda: timestamp.upgrade(run, expect=target))
-        render_content_upgrade_result(out, object_id, result)
-        return
-
-    if retry:
-        _retry(run, target)
-        return
-
-    result = timestamp.submit(run, expect=target)
-    render_section(out, "Content")
-    typer.echo(f"  Object: {object_id}")
-    if result.submitted_count:
-        typer.echo(
-            f"  Submitted {result.submitted_count} "
-            f"{pluralize(result.submitted_count, 'digest')} to SimpleProof"
-        )
-    else:
-        typer.echo("  Nothing to timestamp")
-
+    after = before
+    match outcome:
+        case timestamp.Idle():
+            render_section(out, outcome.target.value.title())
+            typer.echo(f"  Object: {run.object_id}")
+            typer.echo(f"  Nothing to {verb} in phase {outcome.phase.value}")
+        case timestamp.SubmitResult():
+            after = outcome.phase
+            render_section(out, outcome.target.value.title())
+            typer.echo(f"  Object: {run.object_id}")
+            count = outcome.submitted_count
+            if count:
+                typer.echo(
+                    f"  Submitted {count} {pluralize(count, 'digest')} to SimpleProof"
+                )
+            else:
+                typer.echo("  Nothing to timestamp")
+        case timestamp.UpgradeResult():
+            after = outcome.phase
+            render_upgrade_result(out, run.object_id, outcome)
+        case timestamp.RetryResult():
+            after = outcome.phase
+            render_section(out, outcome.target.value.title())
+            typer.echo(f"  Object: {run.object_id}")
+            if outcome.retried:
+                typer.echo(
+                    f"  Resubmitted {outcome.retried} failed "
+                    f"{pluralize(outcome.retried, 'submission')}"
+                )
+            else:
+                typer.echo("  no failed submissions to retry")
     render_section(out, "Workflow", leading_blank=True)
-    if result.previous_phase is result.phase:
-        typer.echo(f"  Phase: {result.phase.value}")
-    else:
-        typer.echo(f"  Phase: {result.previous_phase.value} -> {result.phase.value}")
-    if result.noop_advanced:
-        typer.echo("  Next: stage timestamp inventory")
-    else:
-        typer.echo("  Next: stage timestamp content --upgrade --watch")
-
-
-def timestamp_inventory(
-    ctx: typer.Context,
-    object_id: Annotated[str, typer.Argument(help="Object ID.")],
-    upgrade: Annotated[
-        bool,
-        typer.Option(
-            "--upgrade",
-            help="Poll SP, verify inventory .ots against Bitcoin, advance phase.",
-        ),
-    ] = False,
-    watch_flag: Annotated[
-        bool,
-        typer.Option(
-            "--watch",
-            help="ZMQ-driven loop; runs an inventory upgrade pass per block.",
-        ),
-    ] = False,
-    retry: Annotated[
-        bool,
-        typer.Option("--retry", help="Re-POST inventory digest at inventory-pending."),
-    ] = False,
-    allow_missing_metadata: Annotated[
-        bool,
-        typer.Option(
-            "--allow-missing-metadata",
-            help="Timestamp inventory even when staged version metadata is incomplete.",
-        ),
-    ] = False,
-) -> None:
-    """Build inventory, submit its digest to SimpleProof, serialize plan."""
-    preflight = require_timestamp_preflight(
-        ctx,
-        object_id,
-        upgrade=upgrade,
-        watch=watch_flag,
-        retry=retry,
-    )
-    validate_inventory_metadata_flag(
-        ctx,
-        upgrade=upgrade,
-        watch=watch_flag,
-        retry=retry,
-        allow_missing_metadata=allow_missing_metadata,
-    )
-    run = _timestamp_run(ctx, preflight, object_id)
-    target = TimestampTarget.INVENTORY
-
-    if watch_flag:
-        _watch(ctx, run, target, next_action="stage commit")
-
-    if upgrade:
-        _halting(lambda: timestamp.upgrade(run, expect=target))
-        return
-
-    if retry:
-        _retry(run, target)
-        return
-
-    try:
-        timestamp.submit(
-            run, expect=target, allow_missing_metadata=allow_missing_metadata
-        )
-    except PhaseError as e:
-        raise ErrorContext(e, suffix="; run 'stage timestamp content' first") from e
+    _render_workflow(before, after, next_action)
 
 
 def _timestamp_run(
@@ -332,43 +303,145 @@ def _timestamp_run(
     )
 
 
-def _halting[T](call: Callable[[], T]) -> T:
-    """Run `call`; an attestation mismatch or deep reorg is a halt (exit 5)."""
+def _run_for(
+    ctx: typer.Context, object_id: str, *, bitcoin: bool
+) -> timestamp.TimestampRun:
+    return _timestamp_run(
+        ctx,
+        require_timestamp_preflight(ctx, object_id, bitcoin=bitcoin),
+        object_id,
+    )
+
+
+def _phase(run: timestamp.TimestampRun) -> Phase:
+    return wf_staging.ots_state(run.staging_dir).phase
+
+
+def _verb[T](run: timestamp.TimestampRun, call: Callable[[], T]) -> T:
+    """Run a verb: a halt is exit 5; a phase error names the next command."""
     try:
         return call()
     except (ReorgDetectedError, AttestationMismatchError) as e:
         raise ErrorContext(e, prefix="halt: ") from e
-
-
-def _retry(run: timestamp.TimestampRun, target: TimestampTarget) -> None:
-    try:
-        timestamp.retry(run, expect=target)
-    except timestamp.NoFailedSubmissionsError as e:
-        typer.echo(str(e))
+    except PhaseError as e:
+        raise ErrorContext(e, suffix=f"; next: {timestamp.next_step(run)}") from e
 
 
 def _watch(
     ctx: typer.Context,
     run: timestamp.TimestampRun,
+    verb: str,
     target: TimestampTarget,
     *,
-    next_action: str,
-) -> NoReturn:
+    before: Phase,
+) -> None:
+    """Upgrade `target` on each block until its proofs are final."""
+    json_mode = appctx.json_mode(ctx)
     out = appctx.console(ctx)
     state = wf_staging.ots_state(run.staging_dir)
-    render_watch_start(
-        out,
-        run.object_id,
-        wf_common.compute_job_progress(state, runtime=run.runtime),
-        waiting=state.phase is not rules_for(target).upgraded_phase,
-    )
-    exit_code = _halting(
-        lambda: watch.watch(
-            run,
-            expect=target,
-            progress=lambda kind, data: render_watch_progress(
-                out, kind, data, next_action=next_action
-            ),
+
+    def progress(kind: str, data: dict[str, Any]) -> None:
+        if json_mode:
+            event = {k: v for k, v in data.items() if k not in {"jobs", "prior_jobs"}}
+            typer.echo(
+                json.dumps(
+                    {"event": kind, "object_id": run.object_id, **event},
+                    separators=(",", ":"),
+                )
+            )
+        else:
+            render_watch_progress(
+                out, kind, data, next_action=lambda: timestamp.next_step(run)
+            )
+
+    if not json_mode:
+        render_watch_start(
+            out,
+            run.object_id,
+            wf_common.compute_job_progress(state, runtime=run.runtime),
+            waiting=state.phase is not rules_for(target).upgraded_phase,
         )
+    code = _verb(run, lambda: watch.watch(run, expect=target, progress=progress))
+    if json_mode:
+        after = _phase(run)
+        summary = {
+            "event": "summary",
+            "object_id": run.object_id,
+            "verb": verb,
+            "target": target.value,
+            "phase_before": before.value,
+            "phase_after": after.value,
+            "done": rules_for(target).upgraded_phase is after,
+            "next": timestamp.next_step(run),
+        }
+        typer.echo(json.dumps(summary, separators=(",", ":")))
+    if code:
+        raise typer.Exit(code)
+
+
+def timestamp_cmd(
+    ctx: typer.Context,
+    object_id: ObjectArg,
+    expect: ExpectOption = None,
+    watch_flag: WatchOption = False,
+    allow_missing_metadata: Annotated[
+        bool,
+        typer.Option(
+            "--allow-missing-metadata",
+            help="Timestamp the inventory even when staged metadata is incomplete.",
+        ),
+    ] = False,
+) -> None:
+    """Submit the digests the Phase needs proofs for to SimpleProof.
+
+    Drafting: the content files. Content-upgraded: the inventory.
+    """
+    run = _run_for(ctx, object_id, bitcoin=watch_flag)
+    before = _phase(run)
+    result = _verb(
+        run,
+        lambda: timestamp.submit(
+            run, expect=expect, allow_missing_metadata=allow_missing_metadata
+        ),
     )
-    raise typer.Exit(exit_code)
+    if watch_flag and not result.done:
+        _watch(ctx, run, "timestamp", result.target, before=before)
+        return
+    _render(ctx, run, "timestamp", result, before=before)
+
+
+def upgrade_cmd(
+    ctx: typer.Context,
+    object_id: ObjectArg,
+    expect: ExpectOption = None,
+    watch_flag: WatchOption = False,
+) -> None:
+    """Fetch the proofs SimpleProof has made and verify them against Bitcoin."""
+    run = _run_for(ctx, object_id, bitcoin=True)
+    before = _phase(run)
+    idle = _verb(run, lambda: timestamp.idle(run, "upgrade", expect=expect))
+    if idle is not None:
+        _render(ctx, run, "upgrade", idle, before=before)
+        return
+    if watch_flag:
+        target = _verb(run, lambda: timestamp.check(run, "upgrade", expect=expect))
+        _watch(ctx, run, "upgrade", target, before=before)
+        return
+    result = _verb(run, lambda: timestamp.upgrade(run, expect=expect))
+    _render(ctx, run, "upgrade", result, before=before)
+
+
+def retry_cmd(
+    ctx: typer.Context,
+    object_id: ObjectArg,
+    expect: ExpectOption = None,
+) -> None:
+    """Resubmit the failed SimpleProof submissions of the Phase's target."""
+    run = _run_for(ctx, object_id, bitcoin=False)
+    before = _phase(run)
+    idle = _verb(run, lambda: timestamp.idle(run, "retry", expect=expect))
+    if idle is not None:
+        _render(ctx, run, "retry", idle, before=before)
+        return
+    result = _verb(run, lambda: timestamp.retry(run, expect=expect))
+    _render(ctx, run, "retry", result, before=before)

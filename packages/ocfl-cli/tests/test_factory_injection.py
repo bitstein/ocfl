@@ -95,7 +95,9 @@ def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
 
     r = runner.invoke(
         app,
-        _stage_args(empty_sha256_root, staging, "timestamp", "content", "obj:fac"),
+        _stage_args(
+            empty_sha256_root, staging, "timestamp", "obj:fac", "--expect", "content"
+        ),
         obj=obj,
     )
     assert r.exit_code == 0, r.output

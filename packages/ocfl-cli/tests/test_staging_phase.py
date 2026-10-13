@@ -20,18 +20,16 @@ Matrix (rows = command; cols = D/CP/CU/IP/IU; cells = stay|advance-X|regress|noo
 | rm                               |stay |stay | reg | reg | reg |
 | mv                               |stay |stay | reg | reg | reg |
 | timestamp content                | CP  |stay |noop | err | err |
-| timestamp content --upgrade      | err |stay |noop | err | err |
-| timestamp content --upgrade --w  | err |stay |noop | err | err |
-| timestamp content --retry        | err |stay | err | err | err |
+| upgrade content                  | err |stay |noop | err | err |
+| retry content                    | err |stay | err | err | err |
 | timestamp inventory              | err | err | IP  |stay |noop |
-| timestamp inventory --upgrade    | err | err | err | IU  |noop |
-| timestamp inventory --upgrade --w| err | err | err | IU  |noop |
-| timestamp inventory --retry      | err | err | err |stay | err |
+| upgrade inventory                | err | err | err | IU  |noop |
+| retry inventory                  | err | err | err |stay | err |
 | commit (ots path)                | err | err | err | err |COMM |
 | reset                            |stay |stay |stay |stay |stay |
 | status                           |stay |stay |stay |stay |stay |
 
-The "stay-or-advance" cells (timestamp content --upgrade at content-pending)
+The "stay-or-advance" cells (upgrade content at content-pending)
 collapse to "stay": the actual advance is upstream, after verify completes.
 The "advance-content-pending-or-straight-to-upgraded-if-vacuous" cell
 (timestamp content at drafting) collapses to advance-content-pending: the
@@ -78,48 +76,36 @@ MATRIX: dict[tuple[Phase, str], Phase | str] = {
     (CU, "timestamp content"): CU,
     (IP, "timestamp content"): ERR,
     (IU, "timestamp content"): ERR,
-    # timestamp content --upgrade
-    (D, "timestamp content --upgrade"): ERR,
-    (CP, "timestamp content --upgrade"): CP,
-    (CU, "timestamp content --upgrade"): CU,
-    (IP, "timestamp content --upgrade"): ERR,
-    (IU, "timestamp content --upgrade"): ERR,
-    # timestamp content --upgrade --watch
-    (D, "timestamp content --upgrade --watch"): ERR,
-    (CP, "timestamp content --upgrade --watch"): CP,
-    (CU, "timestamp content --upgrade --watch"): CU,
-    (IP, "timestamp content --upgrade --watch"): ERR,
-    (IU, "timestamp content --upgrade --watch"): ERR,
-    # timestamp content --retry
-    (D, "timestamp content --retry"): ERR,
-    (CP, "timestamp content --retry"): CP,
-    (CU, "timestamp content --retry"): ERR,
-    (IP, "timestamp content --retry"): ERR,
-    (IU, "timestamp content --retry"): ERR,
+    # upgrade content
+    (D, "upgrade content"): ERR,
+    (CP, "upgrade content"): CP,
+    (CU, "upgrade content"): CU,
+    (IP, "upgrade content"): ERR,
+    (IU, "upgrade content"): ERR,
+    # retry content
+    (D, "retry content"): ERR,
+    (CP, "retry content"): CP,
+    (CU, "retry content"): ERR,
+    (IP, "retry content"): ERR,
+    (IU, "retry content"): ERR,
     # timestamp inventory
     (D, "timestamp inventory"): ERR,
     (CP, "timestamp inventory"): ERR,
     (CU, "timestamp inventory"): IP,
     (IP, "timestamp inventory"): IP,
     (IU, "timestamp inventory"): IU,
-    # timestamp inventory --upgrade
-    (D, "timestamp inventory --upgrade"): ERR,
-    (CP, "timestamp inventory --upgrade"): ERR,
-    (CU, "timestamp inventory --upgrade"): ERR,
-    (IP, "timestamp inventory --upgrade"): IU,
-    (IU, "timestamp inventory --upgrade"): IU,
-    # timestamp inventory --upgrade --watch
-    (D, "timestamp inventory --upgrade --watch"): ERR,
-    (CP, "timestamp inventory --upgrade --watch"): ERR,
-    (CU, "timestamp inventory --upgrade --watch"): ERR,
-    (IP, "timestamp inventory --upgrade --watch"): IU,
-    (IU, "timestamp inventory --upgrade --watch"): IU,
-    # timestamp inventory --retry
-    (D, "timestamp inventory --retry"): ERR,
-    (CP, "timestamp inventory --retry"): ERR,
-    (CU, "timestamp inventory --retry"): ERR,
-    (IP, "timestamp inventory --retry"): IP,
-    (IU, "timestamp inventory --retry"): ERR,
+    # upgrade inventory
+    (D, "upgrade inventory"): ERR,
+    (CP, "upgrade inventory"): ERR,
+    (CU, "upgrade inventory"): ERR,
+    (IP, "upgrade inventory"): IU,
+    (IU, "upgrade inventory"): IU,
+    # retry inventory
+    (D, "retry inventory"): ERR,
+    (CP, "retry inventory"): ERR,
+    (CU, "retry inventory"): ERR,
+    (IP, "retry inventory"): IP,
+    (IU, "retry inventory"): ERR,
     # commit (ots path)
     (D, "commit (ots path)"): ERR,
     (CP, "commit (ots path)"): ERR,

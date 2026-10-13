@@ -1,4 +1,4 @@
-"""The block-watch loop for `stage timestamp content|inventory --upgrade --watch`.
+"""The block-watch loop for `stage timestamp|upgrade --watch`.
 
 Per-block invariant: under the staging filelock, decide whether the chain
 moved (height jumped or stable-height tip swapped — the reorg/stale-tip
@@ -40,7 +40,7 @@ def watch(
     expect: TimestampTarget | None = None,
     progress: WatchProgress | None = None,
 ) -> int:
-    """Drive `--upgrade --watch` end-to-end. Returns the exit code."""
+    """Upgrade on each block until the target's proofs are final; the exit code."""
     runtime = run.runtime
     btc = run.btc_factory(run.cfg)
     min_confs = run.min_confirmations

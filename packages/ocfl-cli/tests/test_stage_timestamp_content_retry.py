@@ -1,12 +1,10 @@
-"""Tests for `stage timestamp content --retry`.
+"""Tests for `stage retry` on the content target.
 
 Pins the FAILED-only resubmit contract from `OTS workflow contract`:
 
-- New flag `--retry` on `stage timestamp content` (boolean; default False).
+- `stage retry OBJ --expect content`.
 - Legal only at phase ``content-pending`` (per FSM matrix). Any other phase
   ⇒ ``PhaseError`` ⇒ exit 3.
-- ``--retry`` is mutually exclusive with ``--upgrade`` and ``--watch``;
-  the CLI rejects the combination at the surface (exit 2) before the FSM.
 - For each ``Submission`` with ``status == "failed"``: re-POST those digests
   to SP via ``sp.submit_hashes(digests, category_id)``, increment
   ``attempts``, flip ``status`` back to ``"submitted"`` (crash-safe write
@@ -16,10 +14,6 @@ Pins the FAILED-only resubmit contract from `OTS workflow contract`:
   unchanged).
 - Empty failed-set ⇒ noop (exit 0, no SP calls, ots.json byte-equal).
 - Phase remains ``content-pending`` (FSM ``stay``).
-
-These tests are RED until the ``--retry`` flag lands. The diagnostic is
-``No such option: '--retry'`` from typer (exit 2, but for the wrong
-reason — the flag does not exist).
 """
 
 import hashlib
@@ -222,10 +216,10 @@ class TestRetryResubmitsOnlyFailed:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "retry",
                 "obj:retry-only-failed",
-                "--retry",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -305,10 +299,10 @@ class TestRetryEmptyFailedNoop:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "retry",
                 "obj:retry-empty",
-                "--retry",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -382,10 +376,10 @@ class TestRetryMultipleFailedIndependent:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "retry",
                 "obj:retry-multi",
-                "--retry",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -406,7 +400,7 @@ class TestRetryMultipleFailedIndependent:
 
 
 # =========================================================================== #
-# Layer-2: --retry at any phase other than content-pending raises PhaseError.
+# Layer-2: retry at any phase other than content-pending raises PhaseError.
 # =========================================================================== #
 
 
@@ -466,10 +460,10 @@ class TestRetryPhaseGate:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "retry",
                 "obj:retry-phase",
-                "--retry",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code != 0, r.output
@@ -477,84 +471,6 @@ class TestRetryPhaseGate:
         assert phase.value in r.output
         # No SP POSTs on rejection.
         assert len(sp_fake._submissions) == pre_calls
-
-
-# =========================================================================== #
-# Layer-2: --retry rejects --upgrade / --watch combinations at CLI surface.
-# =========================================================================== #
-
-
-class TestRetryFlagCombinationGuards:
-    @pytest.mark.parametrize(
-        "extra_flag",
-        ["--upgrade", "--watch"],
-    )
-    def test_retry_with_upgrade_or_watch_rejects(
-        self,
-        runner: CliRunner,
-        empty_sha256_root: Path,
-        sp_fake: FakeSimpleProof,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        extra_flag: str,
-    ) -> None:
-        """``--retry --upgrade`` and ``--retry --watch`` rejected at CLI
-        surface with non-zero exit and an actionable message."""
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-
-        staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
-            runner,
-            empty_sha256_root,
-            staging,
-            "obj:retry-combo",
-            ("a.txt", b"alpha"),
-        )
-        d = digests["a.txt"]
-
-        failed = Submission(
-            submitted_at="2026-04-23T16:30:00+00:00",
-            digests=(d,),
-            status="failed",
-            target=TimestampTarget.CONTENT,
-            job_id=None,
-            attempts=1,
-        )
-        _set_state(
-            sd,
-            phase=Phase.CONTENT_PENDING,
-            pending_digests=(d,),
-            submissions=(failed,),
-        )
-
-        pre_calls = len(sp_fake._submissions)
-
-        r = runner.invoke(
-            app,
-            _stage_args(
-                empty_sha256_root,
-                staging,
-                "timestamp",
-                "content",
-                "obj:retry-combo",
-                "--retry",
-                extra_flag,
-            ),
-        )
-        assert r.exit_code != 0, r.output
-        # The diagnostic must name BOTH conflicting flags so the user knows
-        # which combination is rejected (vs. the typer "no such option"
-        # error that names only --retry).
-        assert "--retry" in r.output
-        assert extra_flag in r.output
-        # Rejected before any SP POST.
-        assert len(sp_fake._submissions) == pre_calls
-
-
-# =========================================================================== #
-# Layer-2: crash-safe submit protocol — final state shape after clean retry.
-# =========================================================================== #
 
 
 class TestRetryCrashSafeShape:
@@ -606,10 +522,10 @@ class TestRetryCrashSafeShape:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "retry",
                 "obj:retry-shape",
-                "--retry",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output

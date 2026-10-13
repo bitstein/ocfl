@@ -48,94 +48,92 @@ _STAY = object()  # outcome: phase unchanged
 _ERR = object()  # outcome: PhaseError
 _REGRESS = object()  # outcome: Phase.DRAFTING
 
-# (phase, command) -> Phase | sentinel.
-# Mirrors `architecture.transitions.matrix` and `tests/test_staging_phase.py::MATRIX`.
+_EDITABLE = (
+    Phase.DRAFTING,
+    Phase.CONTENT_PENDING,
+    Phase.CONTENT_UPGRADED,
+    Phase.INVENTORY_PENDING,
+    Phase.INVENTORY_UPGRADED,
+)
+
+# (phase, command) -> Phase | sentinel. A timestamp command is
+# "<verb> <target>": the verb is the `stage` command (`timestamp`, `upgrade`,
+# `retry`), the target the one it works on.
+# Mirrors `tests/test_staging_phase.py::MATRIX`.
 _TRANSITIONS: dict[tuple[Phase, str], Any] = {
     # add / rm / mv: stay at drafting + content-pending; regress from upgraded.
     **{
         (p, c): outcome
         for c in ("add", "rm", "mv")
-        for p, outcome in (
-            (Phase.DRAFTING, _STAY),
-            (Phase.CONTENT_PENDING, _STAY),
-            (Phase.CONTENT_UPGRADED, _REGRESS),
-            (Phase.INVENTORY_PENDING, _REGRESS),
-            (Phase.INVENTORY_UPGRADED, _REGRESS),
+        for p, outcome in zip(
+            _EDITABLE, (_STAY, _STAY, _REGRESS, _REGRESS, _REGRESS), strict=True
         )
     },
     # timestamp content
-    (Phase.DRAFTING, "timestamp content"): Phase.CONTENT_PENDING,
-    (Phase.CONTENT_PENDING, "timestamp content"): _STAY,
-    (Phase.CONTENT_UPGRADED, "timestamp content"): _STAY,  # noop
-    (Phase.INVENTORY_PENDING, "timestamp content"): _ERR,
-    (Phase.INVENTORY_UPGRADED, "timestamp content"): _ERR,
-    # timestamp content --upgrade [--watch]
-    **{
-        (p, c): outcome
-        for c in (
-            "timestamp content --upgrade",
-            "timestamp content --upgrade --watch",
+    **dict(
+        zip(
+            ((p, "timestamp content") for p in _EDITABLE),
+            (Phase.CONTENT_PENDING, _STAY, _STAY, _ERR, _ERR),  # upgraded: noop
+            strict=True,
         )
-        for p, outcome in (
-            (Phase.DRAFTING, _ERR),
-            (Phase.CONTENT_PENDING, _STAY),
-            (Phase.CONTENT_UPGRADED, _STAY),  # noop
-            (Phase.INVENTORY_PENDING, _ERR),
-            (Phase.INVENTORY_UPGRADED, _ERR),
+    ),
+    # upgrade content
+    **dict(
+        zip(
+            ((p, "upgrade content") for p in _EDITABLE),
+            (_ERR, _STAY, _STAY, _ERR, _ERR),  # upgraded: noop
+            strict=True,
         )
-    },
-    # timestamp content --retry: only valid at content-pending.
-    (Phase.DRAFTING, "timestamp content --retry"): _ERR,
-    (Phase.CONTENT_PENDING, "timestamp content --retry"): _STAY,
-    (Phase.CONTENT_UPGRADED, "timestamp content --retry"): _ERR,
-    (Phase.INVENTORY_PENDING, "timestamp content --retry"): _ERR,
-    (Phase.INVENTORY_UPGRADED, "timestamp content --retry"): _ERR,
-    # timestamp inventory
-    (Phase.DRAFTING, "timestamp inventory"): _ERR,
-    (Phase.CONTENT_PENDING, "timestamp inventory"): _ERR,
-    (Phase.CONTENT_UPGRADED, "timestamp inventory"): Phase.INVENTORY_PENDING,
-    (Phase.INVENTORY_PENDING, "timestamp inventory"): _STAY,  # resubmit
-    (Phase.INVENTORY_UPGRADED, "timestamp inventory"): _STAY,  # noop
-    # timestamp inventory --upgrade [--watch]
-    **{
-        (p, c): outcome
-        for c in (
-            "timestamp inventory --upgrade",
-            "timestamp inventory --upgrade --watch",
+    ),
+    # retry content: only valid at content-pending.
+    **dict(
+        zip(
+            ((p, "retry content") for p in _EDITABLE),
+            (_ERR, _STAY, _ERR, _ERR, _ERR),
+            strict=True,
         )
-        for p, outcome in (
-            (Phase.DRAFTING, _ERR),
-            (Phase.CONTENT_PENDING, _ERR),
-            (Phase.CONTENT_UPGRADED, _ERR),
-            (Phase.INVENTORY_PENDING, Phase.INVENTORY_UPGRADED),
-            (Phase.INVENTORY_UPGRADED, _STAY),  # noop
+    ),
+    # timestamp inventory: pending resubmits, upgraded is a noop.
+    **dict(
+        zip(
+            ((p, "timestamp inventory") for p in _EDITABLE),
+            (_ERR, _ERR, Phase.INVENTORY_PENDING, _STAY, _STAY),
+            strict=True,
         )
-    },
-    # timestamp inventory --retry: only valid at inventory-pending.
-    (Phase.DRAFTING, "timestamp inventory --retry"): _ERR,
-    (Phase.CONTENT_PENDING, "timestamp inventory --retry"): _ERR,
-    (Phase.CONTENT_UPGRADED, "timestamp inventory --retry"): _ERR,
-    (Phase.INVENTORY_PENDING, "timestamp inventory --retry"): _STAY,
-    (Phase.INVENTORY_UPGRADED, "timestamp inventory --retry"): _ERR,
+    ),
+    # upgrade inventory
+    **dict(
+        zip(
+            ((p, "upgrade inventory") for p in _EDITABLE),
+            (_ERR, _ERR, _ERR, Phase.INVENTORY_UPGRADED, _STAY),  # upgraded: noop
+            strict=True,
+        )
+    ),
+    # retry inventory: only valid at inventory-pending.
+    **dict(
+        zip(
+            ((p, "retry inventory") for p in _EDITABLE),
+            (_ERR, _ERR, _ERR, _STAY, _ERR),
+            strict=True,
+        )
+    ),
     # commit (ots path): only valid at inventory-upgraded.
-    (Phase.DRAFTING, "commit (ots path)"): _ERR,
-    (Phase.CONTENT_PENDING, "commit (ots path)"): _ERR,
-    (Phase.CONTENT_UPGRADED, "commit (ots path)"): _ERR,
-    (Phase.INVENTORY_PENDING, "commit (ots path)"): _ERR,
-    (Phase.INVENTORY_UPGRADED, "commit (ots path)"): Phase.COMMITTED,
-    # reset / status: always legal, phase unchanged.
-    **{
-        (p, c): _STAY
-        for c in ("reset", "status")
-        for p in (
-            Phase.DRAFTING,
-            Phase.CONTENT_PENDING,
-            Phase.CONTENT_UPGRADED,
-            Phase.INVENTORY_PENDING,
-            Phase.INVENTORY_UPGRADED,
+    **dict(
+        zip(
+            ((p, "commit (ots path)") for p in _EDITABLE),
+            (_ERR, _ERR, _ERR, _ERR, Phase.COMMITTED),
+            strict=True,
         )
-    },
+    ),
+    # reset / status: always legal, phase unchanged.
+    **{(p, c): _STAY for c in ("reset", "status") for p in _EDITABLE},
 }
+
+
+def is_legal(phase: Phase, command: str) -> bool:
+    """Whether `command` may run in `phase` (see `check_transition`)."""
+    outcome = _TRANSITIONS.get((phase, command), _ERR)
+    return outcome is not _ERR
 
 
 def check_transition(phase: Phase, command: str) -> Phase:

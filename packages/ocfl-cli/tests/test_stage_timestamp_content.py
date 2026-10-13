@@ -1,4 +1,4 @@
-"""Tests for `ocfl stage timestamp content` (OTS workflow step 10).
+"""Tests for `ocfl stage timestamp` on the content target (OTS workflow step 10).
 
 Pins step 10 of `OTS workflow contract`:
 
@@ -19,7 +19,7 @@ Pins step 10 of `OTS workflow contract`:
   process restart is resubmitted on next run; SP records duplicates
   without failure (`crash_safe_submit_protocol.on_startup`).
 
-The CLI command is the new ``stage timestamp content <object_id>``
+The CLI command is ``stage timestamp <object_id> [--expect content]``
 subcommand under ``stage_app``. Tests inject a ``FakeSimpleProof``
 via ``runner.obj["sp_client_factory"]`` (see ``conftest.py::runner``
 for the auto-attach mechanism).
@@ -181,7 +181,14 @@ class TestFullSubmitFlow:
 
         r = runner.invoke(
             app,
-            _stage_args(empty_sha256_root, staging, "timestamp", "content", "obj:new"),
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "obj:new",
+                "--expect",
+                "content",
+            ),
         )
         assert r.exit_code == 0, r.output
         assert "Content:" in r.output
@@ -189,7 +196,7 @@ class TestFullSubmitFlow:
         assert "Submitted 2 digests to SimpleProof" in r.output
         assert "Workflow:" in r.output
         assert "Phase: drafting -> content-pending" in r.output
-        assert "Next: stage timestamp content --upgrade --watch" in r.output
+        assert "Next: ocfl stage upgrade obj:new --watch" in r.output
         assert "INFO " not in r.output
 
         sd = _staging_dir(empty_sha256_root, staging, "obj:new")
@@ -250,7 +257,12 @@ class TestFullSubmitFlow:
         r = runner.invoke(
             app,
             _stage_args(
-                sha256_root_with_v1, staging, "timestamp", "content", "obj:test"
+                sha256_root_with_v1,
+                staging,
+                "timestamp",
+                "obj:test",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -317,7 +329,12 @@ class TestDeleteRenameOnlyNoop:
         r = runner.invoke(
             app,
             _stage_args(
-                sha256_root_with_v1, staging, "timestamp", "content", "obj:test"
+                sha256_root_with_v1,
+                staging,
+                "timestamp",
+                "obj:test",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -403,7 +420,14 @@ class TestChunkingBoundary:
 
         r = runner.invoke(
             app,
-            _stage_args(empty_sha256_root, staging, "timestamp", "content", "obj:big"),
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "obj:big",
+                "--expect",
+                "content",
+            ),
         )
         assert r.exit_code == 0, r.output
 
@@ -557,7 +581,12 @@ class TestCrashSafeResubmit:
         r = runner.invoke(
             app,
             _stage_args(
-                empty_sha256_root, staging, "timestamp", "content", "obj:crash"
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "obj:crash",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -605,7 +634,14 @@ class TestDoubleSubmitBenign:
         _seed_submitting_intent(sd, digests)
         r = runner.invoke(
             app,
-            _stage_args(empty_sha256_root, staging, "timestamp", "content", "obj:dup"),
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "obj:dup",
+                "--expect",
+                "content",
+            ),
         )
         assert r.exit_code == 0, r.output
         round_1_count = len(sp_fake._submissions)
@@ -615,7 +651,14 @@ class TestDoubleSubmitBenign:
         _seed_submitting_intent(sd, digests)
         r = runner.invoke(
             app,
-            _stage_args(empty_sha256_root, staging, "timestamp", "content", "obj:dup"),
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "obj:dup",
+                "--expect",
+                "content",
+            ),
         )
         assert r.exit_code == 0, r.output
 
@@ -689,7 +732,10 @@ class TestCarriedProofReuse:
         assert r.exit_code == 0, r.output
 
         r = runner.invoke(
-            app, _stage_args(empty_sha256_root, staging, "timestamp", "content", oid)
+            app,
+            _stage_args(
+                empty_sha256_root, staging, "timestamp", oid, "--expect", "content"
+            ),
         )
         assert r.exit_code == 0, r.output
 

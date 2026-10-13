@@ -18,7 +18,6 @@ from ocfl_cli.stage._app import (
     require_existing_staging,
     require_simpleproof,
     require_timestamp_preflight,
-    validate_timestamp_flags,
 )
 from ocfl_cli.store.ots_state import save_ots
 from ocfl_cli.store.staging import StagingStore
@@ -47,59 +46,24 @@ def _inventory(object_id: str = "obj:test") -> Inventory:
     )
 
 
-@pytest.mark.parametrize(
-    ("upgrade", "watch", "retry", "expected"),
-    [
-        (True, False, True, "--upgrade"),
-        (False, True, True, "--watch"),
-    ],
-)
-def test_validate_timestamp_flags_rejects_retry_combinations(
-    upgrade: bool, watch: bool, retry: bool, expected: str
-) -> None:
-    with pytest.raises(CLIError) as exc_info:
-        validate_timestamp_flags(
-            _ctx({}, command_parts=("stage", "timestamp", "content")),
-            upgrade=upgrade,
-            watch=watch,
-            retry=retry,
-        )
-
-    assert exit_code_for_class(error_class_of(exc_info.value)) is ExitCode.USAGE
-    assert expected in str(exc_info.value)
-
-
-def test_validate_timestamp_flags_rejects_watch_without_upgrade(capsys) -> None:
-    with pytest.raises(CLIError) as exc_info:
-        validate_timestamp_flags(
-            _ctx({}, command_parts=("stage", "timestamp", "inventory")),
-            upgrade=False,
-            watch=True,
-            retry=False,
-        )
-
-    assert exit_code_for_class(error_class_of(exc_info.value)) is ExitCode.USAGE
-    assert "requires --upgrade" in str(exc_info.value)
-
-
 def test_require_simpleproof_rejects_missing_section(capsys) -> None:
-    ctx = _ctx({}, command_parts=("stage", "timestamp", "content"))
+    ctx = _ctx({}, command_parts=("stage", "upgrade"))
 
     with pytest.raises(CLIError) as exc_info:
         require_simpleproof(ctx, Config())
 
     assert exit_code_for_class(error_class_of(exc_info.value)) is ExitCode.CONFIG
-    assert "'stage timestamp content' requires [simpleproof]" in str(exc_info.value)
+    assert "'stage upgrade' requires [simpleproof]" in str(exc_info.value)
 
 
 def test_require_bitcoin_rejects_missing_section(capsys) -> None:
-    ctx = _ctx({}, command_parts=("stage", "timestamp", "content"))
+    ctx = _ctx({}, command_parts=("stage", "upgrade"))
 
     with pytest.raises(CLIError) as exc_info:
         require_bitcoin(ctx, Config())
 
     assert exit_code_for_class(error_class_of(exc_info.value)) is ExitCode.CONFIG
-    assert "'stage timestamp content' requires [bitcoin]" in str(exc_info.value)
+    assert "'stage upgrade' requires [bitcoin]" in str(exc_info.value)
 
 
 def test_require_existing_staging_returns_typed_resolution(tmp_path) -> None:
@@ -193,15 +157,13 @@ def test_require_timestamp_preflight_returns_validated_context(tmp_path) -> None
             "sp_client_factory": sp_factory,
             "btc_rpc_factory": btc_factory,
         },
-        command_parts=("stage", "timestamp", "content"),
+        command_parts=("stage", "upgrade"),
     )
 
     preflight = require_timestamp_preflight(
         ctx,
         "obj:test",
-        upgrade=True,
-        watch=False,
-        retry=False,
+        bitcoin=True,
     )
 
     assert isinstance(preflight, TimestampPreflight)

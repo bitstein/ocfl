@@ -9,6 +9,7 @@ from ocfl_cli.model.phase import Phase
 from ocfl_cli.store.ots_state import (
     load_ots,
 )
+from ocfl_cli.workflow import hints
 from ocfl_cli.workflow.common import (
     StateMap,
     is_failed_verify_job,
@@ -37,23 +38,6 @@ if TYPE_CHECKING:
     from ocfl_cli.store.staging import StagingStore
 
 logger = logging.getLogger(__name__)
-
-
-_NEXT_ACTION_HUMAN: dict[NextActionKind, str] = {
-    NextActionKind.ADD_CONTENT: "stage add <path>",
-    NextActionKind.TIMESTAMP_CONTENT: "stage timestamp content",
-    NextActionKind.RETRY_CONTENT: "stage timestamp content --retry",
-    NextActionKind.UPGRADE_CONTENT: (
-        "stage timestamp content --upgrade (or --upgrade --watch)"
-    ),
-    NextActionKind.TIMESTAMP_INVENTORY: "stage timestamp inventory",
-    NextActionKind.RETRY_INVENTORY: "stage timestamp inventory --retry",
-    NextActionKind.UPGRADE_INVENTORY: (
-        "stage timestamp inventory --upgrade (or --upgrade --watch)"
-    ),
-    NextActionKind.COMMIT: "stage commit",
-    NextActionKind.NONE: "",
-}
 
 
 class _OutstandingJobJson(TypedDict):
@@ -90,8 +74,10 @@ def _submission_age_seconds(submitted_at: str, now: datetime) -> int:
     return max(0, int((now - dt).total_seconds()))
 
 
-def next_action_for(state: OtsState, has_files: bool) -> tuple[NextActionKind, str]:
-    """FSM-aware `(kind, human)` pair for the OTS status next-action surface."""
+def next_action_for(
+    state: OtsState, has_files: bool, object_id: str
+) -> tuple[NextActionKind, str]:
+    """FSM-aware `(kind, command)` pair for the OTS status next-action surface."""
     match state.phase:
         case Phase.DRAFTING:
             kind = (
@@ -130,7 +116,17 @@ def next_action_for(state: OtsState, has_files: bool) -> tuple[NextActionKind, s
             kind = NextActionKind.NONE
         case _:
             raise RuntimeError(f"unhandled phase: {state.phase!r}")
-    return kind, _NEXT_ACTION_HUMAN[kind]
+    return kind, hints.next_command(kind, object_id)
+
+
+def next_step(
+    store: StagingStore, root_path: str, object_id: str, staging_dir: Path
+) -> str:
+    """The command that takes an OTS Staging Area on from where it is now."""
+    state = load_ots(staging_dir)
+    inv = store.load_inventory(root_path, object_id)
+    has_files = bool(ordinary_digests(inv.versions[inv.head].state))
+    return next_action_for(state, has_files, object_id)[1]
 
 
 def _cache_bytes(staging_dir: Path) -> int:
@@ -251,7 +247,7 @@ def status_ots_dict(
     counts = _build_counts(state, non_ots)
     has_files = counts["total"] > 0
 
-    kind, human = next_action_for(state, has_files)
+    kind, human = next_action_for(state, has_files, object_id)
     diff = status_diff_dict(store, root_path, object_id)
 
     return {

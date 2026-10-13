@@ -1,8 +1,10 @@
 """One timestamp workflow for both Timestamp Targets: submit, upgrade, retry.
 
 The target comes from the Staging Area's Phase (`target_for`); a caller may
-name the one it expects, and a mismatch is a phase error (exit 3). What
-differs between the targets is asked of `ocfl_cli.workflow.targets`.
+name the one it expects, and a mismatch is a phase error (exit 3). Without
+one, a verb that has nothing to do in the Phase is `idle` and the caller
+names the next step (`next_step`). What differs between the targets is asked
+of `ocfl_cli.workflow.targets`.
 """
 
 import logging
@@ -13,7 +15,13 @@ from msgspec.structs import replace
 
 from ocfl_cli.errors import AttestationMismatchError, PhaseError
 from ocfl_cli.model.ots_state import OtsState, Proof, Submission
-from ocfl_cli.model.phase import Phase, TimestampTarget, check_transition, target_for
+from ocfl_cli.model.phase import (
+    Phase,
+    TimestampTarget,
+    check_transition,
+    is_legal,
+    target_for,
+)
 from ocfl_cli.ots.bitcoin import (
     PendingVerification,
     VerifiedAttestation,
@@ -28,6 +36,8 @@ from ocfl_cli.store.ots_state import (
     utc_iso,
     with_lock,
 )
+from ocfl_cli.workflow import status as wf_status
+from ocfl_cli.workflow import targets
 from ocfl_cli.workflow.common import (
     JobProgress,
     compute_job_progress,
@@ -108,6 +118,10 @@ class PreparedSubmission:
     noop_advanced: bool = False
 
 
+def _done(target: TimestampTarget, phase: Phase) -> bool:
+    return rules_for(target).upgraded_phase is phase
+
+
 @dataclass(frozen=True, slots=True)
 class SubmitResult:
     target: TimestampTarget
@@ -115,6 +129,11 @@ class SubmitResult:
     previous_phase: Phase
     phase: Phase
     noop_advanced: bool = False
+
+    @property
+    def done(self) -> bool:
+        """The target's proofs are all final."""
+        return _done(self.target, self.phase)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,15 +145,69 @@ class UpgradeResult:
     orphan_count: int = 0
     jobs: tuple[JobProgress, ...] = ()
 
+    @property
+    def done(self) -> bool:
+        """The target's proofs are all final."""
+        return _done(self.target, self.phase)
+
 
 @dataclass(frozen=True, slots=True)
 class RetryResult:
     target: TimestampTarget
     retried: int
+    phase: Phase
+
+    @property
+    def done(self) -> bool:
+        """The target's proofs are all final."""
+        return _done(self.target, self.phase)
 
 
-class NoFailedSubmissionsError(Exception):
-    """`--retry` invoked but no submissions of the target are `failed`."""
+@dataclass(frozen=True, slots=True)
+class Idle:
+    """A verb with nothing to do in `phase`; `target` is the one it shows."""
+
+    target: TimestampTarget
+    phase: Phase
+
+    @property
+    def done(self) -> bool:
+        """The shown target's proofs are all final."""
+        return _done(self.target, self.phase)
+
+
+def idle(
+    run: TimestampRun, verb: str, *, expect: TimestampTarget | None = None
+) -> Idle | None:
+    """`Idle` when `verb` has nothing to do in the Phase, else None.
+
+    Only without `expect`: an expected target that does not fit is a phase
+    error of the verb itself. Reads `ots.json` without the lock (it is
+    replaced atomically), like `stage status`.
+    """
+    if expect is not None:
+        return None
+    state = load_ots(run.staging_dir)
+    rules = resolve(state, None)
+    if is_legal(state.phase, rules.command(verb)):
+        return None
+    shown = next((r for r in targets.ALL if r.upgraded_phase is state.phase), rules)
+    return Idle(target=shown.target, phase=state.phase)
+
+
+def check(
+    run: TimestampRun, verb: str, *, expect: TimestampTarget | None = None
+) -> TimestampTarget:
+    """The target `verb` works on now; `PhaseError` when it may not run."""
+    state = load_ots(run.staging_dir)
+    rules = resolve(state, expect)
+    check_transition(state.phase, rules.command(verb))
+    return rules.target
+
+
+def next_step(run: TimestampRun) -> str:
+    """The command that takes the Staging Area on from where it is now."""
+    return wf_status.next_step(run.store, run.root_path, run.object_id, run.staging_dir)
 
 
 def resolve(state: OtsState, expect: TimestampTarget | None) -> TargetRules:
@@ -484,7 +557,7 @@ def upgrade_locked(
     state = load_ots(run.staging_dir)
     rules = resolve(state, expect)
     previous = state.phase
-    check_transition(state.phase, rules.command(" --upgrade"))
+    check_transition(state.phase, rules.command("upgrade"))
     category_id = apply_category_id(state, run.category_config)
     rules.check_upgradable(state)
     min_confs = run.min_confirmations
@@ -537,7 +610,7 @@ def upgrade_locked(
 def upgrade(
     run: TimestampRun, *, expect: TimestampTarget | None = None
 ) -> UpgradeResult:
-    """`stage timestamp … --upgrade`: one upgrade pass under the staging lock."""
+    """`stage upgrade`: one upgrade pass under the staging lock."""
     with with_lock(run.staging_dir, timeout=run.runtime.lock_timeout):
         return upgrade_locked(run, expect=expect)
 
@@ -550,12 +623,14 @@ def retry_locked(
 ) -> RetryResult:
     """Re-send the target's `failed` submissions. Caller MUST hold the lock.
 
+    With none failed it sends nothing (`retried == 0`).
+
     Crash-safe: intent (`submitting`, attempts + 1), POST, then `submitted`.
     Index-based so two submissions with the same digests stay apart.
     """
     state = load_ots(run.staging_dir)
     rules = resolve(state, expect)
-    target_phase = check_transition(state.phase, rules.command(" --retry"))
+    target_phase = check_transition(state.phase, rules.command("retry"))
     category_id = apply_category_id(state, run.category_config)
     failed = [
         i
@@ -563,7 +638,7 @@ def retry_locked(
         if s.status == "failed" and s.target is rules.target
     ]
     if not failed:
-        raise NoFailedSubmissionsError("no failed submissions to retry")
+        return RetryResult(target=rules.target, retried=0, phase=state.phase)
 
     subs = list(state.submissions)
     for i in failed:
@@ -595,10 +670,10 @@ def retry_locked(
         ),
     )
     logger.info("retried %d failed submission(s) for %s", len(failed), run.object_id)
-    return RetryResult(target=rules.target, retried=len(failed))
+    return RetryResult(target=rules.target, retried=len(failed), phase=target_phase)
 
 
 def retry(run: TimestampRun, *, expect: TimestampTarget | None = None) -> RetryResult:
-    """`stage timestamp … --retry` under the staging lock."""
+    """`stage retry` under the staging lock."""
     with with_lock(run.staging_dir, timeout=run.runtime.lock_timeout):
         return retry_locked(run, expect=expect)

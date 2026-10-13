@@ -586,3 +586,69 @@ class TestOneTimestampWorkflow:
             assert (target is None) == (phase is Phase.COMMITTED), phase
             if target is not None:
                 assert rules_for(target).target is target
+
+
+# --- 7.1 verbs, not mode flags; batches are `stage batch ...`
+
+
+def _click(app):
+    import typer.main
+
+    return typer.main.get_command(app)
+
+
+class TestCliSurface:
+    def test_timestamp_upgrade_retry_are_verbs(self):
+        from ocfl_cli.stage import stage_app
+
+        commands = _click(stage_app).commands
+        for verb in ("timestamp", "upgrade", "retry", "batch"):
+            assert verb in commands, verb
+        assert not hasattr(commands["timestamp"], "commands"), "timestamp is a group"
+        for name in ("timestamp", "upgrade", "retry"):
+            opts = {o for p in commands[name].params for o in p.opts}
+            assert "--expect" in opts, name
+
+    def test_batch_verbs(self):
+        from ocfl_cli.stage import stage_app
+
+        batch = _click(stage_app).commands["batch"]
+        assert set(batch.commands) == {
+            "create",
+            "submit",
+            "upgrade",
+            "retry",
+            "commit",
+            "status",
+            "ls",
+            "rm",
+        }
+
+    def test_no_mode_flag_options_anywhere(self):
+        """No command takes `--upgrade`, `--retry` or `--batch` any more."""
+        from ocfl_cli.main import app
+
+        bad = []
+
+        def walk(cmd, path: str) -> None:
+            for p in cmd.params:
+                if {"--upgrade", "--retry", "--batch"} & set(p.opts):
+                    bad.append(f"{path} {p.opts}")
+            for name, sub in getattr(cmd, "commands", {}).items():
+                walk(sub, f"{path} {name}")
+
+        walk(_click(app), "ocfl")
+        assert not bad, bad
+
+    def test_hints_come_from_one_module(self):
+        """Every `ocfl stage ...` hint is built by `workflow.hints`."""
+        bad = [
+            f"{_rel(p)}:{n.lineno}"
+            for p in _py_files(CLI_SRC)
+            if _rel(p) != "workflow/hints.py"
+            for n in ast.walk(_tree(p))
+            if isinstance(n, ast.Constant)
+            and isinstance(n.value, str)
+            and n.value.lstrip().startswith("ocfl stage ")
+        ]
+        assert not bad, bad

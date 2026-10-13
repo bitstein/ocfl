@@ -137,7 +137,7 @@ def apply_category_id(state: OtsState, cfg_category_id: int) -> int:
     """Reconcile config's `proof_category_id` against the persisted one.
 
     All in-flight jobs in a single `ots.json` must share a category so
-    `--retry` / `--upgrade` address the right SP records. On drift, log
+    `stage retry` / `stage upgrade` address the right SP records. On drift, log
     WARNING and keep the persisted value for the rest of this staging
     session; the new config value takes effect on the next fresh staging.
     """

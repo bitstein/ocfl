@@ -213,7 +213,7 @@ def require_verified_content_before_inventory(state: OtsState) -> None:
     if unverified:
         raise PhaseError(
             f"{len(unverified)} content proof(s) unverified after reorg; "
-            "re-run 'stage timestamp content --upgrade' before "
+            "upgrade the content proofs again before "
             "timestamping inventory or committing"
         )
 

@@ -20,6 +20,7 @@ from ocfl_cli.store.ots_state import (
     with_lock,
 )
 from ocfl_cli.store.staging import StagingStore
+from ocfl_cli.workflow import hints
 from ocfl_cli.workflow.common import (
     StateMap,
     ordinary_digests,
@@ -684,7 +685,7 @@ def reset_staging(
                 batch_id = active_batch_ids[0]
                 batch_hint = (
                     f"; active batch_id={batch_id!r}; inspect with "
-                    f"'stage timestamp batch status {batch_id}'"
+                    f"'{hints.batch('status', batch_id)}'"
                 )
             if not force:
                 raise CLIError(

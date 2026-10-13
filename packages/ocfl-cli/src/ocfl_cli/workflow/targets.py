@@ -76,14 +76,14 @@ class TargetRules:
     target: TimestampTarget
     pending_phase: Phase
     upgraded_phase: Phase
-    # A batch of this target can be committed (`stage commit --batch`).
+    # A batch of this target can be committed (`stage batch commit`).
     commits: bool
     # The batch skip reason when the phase does not allow submitting.
     not_ready_reason: FixedBatchReason
 
-    def command(self, flags: str = "") -> str:
-        """The phase-matrix command name (`ocfl_cli.model.phase`)."""
-        return f"timestamp {self.target.value}{flags}"
+    def command(self, verb: str = "timestamp") -> str:
+        """The phase-matrix command `verb` runs on this target (`model.phase`)."""
+        return f"{verb} {self.target.value}"
 
     def prepare(
         self, area: Area, state: OtsState, *, allow_missing_metadata: bool
@@ -236,6 +236,7 @@ class _InventoryRules(TargetRules):
 
 CONTENT: TargetRules = _PerFileRules()
 INVENTORY: TargetRules = _InventoryRules()
+ALL: tuple[TargetRules, ...] = (CONTENT, INVENTORY)
 _RULES: dict[TimestampTarget, TargetRules] = {
     TimestampTarget.CONTENT: CONTENT,
     TimestampTarget.INVENTORY: INVENTORY,

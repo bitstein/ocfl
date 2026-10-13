@@ -94,22 +94,10 @@ class BatchEvents(Protocol):
     ) -> None: ...
 
 
-def _resumed_batch(
-    staging_root, batch_id: str, target: TimestampTarget
-) -> batch_model.BatchFile:
-    batch = load_batch_or_usage(staging_root, batch_id)
-    if batch.target != target:
-        raise UsageError(
-            f"batch {batch.batch_id} target is {batch.target.value!r}, "
-            f"not {target.value!r}"
-        )
-    return batch
-
-
 def _new_or_resumed(
     store: StagingStore,
     *,
-    target: TimestampTarget,
+    target: TimestampTarget | None,
     root_path: str,
     selected: list[str],
     batch_id: str | None,
@@ -117,15 +105,13 @@ def _new_or_resumed(
     default_category: int,
     runtime: Runtime,
 ) -> tuple[batch_model.BatchFile, bool]:
-    if batch_id is not None and (selected or category is not None):
-        raise UsageError(
-            "--batch is mutually exclusive with --object, --objects-file, "
-            "and --category"
-        )
-    if batch_id is None and not selected:
-        raise UsageError("new batch requires --object or --objects-file")
+    """Resume `batch_id` (its target comes from its file) or create a batch."""
     if batch_id is not None:
-        return _resumed_batch(store.root, batch_id, target), False
+        return load_batch_or_usage(store.root, batch_id), False
+    if target is None:
+        raise RuntimeError("a new batch needs a target")
+    if not selected:
+        raise UsageError("a new batch needs OBJECT... or --objects-file")
     now = batch_state.utc_iso_z(runtime.clock.now())
     batch = batch_model.BatchFile(
         batch_id=batch_state.new_batch_id(),
@@ -204,7 +190,7 @@ def submit(
     cfg: Config,
     sr: StorageRoot,
     *,
-    target: TimestampTarget,
+    target: TimestampTarget | None,
     root_path: str,
     selected: list[str],
     batch_id: str | None,
@@ -214,7 +200,7 @@ def submit(
     events: BatchEvents,
     runtime: Runtime,
 ) -> batch_model.BatchFile:
-    """`stage timestamp batch content|inventory`: create or resume, then submit."""
+    """`stage batch create` (no `batch_id`) or `stage batch submit BATCH`."""
     sp_cfg = cfg.simpleproof
     if sp_cfg is None:
         raise RuntimeError("simpleproof config missing")
@@ -231,13 +217,13 @@ def submit(
     with batch_state.with_driver_lease(
         store.root,
         batch.batch_id,
-        command=batch_command_tuple(target, batch.batch_id),
+        command=batch_command_tuple("submit", batch.batch_id),
     ):
         return _start(
             store,
             cfg,
             sr,
-            target=target,
+            target=batch.target,
             root_path=root_path,
             batch=batch,
             created=created,
@@ -253,19 +239,19 @@ def retry(
     store: StagingStore,
     cfg: Config,
     *,
-    target: TimestampTarget,
     batch_id: str,
     sp_factory: SpClientFactory,
     events: BatchEvents,
     runtime: Runtime,
 ) -> batch_model.BatchFile:
-    """`--retry --batch ID`: resubmit the batch's failed chunks."""
+    """`stage batch retry BATCH`: resubmit the batch's failed chunks."""
     staging_root = store.root
-    batch = _resumed_batch(staging_root, batch_id, target)
+    batch = load_batch_or_usage(staging_root, batch_id)
+    target = batch.target
     with batch_state.with_driver_lease(
         staging_root,
         batch.batch_id,
-        command=(*batch_command_tuple(target, batch.batch_id), "--retry"),
+        command=batch_command_tuple("retry", batch.batch_id),
     ):
         events.resumed(batch)
         before_retry = batch
@@ -287,21 +273,21 @@ def upgrade(
     cfg: Config,
     open_root: Callable[[], StorageRoot],
     *,
-    target: TimestampTarget,
     batch_id: str,
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
     events: BatchEvents,
     runtime: Runtime,
 ) -> batch_model.BatchFile:
-    """`--upgrade --batch ID`: one upgrade pass over the batch."""
+    """`stage batch upgrade BATCH`: one upgrade pass over the batch."""
     staging_root = store.root
-    batch = _resumed_batch(staging_root, batch_id, target)
+    batch = load_batch_or_usage(staging_root, batch_id)
+    target = batch.target
     sr = open_root()
     with batch_state.with_driver_lease(
         staging_root,
         batch.batch_id,
-        command=(*batch_command_tuple(target, batch.batch_id), "--upgrade"),
+        command=batch_command_tuple("upgrade", batch.batch_id),
     ):
         events.resumed(batch)
         before_upgrade = batch
@@ -325,7 +311,7 @@ def watch(
     cfg: Config,
     sr: StorageRoot,
     *,
-    target: TimestampTarget,
+    target: TimestampTarget | None,
     root_path: str,
     selected: list[str],
     batch_id: str | None,
@@ -336,7 +322,10 @@ def watch(
     events: BatchEvents,
     runtime: Runtime,
 ) -> int:
-    """`--watch`: submit, then run an upgrade pass per Bitcoin block.
+    """`--watch`: submit what is due, then run an upgrade pass per Bitcoin block.
+
+    `stage batch create --watch` (no `batch_id`) or `stage batch upgrade
+    BATCH --watch` (the target comes from the batch file).
 
     Returns the exit code: 0 when every row upgraded, 1 when the batch
     finished with failures, 130 when interrupted.
@@ -357,6 +346,7 @@ def watch(
         default_category=sp_cfg.proof_category_id,
         runtime=runtime,
     )
+    target = batch.target
     exit_code = 1
 
     def run_watch_upgrade_pass(
@@ -387,7 +377,7 @@ def watch(
         with batch_state.with_driver_lease(
             staging_root,
             batch.batch_id,
-            command=(*batch_command_tuple(target, batch.batch_id), "--watch"),
+            command=batch_command_tuple("watch", batch.batch_id),
         ):
             batch = _start(
                 store,
@@ -499,7 +489,7 @@ def commit(
     runtime: Runtime,
     commit_object: Callable[..., None] = wf_commit.commit_ots,
 ) -> int:
-    """`stage commit --batch ID`: commit every upgraded object; returns failures.
+    """`stage batch commit BATCH`: commit every upgraded object; returns failures.
 
     `commit_object` commits one object's Staging Area (`commit_ots` keywords).
     """

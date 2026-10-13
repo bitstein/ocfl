@@ -1,4 +1,4 @@
-"""stage timestamp batch content|inventory|ls|status|rm, and stage commit --batch.
+"""stage batch: create, submit, upgrade, retry, commit, status, ls and rm.
 
 The batch engine is `ocfl_cli.workflow.batch`; this module parses options and
 renders the events it reports (JSON lines under `--json`, text otherwise).
@@ -205,67 +205,184 @@ class _CliBatchEvents:
             typer.echo(f"{object_id}: failed ({data['reason']}): {data['message']}")
 
 
-def commit_batch(ctx: typer.Context, batch_id: str) -> None:
-    """`stage commit --batch ID`."""
-    failures = drive.commit(
-        stage_store(ctx),
-        lambda: open_root(ctx),
-        root_path=resolve_root_path(ctx),
-        batch_id=batch_id,
-        events=_CliBatchEvents(ctx, resumed_by_id=True),
-        runtime=appctx.runtime(ctx),
-    )
-    if failures:
-        raise typer.Exit(1)
+BatchArg = Annotated[str, typer.Argument(help="Batch ID.")]
 
 
-def _selected(object_ids: tuple[str, ...], objects_file: Path | None) -> list[str]:
-    selected = list(object_ids)
+def _events(ctx: typer.Context, *, resumed_by_id: bool) -> _CliBatchEvents:
+    return _CliBatchEvents(ctx, resumed_by_id=resumed_by_id)
+
+
+def _selected(object_ids: list[str] | None, objects_file: Path | None) -> list[str]:
+    selected = list(object_ids or ())
     if objects_file is not None:
         selected.extend(read_objects_file(objects_file))
     return selected
 
 
-def _drive_batch_retry(
-    ctx: typer.Context, *, target: TimestampTarget, batch_id: str | None
+def _report_submitted(ctx: typer.Context, batch: BatchFile) -> None:
+    if not appctx.json_mode(ctx):
+        counts = batch_counts(batch)
+        typer.echo(
+            f"batch submitted: {batch.batch_id} prepared={counts['prepared']} "
+            f"submitted={counts['submitted']} skipped={counts['skipped']} "
+            f"failed={counts['failed']}"
+        )
+
+
+def _watch(
+    ctx: typer.Context,
+    *,
+    target: TimestampTarget | None,
+    selected: list[str],
+    batch_id: str | None,
+    category: int | None,
+    allow_missing_metadata: bool,
 ) -> None:
-    if batch_id is None:
-        raise UsageError("--retry requires --batch")
     cfg = require_config(ctx)
     require_simpleproof(ctx, cfg)
-    events = _CliBatchEvents(ctx, resumed_by_id=True)
-    batch = drive.retry(
+    require_bitcoin(ctx, cfg)
+    sr, _fs = open_root(ctx)
+    exit_code = drive.watch(
         stage_store(ctx),
         cfg,
+        sr,
         target=target,
+        root_path=resolve_root_path(ctx),
+        selected=selected,
         batch_id=batch_id,
+        category=category,
+        allow_missing_metadata=allow_missing_metadata,
+        sp_factory=appctx.sp_client_factory(ctx),
+        btc_factory=appctx.btc_rpc_factory(ctx),
+        events=_events(ctx, resumed_by_id=batch_id is not None),
+        runtime=appctx.runtime(ctx),
+    )
+    if exit_code:
+        raise typer.Exit(exit_code)
+
+
+def _submit(
+    ctx: typer.Context,
+    *,
+    target: TimestampTarget | None,
+    selected: list[str],
+    batch_id: str | None,
+    category: int | None,
+    allow_missing_metadata: bool,
+) -> None:
+    cfg = require_config(ctx)
+    require_simpleproof(ctx, cfg)
+    sr, _fs = open_root(ctx)
+    events = _events(ctx, resumed_by_id=batch_id is not None)
+    batch = drive.submit(
+        stage_store(ctx),
+        cfg,
+        sr,
+        target=target,
+        root_path=resolve_root_path(ctx),
+        selected=selected,
+        batch_id=batch_id,
+        category=category,
+        allow_missing_metadata=allow_missing_metadata,
         sp_factory=appctx.sp_client_factory(ctx),
         events=events,
         runtime=appctx.runtime(ctx),
     )
     events.summary(batch)
-    if not appctx.json_mode(ctx):
-        counts = batch_counts(batch)
-        typer.echo(
-            f"batch retried: {batch.batch_id} prepared={counts['prepared']} "
-            f"submitted={counts['submitted']} failed={counts['failed']}"
-        )
+    _report_submitted(ctx, batch)
 
 
-def _drive_batch_upgrade(
-    ctx: typer.Context, *, target: TimestampTarget, batch_id: str | None
+def batch_create(
+    ctx: typer.Context,
+    target: Annotated[
+        TimestampTarget, typer.Argument(help="What the batch timestamps.")
+    ],
+    object_ids: Annotated[
+        list[str] | None, typer.Argument(help="Object IDs to put in the batch.")
+    ] = None,
+    objects_file: Annotated[
+        Path | None,
+        typer.Option("--objects-file", help="File of object IDs, one per line."),
+    ] = None,
+    category: Annotated[
+        int | None,
+        typer.Option("--category", help="SimpleProof category for the batch."),
+    ] = None,
+    allow_missing_metadata: Annotated[
+        bool,
+        typer.Option(
+            "--allow-missing-metadata",
+            help="Inventory batches: timestamp even when staged metadata is "
+            "incomplete.",
+        ),
+    ] = False,
+    watch_flag: Annotated[
+        bool,
+        typer.Option(
+            "--watch",
+            help="Then upgrade on each Bitcoin block until the proofs are final.",
+        ),
+    ] = False,
 ) -> None:
-    if batch_id is None:
-        raise UsageError("--upgrade requires --batch")
+    """Create a batch of Staging Areas and submit their digests together."""
+    if allow_missing_metadata and target is TimestampTarget.CONTENT:
+        raise UsageError("--allow-missing-metadata applies to inventory batches only")
+    selected = _selected(object_ids, objects_file)
+    if not selected:
+        raise UsageError("a new batch needs OBJECT... or --objects-file")
+    run = _watch if watch_flag else _submit
+    run(
+        ctx,
+        target=target,
+        selected=selected,
+        batch_id=None,
+        category=category,
+        allow_missing_metadata=allow_missing_metadata,
+    )
+
+
+def batch_submit(ctx: typer.Context, batch_id: BatchArg) -> None:
+    """Submit what a batch still has to send (resume after a failure)."""
+    _submit(
+        ctx,
+        target=None,
+        selected=[],
+        batch_id=batch_id,
+        category=None,
+        allow_missing_metadata=False,
+    )
+
+
+def batch_upgrade(
+    ctx: typer.Context,
+    batch_id: BatchArg,
+    watch_flag: Annotated[
+        bool,
+        typer.Option(
+            "--watch",
+            help="Upgrade on each Bitcoin block until the proofs are final.",
+        ),
+    ] = False,
+) -> None:
+    """Fetch the batch's proofs from SimpleProof and verify them against Bitcoin."""
+    if watch_flag:
+        _watch(
+            ctx,
+            target=None,
+            selected=[],
+            batch_id=batch_id,
+            category=None,
+            allow_missing_metadata=False,
+        )
+        return
     cfg = require_config(ctx)
     require_simpleproof(ctx, cfg)
     require_bitcoin(ctx, cfg)
-    events = _CliBatchEvents(ctx, resumed_by_id=True)
+    events = _events(ctx, resumed_by_id=True)
     batch = drive.upgrade(
         stage_store(ctx),
         cfg,
         lambda: open_root(ctx)[0],
-        target=target,
         batch_id=batch_id,
         sp_factory=appctx.sp_client_factory(ctx),
         btc_factory=appctx.btc_rpc_factory(ctx),
@@ -281,67 +398,15 @@ def _drive_batch_upgrade(
         )
 
 
-def _drive_batch_watch(
-    ctx: typer.Context,
-    *,
-    target: TimestampTarget,
-    object_ids: tuple[str, ...],
-    objects_file: Path | None,
-    batch_id: str | None,
-    category: int | None,
-    allow_missing_metadata: bool,
-) -> None:
+def batch_retry(ctx: typer.Context, batch_id: BatchArg) -> None:
+    """Resubmit the batch's failed SimpleProof submissions."""
     cfg = require_config(ctx)
     require_simpleproof(ctx, cfg)
-    require_bitcoin(ctx, cfg)
-    store = stage_store(ctx)
-    root_path = resolve_root_path(ctx)
-    sr, _fs = open_root(ctx)
-    exit_code = drive.watch(
-        store,
+    events = _events(ctx, resumed_by_id=True)
+    batch = drive.retry(
+        stage_store(ctx),
         cfg,
-        sr,
-        target=target,
-        root_path=root_path,
-        selected=_selected(object_ids, objects_file),
         batch_id=batch_id,
-        category=category,
-        allow_missing_metadata=allow_missing_metadata,
-        sp_factory=appctx.sp_client_factory(ctx),
-        btc_factory=appctx.btc_rpc_factory(ctx),
-        events=_CliBatchEvents(ctx, resumed_by_id=batch_id is not None),
-        runtime=appctx.runtime(ctx),
-    )
-    if exit_code:
-        raise typer.Exit(exit_code)
-
-
-def _drive_batch_submit(
-    ctx: typer.Context,
-    *,
-    target: TimestampTarget,
-    object_ids: tuple[str, ...],
-    objects_file: Path | None,
-    batch_id: str | None,
-    category: int | None,
-    allow_missing_metadata: bool,
-) -> None:
-    cfg = require_config(ctx)
-    require_simpleproof(ctx, cfg)
-    store = stage_store(ctx)
-    root_path = resolve_root_path(ctx)
-    sr, _fs = open_root(ctx)
-    events = _CliBatchEvents(ctx, resumed_by_id=batch_id is not None)
-    batch = drive.submit(
-        store,
-        cfg,
-        sr,
-        target=target,
-        root_path=root_path,
-        selected=_selected(object_ids, objects_file),
-        batch_id=batch_id,
-        category=category,
-        allow_missing_metadata=allow_missing_metadata,
         sp_factory=appctx.sp_client_factory(ctx),
         events=events,
         runtime=appctx.runtime(ctx),
@@ -350,168 +415,27 @@ def _drive_batch_submit(
     if not appctx.json_mode(ctx):
         counts = batch_counts(batch)
         typer.echo(
-            f"batch submitted: {batch.batch_id} prepared={counts['prepared']} "
-            f"submitted={counts['submitted']} skipped={counts['skipped']} "
-            f"failed={counts['failed']}"
+            f"batch retried: {batch.batch_id} prepared={counts['prepared']} "
+            f"submitted={counts['submitted']} failed={counts['failed']}"
         )
 
 
-def timestamp_batch_content(
-    ctx: typer.Context,
-    object_ids: Annotated[
-        list[str] | None,
-        typer.Option("--object", help="Object ID to include in a new batch."),
-    ] = None,
-    objects_file: Annotated[
-        Path | None,
-        typer.Option("--objects-file", help="File containing object IDs."),
-    ] = None,
-    batch_id: Annotated[
-        str | None,
-        typer.Option("--batch", help="Resume an existing batch."),
-    ] = None,
-    category: Annotated[
-        int | None,
-        typer.Option("--category", help="SimpleProof category for a new batch."),
-    ] = None,
-    upgrade: Annotated[
-        bool,
-        typer.Option("--upgrade", help="Poll SP verify jobs and ingest proofs."),
-    ] = False,
-    retry: Annotated[
-        bool,
-        typer.Option("--retry", help="Repair and resubmit failed batch chunks."),
-    ] = False,
-    watch_flag: Annotated[
-        bool,
-        typer.Option(
-            "--watch",
-            help="ZMQ-driven loop; runs a batch upgrade pass per Bitcoin block.",
-        ),
-    ] = False,
-) -> None:
-    """Create or resume a content timestamping batch."""
-    if retry and (upgrade or watch_flag):
-        raise UsageError("--retry is mutually exclusive with --upgrade and --watch")
-    if upgrade and watch_flag:
-        raise UsageError("--upgrade is mutually exclusive with --watch")
-    if retry:
-        if object_ids or objects_file is not None or category is not None:
-            raise UsageError("--retry is only supported with --batch")
-        _drive_batch_retry(ctx, target=TimestampTarget.CONTENT, batch_id=batch_id)
-        return
-    if watch_flag:
-        _drive_batch_watch(
-            ctx,
-            target=TimestampTarget.CONTENT,
-            object_ids=tuple(object_ids or ()),
-            objects_file=objects_file,
-            batch_id=batch_id,
-            category=category,
-            allow_missing_metadata=False,
-        )
-        return
-    if upgrade:
-        if object_ids or objects_file is not None or category is not None:
-            raise UsageError("--upgrade is only supported with --batch")
-        _drive_batch_upgrade(ctx, target=TimestampTarget.CONTENT, batch_id=batch_id)
-        return
-    _drive_batch_submit(
-        ctx,
-        target=TimestampTarget.CONTENT,
-        object_ids=tuple(object_ids or ()),
-        objects_file=objects_file,
+def batch_commit(ctx: typer.Context, batch_id: BatchArg) -> None:
+    """Commit every object of an inventory batch whose proofs are final."""
+    failures = drive.commit(
+        stage_store(ctx),
+        lambda: open_root(ctx),
+        root_path=resolve_root_path(ctx),
         batch_id=batch_id,
-        category=category,
-        allow_missing_metadata=False,
+        events=_events(ctx, resumed_by_id=True),
+        runtime=appctx.runtime(ctx),
     )
+    if failures:
+        raise typer.Exit(1)
 
 
-def timestamp_batch_inventory(
-    ctx: typer.Context,
-    object_ids: Annotated[
-        list[str] | None,
-        typer.Option("--object", help="Object ID to include in a new batch."),
-    ] = None,
-    objects_file: Annotated[
-        Path | None,
-        typer.Option("--objects-file", help="File containing object IDs."),
-    ] = None,
-    batch_id: Annotated[
-        str | None,
-        typer.Option("--batch", help="Resume an existing batch."),
-    ] = None,
-    category: Annotated[
-        int | None,
-        typer.Option("--category", help="SimpleProof category for a new batch."),
-    ] = None,
-    allow_missing_metadata: Annotated[
-        bool,
-        typer.Option(
-            "--allow-missing-metadata",
-            help="Timestamp inventory even when staged metadata is incomplete.",
-        ),
-    ] = False,
-    upgrade: Annotated[
-        bool,
-        typer.Option("--upgrade", help="Poll SP verify jobs and ingest proofs."),
-    ] = False,
-    retry: Annotated[
-        bool,
-        typer.Option("--retry", help="Repair and resubmit failed batch chunks."),
-    ] = False,
-    watch_flag: Annotated[
-        bool,
-        typer.Option(
-            "--watch",
-            help="ZMQ-driven loop; runs a batch upgrade pass per Bitcoin block.",
-        ),
-    ] = False,
-) -> None:
-    """Create or resume an inventory timestamping batch."""
-    if retry and (upgrade or watch_flag):
-        raise UsageError("--retry is mutually exclusive with --upgrade and --watch")
-    if upgrade and watch_flag:
-        raise UsageError("--upgrade is mutually exclusive with --watch")
-    if retry:
-        if (
-            object_ids
-            or objects_file is not None
-            or category is not None
-            or allow_missing_metadata
-        ):
-            raise UsageError("--retry is only supported with --batch")
-        _drive_batch_retry(ctx, target=TimestampTarget.INVENTORY, batch_id=batch_id)
-        return
-    if watch_flag:
-        _drive_batch_watch(
-            ctx,
-            target=TimestampTarget.INVENTORY,
-            object_ids=tuple(object_ids or ()),
-            objects_file=objects_file,
-            batch_id=batch_id,
-            category=category,
-            allow_missing_metadata=allow_missing_metadata,
-        )
-        return
-    if upgrade:
-        if object_ids or objects_file is not None or category is not None:
-            raise UsageError("--upgrade is only supported with --batch")
-        _drive_batch_upgrade(ctx, target=TimestampTarget.INVENTORY, batch_id=batch_id)
-        return
-    _drive_batch_submit(
-        ctx,
-        target=TimestampTarget.INVENTORY,
-        object_ids=tuple(object_ids or ()),
-        objects_file=objects_file,
-        batch_id=batch_id,
-        category=category,
-        allow_missing_metadata=allow_missing_metadata,
-    )
-
-
-def timestamp_batch_ls(ctx: typer.Context) -> None:
-    """List local batch timestamping state files."""
+def batch_ls(ctx: typer.Context) -> None:
+    """List the batches in the staging root."""
     staging_root = stage_store(ctx).root
     rows = [batch_to_list_row(batch) for batch in load_batches_or_exit(staging_root)]
     if appctx.json_mode(ctx):
@@ -527,19 +451,19 @@ def timestamp_batch_ls(ctx: typer.Context) -> None:
         )
 
 
-def timestamp_batch_status(
+def batch_status(
     ctx: typer.Context,
-    batch_id: Annotated[str, typer.Argument(help="Batch ID.")],
-    verbose: Annotated[
+    batch_id: BatchArg,
+    detail: Annotated[
         bool,
-        typer.Option("--verbose", help="Show per-digest submit/verify state."),
+        typer.Option("--detail", help="Show per-digest submit/verify state."),
     ] = False,
 ) -> None:
-    """Show local per-object status for a batch."""
+    """Show each object of a batch: its status and the next command."""
     out = appctx.console(ctx)
     staging_root = stage_store(ctx).root
     batch = load_batch_or_usage(staging_root, batch_id)
-    data = batch_status_dict(staging_root, batch, verbose=verbose)
+    data = batch_status_dict(staging_root, batch, verbose=detail)
     if appctx.json_mode(ctx):
         output_json(data)
         return
@@ -555,7 +479,7 @@ def timestamp_batch_status(
             f"{row['digests_verified']}/{row['digests_total']} verified  "
             f"Next: {row['next']}"
         )
-        if verbose:
+        if detail:
             for digest in row["digests"]:
                 typer.echo(
                     f"    {digest['digest']}  submitted={digest['submitted']} "
@@ -565,14 +489,14 @@ def timestamp_batch_status(
                 )
 
 
-def timestamp_batch_rm(
+def batch_rm(
     ctx: typer.Context,
-    batch_id: Annotated[str, typer.Argument(help="Batch ID.")],
+    batch_id: BatchArg,
     force: Annotated[
         bool,
-        typer.Option("--force", help="Delete the batch file even with open rows."),
+        typer.Option("--force", help="Delete the batch even with open rows."),
     ] = False,
 ) -> None:
-    """Delete a local batch file when cleanup is safe."""
+    """Delete a batch's file when cleanup is safe."""
     remove_batch(stage_store(ctx).root, batch_id, force=force)
     typer.echo(f"removed batch {batch_id}")

@@ -876,7 +876,7 @@ class TestStageStatusOts:
         assert "Network:" in out
         assert "a.txt\n\nMetadata:" in out
         assert "user.address: missing\n\nWorkflow:" in out
-        assert "Next: stage timestamp content --upgrade" in out
+        assert "Next: ocfl stage upgrade obj:s-human --watch" in out
         assert "Network:\n  Bitcoin:" in out
         assert "A a.txt" in out
         assert "Phase:" in out
@@ -983,7 +983,12 @@ class TestStageStatusOts:
         r = runner.invoke(
             app,
             _stage_args(
-                empty_sha256_root, staging, "timestamp", "content", "obj:s-h-hr"
+                empty_sha256_root,
+                staging,
+                "timestamp",
+                "obj:s-h-hr",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -996,10 +1001,10 @@ class TestStageStatusOts:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:s-h-hr",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output

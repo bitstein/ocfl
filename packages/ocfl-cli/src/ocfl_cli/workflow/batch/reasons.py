@@ -3,12 +3,13 @@
 from typing import TYPE_CHECKING, Literal
 
 from ocfl_cli import errors as errors
+from ocfl_cli.workflow import hints
 
 if TYPE_CHECKING:
     from ocfl_cli.model import batch as batch_model
 
 
-BATCH_MISSING_NEXT = "Operate per-object via stage timestamp content/inventory"
+BATCH_MISSING_NEXT = "work per object: ocfl stage status OBJECT"
 
 
 type FixedBatchReason = Literal[
@@ -78,38 +79,44 @@ def split_prefixed_batch_reason(reason: str) -> tuple[PrefixedBatchReason, str] 
             return None
 
 
-def reason_next(reason: str | None, *, batch: batch_model.BatchFile) -> str | None:
+def reason_next(
+    reason: str | None, *, batch: batch_model.BatchFile, object_id: str
+) -> str | None:
     if reason is None:
         return None
     match split_prefixed_batch_reason(reason):
         case ("in_batch", batch_id):
-            return f"stage timestamp batch status {batch_id}"
+            return hints.batch("status", batch_id)
         case ("category_mismatch", _category_id):
             return (
-                "Start a separate batch for that category or reset/recreate the "
-                "staging session"
+                "Start a separate batch for that category, or discard the "
+                "staging and stage the object again"
             )
         case None:
             pass
     match reason:
         case "regressed":
-            return "stage status OBJECT; reset or restart timestamp flow"
+            return hints.stage("status", object_id)
         case "missing_record_ids" | "transient_sp_error" | "submit_pending":
-            return (
-                f"stage timestamp batch {batch.target} --batch {batch.batch_id} --retry"
-            )
+            return hints.batch("retry", batch.batch_id)
         case "lock_contended":
-            return f"Re-run --batch {batch.batch_id} after the other process exits"
+            return (
+                f"{hints.batch('submit', batch.batch_id)} "
+                "(after the other process exits)"
+            )
         case "committed" | "no_new_digests" | "noop":
             return "None"
         case "content_not_upgraded":
-            return "Upgrade content first"
+            return hints.stage("upgrade", object_id, "--watch")
         case "missing_metadata":
-            return "Add staged metadata or rerun with --allow-missing-metadata"
+            return (
+                f"{hints.stage('metadata', object_id)} ... "
+                "(or create the batch with --allow-missing-metadata)"
+            )
         case "sp_partial_results":
-            return "Re-run --upgrade later"
+            return f"{hints.batch('upgrade', batch.batch_id)} (later)"
         case "results_expired" | "verify_job_failed" | "transient_rpc_error":
-            return "Re-run --upgrade"
+            return hints.batch("upgrade", batch.batch_id)
         case "reorg_deeper_than_min_conf":
             return "Retry after node catches up or investigate chain state"
         case "attestation_mismatch":

@@ -1,9 +1,8 @@
-"""Tests for `ocfl stage timestamp content --upgrade --watch`.
+"""Tests for `ocfl stage upgrade --watch` on the content target.
 
-Pins the `--upgrade --watch` contract from `OTS workflow contract`:
+Pins the `--watch` contract from `OTS workflow contract`:
 
-- New flag `--watch` on `stage timestamp content --upgrade` (requires
-  `--upgrade`). ZMQ-driven loop that runs an upgrade pass per Bitcoin
+- `stage upgrade OBJ --watch`: a ZMQ-driven loop that runs an upgrade pass per Bitcoin
   block; exits when phase advances to ``content-upgraded`` or on
   SIGINT/SIGTERM (exit 130).
 - Loop sketch (per ``stage_timestamp_content_upgrade_watch.loop_sketch``):
@@ -271,10 +270,10 @@ class TestWatchLoopAdvancesOnBlock:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:watch-done",
-                "--upgrade",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -285,11 +284,11 @@ class TestWatchLoopAdvancesOnBlock:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:watch-done",
-                "--upgrade",
                 "--watch",
+                "--expect",
+                "content",
             ),
         )
 
@@ -297,7 +296,7 @@ class TestWatchLoopAdvancesOnBlock:
         assert "Watch:" in r.output
         assert "Object: obj:watch-done" in r.output
         assert "Phase: content-upgraded" in r.output
-        assert "Next: stage timestamp inventory" in r.output
+        assert "Next: ocfl stage timestamp obj:watch-done" in r.output
         assert "Waiting for Bitcoin blocks" not in r.output
 
     def test_watch_sleeps_after_block_before_upgrade(
@@ -340,11 +339,11 @@ class TestWatchLoopAdvancesOnBlock:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:watch-delay",
-                "--upgrade",
                 "--watch",
+                "--expect",
+                "content",
             ),
         )
 
@@ -390,11 +389,11 @@ class TestWatchLoopAdvancesOnBlock:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:watch-ok",
-                "--upgrade",
                 "--watch",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -407,7 +406,7 @@ class TestWatchLoopAdvancesOnBlock:
         assert "Phase: content-pending" in r.output
         assert "Workflow:" in r.output
         assert "Phase: content-pending -> content-upgraded" in r.output
-        assert "Next: stage timestamp inventory" in r.output
+        assert "Next: ocfl stage timestamp obj:watch-ok" in r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
 
 
@@ -486,11 +485,11 @@ class TestWatchHeightJumpTriggersReverify:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:watch-jump",
-                "--upgrade",
                 "--watch",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 0, r.output
@@ -564,11 +563,11 @@ class TestWatchTipChangeAtStableHeightTriggersReverify:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:watch-reorg",
-                "--upgrade",
                 "--watch",
+                "--expect",
+                "content",
             ),
         )
         # Still short of confirmations after the reorg: interrupted on
@@ -625,11 +624,11 @@ class TestWatchSigintExits130WithoutTornCheckpoint:
             _stage_args(
                 empty_sha256_root,
                 staging,
-                "timestamp",
-                "content",
+                "upgrade",
                 "obj:watch-sigint",
-                "--upgrade",
                 "--watch",
+                "--expect",
+                "content",
             ),
         )
         assert r.exit_code == 130, r.output
@@ -712,11 +711,11 @@ class TestWatchLockTimeoutWarningAndContinue:
                     _stage_args(
                         empty_sha256_root,
                         staging,
-                        "timestamp",
-                        "content",
+                        "upgrade",
                         "obj:watch-lock",
-                        "--upgrade",
                         "--watch",
+                        "--expect",
+                        "content",
                     ),
                 )
         finally:
@@ -941,11 +940,11 @@ class TestRegtestRealZmqHashblockDelivery:
                 _stage_args(
                     empty_sha256_root,
                     staging,
-                    "timestamp",
-                    "content",
+                    "upgrade",
                     "obj:rt-watch",
-                    "--upgrade",
                     "--watch",
+                    "--expect",
+                    "content",
                 ),
                 obj=thread_obj,
             )
