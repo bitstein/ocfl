@@ -1067,3 +1067,50 @@ class TestSubmitHashesAtomicity:
             client.submit_hashes(digests, CATEGORY)
 
         assert info.value.partial_result is None
+
+
+# ---------------------------------------------------------------------------
+# check_access — `ocfl config check`
+# ---------------------------------------------------------------------------
+
+
+class TestCheckAccess:
+    def test_gets_proof_categories_with_the_access_token(self) -> None:
+        seen: list[tuple[str, str, str]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(
+                (
+                    request.method,
+                    str(request.url),
+                    request.headers.get("x-access-token", ""),
+                )
+            )
+            return httpx.Response(200, json=[{"id": CATEGORY}])
+
+        _make_client(handler).check_access()
+
+        assert seen == [("GET", f"{BASE}/api/entity/proofCategories", ACCESS_TOKEN)]
+
+    def test_401_is_an_auth_error_without_the_token(self) -> None:
+        client = _make_client(lambda request: httpx.Response(401))
+
+        with pytest.raises(SimpleProofAuthError) as exc_info:
+            client.check_access()
+
+        assert ACCESS_TOKEN not in _exc_chain_text(exc_info.value)
+
+    def test_5xx_is_retried_then_transient(self) -> None:
+        attempts: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            attempts.append(1)
+            return httpx.Response(503)
+
+        _sleeps, sleep = _make_sleep()
+        client = _make_client(handler, sleep=sleep, attempts=2)
+
+        with pytest.raises(SimpleProofTransient):
+            client.check_access()
+
+        assert len(attempts) == 2

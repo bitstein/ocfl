@@ -652,3 +652,59 @@ class TestCliSurface:
             and n.value.lstrip().startswith("ocfl stage ")
         ]
         assert not bad, bad
+
+
+# --- 7.2 `discard`; `config path|show|check`
+
+
+class TestDiscardAndConfig:
+    def test_discard_replaces_reset(self):
+        from ocfl_cli.model.phase import Phase, is_legal
+        from ocfl_cli.stage import stage_app
+
+        commands = _click(stage_app).commands
+        assert "discard" in commands and "reset" not in commands
+        assert all(is_legal(p, "discard") for p in Phase if p is not Phase.COMMITTED)
+        assert not any(is_legal(p, "reset") for p in Phase)
+
+    def test_config_group(self):
+        from ocfl_cli.main import app
+
+        config = _click(app).commands["config"]
+        assert set(config.commands) == {"path", "show", "check"}
+
+    def test_show_redacts_every_secret_field(self):
+        """Every SecretStr field, and the RPC user, is redacted by `config show`."""
+        import json
+
+        from pydantic import SecretStr
+
+        from ocfl_cli.config import BitcoinConfig, Config, SimpleProofConfig, redacted
+
+        secret_fields = {
+            name
+            for model in (SimpleProofConfig, BitcoinConfig)
+            for name, f in model.model_fields.items()
+            if f.annotation is SecretStr
+        }
+        assert secret_fields == {"access_token", "api_key", "rpc_password"}
+        cfg = Config(
+            simpleproof=SimpleProofConfig(
+                base_url="https://sp.example",
+                proof_category_id=1,
+                access_token=SecretStr("s-1"),
+                api_key=SecretStr("s-2"),
+            ),
+            bitcoin=BitcoinConfig(
+                rpc_url="http://127.0.0.1:8332",
+                zmq_endpoint="tcp://127.0.0.1:28332",
+                rpc_user="s-3",
+                rpc_password=SecretStr("s-4"),
+            ),
+        )
+        text = json.dumps(redacted(cfg))
+        assert not [s for s in ("s-1", "s-2", "s-3", "s-4") if s in text]
+
+    def test_only_the_config_group_runs_on_a_broken_config(self):
+        text = (CLI_SRC / "main.py").read_text()
+        assert 'ctx.invoked_subcommand != "config"' in text

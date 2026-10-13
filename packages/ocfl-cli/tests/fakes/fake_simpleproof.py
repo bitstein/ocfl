@@ -39,6 +39,7 @@ class FakeSimpleProof:
     truncate_downloads: bool = False
     retry_after_seconds: float | None = None
     submit_chunk_size: int = 1000
+    access_denied: bool = False
 
     _submissions: list[_Submission] = field(default_factory=list)
     _jobs: dict[str, _Job] = field(default_factory=dict)
@@ -46,6 +47,12 @@ class FakeSimpleProof:
     _entries: dict[str, tuple[ResultsEntry, ...]] = field(default_factory=dict)
     _next_record: int = 0
     _next_job: int = 0
+
+    def check_access(self) -> None:
+        if self.access_denied:
+            from ocfl_cli.errors import SimpleProofAuthError
+
+            raise SimpleProofAuthError("SimpleProof auth failed: HTTP 401")
 
     def submit_hashes(self, digests: list[str], category_id: int) -> SubmitResult:
         record_ids = tuple(f"rec-{self._alloc_record()}" for _ in digests)

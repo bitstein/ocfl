@@ -12,7 +12,7 @@ from ocfl_cli.stage.batch import (
     batch_upgrade,
 )
 from ocfl_cli.stage.commit import commit
-from ocfl_cli.stage.edit import add, ls_cmd, metadata, mv, new, reset, rm
+from ocfl_cli.stage.edit import add, discard, ls_cmd, metadata, mv, new, rm
 from ocfl_cli.stage.status import status
 from ocfl_cli.stage.timestamp import retry_cmd, timestamp_cmd, upgrade_cmd
 
@@ -37,6 +37,6 @@ batch_app.command("commit")(batch_commit)
 batch_app.command("status")(batch_status)
 batch_app.command("ls")(batch_ls)
 batch_app.command("rm")(batch_rm)
-stage_app.command()(reset)
+stage_app.command()(discard)
 
 __all__ = ["stage_app"]

@@ -7,10 +7,13 @@ the staging workflow's results. ZMQ stays in the CLI.
 """
 
 import contextlib
+import os
+import socket
 from base64 import b64encode
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import httpx2 as httpx
 import zmq
@@ -41,6 +44,7 @@ __all__ = [
     "block_source",
     "default_block_stream_factory",
     "default_btc_factory",
+    "probe_zmq_endpoint",
     "verify_attestation",
 ]
 
@@ -220,3 +224,22 @@ def default_block_stream_factory(cfg: Config) -> BlockStream:
     if btc_cfg is None:
         raise RuntimeError("bitcoin config missing")
     return BitcoinZmqSubscriber(btc_cfg.zmq_endpoint)
+
+
+def probe_zmq_endpoint(endpoint: str, *, timeout_s: float) -> None:
+    """Raise `OSError` unless something listens at a ZMQ endpoint.
+
+    ZMQ connects lazily and has no handshake to wait for, so a `tcp://`
+    endpoint is probed with a plain TCP connect and an `ipc://` one by its
+    socket path.
+    """
+    parsed = urlsplit(endpoint)
+    if parsed.scheme == "ipc":
+        path = endpoint.removeprefix("ipc://")
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"no ZMQ socket at {path}")
+        return
+    if parsed.hostname is None or parsed.port is None:
+        raise OSError(f"cannot probe ZMQ endpoint {endpoint!r}")
+    with socket.create_connection((parsed.hostname, parsed.port), timeout=timeout_s):
+        pass

@@ -5,7 +5,7 @@ check_transition over them, and asserts:
 
 - result phase is always a member of Phase
 - PhaseError leaves phase unchanged (legality is a query, not a side effect)
-- idempotent commands (status, reset, noop cells) are stable
+- idempotent commands (status, discard, noop cells) are stable
 - regression-causing commands always land in DRAFTING
 - COMMITTED is never entered through the FSM (commit purges staging upstream;
   check_transition returns COMMITTED only as the result phase from
@@ -30,7 +30,7 @@ COMMANDS = [
     "upgrade inventory",
     "retry inventory",
     "commit (ots path)",
-    "reset",
+    "discard",
     "status",
 ]
 
@@ -63,10 +63,10 @@ class PhaseFSM(RuleBasedStateMachine):
         # Regression rule: add/rm/mv from intermediate phases land in DRAFTING.
         if cmd in MUTATING and before in REGRESS_FROM:
             assert after is Phase.DRAFTING
-        # status / reset / noop cells: phase is stable.
+        # status / discard / noop cells: phase is stable.
         if cmd == "status":
             assert after is before
-        if cmd == "reset":
+        if cmd == "discard":
             assert after is before
         self.phase = after
 

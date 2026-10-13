@@ -1,4 +1,4 @@
-"""stage new, metadata, add, mv, rm, ls and reset: edit a Staging Area."""
+"""stage new, metadata, add, mv, rm, ls and discard: edit a Staging Area."""
 
 from pathlib import Path
 from typing import Annotated
@@ -198,7 +198,7 @@ def ls_cmd(
                 typer.echo(p)
 
 
-def reset(
+def discard(
     ctx: typer.Context,
     object_id: Annotated[str, typer.Argument(help="Object ID.")],
     force: Annotated[
@@ -210,7 +210,7 @@ def reset(
     ] = False,
 ) -> None:
     """Delete staging area for an object."""
-    removed = wf_staging.reset_staging(
+    removed = wf_staging.discard_staging(
         stage_store(ctx), resolve_root_path(ctx), object_id, force=force
     )
     if not removed:

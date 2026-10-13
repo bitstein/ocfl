@@ -1,4 +1,4 @@
-"""Tests for ocfl stage reset."""
+"""Tests for ocfl stage discard."""
 
 from pathlib import Path
 
@@ -31,8 +31,8 @@ def _invoke(runner, storage_root, staging, *args):
     )
 
 
-class TestStageReset:
-    def test_reset_clears_staging(self, runner, storage_root, tmp_path):
+class TestStageDiscard:
+    def test_discard_clears_staging(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"
         _invoke(runner, storage_root, staging, "new", "obj:new")
 
@@ -40,14 +40,14 @@ class TestStageReset:
         root_path = str(storage_root.resolve())
         assert store.exists(root_path, "obj:new")
 
-        result = _invoke(runner, storage_root, staging, "reset", "obj:new")
+        result = _invoke(runner, storage_root, staging, "discard", "obj:new")
         assert result.exit_code == 0, result.output
         assert not store.exists(root_path, "obj:new")
 
-    def test_reset_no_staging_warns(self, runner, storage_root, tmp_path):
-        """Reset on non-existent staging warns and exits 0."""
+    def test_discard_no_staging_warns(self, runner, storage_root, tmp_path):
+        """Discard on non-existent staging warns and exits 0."""
         staging = tmp_path / "staging"
-        result = _invoke(runner, storage_root, staging, "reset", "obj:nope")
+        result = _invoke(runner, storage_root, staging, "discard", "obj:nope")
         assert result.exit_code == 0
         # Should have a warning
         assert "no staging" in result.output.lower() or "warn" in result.output.lower()
@@ -67,7 +67,7 @@ def _mk_ots_staging(
 
     Side-steps the [simpleproof]/[bitcoin] preflight that `stage new --ots`
     runs by creating a non-OTS staging then dropping `ots.json` directly.
-    Sufficient because the reset command only inspects `ots.json` shape.
+    Sufficient because the discard command only inspects `ots.json` shape.
     """
     r = _invoke(runner, storage_root, staging, "new", object_id)
     assert r.exit_code == 0, r.output
@@ -177,7 +177,7 @@ class TestForceRequiredAtNonDraftingPhase:
             "inventory-upgraded",
         ],
     )
-    def test_reset_without_force_refuses(
+    def test_discard_without_force_refuses(
         self,
         runner: CliRunner,
         storage_root: Path,
@@ -193,10 +193,10 @@ class TestForceRequiredAtNonDraftingPhase:
         root_path = str(storage_root.resolve())
         assert store.exists(root_path, "obj:gated")
 
-        r = _invoke(runner, storage_root, staging, "reset", "obj:gated")
+        r = _invoke(runner, storage_root, staging, "discard", "obj:gated")
 
         assert r.exit_code != 0, (
-            f"reset at phase {phase.value!r} with persisted progress "
+            f"discard at phase {phase.value!r} with persisted progress "
             f"must require --force; got exit=0 output={r.output!r}"
         )
         assert "--force" in r.output, (
@@ -229,7 +229,7 @@ class TestForceRequiredAtNonDraftingPhase:
         ],
         ids=["content-pending", "inventory-upgraded"],
     )
-    def test_reset_with_force_proceeds(
+    def test_discard_with_force_proceeds(
         self,
         runner: CliRunner,
         storage_root: Path,
@@ -245,11 +245,11 @@ class TestForceRequiredAtNonDraftingPhase:
         root_path = str(storage_root.resolve())
 
         r = _invoke(
-            runner, storage_root, staging, "reset", "obj:gated-force", "--force"
+            runner, storage_root, staging, "discard", "obj:gated-force", "--force"
         )
         assert r.exit_code == 0, r.output
         assert not store.exists(root_path, "obj:gated-force"), (
-            "reset --force must purge staging at any phase"
+            "discard --force must purge staging at any phase"
         )
 
 
@@ -276,7 +276,7 @@ class TestForceRequiredAtDraftingAfterRegression:
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
 
-        r = _invoke(runner, storage_root, staging, "reset", "obj:regressed")
+        r = _invoke(runner, storage_root, staging, "discard", "obj:regressed")
         assert r.exit_code != 0, (
             "drafting + preserved proofs must still require --force; "
             f"got exit=0 output={r.output!r}"
@@ -284,7 +284,9 @@ class TestForceRequiredAtDraftingAfterRegression:
         assert "--force" in r.output
         assert store.exists(root_path, "obj:regressed")
 
-        r2 = _invoke(runner, storage_root, staging, "reset", "obj:regressed", "--force")
+        r2 = _invoke(
+            runner, storage_root, staging, "discard", "obj:regressed", "--force"
+        )
         assert r2.exit_code == 0, r2.output
         assert not store.exists(root_path, "obj:regressed")
 
@@ -308,15 +310,15 @@ class TestForceNotRequiredAtFreshDrafting:
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
 
-        r = _invoke(runner, storage_root, staging, "reset", "obj:fresh")
+        r = _invoke(runner, storage_root, staging, "discard", "obj:fresh")
         assert r.exit_code == 0, (
             f"fresh drafting must not require --force; got {r.output!r}"
         )
         assert not store.exists(root_path, "obj:fresh")
 
 
-class TestResetPurgesOtsCache:
-    def test_reset_force_purges_ots_cache(
+class TestDiscardPurgesOtsCache:
+    def test_discard_force_purges_ots_cache(
         self,
         runner: CliRunner,
         storage_root: Path,
@@ -340,21 +342,21 @@ class TestResetPurgesOtsCache:
         cache_dir = sd / "ots-cache"
         assert cache_dir.is_dir() and cache.is_file()
 
-        r = _invoke(runner, storage_root, staging, "reset", "obj:cache", "--force")
+        r = _invoke(runner, storage_root, staging, "discard", "obj:cache", "--force")
         assert r.exit_code == 0, r.output
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
         assert not store.exists(root_path, "obj:cache"), (
-            "reset --force must purge the staging directory"
+            "discard --force must purge the staging directory"
         )
         assert not cache_dir.exists(), (
-            "reset must purge `ots-cache/` (no leftover cached `.ots` blobs)"
+            "discard must purge `ots-cache/` (no leftover cached `.ots` blobs)"
         )
         assert not cache.exists()
 
 
-class TestResetWarnMessage:
+class TestDiscardWarnMessage:
     def test_refusal_message_names_active_content_batch_status_command(
         self,
         runner: CliRunner,
@@ -372,7 +374,7 @@ class TestResetWarnMessage:
             submissions=(_submission("a" * 64, status="submitted", batch_id=batch_id),),
         )
 
-        r = _invoke(runner, storage_root, staging, "reset", "obj:batch")
+        r = _invoke(runner, storage_root, staging, "discard", "obj:batch")
 
         assert r.exit_code != 0, r.output
         assert batch_id in r.output
@@ -401,7 +403,7 @@ class TestResetWarnMessage:
             ),
         )
 
-        r = _invoke(runner, storage_root, staging, "reset", "obj:inventory-batch")
+        r = _invoke(runner, storage_root, staging, "discard", "obj:inventory-batch")
 
         assert r.exit_code != 0, r.output
         assert batch_id in r.output
@@ -431,7 +433,7 @@ class TestResetWarnMessage:
             inventory=_inv_proof(),
         )
 
-        r = _invoke(runner, storage_root, staging, "reset", "obj:warn", "--force")
+        r = _invoke(runner, storage_root, staging, "discard", "obj:warn", "--force")
         assert r.exit_code == 0, r.output
 
         out = r.output
@@ -453,8 +455,8 @@ class TestResetWarnMessage:
         assert "proofs=3" in lower
 
 
-class TestNonOtsResetUnchanged:
-    def test_non_ots_reset_does_not_require_force(
+class TestNonOtsDiscardUnchanged:
+    def test_non_ots_discard_does_not_require_force(
         self,
         runner: CliRunner,
         storage_root: Path,
@@ -471,7 +473,7 @@ class TestNonOtsResetUnchanged:
         root_path = str(storage_root.resolve())
         assert store.exists(root_path, "obj:plain")
 
-        r = _invoke(runner, storage_root, staging, "reset", "obj:plain")
+        r = _invoke(runner, storage_root, staging, "discard", "obj:plain")
         assert r.exit_code == 0, r.output
         assert not store.exists(root_path, "obj:plain")
         assert "--force" not in r.output

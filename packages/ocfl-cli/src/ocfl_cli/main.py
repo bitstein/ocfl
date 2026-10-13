@@ -11,6 +11,7 @@ import typer
 from ocfl_cli._appctx import install_app_ctx
 from ocfl_cli._common import DEFAULT_FS_FACTORY
 from ocfl_cli._exit import OcflGroup
+from ocfl_cli.archive.config import config_app
 from ocfl_cli.archive.diff import diff
 from ocfl_cli.archive.export import export
 from ocfl_cli.archive.info import info
@@ -21,7 +22,8 @@ from ocfl_cli.archive.purge import purge
 from ocfl_cli.archive.recover import recover
 from ocfl_cli.archive.show import show
 from ocfl_cli.archive.validate import validate
-from ocfl_cli.config import load_config
+from ocfl_cli.config import Config, load_config
+from ocfl_cli.errors import ConfigError
 from ocfl_cli.exit_codes import format_exit_code_help
 from ocfl_cli.ots.bitcoin import default_block_stream_factory, default_btc_factory
 from ocfl_cli.ots.simpleproof import default_sp_factory
@@ -86,6 +88,7 @@ app.command(rich_help_panel=STORAGE_ADMIN_PANEL)(purge)
 app.command(rich_help_panel=STORAGE_ADMIN_PANEL)(recover)
 app.command(rich_help_panel=ARCHIVE_PANEL)(show)
 app.command(rich_help_panel=STORAGE_ADMIN_PANEL)(validate)
+app.add_typer(config_app, rich_help_panel=STORAGE_ADMIN_PANEL)
 app.add_typer(stage_app, rich_help_panel=STAGING_PANEL)
 
 
@@ -127,7 +130,14 @@ def main(
     )
     ctx.ensure_object(dict)
 
-    config = load_config()
+    try:
+        config = load_config()
+    except ConfigError as e:
+        # `config path|check` diagnose a broken config instead of failing on it.
+        if ctx.invoked_subcommand != "config":
+            raise
+        config = Config()
+        ctx.obj["config_error"] = e
 
     # Resolve `-r` through config: alias → archive root. Precedence:
     # flag > OCFL_ROOT env > implicit-single-archive default.

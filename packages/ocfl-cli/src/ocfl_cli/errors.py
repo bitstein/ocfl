@@ -54,6 +54,20 @@ class ConfigError(CLIError):
     error_class = ErrorClass.CONFIG
 
 
+class ConfigCheckFailedError(CLIError):
+    """`config check`: the config or a credential does not work."""
+
+    code = "config_check_failed"
+    error_class = ErrorClass.CONFIG
+
+
+class ServiceCheckFailedError(CLIError):
+    """`config check`: a configured service cannot be reached."""
+
+    code = "service_check_failed"
+    error_class = ErrorClass.SERVICE
+
+
 class StagingError(CLIError):
     """Base class for staging-directory faults."""
 

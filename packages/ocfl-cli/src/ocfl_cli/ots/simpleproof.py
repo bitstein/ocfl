@@ -64,6 +64,7 @@ class SimpleProofCreds:
 _SUBMIT_PATH = "/api/proof/timestamp/hashes"
 _VERIFY_PATH = "/api/v2/proofs/verify-batches"
 _JOBS_PATH = "/api/v2/proofs/jobs"
+_CATEGORIES_PATH = "/api/entity/proofCategories"
 SUBMIT_CHUNK_SIZE = 1000
 VERIFY_BATCH_CHUNK_SIZE = 1000
 
@@ -243,6 +244,22 @@ class SimpleProofHttpClient:
             raise SimpleProofTransient(
                 f"SimpleProof transport error: {type(exc).__name__}"
             ) from exc
+
+    def check_access(self) -> None:
+        """`GET /api/entity/proofCategories`: read-only, uses the access token.
+
+        Raises `SimpleProofAuthError` on 401/403. The API key (verify jobs)
+        has no read-only endpoint, so it is not checked here.
+        """
+        retry(
+            lambda: self._request(
+                "GET",
+                self._base_url + _CATEGORIES_PATH,
+                headers={"x-access-token": self._creds.access_token},
+            ),
+            sleep=self._sleep,
+            attempts=self._attempts,
+        )
 
     def submit_hashes(self, digests: list[str], category_id: int) -> SubmitResult:
         all_digests: list[str] = []

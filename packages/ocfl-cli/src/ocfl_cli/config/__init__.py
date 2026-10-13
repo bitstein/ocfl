@@ -11,7 +11,12 @@ from pydantic import BaseModel, ValidationError
 from pydantic_settings import BaseSettings
 
 from ocfl_cli.config.archive import ArchiveConfig, validate_digest_name
-from ocfl_cli.config.ots import BitcoinConfig, SimpleProofConfig, env_file_path
+from ocfl_cli.config.ots import (
+    BitcoinConfig,
+    SimpleProofConfig,
+    env_file_path,
+    user_env_file_path,
+)
 from ocfl_cli.errors import ConfigError
 
 if TYPE_CHECKING:
@@ -23,10 +28,17 @@ __all__ = [
     "Config",
     "ConfigError",
     "SimpleProofConfig",
+    "check_env_file",
     "config_path",
     "env_file_path",
     "load_config",
+    "redacted",
+    "user_env_file_path",
 ]
+
+# Values of these keys are secrets: `redacted` never shows them.
+_SECRET_KEYS = frozenset({"access_token", "api_key", "rpc_user", "rpc_password"})
+REDACTED = "<redacted>"
 
 
 @dataclass(frozen=True)
@@ -72,7 +84,7 @@ def load_config(path: Path | None = None) -> Config:
     """Load config from *path* (default: `config_path()`). Missing file → empty."""
     if path is None:
         path = config_path()
-    _check_env_file_perms()
+    check_env_file()
     if not path.is_file():
         return Config()
     try:
@@ -174,7 +186,8 @@ def _reject_forbidden_keys[T: BaseSettings](
             )
 
 
-def _check_env_file_perms() -> None:
+def check_env_file() -> None:
+    """Refuse a secrets file that is missing (when named) or not mode 0600."""
     path = env_file_path()
     if path is None:
         return
@@ -191,6 +204,27 @@ def _check_env_file_perms() -> None:
             f"{path}: mode {mode & 0o777:o} is too permissive for a secrets file; "
             f"chmod 600 {path}"
         )
+
+
+def redacted(cfg: Config) -> dict[str, Any]:
+    """The effective config as plain data, every secret replaced by `REDACTED`."""
+
+    def section(model: BaseModel | None) -> dict[str, Any] | None:
+        if model is None:
+            return None
+        data = model.model_dump(mode="json")
+        return {k: REDACTED if k in _SECRET_KEYS else v for k, v in data.items()}
+
+    return {
+        "path": str(cfg.path) if cfg.path is not None else None,
+        "defaults": {
+            "digest": cfg.defaults_digest,
+            "suppress": list(cfg.defaults_suppress),
+        },
+        "archives": {name: section(archive) for name, archive in cfg.archives.items()},
+        "simpleproof": section(cfg.simpleproof),
+        "bitcoin": section(cfg.bitcoin),
+    }
 
 
 def _format_validation_error(e: ValidationError, path: Path, label: str) -> str:

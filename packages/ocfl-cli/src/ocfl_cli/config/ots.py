@@ -16,7 +16,12 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-__all__ = ["BitcoinConfig", "SimpleProofConfig", "env_file_path"]
+__all__ = [
+    "BitcoinConfig",
+    "SimpleProofConfig",
+    "env_file_path",
+    "user_env_file_path",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +29,17 @@ _PRIVATE_HOST_SUFFIXES = (".ts.net", ".local")
 _TAILSCALE_CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 
+def user_env_file_path() -> Path:
+    """The default secrets file, `.env` next to the default `config.toml`."""
+    return user_config_path("ocfl") / ".env"
+
+
 def env_file_path() -> Path | None:
     """Return the configured dotenv path when one exists."""
     override = os.environ.get("OCFL_ENV_FILE")
     if override:
         return Path(override)
-    default = user_config_path("ocfl") / ".env"
+    default = user_env_file_path()
     return default if default.is_file() else None
 
 

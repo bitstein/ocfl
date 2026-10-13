@@ -257,7 +257,7 @@ def apply_metadata_ots_regression(staging_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Staging Area use cases behind `stage new|metadata|add|mv|rm|ls|reset`.
+# Staging Area use cases behind `stage new|metadata|add|mv|rm|ls|discard`.
 # ---------------------------------------------------------------------------
 
 
@@ -647,7 +647,7 @@ def list_entries(resolved: StagingResolved, object_id: str) -> list[tuple[str, s
     return sorted((p, d) for d, paths in state.items() for p in paths)
 
 
-def _active_reset_batch_ids(state: OtsState) -> tuple[str, ...]:
+def _active_batch_ids(state: OtsState) -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(
             submission.batch_id
@@ -658,7 +658,7 @@ def _active_reset_batch_ids(state: OtsState) -> tuple[str, ...]:
     )
 
 
-def reset_staging(
+def discard_staging(
     store: StagingStore, root_path: str, object_id: str, *, force: bool
 ) -> bool:
     """Delete the Staging Area; False when there is none.
@@ -679,7 +679,7 @@ def reset_staging(
         if any(n for _, n in counts):
             phase = state.phase.value
             summary = ", ".join(f"{k}={v}" for k, v in counts)
-            active_batch_ids = _active_reset_batch_ids(state)
+            active_batch_ids = _active_batch_ids(state)
             batch_hint = ""
             if active_batch_ids:
                 batch_id = active_batch_ids[0]
@@ -689,12 +689,12 @@ def reset_staging(
                 )
             if not force:
                 raise CLIError(
-                    f"reset would discard persisted OTS progress at phase "
+                    f"discard would drop persisted OTS progress at phase "
                     f"{phase!r} ({summary}){batch_hint}; "
                     f"re-run with --force to proceed"
                 )
             logger.warning(
-                "reset --force discarding OTS progress at phase %r: %s",
+                "discard --force dropping OTS progress at phase %r: %s",
                 phase,
                 summary,
             )

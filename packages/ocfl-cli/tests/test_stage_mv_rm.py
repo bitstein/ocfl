@@ -691,7 +691,7 @@ class TestOtsCacheNotPurgedOnRegression:
         assert load_ots(sd).phase is Phase.DRAFTING
         assert cache.is_file(), (
             "ots-cache/ entries must NOT be purged on regression "
-            "(content-addressed by digest; only purged on commit/reset)"
+            "(content-addressed by digest; only purged on commit/discard)"
         )
 
 

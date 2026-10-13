@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from rich.console import Console
 
     from ocfl_cli.config import ArchiveConfig, Config
+    from ocfl_cli.errors import ConfigError
     from ocfl_cli.ports import (
         BitcoinRPC,
         BlockStreamFactory,
@@ -229,6 +230,11 @@ def root(ctx: typer.Context) -> str | None:
 
 def config(ctx: typer.Context) -> Config:
     return cast("Config", _required(ctx, "config"))
+
+
+def config_error(ctx: typer.Context) -> ConfigError | None:
+    """Why the config did not load, for the commands that run anyway."""
+    return cast("ConfigError | None", _obj(ctx).get("config_error"))
 
 
 def archive(ctx: typer.Context) -> ArchiveConfig | None:

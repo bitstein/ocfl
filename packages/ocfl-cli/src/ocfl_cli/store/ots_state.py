@@ -100,7 +100,7 @@ def load_ots(staging: Path) -> OtsState:
         except KeyError:
             raise StagingError(
                 f"{path}: no migration registered for schema v{i} → v{i + 1}; "
-                "discard the staging (stage reset --force) and stage again"
+                "discard the staging (`stage discard --force`) and stage again"
             ) from None
         raw = migrate(raw)
         raw["schema_version"] = i + 1
@@ -145,7 +145,7 @@ def apply_category_id(state: OtsState, cfg_category_id: int) -> int:
         logger.warning(
             "category_id drift: persisted=%d, config=%d; using persisted "
             "value for this staging session (config applies to next fresh "
-            "staging after commit/reset)",
+            "staging after commit/discard)",
             state.category_id,
             cfg_category_id,
         )

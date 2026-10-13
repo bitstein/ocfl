@@ -18,11 +18,11 @@ A Proof commits to a digest, not to a path or a Phase. The old `ots.json` kept c
 - **Key proofs by logical path.** Rejected: a proof is about bytes; paths move, and the extension spec already reads proofs by state digest.
 - **Two tables (content by digest, inventory by version).** Rejected: the inventory proof is also just a proof of a digest, and two tables kept the two workflows apart (roadmap §6.1).
 - **Reuse an inventory proof by trying every earlier `created`.** Rejected for now: one `created` covers edit → revert; more is bookkeeping for a rare case.
-- **Migrate v1 files.** Rejected: there is no production archive yet, so a v1 Staging Area is discarded (`stage reset --force`) and staged again.
+- **Migrate v1 files.** Rejected: there is no production archive yet, so a v1 Staging Area is discarded (`stage discard --force`; `stage reset --force` before roadmap §7) and staged again.
 
 ## Consequences
 
-- `ots.json` schema 2 is not readable by older CLIs, and v1 is refused with a pointer to `stage reset --force`.
+- `ots.json` schema 2 is not readable by older CLIs, and v1 is refused with a pointer to `stage discard --force` (`stage reset --force` before roadmap §7).
 - A Staging Area's proofs table only grows until commit or discard.
 - Every submission records its `target`.
 - Validators are unaffected: the committed object is what the extension spec checks, and the lib still refuses a commit with a missing, invalid or pending content proof.

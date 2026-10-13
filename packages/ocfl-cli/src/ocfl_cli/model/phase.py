@@ -125,8 +125,8 @@ _TRANSITIONS: dict[tuple[Phase, str], Any] = {
             strict=True,
         )
     ),
-    # reset / status: always legal, phase unchanged.
-    **{(p, c): _STAY for c in ("reset", "status") for p in _EDITABLE},
+    # discard / status: always legal, phase unchanged.
+    **{(p, c): _STAY for c in ("discard", "status") for p in _EDITABLE},
 }
 
 

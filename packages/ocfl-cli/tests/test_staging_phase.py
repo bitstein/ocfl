@@ -10,7 +10,7 @@ Outcomes per spec:
 - regress-...: returns Phase.DRAFTING (state-mutation upstream)
 - noop:        returns same phase (idempotent)
 - err:         raises PhaseError
-- reset/status: always succeed (return same phase)
+- discard/status: always succeed (return same phase)
 
 Matrix (rows = command; cols = D/CP/CU/IP/IU; cells = stay|advance-X|regress|noop|err):
 
@@ -26,7 +26,7 @@ Matrix (rows = command; cols = D/CP/CU/IP/IU; cells = stay|advance-X|regress|noo
 | upgrade inventory                | err | err | err | IU  |noop |
 | retry inventory                  | err | err | err |stay | err |
 | commit (ots path)                | err | err | err | err |COMM |
-| reset                            |stay |stay |stay |stay |stay |
+| discard                          |stay |stay |stay |stay |stay |
 | status                           |stay |stay |stay |stay |stay |
 
 The "stay-or-advance" cells (upgrade content at content-pending)
@@ -112,12 +112,12 @@ MATRIX: dict[tuple[Phase, str], Phase | str] = {
     (CU, "commit (ots path)"): ERR,
     (IP, "commit (ots path)"): ERR,
     (IU, "commit (ots path)"): COMM,
-    # reset — always legal in any phase
-    (D, "reset"): D,
-    (CP, "reset"): CP,
-    (CU, "reset"): CU,
-    (IP, "reset"): IP,
-    (IU, "reset"): IU,
+    # discard — always legal in any phase
+    (D, "discard"): D,
+    (CP, "discard"): CP,
+    (CU, "discard"): CU,
+    (IP, "discard"): IP,
+    (IU, "discard"): IU,
     # status — always legal, read-only
     (D, "status"): D,
     (CP, "status"): CP,
