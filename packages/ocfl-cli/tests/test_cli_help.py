@@ -23,6 +23,14 @@ def test_root_help_groups_commands_and_documents_exit_codes(
         assert re.sub(r"\s+", " ", line).strip() in normalized_output
 
 
+def test_root_help_lists_one_exit_code_per_line(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["--help"], terminal_width=120)
+
+    lines = [line.strip() for line in result.output.splitlines()]
+    for doc in EXIT_CODE_DOCS:
+        assert f"{int(doc.code)}  {doc.description}" in lines, result.output
+
+
 def test_timestamp_help_uses_ots_panel(runner: CliRunner) -> None:
     result = runner.invoke(app, ["stage", "--help"])
 

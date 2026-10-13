@@ -71,7 +71,8 @@ app = typer.Typer(
     cls=OcflGroup,
     name="ocfl",
     help="CLI for managing an OCFL archive.",
-    epilog=format_exit_code_help(),
+    # Rich help joins single newlines in an epilog; double ones break the line.
+    epilog=format_exit_code_help().replace("\n", "\n\n"),
     no_args_is_help=True,
 )
 
