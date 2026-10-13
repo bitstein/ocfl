@@ -5,6 +5,10 @@ No release is published yet, so every entry below is unreleased and may still ch
 
 ## [Unreleased]
 
+### Validation
+
+- `validate_root` takes `chain: ots.ChainCheck | None` like `validate_object`: with it, every object's OTS proofs are also checked against Bitcoin (E906, W903). Without it, nothing changes.
+
 ### Public API
 
 - Public modules are `ocfl_lib`, `ocfl_lib.fs`, `ocfl_lib.fs.s3`, `ocfl_lib.ots` and `ocfl_lib.validation`. Every other module is private (`_`-prefixed). Import from the public modules only.

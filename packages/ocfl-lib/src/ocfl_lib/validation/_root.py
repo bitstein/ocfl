@@ -13,6 +13,7 @@ from ocfl_lib.validation._object import validate_object
 from ocfl_lib.validation._report import FindingCollector
 
 if TYPE_CHECKING:
+    from ocfl_lib import ots
     from ocfl_lib.fs._protocols import FileWalker
     from ocfl_lib.validation._report import ValidationReport
 
@@ -47,11 +48,13 @@ def validate_root(
     validate_objects: bool = True,
     check_digests: bool = True,
     max_errors: int = 100,
+    chain: ots.ChainCheck | None = None,
 ) -> ValidationReport:
     """Validate an OCFL storage root and (optionally) every object in it.
 
     Keeps every object's findings, valid or not. Stops after `max_errors`
-    invalid objects and sets `truncated`.
+    invalid objects and sets `truncated`. With `chain`, each object's OTS
+    proofs are also checked against Bitcoin, as in `validate_object`.
     """
     result = FindingCollector(path=path)
     summary = _RootSummary()
@@ -63,6 +66,7 @@ def validate_root(
         validate_objects=validate_objects,
         check_digests=check_digests,
         max_errors=max_errors,
+        chain=chain,
     )
     return result.report(
         objects_checked=summary.objects_checked,
@@ -80,6 +84,7 @@ def _validate_root(
     validate_objects: bool,
     check_digests: bool,
     max_errors: int,
+    chain: ots.ChainCheck | None,
 ) -> None:
     root_spec: Spec | None = None
 
@@ -167,6 +172,7 @@ def _validate_root(
             check_digests=check_digests,
             max_errors=max_errors,
             root_spec=root_spec,
+            chain=chain,
         )
 
 
@@ -179,13 +185,16 @@ def _walk_and_validate(
     check_digests: bool,
     max_errors: int,
     root_spec: Spec | None,
+    chain: ots.ChainCheck | None,
 ) -> None:
     """Walk storage root hierarchy, find objects, validate them."""
     obj_paths = _walk_hierarchy(fsys, root_path, result, root_spec)
 
     for obj_path in obj_paths:
         summary.objects_checked += 1
-        obj_report = validate_object(fsys, obj_path, check_digests=check_digests)
+        obj_report = validate_object(
+            fsys, obj_path, check_digests=check_digests, chain=chain
+        )
         result.extend(obj_report.findings)
         if obj_report.is_valid:
             summary.objects_valid += 1

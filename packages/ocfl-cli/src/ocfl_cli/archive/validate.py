@@ -1,6 +1,7 @@
 """ocfl validate command."""
 
 import json
+from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
@@ -9,7 +10,7 @@ from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import open_location, open_root, output_json, resolve_root
 from ocfl_cli._exit import error_line
-from ocfl_cli.errors import ConfigError, ErrorContext
+from ocfl_cli.errors import ConfigError, ErrorContext, UsageError
 from ocfl_cli.workflow import validation as wf_validation
 from ocfl_lib import (
     Finding,
@@ -30,6 +31,18 @@ if TYPE_CHECKING:
     from ocfl_lib.fs import FS, FileWalker
 
 
+class OtsMode(StrEnum):
+    """How far `validate` checks the OTS extension's proofs.
+
+    Every mode runs the extension's own checks (the lib always does); the
+    modes differ only in whether the proofs are also checked against Bitcoin.
+    """
+
+    AUTO = "auto"  # chain when [bitcoin] is configured, else local
+    LOCAL = "local"  # the proofs' structure and digests only
+    CHAIN = "chain"  # also against the configured Bitcoin node
+
+
 def validate(
     ctx: typer.Context,
     object_id: Annotated[
@@ -39,26 +52,57 @@ def validate(
         bool,
         typer.Option("--no-check-digests", help="Skip content digest verification."),
     ] = False,
-    verify_ots: Annotated[
-        bool,
+    ots_mode: Annotated[
+        OtsMode | None,
         typer.Option(
-            "--verify-ots/--no-verify-ots",
+            "--ots",
             help=(
-                "Walk OTS attestation chain to Bitcoin when the "
-                f"{ots.EXTENSION_NAME} extension is present (default on)."
+                f"Checks of the {ots.EXTENSION_NAME} proofs: auto (chain when "
+                "[bitcoin] is configured, else local), local (no Bitcoin node), "
+                "or chain (against Bitcoin). Default: auto."
             ),
         ),
-    ] = True,
+    ] = None,
+    verify_ots: Annotated[
+        bool | None,
+        # The old spelling: --verify-ots is --ots=chain, --no-verify-ots
+        # --ots=local.
+        typer.Option("--verify-ots/--no-verify-ots", hidden=True),
+    ] = None,
 ) -> None:
     """Validate an OCFL storage root or a specific object."""
     as_json = appctx.json_mode(ctx)
     check_digests = not no_check_digests
     suppress = _suppressed_codes(ctx)
+    if verify_ots is not None:
+        if ots_mode is not None:
+            raise UsageError("--ots and --verify-ots/--no-verify-ots conflict")
+        ots_mode = OtsMode.CHAIN if verify_ots else OtsMode.LOCAL
+    chain = _chain_for(ctx, ots_mode or OtsMode.AUTO)
 
     if object_id is not None:
-        _validate_object(ctx, object_id, check_digests, as_json, suppress, verify_ots)
+        _validate_object(ctx, object_id, check_digests, as_json, suppress, chain)
     else:
-        _validate_root(ctx, check_digests, as_json, suppress)
+        _validate_root(ctx, check_digests, as_json, suppress, chain)
+
+
+def _chain_for(ctx: typer.Context, mode: OtsMode) -> ots.ChainCheck | None:
+    """The Bitcoin check `mode` asks for; None means local checks only.
+
+    `auto` uses the node when `[bitcoin]` is configured; a section that is
+    present but does not load is still a config error (exit 6).
+    """
+    cfg = appctx.config(ctx)
+    match mode:
+        case OtsMode.LOCAL:
+            return None
+        case OtsMode.CHAIN:
+            return _chain_check(cfg, appctx.btc_rpc_factory(ctx))
+        case OtsMode.AUTO:
+            cfg.require("bitcoin")
+            if cfg.bitcoin is None:
+                return None
+            return _chain_check(cfg, appctx.btc_rpc_factory(ctx))
 
 
 def _suppressed_codes(ctx: typer.Context) -> frozenset[str]:
@@ -71,6 +115,7 @@ def _validate_root(
     check_digests: bool,
     json_mode: bool,
     suppress: frozenset[str],
+    chain: ots.ChainCheck | None,
 ) -> None:
     path = resolve_root(appctx.root(ctx))
     emit_progress = _should_emit_progress(ctx)
@@ -84,7 +129,18 @@ def _validate_root(
     digest_status = "content digests enabled" if check_digests else "digests skipped"
     _emit(ctx, f"Validating objects ({digest_status})...")
 
-    report = validate_root(fs, "", check_digests=check_digests)
+    if chain is not None:
+        _emit(
+            ctx,
+            f"Verifying OTS attestations (min {chain.confirmations} confirmations)...",
+        )
+    else:
+        _emit(ctx, "OTS proofs: local checks only (no Bitcoin node)")
+    try:
+        report = validate_root(fs, "", check_digests=check_digests, chain=chain)
+    except OcflError as e:
+        # The chain could not be checked: a failure, not a finding (no E906).
+        raise ErrorContext(e, prefix="cannot verify OTS attestations: ") from e
     emit_root_object_results(
         appctx.err_console(ctx), emit_progress, fs, object_ids, report
     )
@@ -106,7 +162,7 @@ def _validate_object(
     check_digests: bool,
     json_mode: bool,
     suppress: frozenset[str],
-    verify_ots: bool,
+    chain: ots.ChainCheck | None,
 ) -> None:
     root, fs = open_root(ctx)
     obj_path = root.object_path(object_id)
@@ -116,13 +172,15 @@ def _validate_object(
     if check_digests:
         _emit(ctx, "Verifying content digests...")
 
-    chain = None
-    if verify_ots and _ots_extension_present(fs, obj_path):
-        chain = _chain_check(appctx.config(ctx), appctx.btc_rpc_factory(ctx))
+    if not _ots_extension_present(fs, obj_path):
+        chain = None
+    elif chain is not None:
         _emit(
             ctx,
             f"Verifying OTS attestations (min {chain.confirmations} confirmations)...",
         )
+    else:
+        _emit(ctx, "OTS proofs: local checks only (no Bitcoin node)")
     try:
         report = validate_object(fs, obj_path, check_digests=check_digests, chain=chain)
         if chain is not None and _should_emit_progress(ctx):
@@ -159,7 +217,7 @@ def _chain_check(cfg: Config | None, btc_factory: BtcRpcFactory) -> ots.ChainChe
             if cfg is not None and cfg.path is not None
             else "in your ocfl config"
         )
-        raise ConfigError(f"--verify-ots requires [bitcoin] section {where}")
+        raise ConfigError(f"--ots=chain requires [bitcoin] section {where}")
     source = wf_validation.chain_source(btc_factory(cfg))
     return ots.ChainCheck(source, cfg.bitcoin.confirmations)
 

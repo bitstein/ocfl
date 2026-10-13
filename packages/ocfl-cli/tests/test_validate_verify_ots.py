@@ -391,29 +391,57 @@ class TestVerifyOtsProgress:
 
 
 class TestMissingBitcoinConfig:
-    def test_missing_bitcoin_config_default_on_raises_config_error(
+    def test_auto_without_bitcoin_config_checks_locally(
         self,
         runner: CliRunner,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Extension present + default-on + no ``[bitcoin]`` section → exit 6.
-
-        The error message must mention ``[bitcoin]`` so the operator
-        knows which section to add.
-        """
-        # Config has [simpleproof] only; no [bitcoin] section.
+        """No ``[bitcoin]`` section: the default ``--ots=auto`` runs the local
+        checks, says so, and the object is still judged by them (exit 0)."""
         _write_config(tmp_path, monkeypatch, body=_SP_OK)
-
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
 
         r = runner.invoke(app, ["--root", str(root), "validate", "obj-test"])
+
+        assert r.exit_code == 0, r.output
+        assert "local checks only" in r.stderr
+
+    @pytest.mark.parametrize("flag", ["--ots=chain", "--verify-ots"])
+    def test_chain_without_bitcoin_config_raises_config_error(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        flag: str,
+    ) -> None:
+        """``--ots=chain`` (or the old ``--verify-ots``) needs ``[bitcoin]``:
+        exit 6, and the message names the section."""
+        _write_config(tmp_path, monkeypatch, body=_SP_OK)
+        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+
+        r = runner.invoke(app, ["--root", str(root), "validate", "obj-test", flag])
+
         assert r.exit_code == 6, r.output
-        # Hint must reference the missing section by name.
-        combined = (r.stdout or "") + (r.stderr or "") + (r.output or "")
-        assert "[bitcoin]" in combined, (
-            f"ConfigError hint must mention `[bitcoin]`; got: {combined!r}"
+        assert "[bitcoin]" in r.output
+
+    def test_ots_and_verify_ots_conflict(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write_config(tmp_path, monkeypatch, body=_SP_OK)
+        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        r = runner.invoke(
+            app,
+            [
+                "--root",
+                str(root),
+                "validate",
+                "obj-test",
+                "--ots=chain",
+                "--no-verify-ots",
+            ],
         )
+        assert r.exit_code == 2, r.output
 
 
 # =========================================================================== #
@@ -835,3 +863,67 @@ class TestRegtestVerifyOtsEndToEnd:
         data = json.loads(r.stdout)
         assert data["valid"] is True, data
         assert data["errors"] == []
+
+
+# =========================================================================== #
+# --ots at root level (roadmap §7 follow-up, issues 16 and 34)
+# =========================================================================== #
+
+
+class TestRootLevelChain:
+    def _bad_chain_root(self, runner, btc_fake, tmp_path, monkeypatch) -> Path:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_btc(runner, btc_fake.rpc)
+        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        btc_fake.rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, "00" * 32)
+        return root
+
+    @pytest.mark.parametrize("flag", [[], ["--ots=auto"], ["--ots=chain"]])
+    def test_root_validate_walks_each_objects_chain(
+        self,
+        runner: CliRunner,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        flag: list[str],
+    ) -> None:
+        root = self._bad_chain_root(runner, btc_fake, tmp_path, monkeypatch)
+
+        r = runner.invoke(app, ["--root", str(root), "--json", "validate", *flag])
+
+        assert r.exit_code == 1, r.output
+        codes = {e["code"] for e in json.loads(r.stdout)["errors"]}
+        assert "E906" in codes, codes
+
+    def test_root_validate_local_skips_the_chain(
+        self,
+        runner: CliRunner,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        root = self._bad_chain_root(runner, btc_fake, tmp_path, monkeypatch)
+
+        r = runner.invoke(
+            app, ["--root", str(root), "--json", "validate", "--ots=local"]
+        )
+
+        assert r.exit_code == 0, r.output
+        assert json.loads(r.stdout)["valid"] is True
+
+    def test_lib_validate_root_takes_the_chain_check(
+        self, btc_fake, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ocfl_cli.workflow.validation import chain_source
+        from ocfl_lib import LocalFS, ots, validate_root
+
+        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        btc_fake.rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, "00" * 32)
+        chain = ots.ChainCheck(chain_source(btc_fake.rpc), MIN_CONFS)
+
+        fs = LocalFS(root)
+        assert validate_root(fs, "").is_valid
+        report = validate_root(fs, "", chain=chain)
+        assert "E906" in {f.code for f in report.errors}

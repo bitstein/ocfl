@@ -19,7 +19,7 @@ The 37 issues of `ocfl-rs/docs/port/python-cli-surface.md` §6, one decision eac
 | 13 | `--force` has three meanings | adopt (7.4) | `purge -y/--yes` skips the prompt (`--force` is kept there only as a hidden alias); elsewhere `--force` overrides a safety check (`discard`, `batch rm`). |
 | 14 | Short-only flags (`log -n`, `stage rm -r`) | adopt (7.4) | `log -n/--limit`, `stage rm -R/--recursive`; `-r` is dropped because it clashed with the global `-r/--root`. |
 | 15 | `-V/--version` means the object version, and the program has no version flag | adopt (7.4) | `ls` and `export` take `-V/--object-version`; `ocfl --version` prints the program version (33). `show OBJ [VERSION]` stays positional, like git. |
-| 16 | `validate` flag styles clash; default-on `--verify-ots` needs a node | reject (for now) | An `--ots=auto\|local\|chain\|off` switch changes what `validate` reports (E906, W903) and belongs to the validator, not the staging surface. Deferred to its own step with extension-spec tests. |
+| 16 | `validate` flag styles clash; default-on `--verify-ots` needs a node | adopt (follow-up) | `--ots=auto\|local\|chain`, default `auto`: chain checks when `[bitcoin]` is configured, else local checks and a note. No `off` mode: the extension's own checks always run, so a validator never reports less. |
 | 17 | `--digest` offers algorithms it then refuses | adopt (7.4) | The choices are sha512 and sha256, the content digests OCFL 1.1 allows and the CLI accepts. |
 | 18 | `reset` is a misleading name; nothing staged exits 0 | adopt (7.2) | `stage discard`. Nothing staged still exits 0 with a note, so it is safe to run twice. |
 | 19 | `stage ls --json` is shaped unlike `ocfl ls --json` | adopt (7.4) | Always `[{"path"[, "digest"]}]`. |
@@ -37,7 +37,7 @@ The 37 issues of `ocfl-rs/docs/port/python-cli-surface.md` §6, one decision eac
 | 31 | No config inspection or connectivity check | adopt (7.2) | `ocfl config path\|show\|check`. |
 | 32 | A broken `[simpleproof]`/`[bitcoin]` section blocks every command | adopt (7.2, 7.4) | Such a section fails only the commands that need it (7.4); `config path` and `config check` run even when the config file does not load (7.2). |
 | 33 | No `ocfl --version` | adopt (7.4) | Root `--version`. |
-| 34 | `validate` has no root-level OTS walk and no content-proof chain walk | reject (for now) | Like 16, a validator change outside the staging surface; deferred to the same validate step. |
+| 34 | `validate` has no root-level OTS walk and no content-proof chain walk | adopt (follow-up) | Root-level `validate` checks each object's proofs against Bitcoin (`validate_root(chain=...)`). What the chain check covers is unchanged: the same as object-level `validate`. |
 | 35 | `ocfl-index` is a separate binary | reject | It is its own package with its own consumers (ADR-0002); folding it into `ocfl` is a packaging decision for the index work, not part of this review. |
 | 36 | `export --to -` silently writes only the first match | adopt (7.4) | More than one match is a usage error (exit 2). |
 | 37 | `stage commit` takes one object | reject | `stage batch commit` commits many; committing several unrelated objects in one run adds partial-failure rules for what a shell loop already does, and a commit stays a deliberate step (ocfl-rs SPEC D17). |

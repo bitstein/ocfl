@@ -5,6 +5,11 @@ No release is published yet, so every entry below is unreleased and may still ch
 
 ## [Unreleased]
 
+### Validate (issues 16 and 34 of docs/cli-surface-review.md)
+
+- `ocfl validate --ots=auto|local|chain` replaces default-on `--verify-ots`. `auto` (the default) checks the OTS proofs against Bitcoin when `[bitcoin]` is configured and otherwise runs the local checks and says so on stderr (it was exit 6). `chain` needs `[bitcoin]` (exit 6 without). `local` never asks a node. Every mode runs the extension's own checks; there is no mode that skips them. `--verify-ots`/`--no-verify-ots` still work (hidden) as `chain`/`local`; with `--ots` they are a usage error.
+- Root-level `ocfl validate` checks every object's proofs against Bitcoin too (it ignored the chain).
+
 ### CLI surface (docs/roadmap.md §7)
 
 - Verbs instead of mode flags: `stage timestamp OBJ`, `stage upgrade OBJ [--watch]` and `stage retry OBJ` replace `stage timestamp content|inventory OBJ [--upgrade [--watch] | --retry]`. The Timestamp Target comes from the Phase; `--expect content|inventory` asserts it (a mismatch is still exit 3). `--watch` means the same on both verbs: do the verb, then upgrade on each block until the target's proofs are final. `stage timestamp --allow-missing-metadata` is the only place that flag exists. The old forms are gone (no release was published, so no aliases); so are the flag-combination usage errors.
