@@ -28,15 +28,18 @@ class ExitCodeDoc:
 
 EXIT_CODE_DOCS: tuple[ExitCodeDoc, ...] = (
     ExitCodeDoc(ExitCode.SUCCESS, "success"),
-    ExitCodeDoc(ExitCode.GENERIC, "generic CLI/domain error"),
+    ExitCodeDoc(ExitCode.GENERIC, "error: not found, invalid, or a service failed"),
     ExitCodeDoc(ExitCode.USAGE, "usage error"),
-    ExitCodeDoc(ExitCode.PHASE, "staging phase error"),
-    ExitCodeDoc(ExitCode.LOCK_TIMEOUT, "staging lock timeout; retry with backoff"),
+    ExitCodeDoc(
+        ExitCode.PHASE,
+        "state error: wrong staging phase, claim lost, or recovery needed",
+    ),
+    ExitCodeDoc(ExitCode.LOCK_TIMEOUT, "busy: a lock is held; retry with backoff"),
     ExitCodeDoc(
         ExitCode.ATTESTATION,
-        "attestation mismatch or Bitcoin reorg; retry after re-fetch",
+        "halt: attestation mismatch or Bitcoin reorg; retry after re-fetch",
     ),
-    ExitCodeDoc(ExitCode.CONFIG, "configuration error"),
+    ExitCodeDoc(ExitCode.CONFIG, "configuration error, including credentials"),
     ExitCodeDoc(ExitCode.INTERRUPTED, "interrupted"),
 )
 
