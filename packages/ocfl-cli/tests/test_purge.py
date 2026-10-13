@@ -50,3 +50,16 @@ class TestPurge:
             ["--root", str(storage_root), "purge", "nonexistent", "--force"],
         )
         assert result.exit_code == 1
+
+    def test_purge_yes_skips_the_prompt(self, runner: CliRunner, storage_root: Path):
+        result = runner.invoke(
+            app, ["--root", str(storage_root), "purge", "obj:test", "-y"]
+        )
+        assert result.exit_code == 0, result.output
+        fs = LocalFS(storage_root)
+        assert not StorageRoot.open(fs).get_object("obj:test").exists
+
+    def test_force_is_a_hidden_alias(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["purge", "--help"])
+        assert "--yes" in result.output and "-y" in result.output
+        assert "--force" not in result.output

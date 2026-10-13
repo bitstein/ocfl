@@ -27,12 +27,13 @@ class TestLog:
         assert v1_idx < v2_idx
 
     def test_log_limit(self, runner: CliRunner, storage_root: Path):
-        result = runner.invoke(
-            app, ["--root", str(storage_root), "log", "obj:test", "-n", "1"]
-        )
-        assert result.exit_code == 0
-        assert "v2" in result.stdout
-        assert "v1" not in result.stdout
+        for flag in ("-n", "--limit"):
+            result = runner.invoke(
+                app, ["--root", str(storage_root), "log", "obj:test", flag, "1"]
+            )
+            assert result.exit_code == 0
+            assert "v2" in result.stdout
+            assert "v1" not in result.stdout
 
     def test_log_json(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(

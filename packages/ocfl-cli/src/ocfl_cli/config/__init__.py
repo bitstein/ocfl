@@ -51,6 +51,15 @@ class Config:
     archives: dict[str, ArchiveConfig] = field(default_factory=dict)
     simpleproof: SimpleProofConfig | None = None
     bitcoin: BitcoinConfig | None = None
+    # Why a present `[simpleproof]` / `[bitcoin]` section did not load. The
+    # section is then None: only commands that need it fail (`require`).
+    section_errors: dict[str, ConfigError] = field(default_factory=dict)
+
+    def require(self, section: str) -> None:
+        """Raise the error that kept `[section]` from loading, if one did."""
+        error = self.section_errors.get(section)
+        if error is not None:
+            raise error
 
     def archive(self, name: str) -> ArchiveConfig | None:
         return self.archives.get(name)
@@ -120,20 +129,29 @@ def _build(data: dict[str, Any], path: Path) -> Config:
             f"archives.{name}",
         )
 
-    simpleproof = _build_section(
-        SimpleProofConfig,
-        data.get("simpleproof"),
-        path,
-        "simpleproof",
-        forbidden_keys=("access_token", "api_key"),
-    )
-    bitcoin = _build_section(
-        BitcoinConfig,
-        data.get("bitcoin"),
-        path,
-        "bitcoin",
-        forbidden_keys=("rpc_user", "rpc_password"),
-    )
+    # The OTS sections carry secrets from the environment; a missing or bad
+    # one fails only the commands that need the section (`Config.require`).
+    section_errors: dict[str, ConfigError] = {}
+    try:
+        simpleproof = _build_section(
+            SimpleProofConfig,
+            data.get("simpleproof"),
+            path,
+            "simpleproof",
+            forbidden_keys=("access_token", "api_key"),
+        )
+    except ConfigError as e:
+        simpleproof, section_errors["simpleproof"] = None, e
+    try:
+        bitcoin = _build_section(
+            BitcoinConfig,
+            data.get("bitcoin"),
+            path,
+            "bitcoin",
+            forbidden_keys=("rpc_user", "rpc_password"),
+        )
+    except ConfigError as e:
+        bitcoin, section_errors["bitcoin"] = None, e
 
     return Config(
         path=path,
@@ -142,6 +160,7 @@ def _build(data: dict[str, Any], path: Path) -> Config:
         archives=archives,
         simpleproof=simpleproof,
         bitcoin=bitcoin,
+        section_errors=section_errors,
     )
 
 
@@ -224,6 +243,7 @@ def redacted(cfg: Config) -> dict[str, Any]:
         "archives": {name: section(archive) for name, archive in cfg.archives.items()},
         "simpleproof": section(cfg.simpleproof),
         "bitcoin": section(cfg.bitcoin),
+        "errors": {name: str(e) for name, e in cfg.section_errors.items()},
     }
 
 

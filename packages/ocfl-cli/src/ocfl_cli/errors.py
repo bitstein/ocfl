@@ -90,10 +90,24 @@ class StagingFileChangedError(StagingError):
 
 
 class BatchFileMissingError(StagingError):
-    """No batch file exists for the requested batch id."""
+    """No batch file exists for the requested batch id (or id prefix)."""
 
     code = "batch_file_missing"
-    error_class = ErrorClass.USAGE
+    error_class = ErrorClass.NOT_FOUND
+
+
+class BatchMismatchError(StagingError):
+    """The batch cannot do this: wrong target, or another storage root."""
+
+    code = "batch_mismatch"
+    error_class = ErrorClass.STATE
+
+
+class ObjectsNotStagedError(StagingError):
+    """A batch named objects that have no Staging Area under this root."""
+
+    code = "objects_not_staged"
+    error_class = ErrorClass.NOT_FOUND
 
 
 class PhaseError(StagingError):
@@ -104,7 +118,8 @@ class PhaseError(StagingError):
 
 
 class InventoryProofMissingError(PhaseError):
-    """Inventory retry requested without a persisted inventory proof."""
+    """The staged inventory has no final proof yet, or its plan or cached
+    proof is missing: run the timestamp workflow again (not a halt)."""
 
     code = "inventory_proof_missing"
     error_class = ErrorClass.STATE

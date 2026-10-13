@@ -128,7 +128,9 @@ class TestStageRm:
 
     def test_rm_recursive(self, runner, storage_root, tmp_path):
         staging, store, root_path = _setup_staged(runner, storage_root, tmp_path)
-        result = _invoke(runner, storage_root, staging, "rm", "obj:new", "dir", "-r")
+        result = _invoke(
+            runner, storage_root, staging, "rm", "obj:new", "dir", "--recursive"
+        )
         assert result.exit_code == 0, result.output
 
         inv = store.load_inventory(root_path, "obj:new")

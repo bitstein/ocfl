@@ -59,7 +59,14 @@ def _env_file() -> Check:
     return _ok("env_file", str(path) if path is not None else "none (no secrets file)")
 
 
+def _section_error(cfg: Config, name: str) -> Check | None:
+    error = cfg.section_errors.get(name)
+    return None if error is None else _fail(name, str(error), ErrorClass.CONFIG)
+
+
 def _simpleproof(cfg: Config, sp_factory: SpClientFactory) -> Check:
+    if (failed := _section_error(cfg, "simpleproof")) is not None:
+        return failed
     if cfg.simpleproof is None:
         return _ok("simpleproof", "not configured")
     try:
@@ -72,6 +79,8 @@ def _simpleproof(cfg: Config, sp_factory: SpClientFactory) -> Check:
 
 
 def _bitcoin_rpc(cfg: Config, btc_factory: BtcRpcFactory) -> Check:
+    if (error := cfg.section_errors.get("bitcoin")) is not None:
+        return _fail("bitcoin_rpc", str(error), ErrorClass.CONFIG)
     if cfg.bitcoin is None:
         return _ok("bitcoin_rpc", "not configured")
     try:
@@ -85,6 +94,8 @@ def _bitcoin_rpc(cfg: Config, btc_factory: BtcRpcFactory) -> Check:
 
 
 def _bitcoin_zmq(cfg: Config) -> Check:
+    if "bitcoin" in cfg.section_errors:
+        return _fail("bitcoin_zmq", "[bitcoin] did not load", ErrorClass.CONFIG)
     if cfg.bitcoin is None:
         return _ok("bitcoin_zmq", "not configured")
     endpoint = cfg.bitcoin.zmq_endpoint

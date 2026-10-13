@@ -1,6 +1,7 @@
 """The block-watch loop for `stage timestamp|upgrade --watch`.
 
-Per-block invariant: under the staging lock, decide whether the chain
+One upgrade pass runs at the start (proofs already final need not wait for
+a block). Per-block invariant: under the staging lock, decide whether the chain
 moved (height jumped or stable-height tip swapped — the reorg/stale-tip
 window) and re-verify the target's cached proofs accordingly, then run one
 upgrade pass. Returns when the target's phase is reached or the user
@@ -69,6 +70,28 @@ def watch(
     )
     try:
         with stream_cm as blocks:
+            # One pass before the first block: proofs that are already final
+            # need not wait for the next one. Subscribed first, so no block
+            # is missed meanwhile.
+            try:
+                with with_lock(run.staging_dir, runtime):
+                    before = load_ots(run.staging_dir)
+                    timestamp.upgrade_locked(run, expect=rules.target)
+                    state = load_ots(run.staging_dir)
+            except LockTimeoutError as e:
+                logger.warning("staging lock contended (%s); waiting for a block", e)
+            else:
+                prior_jobs = timestamp.target_jobs(state, rules, runtime=runtime)
+                if state.phase is rules.upgraded_phase:
+                    if progress is not None:
+                        progress(
+                            "advanced",
+                            {
+                                "previous_phase": before.phase.value,
+                                "phase": state.phase.value,
+                            },
+                        )
+                    return 0
             while True:
                 if blocks.wait_for_block(timeout_ms=5000) is None:
                     continue

@@ -12,7 +12,7 @@ import typer
 
 from ocfl_cli import _appctx as appctx
 from ocfl_cli._common import open_root, output_json
-from ocfl_cli.errors import UsageError
+from ocfl_cli.errors import ObjectsNotStagedError, UsageError
 from ocfl_cli.model.phase import TimestampTarget
 from ocfl_cli.stage._app import (
     require_bitcoin,
@@ -39,7 +39,9 @@ from ocfl_cli.workflow.batch.report import (
     batch_verify_job_status_counts,
     load_batch_or_usage,
     load_batches_or_exit,
+    not_staged,
     remove_batch,
+    upgraded_objects,
 )
 
 if TYPE_CHECKING:
@@ -75,6 +77,8 @@ class _CliBatchEvents:
         self._json = appctx.json_mode(ctx)
         self._staging_root = stage_store(ctx).root
         self._resumed_by_id = resumed_by_id
+        # The batch as the last watch left it.
+        self.final: BatchFile | None = None
 
     def _emit(self, data: BatchEventOutput) -> None:
         if self._json:
@@ -171,6 +175,7 @@ class _CliBatchEvents:
             typer.echo(f"  {transition}")
 
     def watch_done(self, batch: BatchFile) -> None:
+        self.final = batch
         if self._json:
             self.summary(batch)
         elif self._resumed_by_id:
@@ -219,6 +224,17 @@ def _selected(object_ids: list[str] | None, objects_file: Path | None) -> list[s
     return selected
 
 
+def _require_staged(batch: BatchFile | None) -> None:
+    """A batch row for an object with no OTS staging needs the operator."""
+    if batch is None:
+        return
+    if missing := not_staged(batch):
+        raise ObjectsNotStagedError(
+            f"no OTS staging for {', '.join(missing)} under {batch.root_path} "
+            f"(batch {batch.batch_id})"
+        )
+
+
 def _report_submitted(ctx: typer.Context, batch: BatchFile) -> None:
     if not appctx.json_mode(ctx):
         counts = batch_counts(batch)
@@ -242,6 +258,7 @@ def _watch(
     require_simpleproof(ctx, cfg)
     require_bitcoin(ctx, cfg)
     sr, _fs = open_root(ctx)
+    events = _events(ctx, resumed_by_id=batch_id is not None)
     exit_code = drive.watch(
         stage_store(ctx),
         cfg,
@@ -254,11 +271,12 @@ def _watch(
         allow_missing_metadata=allow_missing_metadata,
         sp_factory=appctx.sp_client_factory(ctx),
         btc_factory=appctx.btc_rpc_factory(ctx),
-        events=_events(ctx, resumed_by_id=batch_id is not None),
+        events=events,
         runtime=appctx.runtime(ctx),
     )
     if exit_code:
         raise typer.Exit(exit_code)
+    _require_staged(events.final)
 
 
 def _submit(
@@ -290,6 +308,7 @@ def _submit(
     )
     events.summary(batch)
     _report_submitted(ctx, batch)
+    _require_staged(batch)
 
 
 def batch_create(
@@ -308,6 +327,13 @@ def batch_create(
         int | None,
         typer.Option("--category", help="SimpleProof category for the batch."),
     ] = None,
+    from_batch: Annotated[
+        str | None,
+        typer.Option(
+            "--from",
+            help="Inventory batches: the objects a content batch upgraded.",
+        ),
+    ] = None,
     allow_missing_metadata: Annotated[
         bool,
         typer.Option(
@@ -325,11 +351,18 @@ def batch_create(
     ] = False,
 ) -> None:
     """Create a batch of Staging Areas and submit their digests together."""
-    if allow_missing_metadata and target is TimestampTarget.CONTENT:
-        raise UsageError("--allow-missing-metadata applies to inventory batches only")
+    if target is TimestampTarget.CONTENT:
+        for flag, given in (
+            ("--allow-missing-metadata", allow_missing_metadata),
+            ("--from", from_batch is not None),
+        ):
+            if given:
+                raise UsageError(f"{flag} applies to inventory batches only")
     selected = _selected(object_ids, objects_file)
+    if from_batch is not None:
+        selected.extend(upgraded_objects(stage_store(ctx).root, from_batch))
     if not selected:
-        raise UsageError("a new batch needs OBJECT... or --objects-file")
+        raise UsageError("a new batch needs OBJECT..., --objects-file or --from")
     run = _watch if watch_flag else _submit
     run(
         ctx,
@@ -498,7 +531,7 @@ def batch_rm(
     ] = False,
 ) -> None:
     """Delete a batch's file when cleanup is safe."""
-    remove_batch(
+    removed = remove_batch(
         stage_store(ctx).root, batch_id, force=force, runtime=appctx.runtime(ctx)
     )
-    typer.echo(f"removed batch {batch_id}")
+    typer.echo(f"removed batch {removed}")

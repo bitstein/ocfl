@@ -396,7 +396,7 @@ def test_content_target_batch_is_rejected_before_commit_attempt(
     )
     result = _invoke(runner, storage_root, staging, "batch", "commit", batch.batch_id)
 
-    assert result.exit_code == 2
+    assert result.exit_code == 3  # batch_mismatch: a state error
     assert "commit batches must target inventory; got content" in result.output
 
 
@@ -416,7 +416,7 @@ def test_batch_commit_rejects_wrong_archive_root_before_commit_attempt(
     )
     result = _invoke(runner, other_root, staging, "batch", "commit", batch.batch_id)
 
-    assert result.exit_code == 2
+    assert result.exit_code == 3  # batch_mismatch: a state error
     assert f"batch {batch.batch_id} belongs to root" in result.output
     assert str(storage_root.resolve()) in result.output
     assert str(other_root.resolve()) in result.output

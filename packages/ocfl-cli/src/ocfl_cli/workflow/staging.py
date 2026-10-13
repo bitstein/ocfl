@@ -640,6 +640,24 @@ def remove_paths(
         _finalize()
 
 
+@dataclass(frozen=True, slots=True)
+class StagingSummary:
+    """One Staging Area of a storage root; `phase` is None for a plain one."""
+
+    object_id: str
+    phase: Phase | None
+
+
+def list_stagings(store: StagingStore, root_path: str) -> list[StagingSummary]:
+    """Every Staging Area of the storage root, by object id."""
+    summaries = []
+    for object_id in store.object_ids(root_path):
+        staging_dir = store.staging_path(root_path, object_id)
+        phase = load_ots(staging_dir).phase if has_ots(staging_dir) else None
+        summaries.append(StagingSummary(object_id=object_id, phase=phase))
+    return summaries
+
+
 def list_entries(resolved: StagingResolved, object_id: str) -> list[tuple[str, str]]:
     """`(logical path, digest)` pairs of the staged version, sorted by path."""
     inv = resolved.store.load_inventory(resolved.root_path, object_id)

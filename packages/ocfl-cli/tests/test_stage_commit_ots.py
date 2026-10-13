@@ -7,7 +7,7 @@ Pins attaching the inventory proof at commit time:
   ``<staging>/ots-cache/<inv_digest>.ots`` bytes, re-parse, and assert
   ``parsed.commitment_digest == plan.inventory.digest``. On mismatch /
   parse / missing → ``AttestationMismatchError`` with an actionable hint
-  to run ``stage upgrade`` (HALT, exit 5).
+  to run ``stage upgrade`` (exit 3; exit 5 only for a cached proof of other bytes).
 - Set ``plan.inventory_proof`` to the cached bytes BEFORE the commit; the
   lib writes it to
   ``extensions/NNNN-ots-timestamps/inventory.json.v<head>.ots``.
@@ -494,7 +494,7 @@ class TestStageCommitOtsMetadataGate:
 
 
 class TestStageCommitOtsCorruptedCache:
-    def test_commit_halts_when_plan_digest_does_not_match_verified_digest(
+    def test_commit_refuses_when_plan_digest_does_not_match_verified_digest(
         self,
         runner: CliRunner,
         empty_sha256_root: Path,
@@ -540,7 +540,7 @@ class TestStageCommitOtsCorruptedCache:
             ),
         )
 
-        assert r.exit_code == 5, r.output
+        assert r.exit_code == 3, r.output  # stale plan: a state error
         out = (r.output or "").lower()
         assert "does not match verified inventory digest" in out, r.output
         assert "ocfl stage timestamp obj:commit-plan-mismatch" in out, r.output
@@ -605,7 +605,7 @@ class TestStageCommitOtsCorruptedCache:
 
 
 class TestStageCommitOtsMissingCache:
-    def test_commit_halts_with_re_run_hint_when_cache_absent(
+    def test_commit_refuses_with_re_run_hint_when_cache_absent(
         self,
         runner: CliRunner,
         empty_sha256_root: Path,
@@ -635,7 +635,7 @@ class TestStageCommitOtsMissingCache:
                 "obj:commit-missing",
             ),
         )
-        assert r.exit_code == 5, r.output
+        assert r.exit_code == 3, r.output  # no cached proof: a state error
         out = (r.output or "").lower()
         assert "ocfl stage upgrade" in out, r.output
 

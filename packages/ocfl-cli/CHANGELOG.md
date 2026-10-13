@@ -18,6 +18,18 @@ No release is published yet, so every entry below is unreleased and may still ch
 - The SimpleProof client port has `check_access()` (`GET /api/entity/proofCategories` with the access token; the API key has no read-only endpoint, so it is not checked). `config.check_env_file` (was `_check_env_file_perms`), `config.redacted`, `config.user_env_file_path` and `ots.bitcoin.probe_zmq_endpoint` are new public helpers.
 - Locks (ADR-0005): every CLI lock is an exclusive `flock` (`store.locks.flock`), waited on for `Runtime.lock_timeout`, now 5 s (was 30 s), through the `Sleeper` port, then exit 4 (`lock_timeout`). The batch lock `batches/<id>.lock` is held for a whole batch run and is the lease: a second driver, `stage batch commit` or `stage batch rm` of the same batch exits 4 after 5 s. The `.driver` lease file, its heartbeat thread, refresh lock, stealing and signal handlers are gone (`DriverLease`, `with_driver_lease`, `with_batch_lock`, `installed_cli_version` removed from `store.batch`), and so is the `filelock` dependency. `with_lock`, `object_commit_lock` and `batch_lock` take the `Runtime`. A lock held by a process that died is free at once.
 - `stage batch rm` deletes the batch's lock file too (and leaves no `.driver*` files, which no longer exist).
+- The 37 issues of the old CLI surface review each have a decision (adopt or reject, and why) in `docs/cli-surface-review.md`. Beyond the items above, these changed:
+  - `stage upgrade --watch` (and `stage timestamp --watch`) runs one upgrade pass before the first block, so proofs that are already final do not wait for one.
+  - `stage batch create inventory --from C_ID` takes the objects a content batch upgraded.
+  - Batch ids accept a unique prefix (an ambiguous one is exit 2, an unknown one exit 1).
+  - A batch row for an object with no Staging Area is skipped as `not_staged` (was `committed`), one with a plain Staging Area as `not_ots`; `stage batch create|submit` then exit 1 (`objects_not_staged`) naming them, and the rows' `next` says how to stage them.
+  - `ocfl purge -y/--yes` skips the prompt (`--force` still works, hidden). `ocfl log -n/--limit`. `stage rm -R/--recursive` replaces `-r`.
+  - `ocfl ls` and `ocfl export` take `-V/--object-version` (was `-V/--version`); `ocfl --version` prints the program version.
+  - `stage new --digest` offers sha512 and sha256 only (the other choices were refused anyway).
+  - `stage ls OBJ --json` is always `[{"path"[, "digest"]}]`; `stage ls` with no object lists the root's Staging Areas (`[{"object_id", "phase"}]`, phase null for a plain one).
+  - At `stage commit`, a missing, unverified or uncached inventory proof or a stale plan is exit 3 (`inventory_proof_missing`, was 5); exit 5 is left for a cached proof that does not parse or commits to other bytes, and its help reads "operator review". A missing batch is exit 1 (`batch_file_missing`, was 2); committing a content batch or another root's batch is exit 3 (`batch_mismatch`, was 2).
+  - A `[simpleproof]` or `[bitcoin]` section that does not load (e.g. a missing secret) fails only the commands that need it (`Config.section_errors`, `Config.require`); `ocfl ls` and the other read commands run. `config show` lists the section errors and `config check` fails them (exit 6).
+  - `ocfl export --to -` with more than one matching path is a usage error (exit 2); it wrote only the first.
 
 ### Merged timestamp workflow (docs/roadmap.md §6)
 

@@ -18,7 +18,8 @@ def log(
         bool, typer.Option("--reverse", help="Show oldest first.")
     ] = False,
     num: Annotated[
-        int | None, typer.Option("-n", help="Limit number of versions shown.")
+        int | None,
+        typer.Option("--limit", "-n", help="Limit number of versions shown."),
     ] = None,
 ) -> None:
     """Show version history of an object."""

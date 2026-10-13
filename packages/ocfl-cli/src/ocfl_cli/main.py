@@ -9,7 +9,7 @@ from typing import Annotated
 import typer
 
 from ocfl_cli._appctx import install_app_ctx
-from ocfl_cli._common import DEFAULT_FS_FACTORY
+from ocfl_cli._common import DEFAULT_FS_FACTORY, installed_cli_version
 from ocfl_cli._exit import OcflGroup
 from ocfl_cli.archive.config import config_app
 from ocfl_cli.archive.diff import diff
@@ -92,6 +92,12 @@ app.add_typer(config_app, rich_help_panel=STORAGE_ADMIN_PANEL)
 app.add_typer(stage_app, rich_help_panel=STAGING_PANEL)
 
 
+def _print_version(value: bool) -> None:
+    if value:
+        typer.echo(f"ocfl {installed_cli_version()}")
+        raise typer.Exit()
+
+
 @app.callback()
 def main(
     ctx: typer.Context,
@@ -120,6 +126,15 @@ def main(
     log_json: Annotated[
         bool,
         typer.Option("--log-json", help="Emit structured JSON log lines."),
+    ] = False,
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=_print_version,
+            is_eager=True,
+            help="Show the program version and exit.",
+        ),
     ] = False,
 ) -> None:
     """CLI for managing an OCFL archive."""

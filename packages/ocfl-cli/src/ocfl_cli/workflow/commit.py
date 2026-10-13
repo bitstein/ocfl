@@ -10,6 +10,7 @@ from ocfl_cli.errors import (
     CommitClaimLostError,
     CommitFailedError,
     CommitInterruptedError,
+    InventoryProofMissingError,
     LockTimeoutError,
     MissingStagedMetadataError,
     PhaseError,
@@ -290,9 +291,11 @@ def commit_ots(
 ) -> None:
     """Attach the cached inventory proof to the timestamped plan and commit it.
 
-    Raises `AttestationMismatchError` (exit 5) when the proof is missing,
-    unverified or for other bytes, and `PhaseError` (exit 3) when the
-    Staging Area is not inventory-upgraded or its plan is missing.
+    Raises `PhaseError` (exit 3) when the Staging Area is not
+    inventory-upgraded, or its inventory proof is missing, unverified, not
+    cached or for a stale plan (`InventoryProofMissingError`), and
+    `AttestationMismatchError` (exit 5, a halt) when the cached proof does
+    not parse or commits to other bytes.
     """
 
     def prepare() -> _Prepared:
@@ -325,7 +328,7 @@ def commit_ots(
 def _timestamped_plan(staging_dir: Path, state: OtsState, object_id: str) -> CommitPlan:
     """The staged plan with its verified inventory proof attached."""
     if state.inventory is None or not state.verified(state.inventory.digest):
-        raise AttestationMismatchError(
+        raise InventoryProofMissingError(
             "inventory_proof missing or unverified; "
             f"run '{hints.stage('upgrade', object_id)}'"
         )
@@ -337,7 +340,7 @@ def _timestamped_plan(staging_dir: Path, state: OtsState, object_id: str) -> Com
             f"run '{hints.stage('timestamp', object_id)}'"
         )
     if plan.inventory.digest != inv_digest:
-        raise AttestationMismatchError(
+        raise InventoryProofMissingError(
             f"inventory timestamp plan digest {plan.inventory.digest} "
             f"does not match verified inventory digest {inv_digest}; "
             f"run '{hints.stage('timestamp', object_id)}' and "
@@ -346,7 +349,7 @@ def _timestamped_plan(staging_dir: Path, state: OtsState, object_id: str) -> Com
     try:
         inv_ots = ots_cache_path(staging_dir, inv_digest).read_bytes()
     except FileNotFoundError:
-        raise AttestationMismatchError(
+        raise InventoryProofMissingError(
             f"ots-cache/{inv_digest}.ots missing; "
             f"run '{hints.stage('upgrade', object_id)}'"
         ) from None

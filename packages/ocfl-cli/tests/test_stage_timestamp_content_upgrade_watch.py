@@ -49,7 +49,6 @@ import pytest
 from fakes import (
     FakeBitcoinRPC,
     FakeSimpleProof,
-    InMemoryHashBlockStream,
     RecordingSleeper,
 )
 from fakes.locks import held_flock
@@ -155,6 +154,25 @@ MIN_CONFS = 3
 
 def _ots_for(digest_hex: str, *, block_height: int = DIGEST_BLOCK_HEIGHT) -> bytes:
     return build_attestation(bytes.fromhex(digest_hex), block_height=block_height)
+
+
+class _ConfirmingStream:
+    """Each wait mines one block (one more confirmation), then reports it.
+
+    A watch runs one pass before the first block, so these tests start one
+    confirmation short: only the block finishes the proof.
+    """
+
+    def __init__(self, rpc: FakeBitcoinRPC, *, blocks: int = 1) -> None:
+        self.rpc = rpc
+        self.blocks = blocks
+
+    def wait_for_block(self, timeout_ms: int) -> bytes | None:
+        if self.blocks == 0:
+            raise KeyboardInterrupt("no more blocks")
+        self.blocks -= 1
+        self.rpc.extend(1)
+        return bytes.fromhex(self.rpc.getblockchaininfo().best_block_hash)
 
 
 def _grow_chain_to(rpc: FakeBitcoinRPC, height: int) -> None:
@@ -313,8 +331,7 @@ class TestWatchLoopAdvancesOnBlock:
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
 
-        stream = InMemoryHashBlockStream()
-        _inject_fake_zmq(runner, stream)
+        _inject_fake_zmq(runner, _ConfirmingStream(btc_fake.rpc))
 
         calls: list[str] = []
 
@@ -331,9 +348,8 @@ class TestWatchLoopAdvancesOnBlock:
 
         ots_bytes = _ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
         _register_attested(btc_fake.rpc, d)
-        stream.push(bytes.fromhex(btc_fake.rpc.getblockchaininfo().best_block_hash))
 
         r = runner.invoke(
             app,
@@ -366,8 +382,7 @@ class TestWatchLoopAdvancesOnBlock:
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
 
-        stream = InMemoryHashBlockStream()
-        _inject_fake_zmq(runner, stream)
+        _inject_fake_zmq(runner, _ConfirmingStream(btc_fake.rpc))
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(
@@ -378,12 +393,8 @@ class TestWatchLoopAdvancesOnBlock:
 
         ots_bytes = _ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
         _register_attested(btc_fake.rpc, d)
-
-        # Prime one block on the in-memory stream — the loop wakes once,
-        # runs the pass, sees phase advance, exits 0.
-        stream.push(bytes.fromhex(btc_fake.rpc.getblockchaininfo().best_block_hash))
 
         r = runner.invoke(
             app,
@@ -611,7 +622,7 @@ class TestWatchSigintExits130WithoutTornCheckpoint:
 
         ots_bytes = _ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
         _register_attested(btc_fake.rpc, d)
 
         class _SigintStream:
@@ -966,3 +977,55 @@ class TestRegtestRealZmqHashblockDelivery:
         assert not thread.is_alive(), "watch loop did not exit after block notify"
         assert result.get("exit") == 0, result
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
+
+
+# =========================================================================== #
+# Layer-2: one pass before the first block (roadmap §7.4, issue 2)
+# =========================================================================== #
+
+
+class TestWatchFirstPass:
+    def test_final_proofs_do_not_wait_for_a_block(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+
+        class _NoBlocks:
+            waits = 0
+
+            def wait_for_block(self, timeout_ms: int) -> bytes | None:
+                self.waits += 1
+                raise KeyboardInterrupt("waited for a block")
+
+        stream = _NoBlocks()
+        _inject_fake_zmq(runner, stream)
+
+        staging = tmp_path / "staging"
+        sd, _paths, digests = _new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:first-pass", ("a.txt", b"alpha")
+        )
+        d = digests["a.txt"]
+        _force_content_pending(sd, (d,))
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: _ots_for(d)})
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        _register_attested(btc_fake.rpc, d)
+
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root, staging, "upgrade", "obj:first-pass", "--watch"
+            ),
+        )
+
+        assert r.exit_code == 0, r.output
+        assert stream.waits == 0
+        assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
+        assert "Phase: content-pending -> content-upgraded" in r.output

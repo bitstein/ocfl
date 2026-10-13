@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 
 from ocfl_cli._common import open_root, parse_version
-from ocfl_cli.errors import CLIError
+from ocfl_cli.errors import CLIError, UsageError
 from ocfl_lib import ObjectNotFound, to_path_map
 
 
@@ -17,7 +17,7 @@ def export(
     object_id: Annotated[str, typer.Argument(help="Object ID.")],
     version: Annotated[
         str | None,
-        typer.Option("--version", "-V", help="Version (default: head)."),
+        typer.Option("--object-version", "-V", help="Object version (default: head)."),
     ] = None,
     to: Annotated[
         str,
@@ -49,9 +49,14 @@ def export(
         paths = [p for p in paths if any(fnmatch.fnmatch(p, pat) for pat in file)]
 
     if to == "-":
-        # Stdout: output first match silently
+        # Stdout holds one file: more than one match is a usage error.
         if not paths:
             return
+        if len(paths) > 1:
+            raise UsageError(
+                f"--to - writes one file; {len(paths)} paths match "
+                f"({', '.join(paths[:3])}{', ...' if len(paths) > 3 else ''})"
+            )
         with obj.open_logical_path(v, paths[0]) as f:
             sys.stdout.buffer.write(f.read())
         return

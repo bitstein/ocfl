@@ -88,10 +88,11 @@ def prepare_batch_object(
 ) -> batch_model.BatchObject:
     staging_dir = store.staging_path(root_path, object_id)
     if not store.exists(root_path, object_id) or not has_ots(staging_dir):
+        reason = "not_ots" if store.exists(root_path, object_id) else "not_staged"
         return batch_model.BatchObject(
             object_id=object_id,
             status="skipped",
-            skipped_reason=fixed_batch_reason("committed"),
+            skipped_reason=fixed_batch_reason(reason),
         )
     try:
         with with_lock(staging_dir, runtime):

@@ -22,6 +22,8 @@ type FixedBatchReason = Literal[
     "missing_record_ids",
     "no_new_digests",
     "noop",
+    "not_ots",
+    "not_staged",
     "regressed",
     "reorg_deeper_than_min_conf",
     "results_expired",
@@ -46,6 +48,8 @@ FIXED_BATCH_REASONS: tuple[FixedBatchReason, ...] = (
     "missing_record_ids",
     "no_new_digests",
     "noop",
+    "not_ots",
+    "not_staged",
     "regressed",
     "reorg_deeper_than_min_conf",
     "results_expired",
@@ -106,6 +110,13 @@ def reason_next(
             )
         case "committed" | "no_new_digests" | "noop":
             return "None"
+        case "not_staged":
+            return hints.stage("new", object_id, "--ots")
+        case "not_ots":
+            return (
+                f"{hints.stage('discard', object_id)}, then "
+                f"{hints.stage('new', object_id, '--ots')}"
+            )
         case "content_not_upgraded":
             return hints.stage("upgrade", object_id, "--watch")
         case "missing_metadata":

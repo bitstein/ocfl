@@ -42,14 +42,10 @@ class TimestampPreflight:
 
 
 class DigestOption(StrEnum):
+    """The content digests OCFL 1.1 allows for a new object (§3.5.1)."""
+
     SHA512 = "sha512"
     SHA256 = "sha256"
-    SHA1 = "sha1"
-    MD5 = "md5"
-    BLAKE2B_512 = "blake2b-512"
-    BLAKE2B_256 = "blake2b-256"
-    BLAKE2B_160 = "blake2b-160"
-    SHA512_256 = "sha512/256"
 
 
 def resolve_root_path(ctx: typer.Context) -> str:
@@ -76,6 +72,7 @@ def require_config(ctx: typer.Context) -> Config:
 
 
 def require_simpleproof(ctx: typer.Context, cfg: Config) -> None:
+    cfg.require("simpleproof")
     if cfg.simpleproof is None:
         raise ConfigError(
             f"{appctx.command_path(ctx)!r} requires [simpleproof] config section"
@@ -83,6 +80,7 @@ def require_simpleproof(ctx: typer.Context, cfg: Config) -> None:
 
 
 def require_bitcoin(ctx: typer.Context, cfg: Config) -> None:
+    cfg.require("bitcoin")
     if cfg.bitcoin is None:
         raise ConfigError(
             f"{appctx.command_path(ctx)!r} requires [bitcoin] config section"
@@ -135,6 +133,9 @@ def require_ots_config(
         if cfg is not None and cfg.path is not None
         else "in your ocfl config"
     )
+    if cfg is not None:
+        cfg.require("simpleproof")
+        cfg.require("bitcoin")
     if cfg is None or cfg.simpleproof is None:
         raise ConfigError(f"--ots requires [simpleproof] section {where}")
     if cfg.bitcoin is None:

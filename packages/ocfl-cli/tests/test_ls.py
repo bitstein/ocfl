@@ -41,7 +41,8 @@ class TestLsObject:
 
     def test_list_files_version(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "ls", "obj:test", "--version", "v1"]
+            app,
+            ["--root", str(storage_root), "ls", "obj:test", "--object-version", "v1"],
         )
         assert result.exit_code == 0
         assert "file1.txt" in result.stdout
@@ -50,7 +51,8 @@ class TestLsObject:
     def test_list_files_bare_version(self, runner: CliRunner, storage_root: Path):
         """Accept '1' as well as 'v1'."""
         result = runner.invoke(
-            app, ["--root", str(storage_root), "ls", "obj:test", "--version", "1"]
+            app,
+            ["--root", str(storage_root), "ls", "obj:test", "--object-version", "1"],
         )
         assert result.exit_code == 0
         assert "file1.txt" in result.stdout
@@ -59,7 +61,8 @@ class TestLsObject:
         self, runner: CliRunner, storage_root: Path
     ):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "ls", "obj:test", "--version", "v9"]
+            app,
+            ["--root", str(storage_root), "ls", "obj:test", "--object-version", "v9"],
         )
         assert result.exit_code == 1
         assert "not found" in result.stderr.lower()

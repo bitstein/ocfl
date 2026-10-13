@@ -151,6 +151,8 @@ def _ots_extension_present(fs: FS, obj_path: str) -> bool:
 
 def _chain_check(cfg: Config | None, btc_factory: BtcRpcFactory) -> ots.ChainCheck:
     """The Bitcoin checks of the OTS extension, against the configured node."""
+    if cfg is not None:
+        cfg.require("bitcoin")
     if cfg is None or cfg.bitcoin is None:
         where = (
             f"in {cfg.path}"

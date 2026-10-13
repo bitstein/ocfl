@@ -41,6 +41,31 @@ class StagingStore:
     def exists(self, root_path: str, object_id: str) -> bool:
         return self.staging_path(root_path, object_id).is_dir()
 
+    def object_ids(self, root_path: str) -> list[str]:
+        """The objects staged for `root_path`, sorted.
+
+        Staging directories are named by a hash of root and object, so each
+        one's inventory names its object; a directory belongs to `root_path`
+        when that name hashes back to it.
+        """
+        if not self._root.is_dir():
+            return []
+        ids: list[str] = []
+        for d in self._root.iterdir():
+            inventory = d / "inventory.json"
+            if not inventory.is_file():
+                continue
+            try:
+                object_id = json.loads(inventory.read_bytes())["id"]
+            except OSError, ValueError, KeyError, TypeError:
+                continue
+            if (
+                isinstance(object_id, str)
+                and self.staging_path(root_path, object_id) == d
+            ):
+                ids.append(object_id)
+        return sorted(ids)
+
     def create(self, root_path: str, object_id: str, inventory: Inventory) -> None:
         """Create staging directory with inventory and empty content map."""
         d = self.staging_path(root_path, object_id)

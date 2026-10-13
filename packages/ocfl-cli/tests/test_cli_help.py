@@ -1,10 +1,12 @@
 """CLI help contract."""
 
+import importlib.metadata
 import logging
 import re
 
 from typer.testing import CliRunner
 
+from ocfl_cli._common import installed_cli_version
 from ocfl_cli.exit_codes import EXIT_CODE_DOCS, ExitCode, format_exit_code_help
 from ocfl_cli.main import app, configure_logging
 
@@ -58,3 +60,47 @@ def test_verbose_logging_allows_httpx2_info() -> None:
     configure_logging(json_mode=False, verbose=True, quiet=False)
 
     assert logging.getLogger("httpx2").getEffectiveLevel() == logging.INFO
+
+
+def test_version_prints_the_installed_version(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == f"ocfl {installed_cli_version()}\n"
+
+
+def test_object_version_options_are_not_called_version(runner: CliRunner) -> None:
+    for command in ("ls", "export"):
+        result = runner.invoke(app, [command, "--help"])
+        assert "--object-version" in result.output, command
+
+
+def test_cli_version_is_cached(monkeypatch) -> None:
+    calls = 0
+
+    def fake_version(distribution: str) -> str:
+        nonlocal calls
+        calls += 1
+        assert distribution == "ocfl-cli"
+        return "1.2.3"
+
+    installed_cli_version.cache_clear()
+    monkeypatch.setattr(importlib.metadata, "version", fake_version)
+    try:
+        assert installed_cli_version() == "1.2.3"
+        assert installed_cli_version() == "1.2.3"
+    finally:
+        installed_cli_version.cache_clear()
+    assert calls == 1
+
+
+def test_cli_version_unknown_without_metadata(monkeypatch) -> None:
+    def missing(distribution: str) -> str:
+        raise importlib.metadata.PackageNotFoundError(distribution)
+
+    installed_cli_version.cache_clear()
+    monkeypatch.setattr(importlib.metadata, "version", missing)
+    try:
+        assert installed_cli_version() == "unknown"
+    finally:
+        installed_cli_version.cache_clear()

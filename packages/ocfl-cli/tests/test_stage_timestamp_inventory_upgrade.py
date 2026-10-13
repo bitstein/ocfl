@@ -885,7 +885,9 @@ class TestInventoryWatchLoop:
 
         ots_bytes = _ots_for(inv_digest)
         _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        # One confirmation short: the watch's first pass leaves the proof
+        # pending, and the block below confirms it.
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
         _register_attested(btc_fake.rpc, inv_digest)
 
         class _OneBlockStream:
@@ -895,6 +897,7 @@ class TestInventoryWatchLoop:
             def wait_for_block(self, timeout_ms: int) -> bytes | None:
                 self._n += 1
                 if self._n == 1:
+                    btc_fake.rpc.extend(1)
                     return bytes.fromhex(
                         btc_fake.rpc.getblockchaininfo().best_block_hash
                     )
@@ -946,7 +949,9 @@ class TestInventoryWatchLoop:
 
         ots_bytes = _ots_for(inv_digest)
         _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        # One confirmation short: the watch's first pass leaves the proof
+        # pending, and the block below confirms it.
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
         _register_attested(btc_fake.rpc, inv_digest)
 
         class _OneBlockStream:
@@ -959,6 +964,7 @@ class TestInventoryWatchLoop:
             def wait_for_block(self, timeout_ms: int) -> bytes | None:
                 self._n += 1
                 if self._n == 1:
+                    btc_fake.rpc.extend(1)
                     return bytes.fromhex(
                         btc_fake.rpc.getblockchaininfo().best_block_hash
                     )
@@ -1013,7 +1019,9 @@ class TestInventoryWatchLoop:
 
         ots_bytes = _ots_for(inv_digest)
         _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        # One confirmation short: the watch's first pass leaves the proof
+        # pending, and the block below confirms it.
+        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
         _register_attested(btc_fake.rpc, inv_digest)
 
         class _SigintStream:

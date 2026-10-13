@@ -69,7 +69,7 @@ class TestExport:
                 str(storage_root),
                 "export",
                 "obj:test",
-                "--version",
+                "--object-version",
                 "v1",
                 "--to",
                 str(out),
@@ -89,7 +89,7 @@ class TestExport:
                 str(storage_root),
                 "export",
                 "obj:test",
-                "--version",
+                "--object-version",
                 "v9",
                 "--to",
                 str(tmp_path / "out"),
@@ -159,6 +159,17 @@ class TestExport:
         )
         assert result.exit_code == 0
         assert result.stdout == "hello"
+
+    def test_export_to_stdout_refuses_more_than_one_match(
+        self, runner: CliRunner, storage_root: Path
+    ):
+        result = runner.invoke(
+            app,
+            ["--root", str(storage_root), "export", "obj:test", "--to", "-"],
+        )
+        assert result.exit_code == 2, result.output
+        assert "--to - writes one file" in result.output
+        assert result.stdout == ""
 
     def test_export_replace(
         self, runner: CliRunner, storage_root: Path, tmp_path: Path

@@ -770,3 +770,79 @@ class TestLocks:
             if isinstance(n, ast.Call) and ast.unparse(n.func).endswith("batch_lock")
         ]
         assert not bad, bad
+
+
+# --- 7.4 the 37-issue review: decisions recorded, adopted ones kept
+
+
+class TestSurfaceReview:
+    def test_every_issue_has_one_decision(self):
+        text = (REPO / "docs/cli-surface-review.md").read_text()
+        rows = {}
+        for line in text.splitlines():
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) >= 3 and cells[0].isdigit():
+                rows[int(cells[0])] = " ".join(cells[1:]).lower()
+        assert set(rows) == set(range(1, 38))
+        for n, row in rows.items():
+            assert ("adopt" in row) != ("reject" in row), n
+
+    def test_exit_codes_stay_the_public_contract(self):
+        from ocfl_cli.exit_codes import EXIT_CODE_DOCS, ExitCode
+
+        assert {int(c) for c in ExitCode} == {0, 1, 2, 3, 4, 5, 6, 130}
+        (halt,) = [d for d in EXIT_CODE_DOCS if d.code is ExitCode.ATTESTATION]
+        assert "retry" not in halt.description
+
+    def test_only_the_root_has_a_version_flag(self):
+        from ocfl_cli.main import app
+
+        root = _click(app)
+        assert any("--version" in p.opts for p in root.params)
+        bad = []
+
+        def walk(cmd, path: str) -> None:
+            for p in cmd.params:
+                if "--version" in p.opts:
+                    bad.append(path)
+            for name, sub in getattr(cmd, "commands", {}).items():
+                walk(sub, f"{path} {name}")
+
+        for name, sub in root.commands.items():
+            walk(sub, name)
+        assert not bad, bad
+
+    def test_no_short_only_or_clashing_flags(self):
+        """Every option has a long form; no subcommand reuses `-r` (`--root`)."""
+        from ocfl_cli.main import app
+
+        bad = []
+
+        def walk(cmd, path: str, top: bool) -> None:
+            for p in cmd.params:
+                opts = getattr(p, "opts", [])
+                if p.param_type_name != "option":
+                    continue
+                if not any(o.startswith("--") for o in opts):
+                    bad.append(f"{path} {opts}")
+                if not top and "-r" in opts:
+                    bad.append(f"{path} {opts}")
+            for name, sub in getattr(cmd, "commands", {}).items():
+                walk(sub, f"{path} {name}", False)
+
+        walk(_click(app), "ocfl", True)
+        assert not bad, bad
+
+    def test_digest_choices_are_the_spec_algorithms(self):
+        from ocfl_cli.stage._app import DigestOption
+        from ocfl_lib import DigestAlgorithm
+
+        for option in DigestOption:
+            assert DigestAlgorithm.from_ocfl_name(option.value).is_spec_algorithm
+        assert {o.value for o in DigestOption} == {"sha512", "sha256"}
+
+    def test_batch_ids_resolve_in_one_place(self):
+        """Commands take a batch id or prefix; only `resolve_batch_id` reads one."""
+        text = (CLI_SRC / "workflow/batch/report.py").read_text()
+        assert "def resolve_batch_id(" in text
+        assert "resolve_batch_id(staging_root, batch_id)" in text

@@ -20,7 +20,8 @@ def ls(
         str | None, typer.Argument(help="Object ID (omit to list all objects).")
     ] = None,
     version: Annotated[
-        str | None, typer.Option("--version", "-V", help="Version (e.g. v1 or 1).")
+        str | None,
+        typer.Option("--object-version", "-V", help="Object version (e.g. v1 or 1)."),
     ] = None,
     digests: Annotated[
         bool, typer.Option("--digests", help="Show digests alongside paths.")

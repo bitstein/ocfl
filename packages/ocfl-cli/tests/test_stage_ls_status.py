@@ -80,7 +80,20 @@ class TestStageLs:
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert isinstance(data, list)
-        assert "a.txt" in data
+        # The same shape as `ocfl ls OBJ --json` (issue 19).
+        assert {"path": "a.txt"} in data
+
+    def test_ls_without_object_lists_staging_areas(
+        self, runner, storage_root, tmp_path
+    ):
+        staging = _setup_staged_new(runner, storage_root, tmp_path)
+        args = ["--root", str(storage_root), "--json", "stage"]
+        result = runner.invoke(app, [*args, "--staging-root", str(staging), "ls"])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output) == [{"object_id": "obj:new", "phase": None}]
+        other = tmp_path / "other-staging"
+        result = runner.invoke(app, [*args, "--staging-root", str(other), "ls"])
+        assert json.loads(result.output) == []
 
     def test_ls_no_staging_errors(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 from ocfl_cli.errors import (
     AttestationMismatchError,
+    BatchMismatchError,
     CommitFailedError,
     ErrorContext,
     LockTimeoutError,
@@ -480,11 +481,11 @@ def commit(
     with batch_state.batch_lock(staging_root, batch.batch_id, runtime):
         batch = load_batch_or_usage(staging_root, batch.batch_id)
         if not rules_for(batch.target).commits:
-            raise UsageError(
+            raise BatchMismatchError(
                 f"commit batches must target inventory; got {batch.target.value}"
             )
         if batch.root_path != root_path:
-            raise UsageError(
+            raise BatchMismatchError(
                 f"batch {batch.batch_id} belongs to root {batch.root_path}; "
                 f"current root is {root_path}"
             )

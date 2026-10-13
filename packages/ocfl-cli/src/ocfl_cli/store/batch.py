@@ -44,6 +44,14 @@ def batch_file_path(staging_root: Path, batch_id: str) -> Path:
     return batches_dir(staging_root) / f"{batch_id}.json"
 
 
+def batch_ids(staging_root: Path) -> list[str]:
+    """The ids of every batch file in the staging root, sorted."""
+    directory = batches_dir(staging_root)
+    if not directory.is_dir():
+        return []
+    return sorted(p.stem for p in directory.glob("*.json"))
+
+
 def batch_lock_path(staging_root: Path, batch_id: str) -> Path:
     """Path to `<staging-root>/batches/<batch_id>.lock`."""
     _validate_batch_id(batch_id)

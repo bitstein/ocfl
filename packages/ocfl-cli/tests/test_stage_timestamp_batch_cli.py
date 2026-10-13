@@ -25,6 +25,7 @@ from typer.testing import CliRunner
 from ocfl_cli.errors import (
     AttestationMismatchError,
     SimpleProofTransient,
+    UsageError,
 )
 from ocfl_cli.main import app
 from ocfl_cli.model import batch as batch_model
@@ -2366,7 +2367,7 @@ def test_batch_status_verbose_json_adds_per_digest_state(
     ]
 
 
-def test_batch_status_missing_file_exits_2(
+def test_batch_status_missing_file_exits_1(
     runner: CliRunner, storage_root: Path, tmp_path: Path
 ) -> None:
     staging = tmp_path / "staging"
@@ -2374,11 +2375,11 @@ def test_batch_status_missing_file_exits_2(
 
     result = _invoke_json(runner, storage_root, staging, "batch", "status", batch_id)
 
-    assert result.exit_code == 2
+    assert result.exit_code == 1
     assert result.stdout == ""
     error = json.loads(result.stderr)["error"]
     assert error["code"] == "batch_file_missing"
-    assert error["exit"] == 2
+    assert error["exit"] == 1
     assert "ocfl stage status OBJECT" in error["message"]
 
 
@@ -4026,3 +4027,126 @@ def test_batch_rm_waits_for_a_running_driver(
 
     assert result.exit_code == 4, result.output
     assert batch_file_path(staging, batch_id).is_file()
+
+
+# --------------------------------------------------------------------------- #
+# Batch ids, unstaged rows and --from (roadmap §7.4, issues 8, 10, 11)
+# --------------------------------------------------------------------------- #
+
+
+def _empty_batch(staging: Path, storage_root: Path, batch_id: str, **kw) -> None:
+    save_batch(
+        staging,
+        BatchFile(
+            batch_id=batch_id,
+            target=kw.pop("target", TimestampTarget.CONTENT),
+            root_path=str(storage_root.resolve()),
+            category_id=641,
+            created_at="2026-05-12T10:00:00Z",
+            updated_at="2026-05-12T10:05:00Z",
+            **kw,
+        ),
+    )
+
+
+def test_batch_ids_resolve_from_a_unique_prefix(
+    runner: CliRunner, storage_root: Path, tmp_path: Path
+) -> None:
+    staging = tmp_path / "staging"
+    first = "0190a0a0-0000-7000-8000-000000000001"
+    second = "0190a0a0-0000-7000-8000-000000000002"
+    other = "0190b0b0-0000-7000-8000-000000000003"
+    for batch_id in (first, second, other):
+        _empty_batch(staging, storage_root, batch_id)
+
+    result = _invoke_json(runner, storage_root, staging, "batch", "status", "0190b")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["batch_id"] == other
+
+    ambiguous = _invoke(runner, storage_root, staging, "batch", "status", "0190a0a0")
+    assert ambiguous.exit_code == 2, ambiguous.output
+    assert first in ambiguous.output and second in ambiguous.output
+
+    missing = _invoke(runner, storage_root, staging, "batch", "status", "ffff")
+    assert missing.exit_code == 1, missing.output
+
+    removed = _invoke(runner, storage_root, staging, "batch", "rm", "0190b")
+    assert removed.exit_code == 0, removed.output
+    assert f"removed batch {other}" in removed.output
+
+
+def test_unstaged_objects_are_named_and_fail_the_run(
+    runner: CliRunner,
+    empty_sha256_root: Path,
+    sp_fake: FakeSimpleProof,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path, monkeypatch)
+    _inject_fake_sp(runner, sp_fake)
+    staging = tmp_path / "staging"
+    _new_ots_with_files(runner, empty_sha256_root, staging, "obj:ots", ("a.txt", b"a"))
+    plain = _invoke(runner, empty_sha256_root, staging, "new", "obj:plain")
+    assert plain.exit_code == 0, plain.output
+
+    result = _invoke(
+        runner,
+        empty_sha256_root,
+        staging,
+        "batch",
+        "create",
+        "content",
+        "obj:ots",
+        "obj:plain",
+        "obj:typo",
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "obj:plain, obj:typo" in result.output
+    (batch_id,) = (p.stem for p in (staging / "batches").glob("*.json"))
+    rows = {
+        row.object_id: row for row in batch_state.load_batch(staging, batch_id).objects
+    }
+    assert rows["obj:ots"].status == "submitted"
+    assert rows["obj:plain"].skipped_reason == "not_ots"
+    assert rows["obj:typo"].skipped_reason == "not_staged"
+    status = _invoke_json(
+        runner, empty_sha256_root, staging, "batch", "status", batch_id
+    )
+    nexts = {r["object_id"]: r["next"] for r in json.loads(status.output)["objects"]}
+    assert nexts["obj:typo"] == "ocfl stage new obj:typo --ots"
+    assert nexts["obj:plain"].startswith("ocfl stage discard obj:plain")
+
+
+def test_inventory_batch_from_a_content_batch_takes_its_upgraded_rows(
+    runner: CliRunner, storage_root: Path, tmp_path: Path
+) -> None:
+    staging = tmp_path / "staging"
+    content_id = new_batch_id()
+    _empty_batch(
+        staging,
+        storage_root,
+        content_id,
+        objects=(
+            BatchObject(object_id="obj:done", status="upgraded"),
+            BatchObject(object_id="obj:waiting", status="submitted"),
+        ),
+    )
+    assert batch_report.upgraded_objects(staging, content_id[:12]) == ("obj:done",)
+
+    inventory_id = new_batch_id()
+    _empty_batch(staging, storage_root, inventory_id, target=TimestampTarget.INVENTORY)
+    with pytest.raises(UsageError, match="--from takes a content batch"):
+        batch_report.upgraded_objects(staging, inventory_id)
+
+    result = _invoke(
+        runner,
+        storage_root,
+        staging,
+        "batch",
+        "create",
+        "content",
+        "--from",
+        content_id,
+    )
+    assert result.exit_code == 2, result.output

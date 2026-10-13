@@ -37,7 +37,7 @@ EXIT_CODE_DOCS: tuple[ExitCodeDoc, ...] = (
     ExitCodeDoc(ExitCode.LOCK_TIMEOUT, "busy: a lock is held; retry with backoff"),
     ExitCodeDoc(
         ExitCode.ATTESTATION,
-        "halt: attestation mismatch or Bitcoin reorg; retry after re-fetch",
+        "halt: attestation mismatch or deep Bitcoin reorg; operator review",
     ),
     ExitCodeDoc(ExitCode.CONFIG, "configuration error, including credentials"),
     ExitCodeDoc(ExitCode.INTERRUPTED, "interrupted"),

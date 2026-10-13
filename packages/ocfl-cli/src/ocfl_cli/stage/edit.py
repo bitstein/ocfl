@@ -164,7 +164,10 @@ def rm(
     object_id: Annotated[str, typer.Argument(help="Object ID.")],
     paths: Annotated[list[str], typer.Argument(help="Logical path(s) to remove.")],
     recursive: Annotated[
-        bool, typer.Option("-r", help="Remove all paths with matching prefix.")
+        bool,
+        typer.Option(
+            "--recursive", "-R", help="Remove all paths with matching prefix."
+        ),
     ] = False,
 ) -> None:
     """Remove logical paths from the staged version."""
@@ -176,26 +179,50 @@ def rm(
 
 def ls_cmd(
     ctx: typer.Context,
-    object_id: Annotated[str, typer.Argument(help="Object ID.")],
+    object_id: Annotated[
+        str | None,
+        typer.Argument(help="Object ID (omit to list the Staging Areas)."),
+    ] = None,
     digests: Annotated[
         bool, typer.Option("--digests", help="Show digests alongside paths.")
     ] = False,
 ) -> None:
-    """List files in the staged head version."""
+    """List the Staging Areas, or the files in one staged head version."""
+    if object_id is None:
+        _ls_stagings(ctx)
+        return
     resolved = require_existing_staging(ctx, object_id)
     entries = wf_staging.list_entries(resolved, object_id)
 
     if appctx.json_mode(ctx):
-        if digests:
-            output_json([{"path": p, "digest": d} for p, d in entries])
-        else:
-            output_json([p for p, _ in entries])
+        output_json(
+            [{"path": p, "digest": d} if digests else {"path": p} for p, d in entries]
+        )
     else:
         for p, d in entries:
             if digests:
                 appctx.console(ctx).print(Text.assemble(_style.digest(d), "  ", p))
             else:
                 typer.echo(p)
+
+
+def _ls_stagings(ctx: typer.Context) -> None:
+    rows = wf_staging.list_stagings(stage_store(ctx), resolve_root_path(ctx))
+    if appctx.json_mode(ctx):
+        output_json(
+            [
+                {
+                    "object_id": row.object_id,
+                    "phase": row.phase.value if row.phase is not None else None,
+                }
+                for row in rows
+            ]
+        )
+        return
+    for row in rows:
+        typer.echo(
+            f"{row.object_id}  {row.phase.value if row.phase is not None else 'plain'}"
+        )
 
 
 def discard(

@@ -1,9 +1,11 @@
 """Shared CLI options, error handling, and output formatting."""
 
+import importlib.metadata
 import json
 import logging
 import os
 import sys
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -67,6 +69,15 @@ def parse_version(v: str) -> VNum:
         return VNum.parse(v)
     except ValueError:
         raise CLIError(f"invalid version: {v!r}") from None
+
+
+@cache
+def installed_cli_version() -> str:
+    """The installed `ocfl-cli` version, or "unknown" from a bare checkout."""
+    try:
+        return importlib.metadata.version("ocfl-cli")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
 
 
 def output_json(data: Any) -> None:
