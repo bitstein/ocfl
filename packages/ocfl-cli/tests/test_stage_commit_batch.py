@@ -11,7 +11,6 @@ from fakes.batch_events import RecordingBatchEvents
 from msgspec.structs import replace
 from typer.testing import CliRunner
 
-from ocfl_cli._common import open_root
 from ocfl_cli.errors import AttestationMismatchError, PhaseError
 from ocfl_cli.main import app
 from ocfl_cli.model import batch as batch_model
@@ -52,6 +51,11 @@ def _remove_staging(**kwargs) -> None:
     shutil.rmtree(kwargs["staging_dir"])
 
 
+def _open_root(storage_root: Path) -> tuple[StorageRoot, LocalFS]:
+    fs = LocalFS(storage_root)
+    return StorageRoot.open(fs), fs
+
+
 def _commit_batch(
     storage_root: Path,
     staging: Path,
@@ -66,7 +70,7 @@ def _commit_batch(
     events = RecordingBatchEvents()
     failures = drive.commit(
         StagingStore(staging),
-        lambda: open_root(str(storage_root)),
+        lambda: _open_root(storage_root),
         root_path=str(storage_root.resolve()),
         batch_id=batch_id,
         events=events,

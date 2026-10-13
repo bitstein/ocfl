@@ -4,7 +4,6 @@ from typing import Annotated
 
 import typer
 
-from ocfl_cli import _appctx as appctx
 from ocfl_cli._common import open_root
 
 
@@ -17,7 +16,7 @@ def purge(
     ] = False,
 ) -> None:
     """Permanently remove an object from the storage root."""
-    root, fs = open_root(appctx.root(ctx))
+    root, fs = open_root(ctx)
 
     if not force:
         typer.confirm(

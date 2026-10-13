@@ -56,7 +56,7 @@ def recover(
     else:
         action = RecoveryAction.REMOVE_STRAY
 
-    root, fs = open_root(appctx.root(ctx))
+    root, fs = open_root(ctx)
     content = (
         _staged_content(ctx, staging_root, object_id)
         if action is RecoveryAction.RESUME and not isinstance(fs, ClaimFS)

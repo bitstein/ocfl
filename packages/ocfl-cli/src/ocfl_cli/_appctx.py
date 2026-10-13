@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         BlockStreamFactory,
         BtcRpcFactory,
         Clock,
+        FsFactory,
         SimpleProofClient,
         Sleeper,
         SpClientFactory,
@@ -46,6 +47,7 @@ class AppCtx:
     sleeper: Sleeper
     block_stream_factory: BlockStreamFactory
     lock_timeout: float
+    fs_factory: FsFactory
     console: Console
     err_console: Console
 
@@ -135,6 +137,7 @@ def install_app_ctx(
     clock: Clock,
     sleeper: Sleeper,
     block_stream_factory: BlockStreamFactory,
+    fs_factory: FsFactory,
 ) -> None:
     """Install application defaults into ``ctx.obj``.
 
@@ -158,6 +161,7 @@ def install_app_ctx(
     obj.setdefault("sleeper", sleeper)
     obj.setdefault("block_stream_factory", block_stream_factory)
     obj.setdefault("lock_timeout", DEFAULT_LOCK_TIMEOUT_SECONDS)
+    obj.setdefault("fs_factory", fs_factory)
     # Factory sources intentionally preserve runner.invoke(obj=...) test overrides.
     sp_source = _factory_source(
         obj,
@@ -205,6 +209,7 @@ def app_ctx(ctx: typer.Context) -> AppCtx:
             "BlockStreamFactory", _required(ctx, "block_stream_factory")
         ),
         lock_timeout=cast("float", _required(ctx, "lock_timeout")),
+        fs_factory=fs_factory(ctx),
         console=console(ctx),
         err_console=err_console(ctx),
     )
@@ -244,6 +249,11 @@ def sp_client_factory(ctx: typer.Context) -> SpClientFactory:
 
 def btc_rpc_factory(ctx: typer.Context) -> BtcRpcFactory:
     return cast("BtcRpcFactory", _required(ctx, "btc_rpc_factory"))
+
+
+def fs_factory(ctx: typer.Context) -> FsFactory:
+    """How this run opens the storage root's filesystem."""
+    return cast("FsFactory", _required(ctx, "fs_factory"))
 
 
 def runtime(ctx: typer.Context) -> Runtime:

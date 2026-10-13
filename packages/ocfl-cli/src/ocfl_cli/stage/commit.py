@@ -47,7 +47,7 @@ def commit(
         commit_batch(ctx, batch_id)
         return
     assert object_id is not None
-    sr, fs = open_root(appctx.root(ctx))
+    sr, fs = open_root(ctx)
     resolved = require_existing_staging(ctx, object_id)
     store = resolved.store
     root_path = resolved.root_path

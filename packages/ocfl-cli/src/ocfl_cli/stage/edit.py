@@ -62,7 +62,7 @@ def new(
         digest = DigestOption.SHA256
 
     store = stage_store(ctx)
-    sr, _fs = open_root(appctx.root(ctx))
+    sr, _fs = open_root(ctx)
     digest_name = (
         digest.value
         if digest is not None

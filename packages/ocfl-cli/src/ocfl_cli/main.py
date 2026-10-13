@@ -9,6 +9,7 @@ from typing import Annotated
 import typer
 
 from ocfl_cli._appctx import install_app_ctx
+from ocfl_cli._common import DEFAULT_FS_FACTORY
 from ocfl_cli._exit import OcflGroup
 from ocfl_cli.archive.diff import diff
 from ocfl_cli.archive.export import export
@@ -156,4 +157,5 @@ def main(
         clock=SYSTEM_CLOCK,
         sleeper=SYSTEM_SLEEPER,
         block_stream_factory=default_block_stream_factory,
+        fs_factory=DEFAULT_FS_FACTORY,
     )

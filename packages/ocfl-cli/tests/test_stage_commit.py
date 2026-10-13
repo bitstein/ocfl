@@ -3,21 +3,26 @@
 import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import filelock
 import pytest
-from runner_helpers import runner_obj
+from fakes.fault_fs import before_claim, raise_on_content_write
+from runner_helpers import injected, runner_obj
 
 from ocfl_cli.errors import LockTimeoutError
 from ocfl_cli.main import app
 from ocfl_cli.store import locks as locks
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow import commit as wf_commit
-from ocfl_lib import LocalFS, StaleHeadError, StorageRoot
+from ocfl_lib import (
+    DigestAlgorithm,
+    InventoryBuilder,
+    LocalFS,
+    StaleHeadError,
+    StorageRoot,
+)
 
 # Content lookups run mid-commit, after the commit has started writing.
-_FAIL_DURING_COMMIT = "ocfl_cli.workflow.commit._StagingContentSource.get_content"
 
 
 def _invoke(runner, storage_root, staging, *args):
@@ -269,7 +274,7 @@ class TestSignalHandling:
         _new_with_metadata(runner, storage_root, staging, "obj:interrupted")
         _invoke(runner, storage_root, staging, "add", "obj:interrupted", str(src))
 
-        with patch(_FAIL_DURING_COMMIT, side_effect=KeyboardInterrupt):
+        with injected(runner, fs_factory=raise_on_content_write(KeyboardInterrupt())):
             result = _invoke(runner, storage_root, staging, "commit", "obj:interrupted")
 
         assert result.exit_code == 130
@@ -284,7 +289,7 @@ class TestSignalHandling:
         _new_with_metadata(runner, storage_root, staging, "obj:retry")
         _invoke(runner, storage_root, staging, "add", "obj:retry", str(src))
 
-        with patch(_FAIL_DURING_COMMIT, side_effect=KeyboardInterrupt):
+        with injected(runner, fs_factory=raise_on_content_write(KeyboardInterrupt())):
             _invoke(runner, storage_root, staging, "commit", "obj:retry")
 
         store = StagingStore(staging)
@@ -302,7 +307,7 @@ class TestSignalHandling:
         _new_with_metadata(runner, storage_root, staging, "obj:clean")
         _invoke(runner, storage_root, staging, "add", "obj:clean", str(src))
 
-        with patch(_FAIL_DURING_COMMIT, side_effect=KeyboardInterrupt):
+        with injected(runner, fs_factory=raise_on_content_write(KeyboardInterrupt())):
             _invoke(runner, storage_root, staging, "commit", "obj:clean")
 
         # Object should not exist (new object, fully reverted)
@@ -320,7 +325,7 @@ class TestSignalHandling:
         _invoke(runner, storage_root, staging, "add", "obj:retried", str(src))
 
         # First attempt: interrupted
-        with patch(_FAIL_DURING_COMMIT, side_effect=KeyboardInterrupt):
+        with injected(runner, fs_factory=raise_on_content_write(KeyboardInterrupt())):
             _invoke(runner, storage_root, staging, "commit", "obj:retried")
 
         # Retry succeeds
@@ -345,9 +350,9 @@ class TestCrashRecovery:
         _new_with_metadata(runner, storage_root, staging, oid)
         _invoke(runner, storage_root, staging, "add", oid, str(src))
 
-        with patch(
-            _FAIL_DURING_COMMIT,
-            side_effect=RuntimeError("simulated crash"),
+        with injected(
+            runner,
+            fs_factory=raise_on_content_write(RuntimeError("simulated crash")),
         ):
             result = _invoke(runner, storage_root, staging, "commit", oid)
 
@@ -381,15 +386,10 @@ class TestClaimLost:
         _new_with_metadata(runner, storage_root, staging, oid)
         _invoke(runner, storage_root, staging, "add", oid, str(src))
 
-        original = wf_commit._StagingContentSource.get_content
-
-        def other_writer_claims_first(self, digest):
+        def other_writer_claims_first() -> None:
             (storage_root / oid).mkdir(exist_ok=True)
-            return original(self, digest)
 
-        with patch.object(
-            wf_commit._StagingContentSource, "get_content", other_writer_claims_first
-        ):
+        with injected(runner, fs_factory=before_claim(other_writer_claims_first)):
             result = _invoke(runner, storage_root, staging, "commit", oid)
 
         assert result.exit_code == 3, result.output
@@ -427,37 +427,51 @@ class TestCommitLocking:
             with guard:
                 current -= 1
 
-        store = StagingStore(tmp_path / "staging")
+        class _KeepStaging(StagingStore):
+            """Both commits must find the staging area: skip the purge."""
+
+            def purge(self, root_path: str, object_id: str) -> None:
+                return None
+
+        store = _KeepStaging(tmp_path / "staging")
         root_path = str(tmp_path / "root")
         object_id = "obj:locked"
+        empty = (
+            InventoryBuilder()
+            .id(object_id)
+            .digest_algorithm(DigestAlgorithm.SHA512)
+            .add_version({}, created="1970-01-01T00:00:00Z")
+            .build()
+        )
+        store.create(root_path, object_id, empty)
         staging_dir = store.staging_path(root_path, object_id)
-        staging_dir.mkdir(parents=True)
+        # A storage root that plans anything and commits slowly.
+        sr = SimpleNamespace(
+            plan=lambda *_a, **_kw: SimpleNamespace(object_id=object_id),
+            commit=fake_commit,
+        )
 
-        with patch(
-            "ocfl_cli.workflow.commit.build_inventory_plan",
-            return_value=(SimpleNamespace(object_id=object_id), object()),
-        ):
-            threads = [
-                threading.Thread(
-                    target=wf_commit.commit_bare,
-                    kwargs={
-                        "store": StagingStore(tmp_path / "staging"),
-                        "sr": SimpleNamespace(commit=fake_commit),
-                        "fs": object(),
-                        "root_path": root_path,
-                        "object_id": object_id,
-                        "staging_dir": staging_dir,
-                        "allow_missing_metadata": True,
-                        "runtime": runtime,
-                    },
-                    daemon=True,
-                )
-                for _ in range(2)
-            ]
-            for thread in threads:
-                thread.start()
-            for thread in threads:
-                thread.join(timeout=5)
+        threads = [
+            threading.Thread(
+                target=wf_commit.commit_bare,
+                kwargs={
+                    "store": store,
+                    "sr": sr,
+                    "fs": object(),
+                    "root_path": root_path,
+                    "object_id": object_id,
+                    "staging_dir": staging_dir,
+                    "allow_missing_metadata": True,
+                    "runtime": runtime,
+                },
+                daemon=True,
+            )
+            for _ in range(2)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
 
         assert all(not thread.is_alive() for thread in threads)
         assert peak == 1
@@ -535,7 +549,7 @@ class TestCommitLocking:
             expected_digest="a" * 128,
             actual_digest="b" * 128,
         )
-        with patch(_FAIL_DURING_COMMIT, side_effect=stale):
+        with injected(runner, fs_factory=raise_on_content_write(stale)):
             result = _invoke(runner, storage_root, staging, "commit", oid)
 
         assert result.exit_code == 1, result.output

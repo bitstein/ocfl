@@ -30,19 +30,11 @@ Pins the `--upgrade --watch` contract from `OTS workflow contract`:
 - Caller (the watch loop), not the stream, owns the cancel flag —
   same loop shape used with the fake stream in tests.
 
-Test infrastructure seam (introduced by the implementer in
-``commands/stage.py``):
-
-- ``block_stream_for(cfg)`` — production factory returning a
-  ``BlockStream``-shaped object. Tests monkeypatch it to inject
-  ``InMemoryHashBlockStream`` from ``tests/fakes/fake_bitcoin.py``.
-  SimpleProof / Bitcoin clients are injected via ``runner.obj``
-  factory entries (see ``conftest.py::runner``).
-
-These tests are RED until both the ``--watch`` flag and the
-``block_stream_for`` seam land. Either failure mode (unknown CLI
-option or ``AttributeError`` on the patched seam) is an acceptable
-diagnostic.
+Ports (``ocfl_cli.ports``): the stream, the post-block sleep and the
+clients are injected through ``runner.obj`` (see ``conftest.py::runner``):
+``block_stream_factory`` returns an ``InMemoryHashBlockStream`` (or an
+inline stub), ``sleeper`` a ``RecordingSleeper``, and ``sp_client_factory``
+/ ``btc_rpc_factory`` the SimpleProof and Bitcoin fakes.
 """
 
 import dataclasses
@@ -906,7 +898,7 @@ class TestRegtestRealZmqHashblockDelivery:
         monkeypatch.setenv("BITCOIN_RPC_PASSWORD", bitcoind_regtest.rpc_password)
         _write_config(tmp_path, monkeypatch, body=cfg_body)
         _inject_fake_sp(runner, sp_fake)
-        # Production btc_rpc_factory + block_stream_for paths used.
+        # Production btc_rpc_factory + block_stream_factory paths used.
 
         staging = tmp_path / "staging"
         sd, _paths, digests = _new_ots_staging(

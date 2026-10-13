@@ -35,7 +35,6 @@ from pydantic import SecretStr
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
-from ocfl_cli._common import open_root
 from ocfl_cli.config import Config
 from ocfl_cli.config.ots import SimpleProofConfig
 from ocfl_cli.main import app
@@ -337,7 +336,7 @@ class TestInventorySubmissionPrimitives:
             )
         )
         store = StagingStore(staging)
-        sr, _fs = open_root(str(empty_sha256_root))
+        sr = StorageRoot.open(LocalFS(empty_sha256_root))
 
         prepared = wf_inventory.prepare_inventory_submission_locked(
             cfg,
@@ -391,7 +390,7 @@ class TestInventorySubmissionPrimitives:
             )
         )
         store = StagingStore(staging)
-        sr, _fs = open_root(str(empty_sha256_root))
+        sr = StorageRoot.open(LocalFS(empty_sha256_root))
 
         prepared = wf_inventory.prepare_inventory_submission_locked(
             cfg,

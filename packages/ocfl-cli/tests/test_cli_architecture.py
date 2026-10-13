@@ -212,7 +212,14 @@ class TestPorts:
         from ocfl_cli._appctx import AppCtx
 
         names = {f.name for f in dataclasses.fields(AppCtx)}
-        assert {"clock", "sleeper", "block_stream_factory", "lock_timeout"} <= names
+        ports = {
+            "clock",
+            "sleeper",
+            "block_stream_factory",
+            "lock_timeout",
+            "fs_factory",
+        }
+        assert ports <= names
 
     def test_only_the_system_adapter_reads_time(self):
         homes = set()
@@ -234,7 +241,10 @@ class TestPorts:
         assert homes == {"system.py"}, homes
 
     def test_tests_patch_no_cli_module(self):
-        """Tests inject fakes through `ctx.obj` / `Runtime`, not module internals."""
+        """Tests inject fakes through `ctx.obj` / `Runtime`, not module internals.
+
+        Covers `monkeypatch` and `unittest.mock.patch` / `patch.object`.
+        """
         bad = []
         for p in _py_files(CLI_TESTS):
             tree = _tree(p)
@@ -251,14 +261,12 @@ class TestPorts:
                         if a.name.split(".")[0] == "ocfl_cli":
                             modules.add(a.asname or a.name.split(".")[0])
             for node in ast.walk(tree):
-                if not (
-                    isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr in {"setattr", "delattr"}
-                    and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == "monkeypatch"
-                    and node.args
-                ):
+                if not (isinstance(node, ast.Call) and node.args):
+                    continue
+                func = ast.unparse(node.func)
+                monkeypatched = func in {"monkeypatch.setattr", "monkeypatch.delattr"}
+                mocked = func in {"patch", "mock.patch", "patch.object"}
+                if not (monkeypatched or mocked):
                     continue
                 target = node.args[0]
                 if isinstance(target, ast.Constant):

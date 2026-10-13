@@ -36,7 +36,7 @@ def ls(
 
 
 def _ls_root(ctx: typer.Context, json_mode: bool) -> None:
-    root, _fs = open_root(appctx.root(ctx))
+    root, _fs = open_root(ctx)
     ids = [obj.id for obj in root.objects()]
     if json_mode:
         output_json(ids)
@@ -52,7 +52,7 @@ def _ls_object(
     digests: bool,
     json_mode: bool,
 ) -> None:
-    root, _fs = open_root(appctx.root(ctx))
+    root, _fs = open_root(ctx)
 
     obj = root.get_object(object_id)
     if not obj.exists:

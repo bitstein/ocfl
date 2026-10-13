@@ -7,7 +7,7 @@ import typer
 
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
-from ocfl_cli._common import open_root, output_json, resolve_root
+from ocfl_cli._common import open_location, open_root, output_json, resolve_root
 from ocfl_cli._exit import error_line
 from ocfl_cli.errors import ConfigError, ErrorContext
 from ocfl_cli.workflow import validation as wf_validation
@@ -21,7 +21,6 @@ from ocfl_lib import (
     validate_root,
 )
 from ocfl_lib import fs as fs_utils
-from ocfl_lib.fs import open_fs
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -78,7 +77,7 @@ def _validate_root(
     _emit(ctx, f"Validating OCFL storage root: {path}")
     _emit(ctx, "Checking root structure (NAMASTE, layout, extensions)...")
     _emit(ctx, "Walking object hierarchy...")
-    fs = open_fs(path)
+    fs = open_location(ctx, path)
     object_ids = _object_ids_by_path(fs) if emit_progress else {}
     if emit_progress:
         appctx.err_console(ctx).print(_style.dim(f"  Found {len(object_ids)} objects"))
@@ -109,7 +108,7 @@ def _validate_object(
     suppress: frozenset[str],
     verify_ots: bool,
 ) -> None:
-    root, fs = open_root(appctx.root(ctx))
+    root, fs = open_root(ctx)
     obj_path = root.object_path(object_id)
 
     _emit(ctx, f"Validating object: {object_id}")

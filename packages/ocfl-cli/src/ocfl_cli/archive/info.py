@@ -27,7 +27,7 @@ def info(
 
 
 def _info_root(ctx: typer.Context, json_mode: bool) -> None:
-    root, _fs = open_root(appctx.root(ctx))
+    root, _fs = open_root(ctx)
 
     layout_name = root.layout.name if root.layout else None
 
@@ -45,7 +45,7 @@ def _info_root(ctx: typer.Context, json_mode: bool) -> None:
 
 
 def _info_object(ctx: typer.Context, object_id: str, json_mode: bool) -> None:
-    root, _fs = open_root(appctx.root(ctx))
+    root, _fs = open_root(ctx)
 
     obj = root.get_object(object_id)
     if not obj.exists:

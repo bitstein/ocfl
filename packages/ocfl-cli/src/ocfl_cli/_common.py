@@ -7,12 +7,18 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ocfl_cli import _appctx as appctx
 from ocfl_cli.errors import CLIError
 from ocfl_lib import StorageRoot, VNum
 from ocfl_lib.fs import open_fs
 
 if TYPE_CHECKING:
     import httpx2 as httpx
+    import typer
+
+    from ocfl_cli.ports import FsFactory
+    from ocfl_lib.fs import LocalFS
+    from ocfl_lib.fs.s3 import S3FS
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +44,18 @@ def resolve_root(root: str | None) -> str:
     return str(Path(raw).resolve())
 
 
-def open_root(root: str | None) -> tuple[StorageRoot, Any]:
-    """Open an existing storage root."""
-    fs = open_fs(resolve_root(root))
+# The production storage filesystem: the lib's local-path / `s3://` factory.
+DEFAULT_FS_FACTORY: FsFactory = open_fs
+
+
+def open_location(ctx: typer.Context, location: str) -> LocalFS | S3FS:
+    """The filesystem at `location`, through this run's `fs_factory` port."""
+    return appctx.fs_factory(ctx)(location)
+
+
+def open_root(ctx: typer.Context) -> tuple[StorageRoot, Any]:
+    """Open this run's existing storage root."""
+    fs = open_location(ctx, resolve_root(appctx.root(ctx)))
     return StorageRoot.open(fs), fs
 
 

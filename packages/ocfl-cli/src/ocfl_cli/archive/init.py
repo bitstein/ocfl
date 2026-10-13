@@ -6,10 +6,9 @@ from typing import Annotated
 import typer
 
 from ocfl_cli import _appctx as appctx
-from ocfl_cli._common import resolve_root
+from ocfl_cli._common import open_location, resolve_root
 from ocfl_cli.errors import CLIError
 from ocfl_lib import Spec, StorageRoot, get_layout
-from ocfl_lib.fs import open_fs
 
 
 def init(
@@ -42,7 +41,7 @@ def init(
 
     layout_obj = get_layout(layout, config=config)
 
-    fs = open_fs(root_path)
+    fs = open_location(ctx, root_path)
     StorageRoot.init(
         fs,
         fs,

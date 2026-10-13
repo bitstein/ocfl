@@ -30,12 +30,12 @@ committed object directory.
 import hashlib
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from fakes import FakeSimpleProof
+from fakes.fault_fs import raise_on_content_write
 from msgspec.structs import replace
-from runner_helpers import runner_obj
+from runner_helpers import injected, runner_obj
 
 # Re-use the inventory-upgrade test harness verbatim instead of
 # duplicating its setup helpers — that file already documents them as
@@ -75,7 +75,6 @@ from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
 
 # Content lookups run mid-commit, after the commit has started writing.
-_FAIL_DURING_COMMIT = "ocfl_cli.workflow.commit._StagingContentSource.get_content"
 
 # --------------------------------------------------------------------------- #
 # Local fixture (sibling tests redefine `empty_sha256_root` because it
@@ -822,7 +821,7 @@ class TestStageCommitOtsKeyboardInterrupt:
             runner, empty_sha256_root, staging, "obj:commit-sigint", sp_fake, btc_fake
         )
 
-        with patch(_FAIL_DURING_COMMIT, side_effect=KeyboardInterrupt):
+        with injected(runner, fs_factory=raise_on_content_write(KeyboardInterrupt())):
             r = runner.invoke(
                 app,
                 _stage_args(
@@ -882,7 +881,10 @@ class TestStageCommitOtsCrashRecovery:
         )
 
         # --- Round 1: induced crash ---
-        with patch(_FAIL_DURING_COMMIT, side_effect=RuntimeError("simulated crash")):
+        with injected(
+            runner,
+            fs_factory=raise_on_content_write(RuntimeError("simulated crash")),
+        ):
             r1 = runner.invoke(
                 app,
                 _stage_args(

@@ -21,6 +21,8 @@ if TYPE_CHECKING:
         VerifyBatchAck,
     )
     from ocfl_lib.bitcoin import BlockchainInfo, BlockHeader
+    from ocfl_lib.fs import LocalFS
+    from ocfl_lib.fs.s3 import S3FS
 
 
 @runtime_checkable
@@ -78,6 +80,8 @@ class SimpleProofClient(Protocol):
 type SpClientFactory = Callable[[Config], SimpleProofClient]
 type BtcRpcFactory = Callable[[Config], BitcoinRPC]
 type BlockStreamFactory = Callable[[Config], BlockStream]
+# Opens the storage root's filesystem at a local path or `s3://` URI.
+type FsFactory = Callable[[str], LocalFS | S3FS]
 
 DEFAULT_LOCK_TIMEOUT_SECONDS = 30.0
 

@@ -23,7 +23,7 @@ def log(
 ) -> None:
     """Show version history of an object."""
     as_json = appctx.json_mode(ctx)
-    root, _fs = open_root(appctx.root(ctx))
+    root, _fs = open_root(ctx)
 
     obj = root.get_object(object_id)
     if not obj.exists:

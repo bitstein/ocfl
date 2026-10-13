@@ -212,7 +212,7 @@ def timestamp_content(
     cfg = preflight.cfg
     resolved = preflight.resolved
 
-    sr, _fs = open_root(appctx.root(ctx))
+    sr, _fs = open_root(ctx)
 
     if watch_flag:
         state = wf_staging.ots_state(resolved.staging_dir)
@@ -351,7 +351,7 @@ def timestamp_inventory(
     cfg = preflight.cfg
     resolved = preflight.resolved
 
-    sr, _fs = open_root(appctx.root(ctx))
+    sr, _fs = open_root(ctx)
 
     if watch_flag:
         state = wf_staging.ots_state(resolved.staging_dir)

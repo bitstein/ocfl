@@ -37,7 +37,6 @@ from pydantic import SecretStr
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
-from ocfl_cli._common import open_root
 from ocfl_cli.config import Config
 from ocfl_cli.config.ots import SimpleProofConfig
 from ocfl_cli.main import app
@@ -463,7 +462,7 @@ class TestContentSubmissionPrimitives:
             )
         )
         store = StagingStore(staging)
-        sr, _fs = open_root(str(empty_sha256_root))
+        sr = StorageRoot.open(LocalFS(empty_sha256_root))
         sd = _staging_dir(empty_sha256_root, staging, "obj:primitive")
 
         prepared = wf_content.prepare_content_submission_locked(

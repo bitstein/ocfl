@@ -32,4 +32,4 @@ Rules, enforced by import-linter (`[tool.importlinter]` in the root `pyproject.t
 
 - Moving a function across a layer is a contract change that import-linter reports.
 - No contract lists exemptions (`ignore_imports`).
-- The use cases reach time only through the ports (`Clock`, `Sleeper`, `BlockStream`, bundled with the lock timeout as `ports.Runtime`); `ocfl_cli.system` is the one module that reads the real clock or sleeps. Tests inject fakes through `ctx.obj` / `AppCtx` or a `Runtime`, not by patching module internals.
+- The use cases reach time only through the ports (`Clock`, `Sleeper`, `BlockStream`, bundled with the lock timeout as `ports.Runtime`), and commands open the storage root through the `fs_factory` port; `ocfl_cli.system` is the one module that reads the real clock or sleeps. Tests inject fakes through `ctx.obj` / `AppCtx` or a `Runtime`, not by patching module internals.

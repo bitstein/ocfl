@@ -208,7 +208,7 @@ def commit_batch(ctx: typer.Context, batch_id: str) -> None:
     """`stage commit --batch ID`."""
     failures = drive.commit(
         stage_store(ctx),
-        lambda: open_root(appctx.root(ctx)),
+        lambda: open_root(ctx),
         root_path=resolve_root_path(ctx),
         batch_id=batch_id,
         events=_CliBatchEvents(ctx, resumed_by_id=True),
@@ -263,7 +263,7 @@ def _drive_batch_upgrade(
     batch = drive.upgrade(
         stage_store(ctx),
         cfg,
-        lambda: open_root(appctx.root(ctx))[0],
+        lambda: open_root(ctx)[0],
         target=target,
         batch_id=batch_id,
         sp_factory=appctx.sp_client_factory(ctx),
@@ -295,7 +295,7 @@ def _drive_batch_watch(
     require_bitcoin(ctx, cfg)
     store = stage_store(ctx)
     root_path = resolve_root_path(ctx)
-    sr, _fs = open_root(appctx.root(ctx))
+    sr, _fs = open_root(ctx)
     exit_code = drive.watch(
         store,
         cfg,
@@ -329,7 +329,7 @@ def _drive_batch_submit(
     require_simpleproof(ctx, cfg)
     store = stage_store(ctx)
     root_path = resolve_root_path(ctx)
-    sr, _fs = open_root(appctx.root(ctx))
+    sr, _fs = open_root(ctx)
     events = _CliBatchEvents(ctx, resumed_by_id=batch_id is not None)
     batch = drive.submit(
         store,

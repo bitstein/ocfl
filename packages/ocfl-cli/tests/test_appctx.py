@@ -18,6 +18,7 @@ from ocfl_cli._appctx import (
     sp_client_factory,
     verbose,
 )
+from ocfl_cli._common import DEFAULT_FS_FACTORY
 from ocfl_cli._style import make_console
 from ocfl_cli.config import ArchiveConfig, Config
 from ocfl_cli.ports import BtcRpcFactory, SpClientFactory
@@ -48,6 +49,7 @@ def test_app_ctx_builds_typed_view_from_ctx_obj() -> None:
             "sleeper": SYSTEM_SLEEPER,
             "block_stream_factory": _factory,
             "lock_timeout": 30.0,
+            "fs_factory": DEFAULT_FS_FACTORY,
             "console": out,
             "err_console": err,
         },
@@ -68,6 +70,7 @@ def test_app_ctx_builds_typed_view_from_ctx_obj() -> None:
     assert typed.sleeper is SYSTEM_SLEEPER
     assert typed.block_stream_factory is _factory
     assert typed.lock_timeout == 30.0
+    assert typed.fs_factory is DEFAULT_FS_FACTORY
     assert typed.console is out
     assert typed.err_console is err
 
@@ -148,6 +151,7 @@ def test_install_app_ctx_caches_and_closes_clients_per_invocation() -> None:
         clock=SYSTEM_CLOCK,
         sleeper=SYSTEM_SLEEPER,
         block_stream_factory=lambda cfg: InMemoryHashBlockStream(),
+        fs_factory=DEFAULT_FS_FACTORY,
     )
 
     sp_factory = sp_client_factory(ctx)
@@ -184,6 +188,7 @@ def test_install_app_ctx_accepts_fakes_without_close_method() -> None:
         clock=SYSTEM_CLOCK,
         sleeper=SYSTEM_SLEEPER,
         block_stream_factory=lambda cfg: InMemoryHashBlockStream(),
+        fs_factory=DEFAULT_FS_FACTORY,
     )
 
     assert sp_client_factory(ctx)(cfg) is client
@@ -217,6 +222,7 @@ def test_install_app_ctx_reuses_injected_factory_source_across_invocations() -> 
             clock=SYSTEM_CLOCK,
             sleeper=SYSTEM_SLEEPER,
             block_stream_factory=lambda cfg: InMemoryHashBlockStream(),
+            fs_factory=DEFAULT_FS_FACTORY,
         )
 
         sp_factory = sp_client_factory(ctx)
