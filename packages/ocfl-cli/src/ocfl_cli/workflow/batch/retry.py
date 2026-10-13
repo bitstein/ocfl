@@ -67,7 +67,7 @@ def collect_retry_record_ids(
         if row.status not in {"prepared", "submitted"}:
             continue
         staging_dir = store.staging_path(batch.root_path, row.object_id)
-        with with_lock(staging_dir, timeout=runtime.lock_timeout):
+        with with_lock(staging_dir, runtime):
             state = load_ots(staging_dir)
             for digest, record_id in object_record_ids_by_digest(
                 batch, row, state
@@ -161,7 +161,7 @@ def missing_prepared_retry_digests(
         if rows[row.object_id].status != "prepared":
             continue
         staging_dir = store.staging_path(batch.root_path, row.object_id)
-        with with_lock(staging_dir, timeout=runtime.lock_timeout):
+        with with_lock(staging_dir, runtime):
             state = load_ots(staging_dir)
             object_ids = object_record_ids_by_digest(batch, row, state)
         for digest in row.digests:
@@ -187,8 +187,7 @@ def save_retry_pre_post(
         submissions=tuple(submissions),
         updated_at=batch_state.utc_iso_z(runtime.clock.now()),
     )
-    with batch_state.with_batch_lock(staging_root, batch.batch_id):
-        batch_state.save_batch(staging_root, batch)
+    batch_state.save_batch(staging_root, batch)
     return batch
 
 

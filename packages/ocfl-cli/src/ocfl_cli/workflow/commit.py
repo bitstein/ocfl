@@ -218,8 +218,8 @@ def _commit_staging(
     staging is kept for a retry.
     """
     with (
-        object_commit_lock(root_path, object_id, timeout=runtime.lock_timeout),
-        with_lock(staging_dir, timeout=runtime.lock_timeout),
+        object_commit_lock(root_path, object_id, runtime),
+        with_lock(staging_dir, runtime),
     ):
         prepared = prepare()
         try:

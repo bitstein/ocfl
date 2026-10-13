@@ -408,7 +408,7 @@ def edit_metadata(
         clear_name=clear_name,
         clear_address=clear_address,
     )
-    with with_lock(resolved.staging_dir, timeout=runtime.lock_timeout):
+    with with_lock(resolved.staging_dir, runtime):
 
         def invalidate_ots_if_needed(
             current: StagedMetadata, updated: StagedMetadata
@@ -510,7 +510,7 @@ def add_sources(
         store.save_content_map(root_path, object_id, content_map)
 
     if has_ots(staging_dir):
-        with with_lock(staging_dir, timeout=runtime.lock_timeout):
+        with with_lock(staging_dir, runtime):
             _finalize()
             apply_rm_mv_regression(staging_dir, state, "add", command)
     else:
@@ -563,7 +563,7 @@ def move_path(
     state[found_digest].append(dst_path)
 
     if has_ots(staging_dir):
-        with with_lock(staging_dir, timeout=runtime.lock_timeout):
+        with with_lock(staging_dir, runtime):
             if moves_companion:
                 pair_ots_companion_rename(state, src_path, dst_path)
             store.save_inventory(root_path, object_id, update_head_state(inv, state))
@@ -630,7 +630,7 @@ def remove_paths(
         store.save_content_map(root_path, object_id, content_map)
 
     if has_ots(staging_dir):
-        with with_lock(staging_dir, timeout=runtime.lock_timeout):
+        with with_lock(staging_dir, runtime):
             pair_ots_companion_remove(state, path_kinds(before, removed_paths))
             _finalize()
             apply_rm_mv_regression(

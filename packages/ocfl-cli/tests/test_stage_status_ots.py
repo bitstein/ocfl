@@ -29,9 +29,9 @@ import hashlib
 import json
 from pathlib import Path
 
-import filelock
 import pytest
 from fakes import FakeBitcoinRPC, FakeClock, FakeSimpleProof
+from fakes.locks import held_flock
 from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
@@ -816,7 +816,7 @@ class TestStageStatusOts:
         )
 
         runner_obj(runner)["lock_timeout"] = 0.01
-        with filelock.FileLock(str(sd / ".lock")).acquire(timeout=1):
+        with held_flock(sd / ".lock"):
             r = runner.invoke(
                 app,
                 _stage_args_json(empty_sha256_root, staging, "status", "obj:s-nolock"),

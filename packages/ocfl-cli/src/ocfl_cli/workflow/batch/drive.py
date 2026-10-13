@@ -1,7 +1,9 @@
 """Batch use cases: create or resume a batch and drive it, reporting events.
 
-Each driver holds the batch's driver lease while it runs and reports what
-changed through `BatchEvents`; the command renders the events.
+Each driver holds the batch lock (`store.batch.batch_lock`, a `flock`) for
+its whole run, so a second driver, a commit or an `rm` of the same batch
+waits, then exits 4 (ADR-0005). It reports what changed through
+`BatchEvents`; the command renders the events.
 """
 
 import contextlib
@@ -24,7 +26,6 @@ from ocfl_cli.store import batch as batch_state
 from ocfl_cli.workflow import commit as wf_commit
 from ocfl_cli.workflow import watch as wf_watch
 from ocfl_cli.workflow.batch.prepare import (
-    batch_command_tuple,
     collect_recoverable_object_intents,
     merge_recovered_object_intents,
     prepare_batch_object,
@@ -142,8 +143,7 @@ def _start(
     """Create (or resume) the batch, recover lost intents, submit what is due."""
     staging_root = store.root
     if created:
-        with batch_state.with_batch_lock(staging_root, batch.batch_id):
-            batch_state.save_batch(staging_root, batch)
+        batch_state.save_batch(staging_root, batch)
         events.created(batch)
         for object_id in dict.fromkeys(selected):
             row = prepare_batch_object(
@@ -159,17 +159,15 @@ def _start(
                 runtime=runtime,
             )
             batch = replace_batch_object(batch, row, runtime=runtime)
-            with batch_state.with_batch_lock(staging_root, batch.batch_id):
-                batch_state.save_batch(staging_root, batch)
+            batch_state.save_batch(staging_root, batch)
             events.object_prepared(batch, row)
     else:
         events.resumed(batch)
     recovered = collect_recoverable_object_intents(store, batch, runtime=runtime)
-    with batch_state.with_batch_lock(staging_root, batch.batch_id):
-        before_recovered = batch
-        batch = batch_state.load_batch(staging_root, batch.batch_id)
-        batch = merge_recovered_object_intents(batch, recovered, runtime=runtime)
-        batch_state.save_batch(staging_root, batch)
+    before_recovered = batch
+    batch = batch_state.load_batch(staging_root, batch.batch_id)
+    batch = merge_recovered_object_intents(batch, recovered, runtime=runtime)
+    batch_state.save_batch(staging_root, batch)
     events.changed(before_recovered, batch)
     before_submit = batch
     batch = submit_batch(
@@ -214,11 +212,7 @@ def submit(
         default_category=sp_cfg.proof_category_id,
         runtime=runtime,
     )
-    with batch_state.with_driver_lease(
-        store.root,
-        batch.batch_id,
-        command=batch_command_tuple("submit", batch.batch_id),
-    ):
+    with batch_state.batch_lock(store.root, batch.batch_id, runtime):
         return _start(
             store,
             cfg,
@@ -248,11 +242,7 @@ def retry(
     staging_root = store.root
     batch = load_batch_or_usage(staging_root, batch_id)
     target = batch.target
-    with batch_state.with_driver_lease(
-        staging_root,
-        batch.batch_id,
-        command=batch_command_tuple("retry", batch.batch_id),
-    ):
+    with batch_state.batch_lock(staging_root, batch.batch_id, runtime):
         events.resumed(batch)
         before_retry = batch
         batch = retry_batch_submissions(
@@ -284,11 +274,7 @@ def upgrade(
     batch = load_batch_or_usage(staging_root, batch_id)
     target = batch.target
     sr = open_root()
-    with batch_state.with_driver_lease(
-        staging_root,
-        batch.batch_id,
-        command=batch_command_tuple("upgrade", batch.batch_id),
-    ):
+    with batch_state.batch_lock(staging_root, batch.batch_id, runtime):
         events.resumed(batch)
         before_upgrade = batch
         batch = run_batch_upgrade_pass(
@@ -374,11 +360,7 @@ def watch(
         return batch, True
 
     try:
-        with batch_state.with_driver_lease(
-            staging_root,
-            batch.batch_id,
-            command=batch_command_tuple("watch", batch.batch_id),
-        ):
+        with batch_state.batch_lock(staging_root, batch.batch_id, runtime):
             batch = _start(
                 store,
                 cfg,
@@ -494,8 +476,9 @@ def commit(
     `commit_object` commits one object's Staging Area (`commit_ots` keywords).
     """
     staging_root = store.root
-    with batch_state.with_batch_lock(staging_root, batch_id):
-        batch = load_batch_or_usage(staging_root, batch_id)
+    batch = load_batch_or_usage(staging_root, batch_id)
+    with batch_state.batch_lock(staging_root, batch.batch_id, runtime):
+        batch = load_batch_or_usage(staging_root, batch.batch_id)
         if not rules_for(batch.target).commits:
             raise UsageError(
                 f"commit batches must target inventory; got {batch.target.value}"
@@ -509,77 +492,77 @@ def commit(
             (row.object_id, row.status, row.skipped_reason) for row in batch.objects
         )
 
-    sr, fs = open_root()
-    counts: CommitCountsOutput = {
-        "committed": 0,
-        "skipped": 0,
-        "failed": 0,
-        "total": len(snapshot),
-    }
-    failures = 0
-    for object_id, status, skipped_reason in snapshot:
-        staging_dir = store.staging_path(batch.root_path, object_id)
-        if not staging_dir.exists():
-            counts["skipped"] += 1
+        sr, fs = open_root()
+        counts: CommitCountsOutput = {
+            "committed": 0,
+            "skipped": 0,
+            "failed": 0,
+            "total": len(snapshot),
+        }
+        failures = 0
+        for object_id, status, skipped_reason in snapshot:
+            staging_dir = store.staging_path(batch.root_path, object_id)
+            if not staging_dir.exists():
+                counts["skipped"] += 1
+                events.commit_event(
+                    commit_object_event(
+                        batch=batch,
+                        object_id=object_id,
+                        event="object_skipped",
+                        reason="committed",
+                    )
+                )
+                continue
+            if status != "upgraded":
+                counts["skipped"] += 1
+                events.commit_event(
+                    commit_object_event(
+                        batch=batch,
+                        object_id=object_id,
+                        event="object_skipped",
+                        reason=skipped_reason or status,
+                    )
+                )
+                continue
+            try:
+                commit_object(
+                    store=store,
+                    sr=sr,
+                    fs=fs,
+                    root_path=batch.root_path,
+                    object_id=object_id,
+                    staging_dir=staging_dir,
+                    allow_missing_metadata=False,
+                    runtime=runtime,
+                )
+            except (
+                AttestationMismatchError,
+                PhaseError,
+                MissingStagedMetadataError,
+                StagingFileMissingError,
+                StagingFileChangedError,
+                CommitFailedError,
+                LockTimeoutError,
+            ) as e:
+                counts["failed"] += 1
+                failures += 1
+                events.commit_event(
+                    commit_object_event(
+                        batch=batch,
+                        object_id=object_id,
+                        event="object_failed",
+                        reason=commit_failure_reason(e),
+                        message=str(e),
+                    )
+                )
+                continue
+            counts["committed"] += 1
             events.commit_event(
                 commit_object_event(
                     batch=batch,
                     object_id=object_id,
-                    event="object_skipped",
-                    reason="committed",
+                    event="object_committed",
                 )
             )
-            continue
-        if status != "upgraded":
-            counts["skipped"] += 1
-            events.commit_event(
-                commit_object_event(
-                    batch=batch,
-                    object_id=object_id,
-                    event="object_skipped",
-                    reason=skipped_reason or status,
-                )
-            )
-            continue
-        try:
-            commit_object(
-                store=store,
-                sr=sr,
-                fs=fs,
-                root_path=batch.root_path,
-                object_id=object_id,
-                staging_dir=staging_dir,
-                allow_missing_metadata=False,
-                runtime=runtime,
-            )
-        except (
-            AttestationMismatchError,
-            PhaseError,
-            MissingStagedMetadataError,
-            StagingFileMissingError,
-            StagingFileChangedError,
-            CommitFailedError,
-            LockTimeoutError,
-        ) as e:
-            counts["failed"] += 1
-            failures += 1
-            events.commit_event(
-                commit_object_event(
-                    batch=batch,
-                    object_id=object_id,
-                    event="object_failed",
-                    reason=commit_failure_reason(e),
-                    message=str(e),
-                )
-            )
-            continue
-        counts["committed"] += 1
-        events.commit_event(
-            commit_object_event(
-                batch=batch,
-                object_id=object_id,
-                event="object_committed",
-            )
-        )
-    events.commit_event(commit_summary_event(batch, counts))
-    return failures
+        events.commit_event(commit_summary_event(batch, counts))
+        return failures

@@ -3,9 +3,9 @@
 from pathlib import Path
 from typing import Any
 
-import filelock
 import pytest
 from click.testing import Result
+from fakes.locks import is_flocked, lock_runtime
 from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
@@ -340,9 +340,7 @@ class TestStageMetadata:
 
         def assert_locked(self: StagingStore, *args: Any, **kwargs: Any) -> None:
             nonlocal observed_lock
-            sibling = filelock.FileLock(str(staging_dir / ".lock"))
-            with pytest.raises(filelock.Timeout):
-                sibling.acquire(timeout=0)
+            assert is_flocked(staging_dir / ".lock")
             observed_lock = True
             original_save_metadata(self, *args, **kwargs)
 
@@ -375,7 +373,7 @@ class TestStageMetadata:
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
         runner_obj(runner)["lock_timeout"] = 0.01
 
-        with with_lock(staging_dir, timeout=1):
+        with with_lock(staging_dir, lock_runtime(1)):
             result = _invoke(
                 runner,
                 storage_root,
@@ -402,7 +400,7 @@ class TestStageMetadata:
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
         runner_obj(runner)["lock_timeout"] = 0.01
 
-        with with_lock(staging_dir, timeout=1):
+        with with_lock(staging_dir, lock_runtime(1)):
             result = _invoke(
                 runner,
                 storage_root,

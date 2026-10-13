@@ -203,8 +203,8 @@ class TestBatchEngine:
             for needle in (
                 "save_batch(",
                 "load_batch(",
-                "with_batch_lock(",
-                "with_driver_lease(",
+                "batch_lock(",
+                "flock(",
                 "with_lock(",
                 "submit_hashes(",
                 "verify_batch(",
@@ -708,3 +708,65 @@ class TestDiscardAndConfig:
     def test_only_the_config_group_runs_on_a_broken_config(self):
         text = (CLI_SRC / "main.py").read_text()
         assert 'ctx.invoked_subcommand != "config"' in text
+
+
+# --- 7.3 locks: flock, a 5 s wait, then exit 4; the batch flock is the lease
+
+
+class TestLocks:
+    def test_one_lock_primitive(self):
+        """Only `store/locks.py` touches `fcntl`; nothing imports `filelock`."""
+        homes = set()
+        for p in _py_files(CLI_SRC):
+            for node in ast.walk(_tree(p)):
+                if isinstance(node, ast.Import | ast.ImportFrom):
+                    names = (
+                        [a.name for a in node.names]
+                        if isinstance(node, ast.Import)
+                        else [node.module or ""]
+                    )
+                    assert "filelock" not in names, _rel(p)
+                    if "fcntl" in names:
+                        homes.add(_rel(p))
+        assert homes == {"store/locks.py"}, homes
+
+    def test_the_wait_is_5_seconds_of_the_sleeper(self):
+        from ocfl_cli import ports
+
+        assert ports.DEFAULT_LOCK_TIMEOUT_SECONDS == 5.0
+        text = (CLI_SRC / "store/locks.py").read_text()
+        assert "runtime.sleeper.sleep(" in text and "LOCK_NB" in text
+
+    def test_no_lease_file_or_heartbeat(self):
+        from ocfl_cli.model import batch as model_batch
+        from ocfl_cli.store import batch as store_batch
+
+        assert not hasattr(model_batch, "DriverLease")
+        names = {n for n in vars(store_batch) if "lease" in n.lower()}
+        assert not names, names
+        text = (CLI_SRC / "store/batch.py").read_text()
+        for needle in (".driver", "heartbeat", "signal", "threading"):
+            assert needle not in text, needle
+
+    def test_every_batch_driver_holds_the_batch_lock(self):
+        tree = _tree(CLI_SRC / "workflow/batch/drive.py")
+        fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        for name in ("submit", "retry", "upgrade", "watch", "commit"):
+            calls = {
+                ast.unparse(n.func)
+                for n in ast.walk(fns[name])
+                if isinstance(n, ast.Call)
+            }
+            assert "batch_state.batch_lock" in calls, name
+
+    def test_the_engine_takes_no_other_batch_lock(self):
+        """Inside a run the driver already holds the batch lock (a second flock
+        on the same file from the same process would block itself)."""
+        bad = [
+            f"{_rel(p)}:{n.lineno}"
+            for p in _py_files(CLI_SRC / "workflow/batch")
+            if p.name not in {"drive.py", "report.py"}
+            for n in ast.walk(_tree(p))
+            if isinstance(n, ast.Call) and ast.unparse(n.func).endswith("batch_lock")
+        ]
+        assert not bad, bad

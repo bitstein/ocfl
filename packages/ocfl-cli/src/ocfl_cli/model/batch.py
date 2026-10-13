@@ -1,4 +1,4 @@
-"""Batch timestamping state: the batch file and driver lease model."""
+"""Batch timestamping state: the batch file model."""
 
 from typing import Literal
 
@@ -70,17 +70,3 @@ class BatchFile(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields
     objects: tuple[BatchObject, ...] = ()
     submissions: tuple[BatchSubmission, ...] = ()
     verify_jobs: tuple[BatchVerifyJob, ...] = ()
-
-
-class DriverLease(
-    msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True
-):
-    """One command-driver lease holder for a batch."""
-
-    batch_id: str
-    pid: int
-    host: str
-    started_at: str
-    heartbeat_at: str
-    command: str
-    cli_version: str

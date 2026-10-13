@@ -7,11 +7,13 @@ from pathlib import Path
 from typing import get_args, get_type_hints, is_typeddict
 
 import pytest
+from fakes import RecordingSleeper
 from fakes.batch_events import RecordingBatchEvents
+from fakes.locks import held_flock, is_flocked
 from msgspec.structs import replace
 from typer.testing import CliRunner
 
-from ocfl_cli.errors import AttestationMismatchError, PhaseError
+from ocfl_cli.errors import AttestationMismatchError, LockTimeoutError, PhaseError
 from ocfl_cli.main import app
 from ocfl_cli.model.batch import BatchFile, BatchObject
 from ocfl_cli.model.phase import TimestampTarget
@@ -420,12 +422,40 @@ def test_batch_commit_rejects_wrong_archive_root_before_commit_attempt(
     assert str(other_root.resolve()) in result.output
 
 
-def test_batch_commit_does_not_require_batch_driver_lease(
-    runner: CliRunner,
+def test_batch_commit_holds_the_batch_lock(
     storage_root: Path,
     tmp_path: Path,
     runtime: Runtime,
-    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The batch lock is the lease: commit holds it for the whole run."""
+    staging = tmp_path / "staging"
+    _stage_dir(staging, storage_root, "obj:leased")
+    batch = _batch(
+        staging,
+        storage_root,
+        rows=(BatchObject(object_id="obj:leased", status="upgraded"),),
+    )
+    held_during_commit: list[bool] = []
+
+    def commit_object(**kwargs) -> None:
+        held_during_commit.append(
+            is_flocked(batch_state.batch_lock_path(staging, batch.batch_id))
+        )
+        _remove_staging(**kwargs)
+
+    exit_code, events = _commit_batch(
+        storage_root, staging, batch.batch_id, commit_object, runtime
+    )
+
+    assert exit_code == 0, events
+    assert held_during_commit == [True]
+
+
+def test_batch_commit_waits_for_a_running_driver(
+    storage_root: Path,
+    tmp_path: Path,
+    runtime: Runtime,
+    sleeper: RecordingSleeper,
 ) -> None:
     staging = tmp_path / "staging"
     _stage_dir(staging, storage_root, "obj:leased")
@@ -434,24 +464,15 @@ def test_batch_commit_does_not_require_batch_driver_lease(
         storage_root,
         rows=(BatchObject(object_id="obj:leased", status="upgraded"),),
     )
-    commit_object = _remove_staging
 
-    with batch_state.with_driver_lease(
-        staging,
-        batch.batch_id,
-        command=(
-            "stage",
-            "batch",
-            "retry",
-            batch.batch_id,
-        ),
-        heartbeat_interval=None,
+    with (
+        held_flock(batch_state.batch_lock_path(staging, batch.batch_id)),
+        pytest.raises(LockTimeoutError),
     ):
-        exit_code, events = _commit_batch(
-            storage_root, staging, batch.batch_id, commit_object, runtime
-        )
+        _commit_batch(storage_root, staging, batch.batch_id, _remove_staging, runtime)
 
-    assert exit_code == 0, events
+    assert sum(sleeper.calls) == pytest.approx(runtime.lock_timeout)
+    assert (staging / "batches").is_dir()
 
 
 @pytest.mark.parametrize(

@@ -70,7 +70,7 @@ def batch_unverified_submitted_digests(
         if row.status != "submitted":
             continue
         staging_dir = store.staging_path(batch.root_path, row.object_id)
-        with with_lock(staging_dir, timeout=runtime.lock_timeout):
+        with with_lock(staging_dir, runtime):
             state = load_ots(staging_dir)
             for digest in row.digests:
                 if digest in seen or digest in covered:
@@ -87,8 +87,7 @@ def save_batch_upgrade(
     batch = msgspec.structs.replace(
         batch, updated_at=batch_state.utc_iso_z(runtime.clock.now())
     )
-    with batch_state.with_batch_lock(staging_root, batch.batch_id):
-        batch_state.save_batch(staging_root, batch)
+    batch_state.save_batch(staging_root, batch)
     return batch
 
 
@@ -282,7 +281,7 @@ def ingest_batch_downloads(
         object_id=row.object_id,
         staging_dir=staging_dir,
     )
-    with with_lock(staging_dir, timeout=runtime.lock_timeout):
+    with with_lock(staging_dir, runtime):
         state = load_ots(staging_dir)
         if not rules.row_current(area, state, row.digests):
             return (
@@ -479,7 +478,7 @@ def reconcile_upgraded_batch_rows(
             rows.append(row)
             continue
         staging_dir = store.staging_path(batch.root_path, row.object_id)
-        with with_lock(staging_dir, timeout=runtime.lock_timeout):
+        with with_lock(staging_dir, runtime):
             state = load_ots(staging_dir)
             upgraded = rules_for(target).row_upgraded(state, row.digests)
         if upgraded:

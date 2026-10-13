@@ -1,6 +1,6 @@
 """The block-watch loop for `stage timestamp|upgrade --watch`.
 
-Per-block invariant: under the staging filelock, decide whether the chain
+Per-block invariant: under the staging lock, decide whether the chain
 moved (height jumped or stable-height tip swapped — the reorg/stale-tip
 window) and re-verify the target's cached proofs accordingly, then run one
 upgrade pass. Returns when the target's phase is reached or the user
@@ -74,7 +74,7 @@ def watch(
                     continue
                 runtime.sleeper.sleep(BLOCK_PROCESSING_DELAY_SECONDS)
                 try:
-                    with with_lock(run.staging_dir, timeout=runtime.lock_timeout):
+                    with with_lock(run.staging_dir, runtime):
                         info = btc.getblockchaininfo()
                         moved = last_height is not None and (
                             info.height - last_height > 1

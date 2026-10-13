@@ -73,10 +73,6 @@ def object_has_other_batch(
     return None
 
 
-def batch_command_tuple(verb: str, batch_id: str) -> tuple[str, ...]:
-    return ("stage", "batch", verb, batch_id)
-
-
 def prepare_batch_object(
     *,
     target: TimestampTarget,
@@ -98,7 +94,7 @@ def prepare_batch_object(
             skipped_reason=fixed_batch_reason("committed"),
         )
     try:
-        with with_lock(staging_dir, timeout=runtime.lock_timeout):
+        with with_lock(staging_dir, runtime):
             state = load_ots(staging_dir)
             if state.category_id != batch.category_id:
                 return batch_model.BatchObject(
@@ -195,7 +191,7 @@ def collect_recoverable_object_intents(
             continue
         if store.staging_path(batch.root_path, object_id) != staging_dir:
             continue
-        with with_lock(staging_dir, timeout=runtime.lock_timeout):
+        with with_lock(staging_dir, runtime):
             row = recover_intent(batch, object_id, load_ots(staging_dir))
         if row is not None:
             recovered.append(row)

@@ -4,9 +4,9 @@ import threading
 import time
 from types import SimpleNamespace
 
-import filelock
 import pytest
 from fakes.fault_fs import before_claim, raise_on_content_write
+from fakes.locks import held_flock, is_flocked, lock_runtime
 from runner_helpers import injected, runner_obj
 
 from ocfl_cli.errors import LockTimeoutError
@@ -406,21 +406,24 @@ class TestCommitLocking:
         object_id = "obj:locked"
 
         with (
-            locks.object_commit_lock(root_path, object_id, timeout=1),
+            locks.object_commit_lock(root_path, object_id, lock_runtime(1)),
             pytest.raises(LockTimeoutError, match="commit lock"),
-            locks.object_commit_lock(root_path, object_id, timeout=0.01),
+            locks.object_commit_lock(root_path, object_id, lock_runtime(0.01)),
         ):
             pytest.fail("second lock acquire should time out")
 
-    def test_bare_commits_for_same_object_are_serialized(self, tmp_path, runtime):
+    def test_bare_commits_for_same_object_are_serialized(self, tmp_path):
+        # A real sleeper: the second commit really waits for the first.
         """Local CLI commits for one object do not overlap plan execution."""
         current = 0
         peak = 0
+        commits = 0
         guard = threading.Lock()
 
         def fake_commit(*_args, **_kwargs):
-            nonlocal current, peak
+            nonlocal current, peak, commits
             with guard:
+                commits += 1
                 current += 1
                 peak = max(peak, current)
             time.sleep(0.05)
@@ -462,7 +465,7 @@ class TestCommitLocking:
                     "object_id": object_id,
                     "staging_dir": staging_dir,
                     "allow_missing_metadata": True,
-                    "runtime": runtime,
+                    "runtime": lock_runtime(5),
                 },
                 daemon=True,
             )
@@ -475,6 +478,7 @@ class TestCommitLocking:
 
         assert all(not thread.is_alive() for thread in threads)
         assert peak == 1
+        assert commits == 2
 
     def test_bare_commit_holds_staging_lock_until_purge(
         self, runner, storage_root, tmp_path, monkeypatch
@@ -495,9 +499,7 @@ class TestCommitLocking:
 
         def assert_locked_during_purge(self, root_path_arg, object_id_arg):
             nonlocal observed_lock
-            sibling = filelock.FileLock(str(staging_dir / ".lock"))
-            with pytest.raises(filelock.Timeout):
-                sibling.acquire(timeout=0)
+            assert is_flocked(staging_dir / ".lock")
             observed_lock = True
             return original_purge(self, root_path_arg, object_id_arg)
 
@@ -525,7 +527,7 @@ class TestCommitLocking:
         staging_dir = store.staging_path(root_path, oid)
         runner_obj(runner)["lock_timeout"] = 0.01
 
-        with filelock.FileLock(str(staging_dir / ".lock")).acquire(timeout=1):
+        with held_flock(staging_dir / ".lock"):
             result = _invoke(runner, storage_root, staging, "commit", oid)
 
         assert result.exit_code == 4

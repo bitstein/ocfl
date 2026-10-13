@@ -379,7 +379,7 @@ def submit(
     allow_missing_metadata: bool = False,
 ) -> SubmitResult:
     """`stage timestamp`: submit the target's digests, under the staging lock."""
-    with with_lock(run.staging_dir, timeout=run.runtime.lock_timeout):
+    with with_lock(run.staging_dir, run.runtime):
         prepared = prepare_submission_locked(
             run.area,
             category_config=run.category_config,
@@ -611,7 +611,7 @@ def upgrade(
     run: TimestampRun, *, expect: TimestampTarget | None = None
 ) -> UpgradeResult:
     """`stage upgrade`: one upgrade pass under the staging lock."""
-    with with_lock(run.staging_dir, timeout=run.runtime.lock_timeout):
+    with with_lock(run.staging_dir, run.runtime):
         return upgrade_locked(run, expect=expect)
 
 
@@ -675,5 +675,5 @@ def retry_locked(
 
 def retry(run: TimestampRun, *, expect: TimestampTarget | None = None) -> RetryResult:
     """`stage retry` under the staging lock."""
-    with with_lock(run.staging_dir, timeout=run.runtime.lock_timeout):
+    with with_lock(run.staging_dir, run.runtime):
         return retry_locked(run, expect=expect)

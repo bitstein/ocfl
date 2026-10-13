@@ -25,7 +25,7 @@ Pins the `--watch` contract from `OTS workflow contract`:
   invariant guarantees no torn checkpoint (``load_ots`` succeeds
   after).
 - Two simultaneous ``--watch`` invocations on the same staging
-  serialize safely via filelock.
+  serialize safely via the staging flock.
 - Caller (the watch loop), not the stream, owns the cancel flag —
   same loop shape used with the fake stream in tests.
 
@@ -40,11 +40,11 @@ import dataclasses
 import hashlib
 import logging
 import threading
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import filelock
 import pytest
 from fakes import (
     FakeBitcoinRPC,
@@ -52,6 +52,7 @@ from fakes import (
     InMemoryHashBlockStream,
     RecordingSleeper,
 )
+from fakes.locks import held_flock
 from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
@@ -683,9 +684,9 @@ class TestWatchLockTimeoutWarningAndContinue:
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
         _register_attested(btc_fake.rpc, d)
 
-        # Pre-acquire the staging .lock from a sibling FileLock instance.
-        sibling = filelock.FileLock(str(sd / ".lock"))
-        sibling.acquire(timeout=5)
+        # Hold the staging .lock as another process would.
+        sibling = ExitStack()
+        sibling.enter_context(held_flock(sd / ".lock"))
 
         class _ContendedStream:
             """First wake delivers a block (which will hit LockTimeoutError);
@@ -719,7 +720,7 @@ class TestWatchLockTimeoutWarningAndContinue:
                     ),
                 )
         finally:
-            sibling.release()
+            sibling.close()
 
         # Loop terminated via the simulated SIGINT, NOT via an unhandled
         # LockTimeoutError. Exit 130 (graceful cancel).
@@ -815,13 +816,13 @@ class TestTwoWatchersSerializeSafely:
 
         # Call watch directly per thread. CliRunner patches
         # process-global sys.stdout/err which is not thread-safe; the
-        # contract under test (filelock serialization) lives entirely in
+        # contract under test (flock serialization) lives entirely in
         # watch. Per-thread state (cfg/store/sr) is built locally;
-        # only the staging dir + filelock are shared.
+        # only the staging dir + its flock are shared.
         cfg = load_config()
         root_path = str(empty_sha256_root.resolve())
         # Both threads start at the same moment so the race against the
-        # filelock is real, not whichever-thread-started-first.
+        # flock is real, not whichever-thread-started-first.
         barrier = threading.Barrier(2)
         results: dict[str, int] = {}
         errors: dict[str, BaseException] = {}

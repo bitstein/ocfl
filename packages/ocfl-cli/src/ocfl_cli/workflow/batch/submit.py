@@ -77,7 +77,7 @@ def mirror_chunk_to_object(
     runtime: Runtime,
 ) -> bool:
     staging_dir = store.staging_path(root_path, object_id)
-    with with_lock(staging_dir, timeout=runtime.lock_timeout):
+    with with_lock(staging_dir, runtime):
         state = load_ots(staging_dir)
         changed: list[Submission] = []
         completed = False
@@ -122,8 +122,7 @@ def submit_batch(
     batch = ensure_submit_chunks(
         batch, chunk_size=sp_factory(cfg).submit_chunk_size, runtime=runtime
     )
-    with batch_state.with_batch_lock(staging_root, batch.batch_id):
-        batch_state.save_batch(staging_root, batch)
+    batch_state.save_batch(staging_root, batch)
     sp = sp_factory(cfg)
     rows = row_by_object(batch)
     submissions = list(batch.submissions)
@@ -196,8 +195,7 @@ def submit_batch(
                 submissions=tuple(submissions),
                 updated_at=batch_state.utc_iso_z(runtime.clock.now()),
             )
-            with batch_state.with_batch_lock(staging_root, batch.batch_id):
-                batch_state.save_batch(staging_root, batch)
+            batch_state.save_batch(staging_root, batch)
 
         for object_id in chunk_object_ids(batch, chunk):
             if mirror_chunk_to_object(
@@ -232,8 +230,7 @@ def save_batch_submit_progress(
         submissions=tuple(submissions),
         updated_at=batch_state.utc_iso_z(runtime.clock.now()),
     )
-    with batch_state.with_batch_lock(staging_root, batch.batch_id):
-        batch_state.save_batch(staging_root, batch)
+    batch_state.save_batch(staging_root, batch)
     return batch
 
 
@@ -254,7 +251,7 @@ def revalidate_submit_chunk(
     valid_object_ids: list[str] = []
     for object_id in chunk_object_ids(batch, chunk):
         staging_dir = store.staging_path(batch.root_path, object_id)
-        with with_lock(staging_dir, timeout=runtime.lock_timeout):
+        with with_lock(staging_dir, runtime):
             state = load_ots(staging_dir)
             if state.category_id != batch.category_id:
                 rows[object_id] = msgspec.structs.replace(

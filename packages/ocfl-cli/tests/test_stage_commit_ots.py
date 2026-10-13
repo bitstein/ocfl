@@ -34,6 +34,7 @@ from pathlib import Path
 import pytest
 from fakes import FakeSimpleProof
 from fakes.fault_fs import raise_on_content_write
+from fakes.locks import lock_runtime
 from msgspec.structs import replace
 from runner_helpers import injected, runner_obj
 
@@ -772,7 +773,9 @@ class TestStageCommitOtsPreExecuteErrors:
         root_path = str(empty_sha256_root.resolve())
         runner_obj(runner)["lock_timeout"] = 0.01
 
-        with locks.object_commit_lock(root_path, "obj:commit-lock-timeout", timeout=30):
+        with locks.object_commit_lock(
+            root_path, "obj:commit-lock-timeout", lock_runtime(30)
+        ):
             r = runner.invoke(
                 app,
                 _stage_args(

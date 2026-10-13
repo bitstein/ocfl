@@ -24,12 +24,13 @@ import json
 import logging
 import os
 import shutil
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 
-import filelock
 import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof, RecordingSleeper
+from fakes.locks import held_flock
 from msgspec.structs import replace
 from pydantic import SecretStr
 from runner_helpers import runner_obj
@@ -1070,9 +1071,9 @@ class TestInventoryWatchLoop:
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
         _register_attested(btc_fake.rpc, inv_digest)
 
-        # Pre-acquire the staging .lock from a sibling FileLock instance.
-        sibling = filelock.FileLock(str(sd / ".lock"))
-        sibling.acquire(timeout=5)
+        # Hold the staging .lock as another process would.
+        sibling = ExitStack()
+        sibling.enter_context(held_flock(sd / ".lock"))
 
         class _ContendedStream:
             def __init__(self) -> None:
@@ -1103,7 +1104,7 @@ class TestInventoryWatchLoop:
                     ),
                 )
         finally:
-            sibling.release()
+            sibling.close()
 
         assert r.exit_code == 130, r.output
         # No torn checkpoint after lock contention + cancel.

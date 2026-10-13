@@ -498,5 +498,7 @@ def batch_rm(
     ] = False,
 ) -> None:
     """Delete a batch's file when cleanup is safe."""
-    remove_batch(stage_store(ctx).root, batch_id, force=force)
+    remove_batch(
+        stage_store(ctx).root, batch_id, force=force, runtime=appctx.runtime(ctx)
+    )
     typer.echo(f"removed batch {batch_id}")

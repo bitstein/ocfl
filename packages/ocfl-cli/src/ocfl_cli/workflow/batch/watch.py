@@ -126,7 +126,7 @@ def reverify_batch_watch_rows(
             rows.append(row)
             continue
         staging_dir = store.staging_path(batch.root_path, row.object_id)
-        with with_lock(staging_dir, timeout=runtime.lock_timeout):
+        with with_lock(staging_dir, runtime):
             state = load_ots(staging_dir)
             state, row_reset, row_reorg = reverify_batch_row(
                 btc=btc,

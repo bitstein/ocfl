@@ -8,20 +8,22 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-import filelock
 import msgspec
 
-from ocfl_cli.errors import LockTimeoutError, StagingError
+from ocfl_cli.errors import StagingError
 from ocfl_cli.model.ots_state import (
     OTS_STATE_VERSION,
     OtsState,
 )
 from ocfl_cli.store import _wire
 from ocfl_cli.store import staging as store
+from ocfl_cli.store.locks import flock
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from pathlib import Path
+
+    from ocfl_cli.ports import Runtime
 
 
 logger = logging.getLogger(__name__)
@@ -114,23 +116,14 @@ def save_ots(staging: Path, state: OtsState) -> None:
 
 
 @contextmanager
-def with_lock(staging: Path, *, timeout: float = 30) -> Iterator[None]:
-    """Acquire `<staging>/.lock` exclusively; raise `LockTimeoutError` on timeout.
+def with_lock(staging: Path, runtime: Runtime) -> Iterator[None]:
+    """Hold the Staging Area's lock, `<staging>/.lock` (`store.locks.flock`).
 
     Held by every command that mutates `ots.json`; `stage status` runs
     lock-free against the atomically-rewritten file.
     """
-    lock = filelock.FileLock(str(staging / ".lock"))
-    try:
-        lock.acquire(timeout=timeout)
-    except filelock.Timeout as e:
-        raise LockTimeoutError(
-            f"could not acquire {staging}/.lock within {timeout}s"
-        ) from e
-    try:
+    with flock(staging / ".lock", runtime, what=f"{staging}/.lock"):
         yield
-    finally:
-        lock.release()
 
 
 def apply_category_id(state: OtsState, cfg_category_id: int) -> int:

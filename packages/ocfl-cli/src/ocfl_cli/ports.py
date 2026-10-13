@@ -87,7 +87,8 @@ type BlockStreamFactory = Callable[[Config], BlockStream]
 # Opens the storage root's filesystem at a local path or `s3://` URI.
 type FsFactory = Callable[[str], LocalFS | S3FS]
 
-DEFAULT_LOCK_TIMEOUT_SECONDS = 30.0
+# How long a lock taker waits before it fails with exit 4 (ADR-0005).
+DEFAULT_LOCK_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True, slots=True)

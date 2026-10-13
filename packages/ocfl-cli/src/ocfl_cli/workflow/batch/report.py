@@ -1,7 +1,7 @@
 """Batch read models: status, events and counts in their `--json` shapes."""
 
 from pathlib import Path  # noqa: TC003 - Typer reads option annotations at runtime.
-from typing import Literal, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 from ocfl_cli import errors as errors
 from ocfl_cli.errors import (
@@ -24,6 +24,9 @@ from ocfl_cli.store.ots_state import (
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow import hints
 from ocfl_cli.workflow.batch.reasons import BATCH_MISSING_NEXT, reason_next
+
+if TYPE_CHECKING:
+    from ocfl_cli.ports import Runtime
 
 BATCH_STATUSES = ("prepared", "submitted", "upgraded", "failed", "skipped")
 
@@ -577,15 +580,24 @@ def commit_summary_event(
     }
 
 
-def remove_batch(staging_root: Path, batch_id: str, *, force: bool) -> None:
-    """Delete the batch file; refuses while rows are open unless `force`."""
-    batch = load_batch_or_usage(staging_root, batch_id)
-    open_rows = [
-        row for row in batch.objects if row.status in {"prepared", "submitted"}
-    ]
-    if open_rows and not force:
-        raise CLIError(
-            f"batch {batch_id} has non-terminal rows; use --force to delete "
-            "the batch file only"
-        )
-    batch_state.batch_file_path(staging_root, batch_id).unlink()
+def remove_batch(
+    staging_root: Path, batch_id: str, *, force: bool, runtime: Runtime
+) -> None:
+    """Delete the batch file and its lock file; refuses open rows unless `force`.
+
+    Holds the batch lock, so a running driver blocks it (exit 4). The lock
+    file goes too, while held: a command that was waiting on it then finds
+    no batch file (ADR-0005).
+    """
+    with batch_state.batch_lock(staging_root, batch_id, runtime):
+        batch = load_batch_or_usage(staging_root, batch_id)
+        open_rows = [
+            row for row in batch.objects if row.status in {"prepared", "submitted"}
+        ]
+        if open_rows and not force:
+            raise CLIError(
+                f"batch {batch_id} has non-terminal rows; use --force to delete "
+                "the batch file only"
+            )
+        batch_state.batch_file_path(staging_root, batch_id).unlink()
+        batch_state.batch_lock_path(staging_root, batch_id).unlink(missing_ok=True)

@@ -1,7 +1,7 @@
-"""filelock integration: with_lock blocks writers; load_ots is lockless.
+"""The staging lock: with_lock blocks writers; load_ots is lockless.
 
 Pinned behavior:
-- with_lock(staging) wraps filelock.FileLock("<staging>/.lock").
+- with_lock(staging, runtime) is an exclusive flock on "<staging>/.lock".
 - Two concurrent acquires: second blocks; timeout=0.1 raises LockTimeoutError.
 - load_ots does NOT acquire the lock — `stage status` reads the
   atomically-rewritten ots.json directly. Bounded staleness is correct.
@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import pytest
+from fakes.locks import lock_runtime
 
 from ocfl_cli.errors import LockTimeoutError
 from ocfl_cli.store.ots_state import load_ots, with_lock
@@ -24,7 +25,7 @@ def staging(tmp_path: Path) -> Path:
 
 
 def test_with_lock_creates_lockfile(staging: Path):
-    with with_lock(staging):
+    with with_lock(staging, lock_runtime()):
         assert (staging / ".lock").exists()
 
 
@@ -34,7 +35,7 @@ def test_with_lock_timeout_raises(staging: Path):
     holder_done = threading.Event()
 
     def hold():
-        with with_lock(staging):
+        with with_lock(staging, lock_runtime()):
             holder_acquired.set()
             holder_release.wait(timeout=5)
         holder_done.set()
@@ -46,7 +47,7 @@ def test_with_lock_timeout_raises(staging: Path):
     try:
         with (
             pytest.raises(LockTimeoutError),
-            with_lock(staging, timeout=0.1),
+            with_lock(staging, lock_runtime(0.1)),
         ):
             pytest.fail("should have timed out")
     finally:
@@ -61,7 +62,7 @@ def test_with_lock_serializes_concurrent_writers(staging: Path):
 
     def critical():
         barrier.wait(timeout=5)
-        with with_lock(staging, timeout=5):
+        with with_lock(staging, lock_runtime(5)):
             time.sleep(0.15)
 
     threads = [threading.Thread(target=critical, daemon=True) for _ in range(2)]
@@ -75,10 +76,10 @@ def test_with_lock_serializes_concurrent_writers(staging: Path):
 
 
 def test_with_lock_releases_on_exception(staging: Path):
-    with pytest.raises(RuntimeError, match="boom"), with_lock(staging):
+    with pytest.raises(RuntimeError, match="boom"), with_lock(staging, lock_runtime()):
         raise RuntimeError("boom")
     # Re-acquire immediately — would block/timeout if not released.
-    with with_lock(staging, timeout=0.5):
+    with with_lock(staging, lock_runtime(0.5)):
         pass
 
 
@@ -103,7 +104,7 @@ def test_load_ots_does_not_acquire_lock(staging: Path):
     holder_release = threading.Event()
 
     def hold():
-        with with_lock(staging):
+        with with_lock(staging, lock_runtime()):
             holder_acquired.set()
             holder_release.wait(timeout=5)
 

@@ -1,182 +1,31 @@
-"""Batch file and driver-lease persistence, and their locks.
+"""Batch file persistence and the batch lock.
 
-The model lives in `ocfl_cli.model.batch`.
+The model lives in `ocfl_cli.model.batch`. The batch lock (`<id>.lock`, an
+exclusive `flock`) is held for a whole batch run: it is the lease that keeps
+two drivers off one batch, and the kernel drops it when its holder exits
+(ADR-0005).
 """
 
-import atexit
-import fcntl
-import importlib.metadata
-import os
-import signal
-import socket
-import threading
 import uuid
-from collections.abc import Callable
-from contextlib import contextmanager, suppress
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from functools import cache
-from types import FrameType
-from typing import TYPE_CHECKING, Any, cast
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
-import filelock
 import msgspec
 
-from ocfl_cli.errors import LockTimeoutError, StagingError
+from ocfl_cli.errors import StagingError
 from ocfl_cli.model.batch import (
     BATCH_FILE_SCHEMA_VERSION,
     BatchFile,
-    DriverLease,
 )
 from ocfl_cli.store import staging as store
-from ocfl_cli.system import SYSTEM_CLOCK
+from ocfl_cli.store.locks import flock
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from ocfl_cli.ports import Clock
-
-
-DRIVER_LEASE_STALE_AFTER_SECONDS = 300
-DRIVER_LEASE_HEARTBEAT_SECONDS = 60
-
-
-class DriverLeaseHandle:
-    """Owned driver lease with explicit refresh and release operations."""
-
-    __slots__ = (
-        "_clock",
-        "_heartbeat_thread",
-        "_lease",
-        "_released",
-        "_signal_registration",
-        "_staging_root",
-        "_stop",
-    )
-
-    def __init__(
-        self,
-        staging_root: Path,
-        lease: DriverLease,
-        *,
-        heartbeat_interval: float | None,
-        clock: Clock = SYSTEM_CLOCK,
-    ) -> None:
-        self._staging_root = staging_root
-        self._lease = lease
-        self._clock = clock
-        self._released = False
-        self._stop = threading.Event()
-        self._heartbeat_thread: threading.Thread | None = None
-        self._signal_registration: _SignalRegistration | None = None
-        if heartbeat_interval is not None:
-            self._heartbeat_thread = threading.Thread(
-                target=self._heartbeat_loop,
-                args=(heartbeat_interval,),
-                daemon=True,
-                name=f"ocfl-batch-driver-{lease.batch_id}",
-            )
-            self._heartbeat_thread.start()
-
-    @property
-    def batch_id(self) -> str:
-        return self._lease.batch_id
-
-    @property
-    def pid(self) -> int:
-        return self._lease.pid
-
-    @property
-    def host(self) -> str:
-        return self._lease.host
-
-    @property
-    def started_at(self) -> str:
-        return self._lease.started_at
-
-    @property
-    def heartbeat_at(self) -> str:
-        return self._lease.heartbeat_at
-
-    @property
-    def command(self) -> tuple[str, ...]:
-        return tuple(self._lease.command.split())
-
-    def refresh(self, *, now: datetime | None = None) -> None:
-        """Refresh this holder's heartbeat under the lease refresh lock."""
-        if self._released:
-            raise StagingError(f"batch {self.batch_id}: driver lease is released")
-        now = _coerce_utc(now or self._clock.now())
-        lock_path = driver_refresh_lock_path(self._staging_root, self.batch_id)
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(lock_path, "a+b") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                current = load_driver_lease(self._staging_root, self.batch_id)
-                if not _same_holder(current, self._lease):
-                    raise StagingError(
-                        f"batch {self.batch_id}: driver lease is no longer held "
-                        f"by pid={self.pid} host={self.host}"
-                    )
-                self._lease = msgspec.structs.replace(
-                    self._lease, heartbeat_at=_format_datetime(now)
-                )
-                _write_driver_lease_exclusive(
-                    self._staging_root, self._lease, replace=True
-                )
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-
-    def release(self) -> None:
-        """Release this lease if the current on-disk holder still matches."""
-        if self._released:
-            return
-        self._released = True
-        self._stop.set()
-        if self._heartbeat_thread is not None:
-            self._heartbeat_thread.join(timeout=5)
-        if self._signal_registration is not None:
-            self._signal_registration.restore()
-            self._signal_registration = None
-        path = driver_lease_path(self._staging_root, self.batch_id)
-        lock_path = driver_refresh_lock_path(self._staging_root, self.batch_id)
-        with open(lock_path, "a+b") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                try:
-                    current = load_driver_lease(self._staging_root, self.batch_id)
-                except StagingError:
-                    return
-                if _same_holder(current, self._lease):
-                    path.unlink(missing_ok=True)
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-
-    def _heartbeat_loop(self, heartbeat_interval: float) -> None:
-        while not self._stop.wait(heartbeat_interval):
-            try:
-                self.refresh()
-            except StagingError:
-                return
-
-
-SignalHandler = Callable[[int, FrameType | None], None]
-SignalAction = int | SignalHandler
-
-
-@dataclass(slots=True)
-class _SignalRegistration:
-    handle: DriverLeaseHandle
-    previous: dict[signal.Signals, SignalAction]
-    installed: dict[signal.Signals, SignalHandler]
-
-    def restore(self) -> None:
-        for sig, previous_handler in self.previous.items():
-            if signal.getsignal(sig) == self.installed[sig]:
-                signal.signal(sig, previous_handler)
-        with suppress(ValueError):
-            atexit.unregister(self.handle.release)
+    from ocfl_cli.ports import Runtime
 
 
 def new_batch_id() -> str:
@@ -199,18 +48,6 @@ def batch_lock_path(staging_root: Path, batch_id: str) -> Path:
     """Path to `<staging-root>/batches/<batch_id>.lock`."""
     _validate_batch_id(batch_id)
     return batches_dir(staging_root) / f"{batch_id}.lock"
-
-
-def driver_lease_path(staging_root: Path, batch_id: str) -> Path:
-    """Path to `<staging-root>/batches/<batch_id>.driver`."""
-    _validate_batch_id(batch_id)
-    return batches_dir(staging_root) / f"{batch_id}.driver"
-
-
-def driver_refresh_lock_path(staging_root: Path, batch_id: str) -> Path:
-    """Path to `<batch_id>.driver.refresh-lock`."""
-    _validate_batch_id(batch_id)
-    return batches_dir(staging_root) / f"{batch_id}.driver.refresh-lock"
 
 
 def load_batch(staging_root: Path, batch_id: str) -> BatchFile:
@@ -237,24 +74,6 @@ def load_batch(staging_root: Path, batch_id: str) -> BatchFile:
     return batch
 
 
-def load_driver_lease(staging_root: Path, batch_id: str) -> DriverLease:
-    """Load a batch command-driver lease."""
-    _validate_batch_id(batch_id)
-    path = driver_lease_path(staging_root, batch_id)
-    try:
-        lease = msgspec.json.decode(path.read_bytes(), type=DriverLease)
-    except msgspec.ValidationError as e:
-        raise StagingError(f"{path}: invalid driver lease: {e}") from None
-    except (OSError, msgspec.DecodeError) as e:
-        raise StagingError(f"{path}: {e}") from None
-    if lease.batch_id != batch_id:
-        raise StagingError(
-            f"{path}: batch_id {lease.batch_id!r} does not match {batch_id!r}"
-        )
-    _validate_driver_lease(lease, path=path)
-    return lease
-
-
 def save_batch(staging_root: Path, batch: BatchFile) -> None:
     """Atomically write `batch` to its batch file."""
     _validate_batch_id(batch.batch_id)
@@ -270,301 +89,23 @@ def save_batch(staging_root: Path, batch: BatchFile) -> None:
     )
 
 
-def save_driver_lease(
-    staging_root: Path,
-    batch_id: str,
-    *,
-    pid: int,
-    host: str,
-    command: tuple[str, ...],
-    started_at: datetime,
-    heartbeat_at: datetime,
-) -> DriverLease:
-    """Write a driver lease for tests and recovery tooling."""
-    _validate_batch_id(batch_id)
-    lease = DriverLease(
-        batch_id=batch_id,
-        pid=pid,
-        host=host,
-        started_at=_format_datetime(_coerce_utc(started_at)),
-        heartbeat_at=_format_datetime(_coerce_utc(heartbeat_at)),
-        command=_format_command(command),
-        cli_version=installed_cli_version(),
-    )
-    _write_driver_lease_exclusive(staging_root, lease, replace=True)
-    return lease
-
-
 @contextmanager
-def with_batch_lock(
-    staging_root: Path, batch_id: str, *, timeout: float = 30
-) -> Iterator[None]:
-    """Acquire `<staging-root>/batches/<batch_id>.lock` exclusively."""
-    _validate_batch_id(batch_id)
-    directory = batches_dir(staging_root)
-    directory.mkdir(parents=True, exist_ok=True)
-    path = batch_lock_path(staging_root, batch_id)
-    lock = filelock.FileLock(str(path))
-    try:
-        lock.acquire(timeout=timeout)
-    except filelock.Timeout as e:
-        raise LockTimeoutError(f"could not acquire {path} within {timeout}s") from e
-    try:
-        yield
-    finally:
-        lock.release()
+def batch_lock(staging_root: Path, batch_id: str, runtime: Runtime) -> Iterator[None]:
+    """Hold the batch's lock for a whole run (`store.locks.flock`).
 
-
-@contextmanager
-def with_driver_lease(
-    staging_root: Path,
-    batch_id: str,
-    *,
-    command: tuple[str, ...],
-    heartbeat_interval: float | None = DRIVER_LEASE_HEARTBEAT_SECONDS,
-    stale_after: float = DRIVER_LEASE_STALE_AFTER_SECONDS,
-    clock: Clock = SYSTEM_CLOCK,
-) -> Iterator[DriverLeaseHandle]:
-    """Acquire a command-driver lease for one batch and release it on exit."""
-    handle = acquire_driver_lease(
-        staging_root,
-        batch_id,
-        command=command,
-        heartbeat_interval=heartbeat_interval,
-        stale_after=stale_after,
-        clock=clock,
-    )
-    try:
-        handle._signal_registration = _register_signal_release(handle)
-        yield handle
-    finally:
-        handle.release()
-
-
-def acquire_driver_lease(
-    staging_root: Path,
-    batch_id: str,
-    *,
-    command: tuple[str, ...],
-    heartbeat_interval: float | None = DRIVER_LEASE_HEARTBEAT_SECONDS,
-    stale_after: float = DRIVER_LEASE_STALE_AFTER_SECONDS,
-    clock: Clock = SYSTEM_CLOCK,
-) -> DriverLeaseHandle:
-    """Acquire a command-driver lease, stealing only if the existing lease is stale."""
-    _validate_batch_id(batch_id)
-    lease = _new_driver_lease(batch_id, command=command, now=clock.now())
-    directory = batches_dir(staging_root)
-    directory.mkdir(parents=True, exist_ok=True)
-    lock_path = driver_refresh_lock_path(staging_root, batch_id)
-    lock_path.touch(mode=0o600, exist_ok=True)
-    with open(lock_path, "a+b") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            try:
-                _write_driver_lease_exclusive(staging_root, lease, replace=False)
-            except FileExistsError:
-                lease = _steal_or_raise_locked(
-                    staging_root, lease, stale_after=stale_after, now=clock.now()
-                )
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-    return DriverLeaseHandle(
-        staging_root, lease, heartbeat_interval=heartbeat_interval, clock=clock
-    )
-
-
-def _new_driver_lease(
-    batch_id: str, *, command: tuple[str, ...], now: datetime
-) -> DriverLease:
-    stamp = _format_datetime(now)
-    return DriverLease(
-        batch_id=batch_id,
-        pid=os.getpid(),
-        host=socket.gethostname(),
-        started_at=stamp,
-        heartbeat_at=stamp,
-        command=_format_command(command),
-        cli_version=installed_cli_version(),
-    )
-
-
-def _steal_or_raise_locked(
-    staging_root: Path,
-    replacement: DriverLease,
-    *,
-    stale_after: float,
-    now: datetime,
-    expected: DriverLease | None = None,
-) -> DriverLease:
-    batch_id = replacement.batch_id
-    current = load_driver_lease(staging_root, batch_id)
-    if (expected is not None and not _same_holder(current, expected)) or not _is_stale(
-        current, stale_after=stale_after, now=now
+    Every command that drives, commits or removes the batch holds it; a
+    second one waits `runtime.lock_timeout`, then exits 4. Readers (`status`,
+    `ls`) need no lock: the batch file is replaced atomically.
+    """
+    with flock(
+        batch_lock_path(staging_root, batch_id), runtime, what=f"batch {batch_id}"
     ):
-        raise _lease_held_error(batch_id, current)
-    _rename_stolen_lease(staging_root, current, now=now)
-    _write_driver_lease_exclusive(staging_root, replacement, replace=False)
-    return replacement
-
-
-def _write_driver_lease_exclusive(
-    staging_root: Path, lease: DriverLease, *, replace: bool
-) -> None:
-    path = driver_lease_path(staging_root, lease.batch_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _validate_driver_lease(lease, path=path)
-    if replace:
-        store.atomic_write_bytes(path, msgspec.json.encode(lease))
-        return
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(msgspec.json.encode(lease))
-            f.flush()
-            os.fsync(f.fileno())
-    except BaseException:
-        path.unlink(missing_ok=True)
-        raise
-
-
-def _rename_stolen_lease(
-    staging_root: Path, lease: DriverLease, *, now: datetime
-) -> None:
-    path = driver_lease_path(staging_root, lease.batch_id)
-    stolen_path = path.with_name(
-        f"{path.name}.stolen.{os.getpid()}.{int(now.timestamp())}"
-    )
-    os.replace(path, stolen_path)
-
-
-def _is_stale(lease: DriverLease, *, stale_after: float, now: datetime) -> bool:
-    heartbeat_at = _parse_datetime(lease.heartbeat_at)
-    if _coerce_utc(now) - heartbeat_at > timedelta(seconds=stale_after):
-        return True
-    return lease.host == socket.gethostname() and not _pid_is_alive(lease.pid)
-
-
-def _pid_is_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def _lease_held_error(batch_id: str, lease: DriverLease) -> LockTimeoutError:
-    return LockTimeoutError(
-        f"batch {batch_id} driver lease is held by pid={lease.pid} "
-        f"host={lease.host} started_at={lease.started_at} "
-        f"heartbeat_at={lease.heartbeat_at} command={lease.command}"
-    )
-
-
-def _same_holder(left: DriverLease, right: DriverLease) -> bool:
-    return (
-        left.batch_id == right.batch_id
-        and left.pid == right.pid
-        and left.host == right.host
-        and left.started_at == right.started_at
-        and left.command == right.command
-        and left.cli_version == right.cli_version
-    )
-
-
-def _validate_driver_lease(lease: DriverLease, *, path: Path) -> None:
-    if lease.pid <= 0:
-        raise StagingError(f"{path}: driver lease pid must be positive")
-    if not lease.host:
-        raise StagingError(f"{path}: driver lease host is required")
-    if not lease.command:
-        raise StagingError(f"{path}: driver lease command is required")
-    if not lease.cli_version:
-        raise StagingError(f"{path}: driver lease cli_version is required")
-    _parse_datetime(lease.started_at)
-    _parse_datetime(lease.heartbeat_at)
-
-
-def _format_command(command: tuple[str, ...]) -> str:
-    if not command:
-        raise StagingError("driver lease command is required")
-    return " ".join(command)
-
-
-@cache
-def installed_cli_version() -> str:
-    try:
-        return importlib.metadata.version("ocfl-cli")
-    except importlib.metadata.PackageNotFoundError:
-        return "unknown"
+        yield
 
 
 def utc_iso_z(now: datetime) -> str:
     """`now` for batch files: UTC at seconds precision with a Z suffix."""
-    return _format_datetime(now)
-
-
-def _format_datetime(value: datetime) -> str:
-    return value.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def _parse_datetime(value: str) -> datetime:
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        raise StagingError(f"invalid driver lease timestamp {value!r}") from None
-    if parsed.tzinfo is None:
-        raise StagingError(
-            f"invalid driver lease timestamp {value!r}: timezone required"
-        )
-    return parsed.astimezone(UTC)
-
-
-def _coerce_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        raise StagingError("driver lease timestamp timezone required")
-    return value.astimezone(UTC)
-
-
-def _register_signal_release(handle: DriverLeaseHandle) -> _SignalRegistration | None:
-    if threading.current_thread() is not threading.main_thread():
-        return None
-    atexit.register(handle.release)
-    previous: dict[signal.Signals, SignalAction] = {}
-    installed: dict[signal.Signals, SignalHandler] = {}
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        previous_handler = _signal_action(signal.getsignal(sig))
-
-        def release_and_forward(
-            signum: int,
-            frame: FrameType | None,
-            *,
-            previous_handler: SignalAction = previous_handler,
-        ) -> None:
-            handle.release()
-            if previous_handler == signal.SIG_DFL:
-                signal.signal(signum, signal.SIG_DFL)
-                os.kill(os.getpid(), signum)
-            elif previous_handler == signal.SIG_IGN:
-                return
-            else:
-                cast("SignalHandler", previous_handler)(signum, frame)
-
-        previous[sig] = previous_handler
-        installed[sig] = release_and_forward
-        signal.signal(sig, release_and_forward)
-    return _SignalRegistration(handle=handle, previous=previous, installed=installed)
-
-
-def _signal_action(raw: Any) -> SignalAction:
-    if raw is None:
-        return signal.SIG_DFL
-    if raw in (signal.SIG_DFL, signal.SIG_IGN):
-        return raw
-    return cast("SignalHandler", raw)
+    return now.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _validate_batch_id(batch_id: str) -> None:

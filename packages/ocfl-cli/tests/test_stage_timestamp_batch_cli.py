@@ -1,5 +1,6 @@
 """CLI tests for local-only batch timestamping commands."""
 
+import fcntl
 import hashlib
 import json
 import multiprocessing
@@ -9,7 +10,6 @@ import time
 from pathlib import Path
 from typing import cast, get_args, get_origin, get_type_hints, is_typeddict
 
-import filelock
 import pytest
 from fakes import (
     FakeBitcoinRPC,
@@ -17,6 +17,7 @@ from fakes import (
     InMemoryHashBlockStream,
     RecordingSleeper,
 )
+from fakes.locks import held_flock
 from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
@@ -885,16 +886,17 @@ def test_batch_content_new_batch_acquires_lease_before_file_is_visible(
     _new_ots_with_files(
         runner, empty_sha256_root, staging, "obj:lease", ("a.txt", b"a")
     )
-    original_open = os.open
+    original_flock = fcntl.flock
     observed_clean = []
 
-    def checked_open(path, flags, *args, **kwargs):
-        # The lease is the `.driver` file, created exclusively.
-        if str(path).endswith(".driver") and flags & os.O_EXCL:
+    def checked_flock(fd, operation):
+        # The lease is the batch lock: an exclusive flock on `batches/<id>.lock`.
+        path = os.readlink(f"/proc/self/fd/{fd}")
+        if path.endswith(".lock") and Path(path).parent.name == "batches":
             observed_clean.append(not list((staging / "batches").glob("*.json")))
-        return original_open(path, flags, *args, **kwargs)
+        return original_flock(fd, operation)
 
-    monkeypatch.setattr(os, "open", checked_open)
+    monkeypatch.setattr(fcntl, "flock", checked_flock)
 
     result = runner.invoke(
         app,
@@ -946,7 +948,7 @@ def test_batch_content_competing_batch_driver_refuses_live_lease(
 
     assert first_code == 0, first_output
     assert second_code == 4  # LockTimeoutError: ErrorClass.BUSY
-    assert "driver lease is held" in second_output
+    assert f"could not acquire batch {batch_id}" in second_output
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.submissions[0].status == "submitted"
 
@@ -1094,31 +1096,20 @@ def test_batch_content_recovers_object_intent_without_batch_row(
             updated_at="2026-05-12T10:00:00Z",
         ),
     )
-    # Watch the real file locks: `batches/<id>.lock` is the batch lock, a
-    # Staging Area's `.lock` the object lock.
+    # Watch the real flocks: `batches/<id>.lock` is the batch lock, a
+    # Staging Area's `.lock` the object lock. One order only, batch first:
+    # nothing takes the batch lock while it holds an object lock.
     batch_lock = str(staging / "batches" / f"{batch_id}.lock")
-    batch_lock_held = False
     events: list[str] = []
-    original_acquire = filelock.BaseFileLock.acquire
-    original_release = filelock.BaseFileLock.release
+    original_flock = fcntl.flock
 
-    def recording_acquire(self, *args, **kwargs):
-        nonlocal batch_lock_held
-        if self.lock_file.endswith(f"{os.sep}.lock"):
-            events.append(f"object-enter-while-batch={int(batch_lock_held)}")
-        result = original_acquire(self, *args, **kwargs)
-        if self.lock_file == batch_lock:
-            batch_lock_held = True
-        return result
+    def recording_flock(fd, operation):
+        path = os.readlink(f"/proc/self/fd/{fd}")
+        if operation & fcntl.LOCK_EX:
+            events.append("batch" if path == batch_lock else "object")
+        return original_flock(fd, operation)
 
-    def recording_release(self, *args, **kwargs):
-        nonlocal batch_lock_held
-        original_release(self, *args, **kwargs)
-        if self.lock_file == batch_lock and not self.is_locked:
-            batch_lock_held = False
-
-    monkeypatch.setattr(filelock.BaseFileLock, "acquire", recording_acquire)
-    monkeypatch.setattr(filelock.BaseFileLock, "release", recording_release)
+    monkeypatch.setattr(fcntl, "flock", recording_flock)
 
     result = runner.invoke(
         app,
@@ -1132,8 +1123,8 @@ def test_batch_content_recovers_object_intent_without_batch_row(
     )
 
     assert result.exit_code == 0, result.output
-    assert "object-enter-while-batch=0" in events
-    assert "object-enter-while-batch=1" not in events
+    assert events[0] == "batch" and events.count("batch") == 1, events
+    assert "object" in events
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.objects[0].object_id == "obj:orphan"
     assert batch.objects[0].status == "submitted"
@@ -4008,3 +3999,30 @@ def test_batch_rm_refuses_non_terminal_without_force(
 
     assert forced.exit_code == 0, forced.output
     assert not batch_file_path(staging, batch_id).exists()
+    # The lock file goes too (ADR-0005): nothing of the batch is left.
+    assert not list((staging / "batches").glob(f"{batch_id}*"))
+
+
+def test_batch_rm_waits_for_a_running_driver(
+    runner: CliRunner, storage_root: Path, tmp_path: Path
+) -> None:
+    staging = tmp_path / "staging"
+    batch_id = new_batch_id()
+    save_batch(
+        staging,
+        BatchFile(
+            batch_id=batch_id,
+            target=TimestampTarget.CONTENT,
+            root_path=str(storage_root),
+            category_id=641,
+            created_at="2026-05-12T10:00:00Z",
+            updated_at="2026-05-12T10:05:00Z",
+        ),
+    )
+    runner_obj(runner)["lock_timeout"] = 0.01
+
+    with held_flock(batch_state.batch_lock_path(staging, batch_id)):
+        result = _invoke(runner, storage_root, staging, "batch", "rm", batch_id)
+
+    assert result.exit_code == 4, result.output
+    assert batch_file_path(staging, batch_id).is_file()
