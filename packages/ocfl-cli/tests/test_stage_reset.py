@@ -88,18 +88,8 @@ def _verified_proof(digest: str = "deadbeef" * 8) -> Proof:
     )
 
 
-def _inv_proof(
-    version: str = "v1",
-    digest: str = "feedface" * 8,
-    *,
-    batch_id: str | None = None,
-) -> StagedInventory:
-    return StagedInventory(
-        version=version,
-        digest=digest,
-        job_id="job-inv",
-        batch_id=batch_id,
-    )
+def _inv_proof(version: str = "v1", digest: str = "feedface" * 8) -> StagedInventory:
+    return StagedInventory(version=version, digest=digest, job_id="job-inv")
 
 
 INV_DIGEST = "feedface" * 8
@@ -110,13 +100,17 @@ def _inv_proof_entry() -> Proof:
 
 
 def _submission(
-    digest: str, *, status: str = "submitted", batch_id: str | None = None
+    digest: str,
+    *,
+    status: str = "submitted",
+    batch_id: str | None = None,
+    target: TimestampTarget = TimestampTarget.CONTENT,
 ) -> Submission:
     return Submission(
         submitted_at="2026-04-25T14:00:00+00:00",
         digests=(digest,),
         status=status,
-        target=TimestampTarget.CONTENT,
+        target=target,
         job_id="job-1",
         attempts=1,
         batch_id=batch_id,
@@ -397,8 +391,14 @@ class TestResetWarnMessage:
         _pin_state(
             sd,
             Phase.INVENTORY_PENDING,
-            inventory=_inv_proof(batch_id=batch_id),
+            inventory=_inv_proof(),
             proofs={INV_DIGEST: _inv_proof_entry()},
+            # The inventory's batch lives on its Submission, like content's.
+            submissions=(
+                _submission(
+                    INV_DIGEST, batch_id=batch_id, target=TimestampTarget.INVENTORY
+                ),
+            ),
         )
 
         r = _invoke(runner, storage_root, staging, "reset", "obj:inventory-batch")

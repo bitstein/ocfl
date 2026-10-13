@@ -647,20 +647,14 @@ def list_entries(resolved: StagingResolved, object_id: str) -> list[tuple[str, s
 
 
 def _active_reset_batch_ids(state: OtsState) -> tuple[str, ...]:
-    batch_ids = (
-        *(
+    return tuple(
+        dict.fromkeys(
             submission.batch_id
             for submission in state.submissions
             if submission.status in {"submitting", "submitted"}
             and submission.batch_id is not None
-        ),
-        *(
-            ()
-            if state.inventory is None or state.inventory.batch_id is None
-            else (state.inventory.batch_id,)
-        ),
+        )
     )
-    return tuple(dict.fromkeys(batch_ids))
 
 
 def reset_staging(

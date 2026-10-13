@@ -10,7 +10,6 @@ from ocfl_cli.errors import (
     AttestationMismatchError,
     ReorgDetectedError,
 )
-from ocfl_cli.model.phase import Phase
 from ocfl_cli.ots.bitcoin import (
     PendingVerification,
     VerifiedAttestation,
@@ -29,10 +28,12 @@ from ocfl_cli.workflow.batch.upgrade import (
     save_batch_upgrade,
 )
 from ocfl_cli.workflow.common import unverify, verified_proof
+from ocfl_cli.workflow.targets import rules_for
 
 if TYPE_CHECKING:
     from ocfl_cli.model import batch as batch_model
     from ocfl_cli.model.ots_state import OtsState
+    from ocfl_cli.model.phase import TimestampTarget
     from ocfl_cli.ports import Runtime
     from ocfl_cli.store.staging import StagingStore
 
@@ -100,14 +101,14 @@ def reverify_batch_row(
     return msgspec.structs.replace(state, proofs=proofs), reset, reorg
 
 
-def reset_batch_row_phase(target: batch_model.BatchTarget, state: OtsState) -> OtsState:
-    phase = Phase.CONTENT_PENDING if target == "content" else Phase.INVENTORY_PENDING
+def reset_batch_row_phase(target: TimestampTarget, state: OtsState) -> OtsState:
+    phase = rules_for(target).pending_phase
     return msgspec.structs.replace(state, phase=phase)
 
 
 def reverify_batch_watch_rows(
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     cfg,
     store: StagingStore,
     staging_root: Path,

@@ -777,7 +777,9 @@ class TestTwoWatchersSerializeSafely:
         _register_attested(btc_fake.rpc, d)
 
         from ocfl_cli.config import load_config
-        from ocfl_cli.workflow.watch import watch_content
+        from ocfl_cli.model.phase import TimestampTarget
+        from ocfl_cli.workflow.timestamp import TimestampRun
+        from ocfl_cli.workflow.watch import watch
         from ocfl_lib import LocalFS, StorageRoot
 
         # Two independent streams; each delivers one block then raises
@@ -812,10 +814,10 @@ class TestTwoWatchersSerializeSafely:
 
         thread_runtime = dataclasses.replace(runtime, block_streams=_next_stream)
 
-        # Call watch_content directly per thread. CliRunner patches
+        # Call watch directly per thread. CliRunner patches
         # process-global sys.stdout/err which is not thread-safe; the
         # contract under test (filelock serialization) lives entirely in
-        # watch_content. Per-thread state (cfg/store/sr) is built locally;
+        # watch. Per-thread state (cfg/store/sr) is built locally;
         # only the staging dir + filelock are shared.
         cfg = load_config()
         root_path = str(empty_sha256_root.resolve())
@@ -830,17 +832,18 @@ class TestTwoWatchersSerializeSafely:
                 store = StagingStore(staging)
                 sr = StorageRoot.open(LocalFS(empty_sha256_root))
                 barrier.wait(timeout=10)
-                results[tag] = watch_content(
-                    cfg,
-                    store,
-                    sr,
-                    root_path,
-                    "obj:watch-two",
-                    sd,
+                run = TimestampRun(
+                    cfg=cfg,
+                    store=store,
+                    sr=sr,
+                    root_path=root_path,
+                    object_id="obj:watch-two",
+                    staging_dir=sd,
                     sp_factory=lambda _cfg: sp_fake,
                     btc_factory=lambda _cfg: btc_fake.rpc,
                     runtime=thread_runtime,
                 )
+                results[tag] = watch(run, expect=TimestampTarget.CONTENT)
             except BaseException as e:
                 errors[tag] = e
 

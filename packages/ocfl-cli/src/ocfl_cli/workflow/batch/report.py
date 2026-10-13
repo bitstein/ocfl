@@ -13,6 +13,9 @@ from ocfl_cli.model import batch as batch_model
 from ocfl_cli.model.ots_state import (  # noqa: TC001 - get_type_hints reads it.
     OtsState,
 )
+from ocfl_cli.model.phase import (
+    TimestampTarget,  # noqa: TC001 - get_type_hints reads it.
+)
 from ocfl_cli.store import batch as batch_state
 from ocfl_cli.store.ots_state import (
     has_ots,
@@ -80,7 +83,7 @@ class BatchVerifyJobOutput(TypedDict):
 
 class BatchStatusOutput(TypedDict):
     batch_id: str
-    target: batch_model.BatchTarget
+    target: TimestampTarget
     root_path: str
     category_id: int
     created_at: str
@@ -103,7 +106,7 @@ type BatchObjectEventName = Literal[
 class BatchObjectEventOutput(TypedDict):
     event: BatchObjectEventName
     batch_id: str
-    target: batch_model.BatchTarget
+    target: TimestampTarget
     object_id: str
     status: batch_model.BatchObjectStatus
     digests_total: int
@@ -117,7 +120,7 @@ class BatchObjectEventOutput(TypedDict):
 class BatchSummaryEventOutput(TypedDict):
     event: Literal["summary"]
     batch_id: str
-    target: batch_model.BatchTarget
+    target: TimestampTarget
     category_id: int
     root_path: str
     counts: BatchCountsOutput
@@ -133,7 +136,7 @@ type CommitObjectEventName = Literal[
 class CommitObjectEventOutput(TypedDict):
     event: CommitObjectEventName
     batch_id: str
-    target: batch_model.BatchTarget
+    target: TimestampTarget
     object_id: str
     reason: str | None
     message: str | None
@@ -149,7 +152,7 @@ class CommitCountsOutput(TypedDict):
 class CommitSummaryEventOutput(TypedDict):
     event: Literal["summary"]
     batch_id: str
-    target: batch_model.BatchTarget
+    target: TimestampTarget
     category_id: int
     root_path: str
     counts: CommitCountsOutput
@@ -158,7 +161,7 @@ class CommitSummaryEventOutput(TypedDict):
 class BatchCreatedEventOutput(TypedDict):
     event: Literal["batch_created"]
     batch_id: str
-    target: batch_model.BatchTarget
+    target: TimestampTarget
     category_id: int
     root_path: str
     created_at: str
@@ -167,7 +170,7 @@ class BatchCreatedEventOutput(TypedDict):
 class BatchResumedEventOutput(TypedDict):
     event: Literal["batch_resumed"]
     batch_id: str
-    target: batch_model.BatchTarget
+    target: TimestampTarget
     category_id: int
     root_path: str
 
@@ -276,27 +279,8 @@ def submitted_count_from_batch(
 def submitted_count_from_object(
     batch: batch_model.BatchFile, row: batch_model.BatchObject, state: OtsState
 ) -> int:
-    wanted = set(row.digests)
-    submitted: set[str] = set()
-    if batch.target == "content":
-        for submission in state.submissions:
-            if submission.batch_id != batch.batch_id or submission.record_ids is None:
-                continue
-            for digest, record_id in zip(
-                submission.digests, submission.record_ids, strict=False
-            ):
-                if digest in wanted and record_id is not None:
-                    submitted.add(digest)
-        return len(submitted)
-    proof = state.inventory
-    if (
-        proof is not None
-        and proof.batch_id == batch.batch_id
-        and proof.digest in wanted
-        and proof.record_id is not None
-    ):
-        return 1
-    return 0
+    ids = object_record_ids_by_digest(batch, row, state)
+    return sum(1 for record_id in ids.values() if record_id is not None)
 
 
 def object_record_ids_by_digest(
@@ -306,23 +290,18 @@ def object_record_ids_by_digest(
     if state is None:
         return record_ids
     wanted = set(row.digests)
-    if batch.target == "content":
-        for submission in state.submissions:
-            if submission.batch_id != batch.batch_id or submission.record_ids is None:
-                continue
-            for digest, record_id in zip(
-                submission.digests, submission.record_ids, strict=False
-            ):
-                if digest in wanted:
-                    record_ids[digest] = record_id
-        return record_ids
-    proof = state.inventory
-    if (
-        proof is not None
-        and proof.batch_id == batch.batch_id
-        and proof.digest in wanted
-    ):
-        record_ids[proof.digest] = proof.record_id
+    for submission in state.submissions:
+        if (
+            submission.batch_id != batch.batch_id
+            or submission.target is not batch.target
+            or submission.record_ids is None
+        ):
+            continue
+        for digest, record_id in zip(
+            submission.digests, submission.record_ids, strict=False
+        ):
+            if digest in wanted and record_id is not None:
+                record_ids[digest] = record_id
     return record_ids
 
 

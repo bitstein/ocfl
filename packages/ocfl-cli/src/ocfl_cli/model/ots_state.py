@@ -82,10 +82,6 @@ class StagedInventory(msgspec.Struct, frozen=True):
     version: str
     digest: str
     job_id: str | None = None
-    batch_id: str | None = None
-    record_id: str | None = None
-    batch_id: str | None = None
-    record_id: str | None = None
 
 
 class OtsState(msgspec.Struct, frozen=True):

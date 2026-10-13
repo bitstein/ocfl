@@ -62,7 +62,7 @@ from ocfl_cli.stage import timestamp as stage_timestamp
 from ocfl_cli.store.ots_state import load_ots, ots_cache_path, save_ots
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow import common as wf_common
-from ocfl_cli.workflow import content as wf_content
+from ocfl_cli.workflow import timestamp as wf_timestamp
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
 
@@ -274,7 +274,8 @@ def _seed_processing_verify_job(
 
 class TestProgressRendering:
     def test_one_shot_content_result_renders_jobs_and_warning(self, capsys):
-        result = wf_content.UpgradeContentResult(
+        result = wf_timestamp.UpgradeResult(
+            target=TimestampTarget.CONTENT,
             previous_phase=Phase.CONTENT_PENDING,
             phase=Phase.CONTENT_PENDING,
             unverified_pending_count=63,
@@ -446,10 +447,8 @@ class TestMidflightProgressSnapshots:
             },
         )
 
-        state = wf_content.poll_content_verifications_locked(
-            load_ots(sd), sd, sp=sp_fake
-        )
-        state = wf_content.snapshot_content_results_locked(state, sd, sp=sp_fake)
+        state = wf_common.poll_outstanding_jobs(load_ots(sd), sp_fake)
+        state = wf_common.snapshot_results(state, sd, sp_fake)
 
         job = state.verify_jobs[0]
         assert digest in job.attestation_snapshots
@@ -483,12 +482,10 @@ class TestMidflightProgressSnapshots:
             (digest,),
             {foreign: ()},
         )
-        state = wf_content.poll_content_verifications_locked(
-            load_ots(sd), sd, sp=sp_fake
-        )
+        state = wf_common.poll_outstanding_jobs(load_ots(sd), sp_fake)
 
         with pytest.raises(AttestationMismatchError, match="unexpected digest from SP"):
-            wf_content.snapshot_content_results_locked(state, sd, sp=sp_fake)
+            wf_common.snapshot_results(state, sd, sp_fake)
 
     def test_unconfirmed_result_does_not_count_as_anchored(
         self,
@@ -507,11 +504,9 @@ class TestMidflightProgressSnapshots:
         digest = digests_by_name["a.txt"]
         _force_content_pending(sd, (digest,))
         _seed_processing_verify_job(sp_fake, sd, (digest,), {digest: ()})
-        state = wf_content.poll_content_verifications_locked(
-            load_ots(sd), sd, sp=sp_fake
-        )
+        state = wf_common.poll_outstanding_jobs(load_ots(sd), sp_fake)
 
-        state = wf_content.snapshot_content_results_locked(state, sd, sp=sp_fake)
+        state = wf_common.snapshot_results(state, sd, sp_fake)
 
         assert state.verify_jobs[0].attestation_snapshots == {}
         progress = wf_common.compute_job_progress(state, runtime=runtime)
@@ -558,12 +553,10 @@ class TestMidflightProgressSnapshots:
             return original(results_url)
 
         monkeypatch.setattr(sp_fake, "fetch_results_entries", counted_fetch)
-        state = wf_content.poll_content_verifications_locked(
-            load_ots(sd), sd, sp=sp_fake
-        )
+        state = wf_common.poll_outstanding_jobs(load_ots(sd), sp_fake)
 
-        state = wf_content.snapshot_content_results_locked(state, sd, sp=sp_fake)
-        state = wf_content.snapshot_content_results_locked(state, sd, sp=sp_fake)
+        state = wf_common.snapshot_results(state, sd, sp_fake)
+        state = wf_common.snapshot_results(state, sd, sp_fake)
 
         assert calls == 2
 
@@ -597,12 +590,10 @@ class TestMidflightProgressSnapshots:
                 )
             },
         )
-        state = wf_content.poll_content_verifications_locked(
-            load_ots(sd), sd, sp=sp_fake
-        )
+        state = wf_common.poll_outstanding_jobs(load_ots(sd), sp_fake)
         before = state.verify_jobs[0].attestation_snapshots
 
-        state = wf_content.snapshot_content_results_locked(state, sd, sp=sp_fake)
+        state = wf_common.snapshot_results(state, sd, sp_fake)
 
         after = state.verify_jobs[0].attestation_snapshots
         assert after is not before
@@ -659,12 +650,13 @@ class TestMidflightProgressSnapshots:
             },
         )
 
-        state = wf_content.reverify_content_proofs(
+        state = wf_timestamp.reverify(
             state,
-            btc_fake.rpc,
-            sp_fake,
-            sd,
-            MIN_CONFS,
+            (digest,),
+            btc=btc_fake.rpc,
+            sp=sp_fake,
+            staging_dir=sd,
+            min_confirmations=MIN_CONFS,
             category_id=641,
         )
 
@@ -719,11 +711,14 @@ class TestMidflightProgressSnapshots:
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
         _register_attested(btc_fake.rpc, digest)
 
-        state = wf_content.ingest_content_verifications_locked(
+        downloads = sp_fake.download_results(f"results://{job_id}", {digest})
+        state = wf_timestamp.verify_digest(
+            digest,
+            downloads[digest],
             state,
-            sd,
-            sp=sp_fake,
+            TimestampTarget.CONTENT,
             btc=btc_fake.rpc,
+            staging_dir=sd,
             min_confirmations=MIN_CONFS,
             runtime=runtime,
         )

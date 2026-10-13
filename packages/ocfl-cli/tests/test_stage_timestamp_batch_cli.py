@@ -78,6 +78,18 @@ zmq_endpoint = "tcp://127.0.0.1:28332"
 """
 
 
+def _inv_submission(digest: str, batch_id: str, record_id: str | None) -> Submission:
+    """The inventory's batch submission: batch fields live on the Submission."""
+    return Submission(
+        submitted_at="2026-05-12T10:00:00+00:00",
+        digests=(digest,),
+        status="submitted" if record_id is not None else "submitting",
+        target=TimestampTarget.INVENTORY,
+        batch_id=batch_id,
+        record_ids=(record_id,),
+    )
+
+
 def test_batch_output_helpers_have_typed_contracts() -> None:
     status_hints = get_type_hints(batch_report.batch_status_dict)
     object_event_hints = get_type_hints(batch_report.batch_object_event)
@@ -110,7 +122,7 @@ def test_batch_verify_active_statuses_include_simpleproof_v2_states(
     digest = "a" * 64
     batch = BatchFile(
         batch_id="batch-v2-statuses",
-        target="content",
+        target=TimestampTarget.CONTENT,
         root_path="/repo",
         category_id=641,
         created_at="2026-05-12T10:00:00Z",
@@ -651,8 +663,12 @@ def test_batch_inventory_new_batch_submits_and_mirrors_record_id(
     assert batch.objects[0].digests == (updated.inventory.digest,)
     assert batch.submissions[0].digests == (updated.inventory.digest,)
     assert sp_fake._submissions[0].digests == (updated.inventory.digest,)
-    assert updated.inventory.batch_id == batch_id
-    assert updated.inventory.record_id == "rec-1"
+    (sub,) = [s for s in updated.submissions if s.target == "inventory"]
+    assert (sub.status, sub.batch_id, sub.record_ids) == (
+        "submitted",
+        batch_id,
+        ("rec-1",),
+    )
 
 
 def test_batch_inventory_same_object_skips_until_content_upgraded(
@@ -770,8 +786,9 @@ def test_batch_inventory_after_content_upgraded_ignores_content_batch_owner(
     assert inventory_batch.objects[0].status == "submitted"
     updated = load_ots(staging_dir)
     assert updated.inventory is not None
-    assert updated.inventory.batch_id == inventory_batch.batch_id
-    assert updated.inventory.record_id is not None
+    (sub,) = [s for s in updated.submissions if s.target == "inventory"]
+    assert sub.batch_id == inventory_batch.batch_id
+    assert sub.record_ids is not None and None not in sub.record_ids
 
 
 def test_batch_content_shape_mismatch_fails_chunk_closed(
@@ -1087,7 +1104,7 @@ def test_batch_content_recovers_object_intent_without_batch_row(
         staging,
         BatchFile(
             batch_id=batch_id,
-            target="content",
+            target=TimestampTarget.CONTENT,
             root_path=str(empty_sha256_root.resolve()),
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -1577,19 +1594,15 @@ def test_batch_retry_inventory_propagates_batch_record_id(
         OtsState(
             phase=Phase.CONTENT_UPGRADED,
             category_id=641,
-            inventory=StagedInventory(
-                version="v1",
-                digest=digest,
-                batch_id=batch_id,
-                record_id=None,
-            ),
+            inventory=StagedInventory(version="v1", digest=digest),
+            submissions=(_inv_submission(digest, batch_id, None),),
         ),
     )
     save_batch(
         staging,
         BatchFile(
             batch_id=batch_id,
-            target="inventory",
+            target=TimestampTarget.INVENTORY,
             root_path=root_path,
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -1633,8 +1646,9 @@ def test_batch_retry_inventory_propagates_batch_record_id(
     state = load_ots(
         StagingStore(staging).staging_path(root_path, "obj:inventory-retry")
     )
-    assert state.inventory is not None
-    assert state.inventory.record_id == "batch-rec-inv"
+    (sub,) = [s for s in state.submissions if s.target == "inventory"]
+    assert sub.record_ids == ("batch-rec-inv",)
+    assert sub.status == "submitted"
 
 
 def test_batch_retry_pending_chunk_posts_after_crash_before_post(
@@ -1822,7 +1836,7 @@ def test_batch_retry_object_record_id_wins_for_non_failed_chunk(
         staging,
         BatchFile(
             batch_id=batch_id,
-            target="content",
+            target=TimestampTarget.CONTENT,
             root_path=root_path,
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -1902,7 +1916,7 @@ def test_batch_ls_json_orders_by_updated_at(
         staging,
         BatchFile(
             batch_id=first_id,
-            target="content",
+            target=TimestampTarget.CONTENT,
             root_path=str(storage_root),
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -1914,7 +1928,7 @@ def test_batch_ls_json_orders_by_updated_at(
         staging,
         BatchFile(
             batch_id=second_id,
-            target="inventory",
+            target=TimestampTarget.INVENTORY,
             root_path=str(storage_root),
             category_id=642,
             created_at="2026-05-12T10:01:00Z",
@@ -1952,7 +1966,7 @@ def test_batch_ls_human_includes_created_at(
         staging,
         BatchFile(
             batch_id=batch_id,
-            target="content",
+            target=TimestampTarget.CONTENT,
             root_path=str(storage_root),
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -2007,7 +2021,7 @@ def test_batch_status_json_contract_uses_canonical_next(
         staging,
         BatchFile(
             batch_id=batch_id,
-            target="content",
+            target=TimestampTarget.CONTENT,
             root_path=root_path,
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -2085,7 +2099,7 @@ def test_batch_status_healthy_next_strings_are_canonical(
         staging,
         BatchFile(
             batch_id=batch_id,
-            target="content",
+            target=TimestampTarget.CONTENT,
             root_path=root_path,
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -2154,7 +2168,7 @@ def test_batch_status_healthy_next_strings_are_canonical(
         staging,
         BatchFile(
             batch_id=complete_batch_id,
-            target="content",
+            target=TimestampTarget.CONTENT,
             root_path=root_path,
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -2302,7 +2316,7 @@ def test_batch_status_reason_next_strings_are_consistent(
         staging,
         BatchFile(
             batch_id=batch_id,
-            target="content",
+            target=TimestampTarget.CONTENT,
             root_path=str(storage_root),
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -2353,7 +2367,7 @@ def test_batch_status_verbose_json_adds_per_digest_state(
         staging,
         BatchFile(
             batch_id=batch_id,
-            target="content",
+            target=TimestampTarget.CONTENT,
             root_path=root_path,
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -2454,7 +2468,7 @@ def test_batch_status_next_distinguishes_transient_sp_context(
         staging,
         BatchFile(
             batch_id=batch_id,
-            target="content",
+            target=TimestampTarget.CONTENT,
             root_path=str(storage_root),
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -3080,7 +3094,7 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
         staging,
         BatchFile(
             batch_id=batch_id,
-            target="content",
+            target=TimestampTarget.CONTENT,
             root_path=root_path,
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -3201,7 +3215,7 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
         staging,
         BatchFile(
             batch_id=batch_id,
-            target="content",
+            target=TimestampTarget.CONTENT,
             root_path=root_path,
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -3286,12 +3300,8 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
         OtsState(
             phase=Phase.INVENTORY_UPGRADED,
             category_id=641,
-            inventory=StagedInventory(
-                version="v1",
-                digest=upgraded_digest,
-                batch_id=batch_id,
-                record_id="rec-upgraded",
-            ),
+            inventory=StagedInventory(version="v1", digest=upgraded_digest),
+            submissions=(_inv_submission(upgraded_digest, batch_id, "rec-upgraded"),),
             proofs={
                 upgraded_digest: Proof(
                     target=TimestampTarget.INVENTORY,
@@ -3308,12 +3318,8 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
         OtsState(
             phase=Phase.INVENTORY_PENDING,
             category_id=641,
-            inventory=StagedInventory(
-                version="v1",
-                digest=waiting_digest,
-                batch_id=batch_id,
-                record_id="rec-waiting",
-            ),
+            inventory=StagedInventory(version="v1", digest=waiting_digest),
+            submissions=(_inv_submission(waiting_digest, batch_id, "rec-waiting"),),
             proofs={
                 waiting_digest: Proof(target=TimestampTarget.INVENTORY, verified=False)
             },
@@ -3327,7 +3333,7 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
         staging,
         BatchFile(
             batch_id=batch_id,
-            target="inventory",
+            target=TimestampTarget.INVENTORY,
             root_path=root_path,
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -3461,7 +3467,7 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
         staging,
         BatchFile(
             batch_id=batch_id,
-            target="content",
+            target=TimestampTarget.CONTENT,
             root_path=root_path,
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -3547,12 +3553,8 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
         OtsState(
             phase=Phase.INVENTORY_UPGRADED,
             category_id=641,
-            inventory=StagedInventory(
-                version="v1",
-                digest=failed_digest,
-                batch_id=batch_id,
-                record_id="rec-failed",
-            ),
+            inventory=StagedInventory(version="v1", digest=failed_digest),
+            submissions=(_inv_submission(failed_digest, batch_id, "rec-failed"),),
             proofs={
                 failed_digest: Proof(
                     target=TimestampTarget.INVENTORY,
@@ -3569,12 +3571,8 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
         OtsState(
             phase=Phase.INVENTORY_PENDING,
             category_id=641,
-            inventory=StagedInventory(
-                version="v1",
-                digest=waiting_digest,
-                batch_id=batch_id,
-                record_id="rec-waiting",
-            ),
+            inventory=StagedInventory(version="v1", digest=waiting_digest),
+            submissions=(_inv_submission(waiting_digest, batch_id, "rec-waiting"),),
             proofs={
                 waiting_digest: Proof(target=TimestampTarget.INVENTORY, verified=False)
             },
@@ -3589,7 +3587,7 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
         staging,
         BatchFile(
             batch_id=batch_id,
-            target="inventory",
+            target=TimestampTarget.INVENTORY,
             root_path=root_path,
             category_id=641,
             created_at="2026-05-12T10:00:00Z",
@@ -4128,7 +4126,7 @@ def test_batch_rm_refuses_non_terminal_without_force(
         staging,
         BatchFile(
             batch_id=batch_id,
-            target="content",
+            target=TimestampTarget.CONTENT,
             root_path=str(storage_root),
             category_id=641,
             created_at="2026-05-12T10:00:00Z",

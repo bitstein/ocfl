@@ -48,8 +48,12 @@ from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.ports import BlockStream
 from ocfl_cli.store.ots_state import load_ots, ots_cache_path, save_ots
 from ocfl_cli.store.staging import StagingStore
-from ocfl_cli.workflow import inventory as wf_inventory
-from ocfl_cli.workflow.common import compute_inventory_job_progress
+from ocfl_cli.workflow import timestamp as wf_timestamp
+from ocfl_cli.workflow.common import (
+    compute_inventory_job_progress,
+    poll_outstanding_jobs,
+    snapshot_results,
+)
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
 
@@ -337,9 +341,9 @@ class TestInventoryUpgradePrimitives:
             ),
         )
         save_ots(sd, state)
-        state = wf_inventory.poll_inventory_verifications_locked(state, sd, sp=sp_fake)
+        state = poll_outstanding_jobs(state, sp_fake)
 
-        state = wf_inventory.snapshot_inventory_results_locked(state, sd, sp=sp_fake)
+        state = snapshot_results(state, sd, sp_fake)
 
         progress = compute_inventory_job_progress(state, runtime=runtime)
         assert progress is not None
@@ -384,31 +388,32 @@ class TestInventoryUpgradePrimitives:
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS)
         _register_attested(btc_fake.rpc, inv_digest)
 
-        state = wf_inventory.prepare_inventory_upgrade_locked(
-            load_ots(sd),
-            sd,
-            sp=sp_fake,
-            btc=btc_fake.rpc,
-            category_id=cfg.simpleproof.proof_category_id,
-            min_confirmations=cfg.bitcoin.confirmations,
-        )
-        assert len(state.verify_jobs) == 1
-        job_id = state.verify_jobs[0].job_id
-        assert load_ots(sd).verify_jobs[0].job_id == job_id
-
-        sp_fake.advance_to_completed(job_id, {inv_digest: _ots_for(inv_digest)})
-        state = wf_inventory.poll_inventory_verifications_locked(state, sd, sp=sp_fake)
-        assert state.verify_jobs[0].status == "COMPLETED"
-        assert load_ots(sd).verify_jobs[0].status == "COMPLETED"
-
-        state = wf_inventory.ingest_inventory_verifications_locked(
-            state,
-            sd,
-            sp=sp_fake,
-            btc=btc_fake.rpc,
-            min_confirmations=cfg.bitcoin.confirmations,
+        run = wf_timestamp.TimestampRun(
+            cfg=cfg,
+            store=StagingStore(staging),
+            sr=StorageRoot.open(LocalFS(empty_sha256_root)),
+            root_path=str(empty_sha256_root.resolve()),
+            object_id="obj:inv-upgrade-primitive",
+            staging_dir=sd,
+            sp_factory=lambda cfg: sp_fake,
+            btc_factory=lambda cfg: btc_fake.rpc,
             runtime=runtime,
         )
+
+        # Pass 1 (target from the phase): queue the verify job.
+        first = wf_timestamp.upgrade_locked(run)
+        assert first.target is TimestampTarget.INVENTORY
+        assert first.phase is Phase.INVENTORY_PENDING
+        state = load_ots(sd)
+        assert len(state.verify_jobs) == 1
+        job_id = state.verify_jobs[0].job_id
+
+        # Pass 2: the completed job is downloaded, verified and advances.
+        sp_fake.advance_to_completed(job_id, {inv_digest: _ots_for(inv_digest)})
+        second = wf_timestamp.upgrade_locked(run)
+        assert second.phase is Phase.INVENTORY_UPGRADED
+        state = load_ots(sd)
+        assert state.verify_jobs[0].status == "COMPLETED"
 
         assert state.phase is Phase.INVENTORY_UPGRADED
         assert state.inventory is not None
@@ -1228,7 +1233,13 @@ class TestInventoryRetryPhaseGate:
 
 
 class TestInventoryRetryHappyPath:
-    def test_retry_at_inventory_pending_resubmits_inv_digest(
+    def _retry(self, runner: CliRunner, root: Path, staging: Path, oid: str):
+        return runner.invoke(
+            app,
+            _stage_args(root, staging, "timestamp", "inventory", oid, "--retry"),
+        )
+
+    def test_retry_resends_a_failed_inventory_submission(
         self,
         runner: CliRunner,
         empty_sha256_root: Path,
@@ -1236,12 +1247,8 @@ class TestInventoryRetryHappyPath:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """At INVENTORY_PENDING with a populated ``inventory_proof``,
-        ``--retry`` re-POSTs ``[inv_digest]`` to SP one more time; phase
-        stays INVENTORY_PENDING. Single-digest semantics: the inventory
-        side has no ``submissions`` list — a re-POST at INVENTORY_PENDING
-        IS the "retry" (mirrors content --retry's "re-POST FAILED"
-        intent). StagedInventory is not required to grow a status field."""
+        """``--retry`` re-POSTs the target's ``failed`` submissions, the same
+        rule as content: the inventory submission is a ``Submission`` too."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -1249,34 +1256,50 @@ class TestInventoryRetryHappyPath:
         sd, _da, inv_digest = _setup_at_inventory_pending(
             runner, empty_sha256_root, staging, "obj:inv-retry-ok"
         )
-
-        # Setup ran `stage timestamp inventory` once → 1 SP submission.
-        pre_calls = list(sp_fake._submissions)
-        assert len(pre_calls) >= 1
-        assert tuple(pre_calls[-1].digests) == (inv_digest,)
-
-        r = runner.invoke(
-            app,
-            _stage_args(
-                empty_sha256_root,
-                staging,
-                "timestamp",
-                "inventory",
-                "obj:inv-retry-ok",
-                "--retry",
-            ),
+        state = load_ots(sd)
+        subs = tuple(
+            replace(s, status="failed") if s.target == "inventory" else s
+            for s in state.submissions
         )
+        save_ots(sd, replace(state, submissions=subs))
+        pre_calls = len(sp_fake._submissions)
+
+        r = self._retry(runner, empty_sha256_root, staging, "obj:inv-retry-ok")
         assert r.exit_code == 0, r.output
 
-        new_calls = sp_fake._submissions[len(pre_calls) :]
-        assert len(new_calls) == 1, new_calls
-        assert tuple(new_calls[0].digests) == (inv_digest,)
-
+        new_calls = sp_fake._submissions[pre_calls:]
+        assert [tuple(c.digests) for c in new_calls] == [(inv_digest,)]
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_PENDING
-        assert state.inventory is not None
-        assert state.inventory_proof is not None
-        assert state.inventory.digest == inv_digest
+        (sub,) = [s for s in state.submissions if s.target == "inventory"]
+        assert sub.status == "submitted"
+        assert sub.attempts == 2
+
+    def test_retry_without_a_failed_submission_sends_nothing(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """No ``failed`` inventory submission: nothing is re-POSTed (it used
+        to always re-POST the digest); the command says so and exits 0."""
+        _write_config(tmp_path, monkeypatch)
+        _inject_fake_sp(runner, sp_fake)
+
+        staging = tmp_path / "staging"
+        sd, _da, _inv_digest = _setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-retry-none"
+        )
+        before = (sd / "ots.json").read_bytes()
+        pre_calls = len(sp_fake._submissions)
+
+        r = self._retry(runner, empty_sha256_root, staging, "obj:inv-retry-none")
+        assert r.exit_code == 0, r.output
+        assert "no failed submissions to retry" in r.output
+        assert len(sp_fake._submissions) == pre_calls
+        assert (sd / "ots.json").read_bytes() == before
 
 
 # =========================================================================== #

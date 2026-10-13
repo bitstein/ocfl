@@ -14,48 +14,33 @@ from ocfl_cli.errors import (
     SimpleProofTransient,
 )
 from ocfl_cli.model import batch as batch_model
-from ocfl_cli.model.phase import Phase
 from ocfl_cli.ots.simpleproof import VERIFY_BATCH_CHUNK_SIZE
 from ocfl_cli.store import batch as batch_state
 from ocfl_cli.store.ots_state import (
     load_ots,
-    plan_path,
     save_ots,
     with_lock,
 )
-from ocfl_cli.workflow import commit as wf_commit
-from ocfl_cli.workflow import content as wf_content
-from ocfl_cli.workflow import inventory as wf_inventory
+from ocfl_cli.workflow import timestamp
 from ocfl_cli.workflow.batch.reasons import (
     fixed_batch_reason,
 )
+from ocfl_cli.workflow.targets import Area, rules_for
 from ocfl_lib import BitcoinRpcError
 
 if TYPE_CHECKING:
     from ocfl_cli.model.ots_state import OtsState
+    from ocfl_cli.model.phase import TimestampTarget
     from ocfl_cli.model.simpleproof import SimpleProofDownloadResult
     from ocfl_cli.ports import Runtime
     from ocfl_cli.store.staging import StagingStore
 
 
-def content_digest_verified(state: OtsState, digest: str) -> bool:
-    return state.verified(digest)
-
-
-def inventory_digest_verified(state: OtsState, digest: str) -> bool:
-    return (
-        state.inventory is not None
-        and state.inventory.digest == digest
-        and state.verified(digest)
-    )
-
-
 def batch_digest_verified(
-    *, target: batch_model.BatchTarget, state: OtsState, digest: str
+    *, target: TimestampTarget, state: OtsState, digest: str
 ) -> bool:
-    if target == "content":
-        return content_digest_verified(state, digest)
-    return inventory_digest_verified(state, digest)
+    """Whether `digest` is proved for the object's staged version."""
+    return rules_for(target).row_upgraded(state, (digest,))
 
 
 def covered_verify_digests(batch: batch_model.BatchFile) -> set[str]:
@@ -73,7 +58,7 @@ def covered_verify_digests(batch: batch_model.BatchFile) -> set[str]:
 
 def batch_unverified_submitted_digests(
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     store: StagingStore,
     batch: batch_model.BatchFile,
     runtime: Runtime,
@@ -109,7 +94,7 @@ def save_batch_upgrade(
 
 def submit_batch_verify_jobs(
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     cfg,
     store: StagingStore,
     staging_root: Path,
@@ -275,16 +260,9 @@ def poll_batch_verify_jobs(
     )
 
 
-def content_row_upgraded(state: OtsState, row: batch_model.BatchObject) -> bool:
-    return all(content_digest_verified(state, digest) for digest in row.digests)
-
-
-def inventory_row_upgraded(state: OtsState, row: batch_model.BatchObject) -> bool:
-    return all(inventory_digest_verified(state, digest) for digest in row.digests)
-
-
-def ingest_batch_content_downloads(
+def ingest_batch_downloads(
     *,
+    target: TimestampTarget,
     store: StagingStore,
     sr,
     batch: batch_model.BatchFile,
@@ -294,122 +272,53 @@ def ingest_batch_content_downloads(
     min_confirmations: int,
     runtime: Runtime,
 ) -> tuple[batch_model.BatchObject, bool]:
+    """Verify and record one row's downloaded proofs; advance its phase when done."""
+    rules = rules_for(target)
     staging_dir = store.staging_path(batch.root_path, row.object_id)
+    area = Area(
+        store=store,
+        sr=sr,
+        root_path=batch.root_path,
+        object_id=row.object_id,
+        staging_dir=staging_dir,
+    )
     with with_lock(staging_dir, timeout=runtime.lock_timeout):
         state = load_ots(staging_dir)
+        if not rules.row_current(area, state, row.digests):
+            return (
+                msgspec.structs.replace(
+                    row, status="failed", last_error=fixed_batch_reason("regressed")
+                ),
+                True,
+            )
         for digest in row.digests:
             ots_bytes = downloads.get(digest)
-            if ots_bytes is None or content_digest_verified(state, digest):
+            if ots_bytes is None or state.verified(digest):
                 continue
-            state = wf_content.verify_content_digest(
+            state = timestamp.verify_digest(
                 digest,
                 ots_bytes,
                 state,
+                target,
                 btc=btc,
                 staging_dir=staging_dir,
                 min_confirmations=min_confirmations,
                 runtime=runtime,
             )
-        ready, _unverified_pending, _orphans = wf_content.phase_advance_ready(
-            state, store, sr, batch.root_path, row.object_id, staging_dir
-        )
-        if ready and state.phase is not Phase.CONTENT_UPGRADED:
-            state = msgspec.structs.replace(state, phase=Phase.CONTENT_UPGRADED)
+        if rules.progress(area, state).done and state.phase is not rules.upgraded_phase:
+            state = msgspec.structs.replace(state, phase=rules.upgraded_phase)
             save_ots(staging_dir, state)
-        if content_row_upgraded(state, row):
+        if rules.row_upgraded(state, row.digests):
             return (
                 msgspec.structs.replace(row, status="upgraded", last_error=None),
                 True,
             )
     return row, False
-
-
-def ingest_batch_inventory_downloads(
-    *,
-    store: StagingStore,
-    sr,
-    batch: batch_model.BatchFile,
-    row: batch_model.BatchObject,
-    downloads: SimpleProofDownloadResult,
-    btc,
-    min_confirmations: int,
-    runtime: Runtime,
-) -> tuple[batch_model.BatchObject, bool]:
-    staging_dir = store.staging_path(batch.root_path, row.object_id)
-    with with_lock(staging_dir, timeout=runtime.lock_timeout):
-        state = load_ots(staging_dir)
-        proof = state.inventory
-        if proof is None or proof.batch_id != batch.batch_id:
-            return (
-                msgspec.structs.replace(
-                    row, status="failed", last_error=fixed_batch_reason("regressed")
-                ),
-                True,
-            )
-        if not inventory_plan_matches_submission(
-            store=store,
-            sr=sr,
-            batch=batch,
-            row=row,
-            staging_dir=staging_dir,
-            state=state,
-        ):
-            return (
-                msgspec.structs.replace(
-                    row, status="failed", last_error=fixed_batch_reason("regressed")
-                ),
-                True,
-            )
-        ots_bytes = downloads.get(proof.digest)
-        if ots_bytes is None or state.verified(proof.digest):
-            return row, False
-        state = wf_inventory.verify_inventory_digest(
-            state, ots_bytes, btc, staging_dir, min_confirmations, runtime=runtime
-        )
-        if inventory_row_upgraded(state, row):
-            return (
-                msgspec.structs.replace(row, status="upgraded", last_error=None),
-                True,
-            )
-    return row, False
-
-
-def inventory_plan_matches_submission(
-    *,
-    store: StagingStore,
-    sr,
-    batch: batch_model.BatchFile,
-    row: batch_model.BatchObject,
-    staging_dir: Path,
-    state: OtsState,
-) -> bool:
-    proof = state.inventory
-    if proof is None or proof.digest not in row.digests:
-        return False
-    prior_plan = wf_commit.load_plan(staging_dir)
-    if prior_plan is None:
-        return False
-    prior_inv = prior_plan.inventory.inventory
-    prior_created = prior_inv.versions[prior_inv.head].created
-    metadata = store.load_metadata(batch.root_path, row.object_id)
-    plan, _content_source = wf_commit.build_inventory_plan(
-        store,
-        sr,
-        batch.root_path,
-        row.object_id,
-        message=metadata.message,
-        user=wf_commit.version_user_from_staged(metadata),
-        created=prior_created,
-    )
-    if plan.inventory.digest != proof.digest:
-        return False
-    plan_path(staging_dir).write_bytes(plan.to_json())
-    return True
 
 
 def ingest_batch_verify_jobs(
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     cfg,
     store: StagingStore,
     sr,
@@ -494,28 +403,17 @@ def ingest_batch_verify_jobs(
             ):
                 continue
             try:
-                if target == "content":
-                    new_row, row_changed = ingest_batch_content_downloads(
-                        store=store,
-                        sr=sr,
-                        batch=batch,
-                        row=row,
-                        downloads=downloads,
-                        btc=btc,
-                        min_confirmations=min_confirmations,
-                        runtime=runtime,
-                    )
-                else:
-                    new_row, row_changed = ingest_batch_inventory_downloads(
-                        store=store,
-                        sr=sr,
-                        batch=batch,
-                        row=row,
-                        downloads=downloads,
-                        btc=btc,
-                        min_confirmations=min_confirmations,
-                        runtime=runtime,
-                    )
+                new_row, row_changed = ingest_batch_downloads(
+                    target=target,
+                    store=store,
+                    sr=sr,
+                    batch=batch,
+                    row=row,
+                    downloads=downloads,
+                    btc=btc,
+                    min_confirmations=min_confirmations,
+                    runtime=runtime,
+                )
             except AttestationMismatchError:
                 new_row = msgspec.structs.replace(
                     row,
@@ -568,7 +466,7 @@ def ingest_batch_verify_jobs(
 
 def reconcile_upgraded_batch_rows(
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     store: StagingStore,
     staging_root: Path,
     batch: batch_model.BatchFile,
@@ -583,11 +481,7 @@ def reconcile_upgraded_batch_rows(
         staging_dir = store.staging_path(batch.root_path, row.object_id)
         with with_lock(staging_dir, timeout=runtime.lock_timeout):
             state = load_ots(staging_dir)
-            upgraded = (
-                content_row_upgraded(state, row)
-                if target == "content"
-                else inventory_row_upgraded(state, row)
-            )
+            upgraded = rules_for(target).row_upgraded(state, row.digests)
         if upgraded:
             rows.append(
                 msgspec.structs.replace(row, status="upgraded", last_error=None)
@@ -606,7 +500,7 @@ def reconcile_upgraded_batch_rows(
 
 def run_batch_upgrade_pass(
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     cfg,
     store: StagingStore,
     sr,

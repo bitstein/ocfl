@@ -16,6 +16,7 @@ import pytest
 
 from ocfl_cli.errors import LockTimeoutError, StagingError
 from ocfl_cli.model.batch import BatchFile, BatchObject, BatchSubmission, BatchVerifyJob
+from ocfl_cli.model.phase import TimestampTarget
 from ocfl_cli.store import batch as batch_state
 from ocfl_cli.store.batch import (
     batch_file_path,
@@ -36,7 +37,7 @@ def test_batch_file_round_trips_required_schema(tmp_path: Path):
     batch_id = new_batch_id()
     batch = BatchFile(
         batch_id=batch_id,
-        target="content",
+        target=TimestampTarget.CONTENT,
         root_path="/archive/root",
         category_id=641,
         created_at="2026-05-12T10:00:00Z",
@@ -130,7 +131,7 @@ def test_save_batch_keeps_previous_file_when_replace_fails(
     batch_id = new_batch_id()
     original = BatchFile(
         batch_id=batch_id,
-        target="content",
+        target=TimestampTarget.CONTENT,
         root_path="/archive/root",
         category_id=641,
         created_at="2026-05-12T10:00:00Z",
@@ -138,7 +139,7 @@ def test_save_batch_keeps_previous_file_when_replace_fails(
     )
     replacement = BatchFile(
         batch_id=batch_id,
-        target="content",
+        target=TimestampTarget.CONTENT,
         root_path="/archive/root",
         category_id=641,
         created_at="2026-05-12T10:00:00Z",
@@ -180,7 +181,7 @@ def test_batch_paths_reject_non_canonical_uuid7(tmp_path: Path, batch_id: str):
 def test_save_batch_rejects_invalid_batch_id(tmp_path: Path):
     batch = BatchFile(
         batch_id="../outside",
-        target="content",
+        target=TimestampTarget.CONTENT,
         root_path="/archive/root",
         category_id=641,
         created_at="2026-05-12T10:00:00Z",

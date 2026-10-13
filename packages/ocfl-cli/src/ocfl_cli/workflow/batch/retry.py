@@ -26,6 +26,7 @@ from ocfl_cli.workflow.batch.submit import (
 )
 
 if TYPE_CHECKING:
+    from ocfl_cli.model.phase import TimestampTarget
     from ocfl_cli.ports import Runtime
     from ocfl_cli.store.staging import StagingStore
 
@@ -43,7 +44,7 @@ def object_ids_for_digests(
 
 def collect_retry_record_ids(
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     store: StagingStore,
     staging_root: Path,
     batch: batch_model.BatchFile,
@@ -146,7 +147,7 @@ def append_retry_chunk(
 
 def missing_prepared_retry_digests(
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     store: StagingStore,
     batch: batch_model.BatchFile,
     rows: dict[str, batch_model.BatchObject],
@@ -193,7 +194,7 @@ def save_retry_pre_post(
 
 def retry_batch_submissions(
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     cfg,
     store: StagingStore,
     staging_root: Path,

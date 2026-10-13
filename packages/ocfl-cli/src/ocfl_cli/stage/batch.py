@@ -13,6 +13,7 @@ import typer
 from ocfl_cli import _appctx as appctx
 from ocfl_cli._common import open_root, output_json
 from ocfl_cli.errors import UsageError
+from ocfl_cli.model.phase import TimestampTarget
 from ocfl_cli.stage._app import (
     require_bitcoin,
     require_config,
@@ -42,7 +43,7 @@ from ocfl_cli.workflow.batch.report import (
 )
 
 if TYPE_CHECKING:
-    from ocfl_cli.model.batch import BatchFile, BatchObject, BatchTarget
+    from ocfl_cli.model.batch import BatchFile, BatchObject
 
 
 def _batch_verify_job_transitions(
@@ -226,7 +227,7 @@ def _selected(object_ids: tuple[str, ...], objects_file: Path | None) -> list[st
 
 
 def _drive_batch_retry(
-    ctx: typer.Context, *, target: BatchTarget, batch_id: str | None
+    ctx: typer.Context, *, target: TimestampTarget, batch_id: str | None
 ) -> None:
     if batch_id is None:
         raise UsageError("--retry requires --batch")
@@ -252,7 +253,7 @@ def _drive_batch_retry(
 
 
 def _drive_batch_upgrade(
-    ctx: typer.Context, *, target: BatchTarget, batch_id: str | None
+    ctx: typer.Context, *, target: TimestampTarget, batch_id: str | None
 ) -> None:
     if batch_id is None:
         raise UsageError("--upgrade requires --batch")
@@ -283,7 +284,7 @@ def _drive_batch_upgrade(
 def _drive_batch_watch(
     ctx: typer.Context,
     *,
-    target: BatchTarget,
+    target: TimestampTarget,
     object_ids: tuple[str, ...],
     objects_file: Path | None,
     batch_id: str | None,
@@ -318,7 +319,7 @@ def _drive_batch_watch(
 def _drive_batch_submit(
     ctx: typer.Context,
     *,
-    target: BatchTarget,
+    target: TimestampTarget,
     object_ids: tuple[str, ...],
     objects_file: Path | None,
     batch_id: str | None,
@@ -397,12 +398,12 @@ def timestamp_batch_content(
     if retry:
         if object_ids or objects_file is not None or category is not None:
             raise UsageError("--retry is only supported with --batch")
-        _drive_batch_retry(ctx, target="content", batch_id=batch_id)
+        _drive_batch_retry(ctx, target=TimestampTarget.CONTENT, batch_id=batch_id)
         return
     if watch_flag:
         _drive_batch_watch(
             ctx,
-            target="content",
+            target=TimestampTarget.CONTENT,
             object_ids=tuple(object_ids or ()),
             objects_file=objects_file,
             batch_id=batch_id,
@@ -413,11 +414,11 @@ def timestamp_batch_content(
     if upgrade:
         if object_ids or objects_file is not None or category is not None:
             raise UsageError("--upgrade is only supported with --batch")
-        _drive_batch_upgrade(ctx, target="content", batch_id=batch_id)
+        _drive_batch_upgrade(ctx, target=TimestampTarget.CONTENT, batch_id=batch_id)
         return
     _drive_batch_submit(
         ctx,
-        target="content",
+        target=TimestampTarget.CONTENT,
         object_ids=tuple(object_ids or ()),
         objects_file=objects_file,
         batch_id=batch_id,
@@ -480,12 +481,12 @@ def timestamp_batch_inventory(
             or allow_missing_metadata
         ):
             raise UsageError("--retry is only supported with --batch")
-        _drive_batch_retry(ctx, target="inventory", batch_id=batch_id)
+        _drive_batch_retry(ctx, target=TimestampTarget.INVENTORY, batch_id=batch_id)
         return
     if watch_flag:
         _drive_batch_watch(
             ctx,
-            target="inventory",
+            target=TimestampTarget.INVENTORY,
             object_ids=tuple(object_ids or ()),
             objects_file=objects_file,
             batch_id=batch_id,
@@ -496,11 +497,11 @@ def timestamp_batch_inventory(
     if upgrade:
         if object_ids or objects_file is not None or category is not None:
             raise UsageError("--upgrade is only supported with --batch")
-        _drive_batch_upgrade(ctx, target="inventory", batch_id=batch_id)
+        _drive_batch_upgrade(ctx, target=TimestampTarget.INVENTORY, batch_id=batch_id)
         return
     _drive_batch_submit(
         ctx,
-        target="inventory",
+        target=TimestampTarget.INVENTORY,
         object_ids=tuple(object_ids or ()),
         objects_file=objects_file,
         batch_id=batch_id,

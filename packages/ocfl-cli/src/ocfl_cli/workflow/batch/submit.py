@@ -10,7 +10,6 @@ from ocfl_cli.errors import (
     SimpleProofError,
 )
 from ocfl_cli.model import batch as batch_model
-from ocfl_cli.model.phase import Phase
 from ocfl_cli.store import batch as batch_state
 from ocfl_cli.store.ots_state import (
     load_ots,
@@ -20,9 +19,11 @@ from ocfl_cli.store.ots_state import (
 from ocfl_cli.workflow.batch.reasons import (
     fixed_batch_reason,
 )
+from ocfl_cli.workflow.targets import rules_for
 
 if TYPE_CHECKING:
     from ocfl_cli.model.ots_state import OtsState, Submission
+    from ocfl_cli.model.phase import TimestampTarget
     from ocfl_cli.ports import Runtime
     from ocfl_cli.store.staging import StagingStore
 
@@ -66,7 +67,7 @@ def chunk_object_ids(
 
 def mirror_chunk_to_object(
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     store: StagingStore,
     root_path: str,
     staging_root: Path,
@@ -78,55 +79,39 @@ def mirror_chunk_to_object(
     staging_dir = store.staging_path(root_path, object_id)
     with with_lock(staging_dir, timeout=runtime.lock_timeout):
         state = load_ots(staging_dir)
-        if target == "content":
-            changed: list[Submission] = []
-            completed = False
-            for submission in state.submissions:
-                if submission.batch_id != batch.batch_id:
-                    changed.append(submission)
-                    continue
-                record_ids = list(
-                    submission.record_ids
-                    if submission.record_ids is not None
-                    else tuple(None for _ in submission.digests)
-                )
-                for i, digest in enumerate(submission.digests):
-                    if digest in ids_by_digest:
-                        record_ids[i] = ids_by_digest[digest]
-                completed = all(record_id is not None for record_id in record_ids)
-                changed.append(
-                    msgspec.structs.replace(
-                        submission,
-                        record_ids=tuple(record_ids),
-                        status="submitted" if completed else "submitting",
-                    )
-                )
-            phase = Phase.CONTENT_PENDING if completed else state.phase
-            save_ots(
-                staging_dir,
-                msgspec.structs.replace(state, submissions=tuple(changed), phase=phase),
+        changed: list[Submission] = []
+        completed = False
+        for submission in state.submissions:
+            if submission.batch_id != batch.batch_id or submission.target is not target:
+                changed.append(submission)
+                continue
+            record_ids = list(
+                submission.record_ids
+                if submission.record_ids is not None
+                else tuple(None for _ in submission.digests)
             )
-            return completed
-
-        proof = state.inventory
-        if proof is None or proof.batch_id != batch.batch_id:
-            return False
-        record_id = ids_by_digest.get(proof.digest)
-        if record_id is None:
-            return proof.record_id is not None
+            for i, digest in enumerate(submission.digests):
+                if digest in ids_by_digest:
+                    record_ids[i] = ids_by_digest[digest]
+            completed = all(record_id is not None for record_id in record_ids)
+            changed.append(
+                msgspec.structs.replace(
+                    submission,
+                    record_ids=tuple(record_ids),
+                    status="submitted" if completed else "submitting",
+                )
+            )
+        phase = rules_for(target).pending_phase if completed else state.phase
         save_ots(
             staging_dir,
-            msgspec.structs.replace(
-                state,
-                inventory=msgspec.structs.replace(proof, record_id=record_id),
-            ),
+            msgspec.structs.replace(state, submissions=tuple(changed), phase=phase),
         )
-        return True
+        return completed
 
 
 def submit_batch(
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     cfg,
     store: StagingStore,
     staging_root: Path,
@@ -254,7 +239,7 @@ def save_batch_submit_progress(
 
 def revalidate_submit_chunk(
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     store: StagingStore,
     batch: batch_model.BatchFile,
     chunk: batch_model.BatchSubmission,
@@ -279,14 +264,9 @@ def revalidate_submit_chunk(
                 )
                 valid_digests.difference_update(rows[object_id].digests)
                 continue
-            if target == "content":
-                row_digests = revalidate_content_submission(
-                    state, batch.batch_id, rows[object_id]
-                )
-            else:
-                row_digests = revalidate_inventory_submission(
-                    state, batch.batch_id, rows[object_id]
-                )
+            row_digests = revalidate_submission(
+                state, batch.batch_id, target, rows[object_id]
+            )
             if row_digests is None:
                 rows[object_id] = msgspec.structs.replace(
                     rows[object_id],
@@ -306,11 +286,15 @@ def revalidate_submit_chunk(
     return chunk, rows, valid_object_ids
 
 
-def revalidate_content_submission(
-    state: OtsState, batch_id: str, row: batch_model.BatchObject
+def revalidate_submission(
+    state: OtsState,
+    batch_id: str,
+    target: TimestampTarget,
+    row: batch_model.BatchObject,
 ) -> set[str] | None:
+    """The row's digests still to send; None when the object moved on."""
     for submission in state.submissions:
-        if submission.batch_id != batch_id:
+        if submission.batch_id != batch_id or submission.target is not target:
             continue
         if not set(row.digests).issubset(set(submission.digests)):
             return None
@@ -325,14 +309,3 @@ def revalidate_content_submission(
             if digest in row.digests and record_id is None
         }
     return None
-
-
-def revalidate_inventory_submission(
-    state: OtsState, batch_id: str, row: batch_model.BatchObject
-) -> set[str] | None:
-    proof = state.inventory
-    if proof is None or proof.batch_id != batch_id or proof.digest not in row.digests:
-        return None
-    if proof.record_id is not None:
-        return set()
-    return {proof.digest}

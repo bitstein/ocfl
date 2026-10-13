@@ -4,9 +4,11 @@ from typing import Literal
 
 import msgspec
 
+from ocfl_cli.model.phase import TimestampTarget  # noqa: TC001 - msgspec decodes it.
+
 BATCH_FILE_SCHEMA_VERSION = 1
 
-BatchTarget = Literal["content", "inventory"]
+
 BatchObjectStatus = Literal["prepared", "submitted", "upgraded", "failed", "skipped"]
 BatchSubmissionStatus = Literal["pending", "submitted", "failed"]
 BatchVerifyJobStatus = Literal[
@@ -60,7 +62,7 @@ class BatchFile(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields
 
     schema_version: int = BATCH_FILE_SCHEMA_VERSION
     batch_id: str
-    target: BatchTarget
+    target: TimestampTarget
     root_path: str
     category_id: int
     created_at: str

@@ -64,11 +64,6 @@ def _omit_absent_batch_fields(raw: dict[str, Any]) -> None:
                 _pop_none(submission, "batch_id")
                 _pop_none(submission, "record_ids")
 
-    inv = raw.get("inventory")
-    if isinstance(inv, dict):
-        _pop_none(inv, "batch_id")
-        _pop_none(inv, "record_id")
-
 
 def _omit_absent_verify_job_fields(raw: dict[str, Any]) -> None:
     verify_jobs = raw.get("verify_jobs")

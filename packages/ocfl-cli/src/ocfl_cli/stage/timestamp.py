@@ -1,6 +1,6 @@
 """stage timestamp content and inventory."""
 
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import typer
 
@@ -13,20 +13,22 @@ from ocfl_cli.errors import (
     PhaseError,
     ReorgDetectedError,
 )
-from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.stage._app import (
+    TimestampPreflight,
     require_timestamp_preflight,
     validate_inventory_metadata_flag,
 )
 from ocfl_cli.stage.render import pluralize, render_section, short_job_id
 from ocfl_cli.workflow import common as wf_common
-from ocfl_cli.workflow import content as wf_content
-from ocfl_cli.workflow import inventory as wf_inventory
 from ocfl_cli.workflow import staging as wf_staging
 from ocfl_cli.workflow import status as wf_status
-from ocfl_cli.workflow import watch
+from ocfl_cli.workflow import timestamp, watch
+from ocfl_cli.workflow.targets import rules_for
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from rich.console import Console
 
 
@@ -151,7 +153,7 @@ def render_watch_progress(
 
 
 def render_content_upgrade_result(
-    out: Console, object_id: str, result: wf_content.UpgradeContentResult
+    out: Console, object_id: str, result: timestamp.UpgradeResult
 ) -> None:
     render_section(out, "Content")
     typer.echo(f"  Object: {object_id}")
@@ -209,79 +211,22 @@ def timestamp_content(
         watch=watch_flag,
         retry=retry,
     )
-    cfg = preflight.cfg
-    resolved = preflight.resolved
-
-    sr, _fs = open_root(ctx)
+    run = _timestamp_run(ctx, preflight, object_id)
+    target = TimestampTarget.CONTENT
 
     if watch_flag:
-        state = wf_staging.ots_state(resolved.staging_dir)
-        render_watch_start(
-            out,
-            object_id,
-            wf_common.compute_job_progress(state, runtime=appctx.runtime(ctx)),
-            waiting=state.phase is not Phase.CONTENT_UPGRADED,
-        )
-        try:
-            exit_code = watch.watch_content(
-                cfg,
-                resolved.store,
-                sr,
-                resolved.root_path,
-                object_id,
-                resolved.staging_dir,
-                sp_factory=preflight.sp_factory,
-                btc_factory=preflight.btc_factory,
-                progress=lambda kind, data: render_watch_progress(
-                    out, kind, data, next_action="stage timestamp inventory"
-                ),
-                runtime=appctx.runtime(ctx),
-            )
-        except (ReorgDetectedError, AttestationMismatchError) as e:
-            raise ErrorContext(e, prefix="halt: ") from e
-        raise typer.Exit(exit_code)
+        _watch(ctx, run, target, next_action="stage timestamp inventory")
 
     if upgrade:
-        try:
-            result = wf_content.upgrade_content(
-                cfg,
-                resolved.store,
-                sr,
-                resolved.root_path,
-                object_id,
-                resolved.staging_dir,
-                sp_factory=preflight.sp_factory,
-                btc_factory=preflight.btc_factory,
-                runtime=appctx.runtime(ctx),
-            )
-        except (ReorgDetectedError, AttestationMismatchError) as e:
-            raise ErrorContext(e, prefix="halt: ") from e
+        result = _halting(lambda: timestamp.upgrade(run, expect=target))
         render_content_upgrade_result(out, object_id, result)
         return
 
     if retry:
-        try:
-            wf_content.retry_content(
-                cfg,
-                resolved.staging_dir,
-                object_id,
-                sp_factory=preflight.sp_factory,
-                runtime=appctx.runtime(ctx),
-            )
-        except wf_content.NoFailedSubmissionsError as e:
-            typer.echo(str(e))
+        _retry(run, target)
         return
 
-    result = wf_content.submit_content(
-        cfg,
-        resolved.store,
-        sr,
-        resolved.root_path,
-        object_id,
-        resolved.staging_dir,
-        sp_factory=preflight.sp_factory,
-        runtime=appctx.runtime(ctx),
-    )
+    result = timestamp.submit(run, expect=target)
     render_section(out, "Content")
     typer.echo(f"  Object: {object_id}")
     if result.submitted_count:
@@ -333,7 +278,6 @@ def timestamp_inventory(
     ] = False,
 ) -> None:
     """Build inventory, submit its digest to SimpleProof, serialize plan."""
-    out = appctx.console(ctx)
     preflight = require_timestamp_preflight(
         ctx,
         object_id,
@@ -348,68 +292,83 @@ def timestamp_inventory(
         retry=retry,
         allow_missing_metadata=allow_missing_metadata,
     )
-    cfg = preflight.cfg
-    resolved = preflight.resolved
-
-    sr, _fs = open_root(ctx)
+    run = _timestamp_run(ctx, preflight, object_id)
+    target = TimestampTarget.INVENTORY
 
     if watch_flag:
-        state = wf_staging.ots_state(resolved.staging_dir)
-        render_watch_start(
-            out,
-            object_id,
-            wf_common.compute_job_progress(state, runtime=appctx.runtime(ctx)),
-            waiting=state.phase is not Phase.INVENTORY_UPGRADED,
-        )
-        try:
-            exit_code = watch.watch_inventory(
-                cfg,
-                resolved.staging_dir,
-                sp_factory=preflight.sp_factory,
-                btc_factory=preflight.btc_factory,
-                progress=lambda kind, data: render_watch_progress(
-                    out, kind, data, next_action="stage commit"
-                ),
-                runtime=appctx.runtime(ctx),
-            )
-        except (ReorgDetectedError, AttestationMismatchError) as e:
-            raise ErrorContext(e, prefix="halt: ") from e
-        raise typer.Exit(exit_code)
+        _watch(ctx, run, target, next_action="stage commit")
 
     if upgrade:
-        try:
-            wf_inventory.upgrade_inventory(
-                cfg,
-                resolved.staging_dir,
-                sp_factory=preflight.sp_factory,
-                btc_factory=preflight.btc_factory,
-                runtime=appctx.runtime(ctx),
-            )
-        except (ReorgDetectedError, AttestationMismatchError) as e:
-            raise ErrorContext(e, prefix="halt: ") from e
+        _halting(lambda: timestamp.upgrade(run, expect=target))
         return
 
     if retry:
-        wf_inventory.retry_inventory(
-            cfg,
-            resolved.staging_dir,
-            object_id,
-            sp_factory=preflight.sp_factory,
-            runtime=appctx.runtime(ctx),
-        )
+        _retry(run, target)
         return
 
     try:
-        wf_inventory.submit_inventory(
-            cfg,
-            resolved.store,
-            sr,
-            resolved.root_path,
-            object_id,
-            resolved.staging_dir,
-            sp_factory=preflight.sp_factory,
-            allow_missing_metadata=allow_missing_metadata,
-            runtime=appctx.runtime(ctx),
+        timestamp.submit(
+            run, expect=target, allow_missing_metadata=allow_missing_metadata
         )
     except PhaseError as e:
         raise ErrorContext(e, suffix="; run 'stage timestamp content' first") from e
+
+
+def _timestamp_run(
+    ctx: typer.Context, preflight: TimestampPreflight, object_id: str
+) -> timestamp.TimestampRun:
+    sr, _fs = open_root(ctx)
+    resolved = preflight.resolved
+    return timestamp.TimestampRun(
+        cfg=preflight.cfg,
+        store=resolved.store,
+        sr=sr,
+        root_path=resolved.root_path,
+        object_id=object_id,
+        staging_dir=resolved.staging_dir,
+        sp_factory=preflight.sp_factory,
+        btc_factory=preflight.btc_factory,
+        runtime=appctx.runtime(ctx),
+    )
+
+
+def _halting[T](call: Callable[[], T]) -> T:
+    """Run `call`; an attestation mismatch or deep reorg is a halt (exit 5)."""
+    try:
+        return call()
+    except (ReorgDetectedError, AttestationMismatchError) as e:
+        raise ErrorContext(e, prefix="halt: ") from e
+
+
+def _retry(run: timestamp.TimestampRun, target: TimestampTarget) -> None:
+    try:
+        timestamp.retry(run, expect=target)
+    except timestamp.NoFailedSubmissionsError as e:
+        typer.echo(str(e))
+
+
+def _watch(
+    ctx: typer.Context,
+    run: timestamp.TimestampRun,
+    target: TimestampTarget,
+    *,
+    next_action: str,
+) -> NoReturn:
+    out = appctx.console(ctx)
+    state = wf_staging.ots_state(run.staging_dir)
+    render_watch_start(
+        out,
+        run.object_id,
+        wf_common.compute_job_progress(state, runtime=run.runtime),
+        waiting=state.phase is not rules_for(target).upgraded_phase,
+    )
+    exit_code = _halting(
+        lambda: watch.watch(
+            run,
+            expect=target,
+            progress=lambda kind, data: render_watch_progress(
+                out, kind, data, next_action=next_action
+            ),
+        )
+    )
+    raise typer.Exit(exit_code)

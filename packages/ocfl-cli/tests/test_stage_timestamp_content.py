@@ -31,7 +31,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from fakes import FakeSimpleProof
+from fakes import FakeBitcoinRPC, FakeSimpleProof
 from msgspec.structs import replace
 from pydantic import SecretStr
 from runner_helpers import runner_obj
@@ -45,7 +45,7 @@ from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store.ots_state import load_ots, save_ots, utc_iso
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.system import SYSTEM_CLOCK
-from ocfl_cli.workflow import content as wf_content
+from ocfl_cli.workflow import timestamp as wf_timestamp
 from ocfl_lib import (
     DigestAlgorithm,
     LocalFS,
@@ -465,14 +465,19 @@ class TestContentSubmissionPrimitives:
         sr = StorageRoot.open(LocalFS(empty_sha256_root))
         sd = _staging_dir(empty_sha256_root, staging, "obj:primitive")
 
-        prepared = wf_content.prepare_content_submission_locked(
-            cfg,
-            store,
-            sr,
-            str(empty_sha256_root.resolve()),
-            "obj:primitive",
-            sd,
+        run = wf_timestamp.TimestampRun(
+            cfg=cfg,
+            store=store,
+            sr=sr,
+            root_path=str(empty_sha256_root.resolve()),
+            object_id="obj:primitive",
+            staging_dir=sd,
+            sp_factory=lambda cfg: sp_fake,
+            btc_factory=lambda cfg: FakeBitcoinRPC(),
             runtime=runtime,
+        )
+        prepared = wf_timestamp.prepare_submission_locked(
+            run.area, category_config=641, runtime=runtime
         )
 
         assert prepared.digests == (hashlib.sha256(b"primitive").hexdigest(),)
@@ -483,12 +488,7 @@ class TestContentSubmissionPrimitives:
         assert len(state.submissions) == 1
         assert state.submissions[0].status == "submitting"
 
-        result = wf_content.submit_prepared_content_locked(
-            cfg,
-            sd,
-            prepared,
-            sp_factory=lambda cfg: sp_fake,
-        )
+        result = wf_timestamp.submit_prepared_locked(run, prepared)
 
         assert result.submitted_count == 1
         assert len(sp_fake._submissions) == 1
@@ -628,3 +628,79 @@ class TestDoubleSubmitBenign:
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
         assert all(s.status != "submitting" for s in state.submissions)
+
+
+# --------------------------------------------------------------------------- #
+# Layer-2: a file the OTS object already proves keeps its committed proof
+# --------------------------------------------------------------------------- #
+
+
+class TestCarriedProofReuse:
+    def test_re_added_file_reuses_the_objects_committed_proof(
+        self,
+        runner: CliRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """v2 of an OTS object re-adds `a.txt`, whose digest v1 proves with
+        `a.txt.ots`: nothing is submitted, the phase moves on at once and
+        the companion maps to the committed proof's digest (ADR-0004)."""
+        from test_stage_commit_ots import _setup_at_inventory_upgraded
+        from test_stage_timestamp_inventory_upgrade import (
+            _inject_fake_btc,
+        )
+        from test_stage_timestamp_inventory_upgrade import (
+            _inject_fake_sp as _inject_sp,
+        )
+        from test_stage_timestamp_inventory_upgrade import (
+            _write_config as _write_ots_config,
+        )
+
+        _write_ots_config(tmp_path, monkeypatch)
+        _inject_sp(runner, sp_fake)
+        _inject_fake_btc(runner, btc_fake.rpc)
+        staging = tmp_path / "staging"
+        oid = "obj:carried"
+        _setup_at_inventory_upgraded(
+            runner, empty_sha256_root, staging, oid, sp_fake, btc_fake
+        )
+        r = runner.invoke(app, _stage_args(empty_sha256_root, staging, "commit", oid))
+        assert r.exit_code == 0, r.output
+
+        sr = StorageRoot.open(LocalFS(empty_sha256_root))
+        v1_state = sr.get_object(oid).inventory.inventory.versions["v1"].state
+        by_path = {p: d for d, ps in v1_state.items() for p in ps}
+        committed_proof = by_path["a.txt.ots"]
+        sent = len(sp_fake._submissions)
+
+        r = runner.invoke(
+            app, _stage_args(empty_sha256_root, staging, "new", oid, "--ots")
+        )
+        assert r.exit_code == 0, r.output
+        src = tmp_path / "again" / "a.txt"
+        src.parent.mkdir()
+        src.write_bytes(b"alpha")
+        r = runner.invoke(
+            app, _stage_args(empty_sha256_root, staging, "add", oid, str(src))
+        )
+        assert r.exit_code == 0, r.output
+
+        r = runner.invoke(
+            app, _stage_args(empty_sha256_root, staging, "timestamp", "content", oid)
+        )
+        assert r.exit_code == 0, r.output
+
+        sd = _staging_dir(empty_sha256_root, staging, oid)
+        assert len(sp_fake._submissions) == sent
+        state = load_ots(sd)
+        assert state.phase is Phase.CONTENT_UPGRADED
+        assert state.submissions == ()
+        inv = StagingStore(staging).load_inventory(
+            str(empty_sha256_root.resolve()), oid
+        )
+        staged = {p: d for d, ps in inv.versions[inv.head].state.items() for p in ps}
+        assert staged["a.txt"] == hashlib.sha256(b"alpha").hexdigest()
+        assert staged["a.txt.ots"] == committed_proof

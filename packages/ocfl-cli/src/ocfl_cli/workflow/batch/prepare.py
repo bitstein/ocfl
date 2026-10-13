@@ -16,20 +16,20 @@ from ocfl_cli.store import batch as batch_state
 from ocfl_cli.store.ots_state import (
     has_ots,
     load_ots,
-    plan_path,
     save_ots,
     with_lock,
 )
-from ocfl_cli.workflow import content as wf_content
-from ocfl_cli.workflow import inventory as wf_inventory
+from ocfl_cli.workflow import timestamp
 from ocfl_cli.workflow.batch.reasons import (
     category_mismatch_reason,
     fixed_batch_reason,
     in_batch_reason,
 )
+from ocfl_cli.workflow.targets import Area, rules_for
 
 if TYPE_CHECKING:
     from ocfl_cli.model.ots_state import OtsState
+    from ocfl_cli.model.phase import TimestampTarget
     from ocfl_cli.ports import Runtime
     from ocfl_cli.store.staging import StagingStore
 
@@ -58,23 +58,16 @@ def replace_batch_object(
 
 
 def object_has_other_batch(
-    state: OtsState, batch_id: str, target: batch_model.BatchTarget
+    state: OtsState, batch_id: str, target: TimestampTarget
 ) -> str | None:
-    if target == "inventory":
-        proof = state.inventory
-        if (
-            proof is not None
-            and proof.batch_id is not None
-            and proof.batch_id != batch_id
-            and proof.record_id is None
-        ):
-            return proof.batch_id
-        return None
+    """The other batch still waiting on one of the object's submissions of `target`."""
     for submission in state.submissions:
         if (
-            submission.status in {"submitting", "submitted"}
+            submission.target is target
+            and submission.status in {"submitting", "submitted"}
             and submission.batch_id is not None
             and submission.batch_id != batch_id
+            and not all(state.verified(d) for d in submission.digests)
         ):
             return submission.batch_id
     return None
@@ -86,7 +79,7 @@ def batch_command_tuple(target: str, batch_id: str) -> tuple[str, ...]:
 
 def prepare_batch_object(
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     cfg,
     store: StagingStore,
     sr,
@@ -121,72 +114,45 @@ def prepare_batch_object(
                     status="skipped",
                     skipped_reason=in_batch_reason(other),
                 )
-            if target == "content":
-                prepared = wf_content.prepare_content_submission_locked(
-                    cfg, store, sr, root_path, object_id, staging_dir, runtime=runtime
-                )
-                if not prepared.digests:
-                    return batch_model.BatchObject(
-                        object_id=object_id,
-                        status="skipped",
-                        skipped_reason=(
-                            fixed_batch_reason("noop")
-                            if prepared.noop_advanced
-                            else fixed_batch_reason("no_new_digests")
-                        ),
-                    )
-                state = load_ots(staging_dir)
-                submissions = list(state.submissions)
-                submissions[-1] = msgspec.structs.replace(
-                    submissions[-1],
-                    batch_id=batch.batch_id,
-                    record_ids=tuple(None for _ in prepared.digests),
-                )
-                save_ots(
-                    staging_dir,
-                    msgspec.structs.replace(state, submissions=tuple(submissions)),
-                )
-                return batch_model.BatchObject(
-                    object_id=object_id, status="prepared", digests=prepared.digests
-                )
-
-            prepared = wf_inventory.prepare_inventory_submission_locked(
-                cfg,
-                store,
-                sr,
-                root_path,
-                object_id,
-                staging_dir,
+            prepared = timestamp.prepare_submission_locked(
+                Area(
+                    store=store,
+                    sr=sr,
+                    root_path=root_path,
+                    object_id=object_id,
+                    staging_dir=staging_dir,
+                ),
+                category_config=cfg.simpleproof.proof_category_id,
+                runtime=runtime,
+                expect=target,
                 allow_missing_metadata=allow_missing_metadata,
             )
-            if prepared.digest is None:
+            if not prepared.digests:
                 return batch_model.BatchObject(
                     object_id=object_id,
                     status="skipped",
-                    skipped_reason=fixed_batch_reason("noop"),
+                    skipped_reason=(
+                        fixed_batch_reason("noop")
+                        if prepared.noop_advanced
+                        else fixed_batch_reason("no_new_digests")
+                    ),
                 )
             state = load_ots(staging_dir)
-            if state.inventory is None:
-                return batch_model.BatchObject(
-                    object_id=object_id,
-                    status="failed",
-                    last_error=fixed_batch_reason("regressed"),
-                )
-            save_ots(
-                staging_dir,
+            submissions = tuple(
                 msgspec.structs.replace(
-                    state,
-                    inventory=msgspec.structs.replace(
-                        state.inventory,
-                        batch_id=batch.batch_id,
-                        record_id=None,
-                    ),
-                ),
+                    s,
+                    batch_id=batch.batch_id,
+                    record_ids=tuple(None for _ in s.digests),
+                )
+                if s == prepared.submission
+                else s
+                for s in state.submissions
             )
-            if prepared.plan is not None:
-                plan_path(staging_dir).write_bytes(prepared.plan.to_json())
+            save_ots(
+                staging_dir, msgspec.structs.replace(state, submissions=submissions)
+            )
             return batch_model.BatchObject(
-                object_id=object_id, status="prepared", digests=(prepared.digest,)
+                object_id=object_id, status="prepared", digests=prepared.digests
             )
     except LockTimeoutError:
         return batch_model.BatchObject(
@@ -201,11 +167,7 @@ def prepare_batch_object(
             skipped_reason=fixed_batch_reason("missing_metadata"),
         )
     except PhaseError:
-        reason = (
-            fixed_batch_reason("content_not_upgraded")
-            if target == "inventory"
-            else fixed_batch_reason("no_new_digests")
-        )
+        reason = fixed_batch_reason(rules_for(target).not_ready_reason)
         return batch_model.BatchObject(
             object_id=object_id, status="skipped", skipped_reason=reason
         )
@@ -234,10 +196,7 @@ def collect_recoverable_object_intents(
         if store.staging_path(batch.root_path, object_id) != staging_dir:
             continue
         with with_lock(staging_dir, timeout=runtime.lock_timeout):
-            state = load_ots(staging_dir)
-            row = recover_content_intent(batch, object_id, state)
-            if batch.target == "inventory":
-                row = recover_inventory_intent(batch, object_id, state)
+            row = recover_intent(batch, object_id, load_ots(staging_dir))
         if row is not None:
             recovered.append(row)
             known.add(object_id)
@@ -267,11 +226,15 @@ def merge_recovered_object_intents(
     )
 
 
-def recover_content_intent(
+def recover_intent(
     batch: batch_model.BatchFile, object_id: str, state: OtsState
 ) -> batch_model.BatchObject | None:
+    """The row of the object's submission tagged with this batch, if any."""
     for submission in state.submissions:
-        if submission.batch_id != batch.batch_id:
+        if (
+            submission.batch_id != batch.batch_id
+            or submission.target is not batch.target
+        ):
             continue
         submitted = submission.record_ids is not None and all(
             record_id is not None for record_id in submission.record_ids
@@ -282,16 +245,3 @@ def recover_content_intent(
             digests=submission.digests,
         )
     return None
-
-
-def recover_inventory_intent(
-    batch: batch_model.BatchFile, object_id: str, state: OtsState
-) -> batch_model.BatchObject | None:
-    proof = state.inventory
-    if proof is None or proof.batch_id != batch.batch_id:
-        return None
-    return batch_model.BatchObject(
-        object_id=object_id,
-        status="submitted" if proof.record_id is not None else "prepared",
-        digests=(proof.digest,),
-    )

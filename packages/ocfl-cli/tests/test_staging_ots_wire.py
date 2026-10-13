@@ -68,12 +68,12 @@ def test_encode_omits_absent_batch_fields() -> None:
     assert "batch_id" not in raw["submissions"][0]
     assert "record_ids" not in raw["submissions"][0]
     assert raw["submissions"][0]["target"] == "content"
-    assert "batch_id" not in raw["inventory"]
-    assert "record_id" not in raw["inventory"]
+    assert raw["inventory"] == {"version": "v3", "digest": digest, "job_id": None}
 
 
 def test_batch_fields_round_trip_when_present() -> None:
     digest = _bare_hex("b")
+    inv = _bare_hex("c")
     state = OtsState(
         phase=Phase.CONTENT_PENDING,
         category_id=641,
@@ -86,13 +86,16 @@ def test_batch_fields_round_trip_when_present() -> None:
                 batch_id="batch-1",
                 record_ids=("record-1",),
             ),
+            Submission(
+                submitted_at="2026-04-23T16:40:00+00:00",
+                digests=(inv,),
+                status="submitted",
+                target=TimestampTarget.INVENTORY,
+                batch_id="batch-2",
+                record_ids=("record-2",),
+            ),
         ),
-        inventory=StagedInventory(
-            version="v3",
-            digest=digest,
-            batch_id="batch-1",
-            record_id="record-2",
-        ),
+        inventory=StagedInventory(version="v3", digest=inv),
     )
 
     raw = encode_ots_state(state)
@@ -100,8 +103,11 @@ def test_batch_fields_round_trip_when_present() -> None:
 
     assert raw["submissions"][0]["batch_id"] == "batch-1"
     assert raw["submissions"][0]["record_ids"] == ("record-1",)
-    assert raw["inventory"]["batch_id"] == "batch-1"
-    assert raw["inventory"]["record_id"] == "record-2"
+    # The inventory's batch fields live on its Submission, like content's.
+    assert raw["submissions"][1]["target"] == "inventory"
+    assert raw["submissions"][1]["batch_id"] == "batch-2"
+    assert raw["submissions"][1]["record_ids"] == ("record-2",)
+    assert raw["inventory"] == {"version": "v3", "digest": inv, "job_id": None}
     assert decoded == state
 
 

@@ -502,7 +502,7 @@ class TestSchemaMigration:
         with pytest.raises(StagingError, match="no migration registered"):
             load_ots(tmp_path)
 
-    def test_submission_and_inventory_batch_fields_default_absent(self, tmp_path: Path):
+    def test_submission_batch_fields_default_absent(self, tmp_path: Path):
         digest = _bare_hex("a")
         (tmp_path / "ots.json").write_text(
             json.dumps(
@@ -538,15 +538,13 @@ class TestSchemaMigration:
         assert state.submissions[0].batch_id is None
         assert state.submissions[0].record_ids is None
         assert state.inventory is not None
-        assert state.inventory.batch_id is None
-        assert state.inventory.record_id is None
+        assert state.inventory.digest == digest
 
         save_ots(tmp_path, state)
         raw = json.loads((tmp_path / "ots.json").read_bytes())
         assert "batch_id" not in raw["submissions"][0]
         assert "record_ids" not in raw["submissions"][0]
-        assert "batch_id" not in raw["inventory"]
-        assert "record_id" not in raw["inventory"]
+        assert set(raw["inventory"]) == {"version", "digest", "job_id"}
         assert load_ots(tmp_path) == state
 
     def test_newer_version_rejected(self, tmp_path: Path):

@@ -10,7 +10,7 @@ ADR-0002 put workflows in `ocfl-cli` and asked for layers inside it. Before this
 |---|---|---|
 | composition root | `ocfl_cli.main` | the Typer app; wires the production adapters into `AppCtx` |
 | commands | `ocfl_cli.archive`, `ocfl_cli.stage`, `_appctx`, `_common`, `_exit`, `_style`, `exit_codes` | option parsing, rendering, the one error handler |
-| use cases | `ocfl_cli.workflow` | the Staging Area workflows: `staging`, `status`, `content`, `inventory`, `commit`, `watch`, `validation`, the batch engine (`batch`) and shared helpers (`common`) |
+| use cases | `ocfl_cli.workflow` | the Staging Area workflows: `staging`, `status`, `timestamp` (one workflow for both Timestamp Targets, roadmap §6) with the per-target `targets`, `commit`, `watch`, `validation`, the batch engine (`batch`) and shared helpers (`common`) |
 | adapters | `ocfl_cli.ots`, `ocfl_cli.store` | SimpleProof HTTP, Bitcoin RPC/ZMQ (`ots`); staging files, `ots.json`, batch files, locks (`store`) |
 | system | `ocfl_cli.system` | the real clock and sleep behind the time ports |
 | base | `ocfl_cli.model`, `ocfl_cli.ports`, `ocfl_cli.config`, `ocfl_cli.errors` | value types, the Protocols the use cases need, configuration, errors |

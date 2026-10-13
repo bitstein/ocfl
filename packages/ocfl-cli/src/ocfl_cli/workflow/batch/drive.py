@@ -46,12 +46,14 @@ from ocfl_cli.workflow.batch.watch import (
     batch_watch_successful,
     reverify_batch_watch_rows,
 )
+from ocfl_cli.workflow.targets import rules_for
 from ocfl_lib import BitcoinRpcError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from ocfl_cli.config import Config
+    from ocfl_cli.model.phase import TimestampTarget
     from ocfl_cli.ports import BlockStream, BtcRpcFactory, Runtime, SpClientFactory
     from ocfl_cli.store.staging import StagingStore
     from ocfl_lib import StorageRoot
@@ -93,12 +95,13 @@ class BatchEvents(Protocol):
 
 
 def _resumed_batch(
-    staging_root, batch_id: str, target: batch_model.BatchTarget
+    staging_root, batch_id: str, target: TimestampTarget
 ) -> batch_model.BatchFile:
     batch = load_batch_or_usage(staging_root, batch_id)
     if batch.target != target:
         raise UsageError(
-            f"batch {batch.batch_id} target is {batch.target!r}, not {target!r}"
+            f"batch {batch.batch_id} target is {batch.target.value!r}, "
+            f"not {target.value!r}"
         )
     return batch
 
@@ -106,7 +109,7 @@ def _resumed_batch(
 def _new_or_resumed(
     store: StagingStore,
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     root_path: str,
     selected: list[str],
     batch_id: str | None,
@@ -140,7 +143,7 @@ def _start(
     cfg: Config,
     sr: StorageRoot,
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     root_path: str,
     batch: batch_model.BatchFile,
     created: bool,
@@ -201,7 +204,7 @@ def submit(
     cfg: Config,
     sr: StorageRoot,
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     root_path: str,
     selected: list[str],
     batch_id: str | None,
@@ -250,7 +253,7 @@ def retry(
     store: StagingStore,
     cfg: Config,
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     batch_id: str,
     sp_factory: SpClientFactory,
     events: BatchEvents,
@@ -284,7 +287,7 @@ def upgrade(
     cfg: Config,
     open_root: Callable[[], StorageRoot],
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     batch_id: str,
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
@@ -322,7 +325,7 @@ def watch(
     cfg: Config,
     sr: StorageRoot,
     *,
-    target: batch_model.BatchTarget,
+    target: TimestampTarget,
     root_path: str,
     selected: list[str],
     batch_id: str | None,
@@ -503,9 +506,9 @@ def commit(
     staging_root = store.root
     with batch_state.with_batch_lock(staging_root, batch_id):
         batch = load_batch_or_usage(staging_root, batch_id)
-        if batch.target != "inventory":
+        if not rules_for(batch.target).commits:
             raise UsageError(
-                f"commit batches must target inventory; got {batch.target}"
+                f"commit batches must target inventory; got {batch.target.value}"
             )
         if batch.root_path != root_path:
             raise UsageError(

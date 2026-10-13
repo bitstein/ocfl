@@ -183,7 +183,7 @@ class TestLayers:
         assert not (CLI_SRC / "stage/service.py").exists()
         assert not (CLI_SRC / "stage/watch.py").exists()
         assert not (CLI_SRC / "stage/commands.py").exists()
-        for mod in ("staging", "status", "content", "inventory", "commit", "watch"):
+        for mod in ("staging", "status", "timestamp", "targets", "commit", "watch"):
             assert (CLI_SRC / "workflow" / f"{mod}.py").is_file(), mod
 
 
@@ -514,3 +514,75 @@ class TestProofsByDigest:
             src = ast.unparse(fns[name])
             assert "unlink" not in src, name
             assert "proofs=" not in src and "verify_jobs=" not in src, name
+
+
+# --- 6.1 one timestamp workflow, parameterized by the Timestamp Target
+
+
+def _compares_a_target(node: ast.AST) -> bool:
+    def is_target(n: ast.AST) -> bool:
+        if isinstance(n, ast.Constant):
+            return n.value in {"content", "inventory"}
+        return isinstance(n, ast.Attribute) and n.attr in {"CONTENT", "INVENTORY"}
+
+    if isinstance(node, ast.Compare):
+        return any(is_target(n) for n in (node.left, *node.comparators))
+    if isinstance(node, ast.match_case):
+        return any(is_target(n) for n in ast.walk(node.pattern))
+    if isinstance(node, ast.Dict):
+        return any(k is not None and is_target(k) for k in node.keys)
+    return False
+
+
+class TestOneTimestampWorkflow:
+    def test_no_per_target_use_case_modules(self):
+        workflow = CLI_SRC / "workflow"
+        assert not (workflow / "content.py").exists()
+        assert not (workflow / "inventory.py").exists()
+
+    def test_only_the_target_rules_branch_on_a_target(self):
+        bad = [
+            f"{_rel(p)}: {ast.unparse(n)[:60]}"
+            for p in _py_files(CLI_SRC / "workflow")
+            if p.name != "targets.py"
+            for n in ast.walk(_tree(p))
+            if _compares_a_target(n)
+        ]
+        assert not bad, bad
+
+    def test_no_content_inventory_twins(self):
+        names = {
+            n.name
+            for p in _py_files(CLI_SRC / "workflow")
+            for n in ast.walk(_tree(p))
+            if isinstance(n, ast.FunctionDef | ast.ClassDef)
+        }
+        twins = sorted(
+            n
+            for n in names
+            if (
+                {n.replace("content", "inventory"), n.replace("Content", "Inventory")}
+                - {n}
+            )
+            & names
+        )
+        assert not twins, twins
+
+    def test_one_block_watch_loop(self):
+        calls = [
+            n
+            for n in ast.walk(_tree(CLI_SRC / "workflow/watch.py"))
+            if isinstance(n, ast.Call)
+            and ast.unparse(n.func).endswith("wait_for_block")
+        ]
+        assert len(calls) == 1
+
+    def test_every_phase_has_a_target_but_committed(self):
+        from ocfl_cli.model.phase import Phase, target_for
+        from ocfl_cli.workflow.targets import rules_for
+
+        for phase in Phase:
+            target = target_for(phase)
+            assert (target is None) == (phase is Phase.COMMITTED), phase
+            if target is not None:
+                assert rules_for(target).target is target

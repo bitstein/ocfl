@@ -43,7 +43,7 @@ from ocfl_cli.model.ots_state import Proof, VerifyJob
 from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store.ots_state import load_ots, ots_cache_path, plan_path, save_ots
 from ocfl_cli.store.staging import StagingStore
-from ocfl_cli.workflow import inventory as wf_inventory
+from ocfl_cli.workflow import timestamp as wf_timestamp
 from ocfl_lib import CommitPlan, LocalFS, Spec, StorageRoot, get_layout
 from tests.helpers.ots import build_attestation
 
@@ -340,34 +340,32 @@ class TestInventorySubmissionPrimitives:
         store = StagingStore(staging)
         sr = StorageRoot.open(LocalFS(empty_sha256_root))
 
-        prepared = wf_inventory.prepare_inventory_submission_locked(
-            cfg,
-            store,
-            sr,
-            str(empty_sha256_root.resolve()),
-            "obj:inv-primitive",
-            sd,
-            allow_missing_metadata=False,
+        run = _run(cfg, store, sr, empty_sha256_root, "obj:inv-primitive", sd, sp_fake)
+        prepared = wf_timestamp.prepare_submission_locked(
+            run.area, category_config=641, runtime=run.runtime
         )
 
+        # The intent and plan.json are durable before the POST; the phase
+        # moves only once the digest is sent.
+        (digest,) = prepared.digests
         state = load_ots(sd)
-        assert state.phase is Phase.INVENTORY_PENDING
+        assert state.phase is Phase.CONTENT_UPGRADED
         assert state.inventory is not None
-        assert state.inventory.digest == prepared.digest
+        assert state.inventory.digest == digest
+        (intent,) = [s for s in state.submissions if s.target == "inventory"]
+        assert (intent.status, intent.digests) == ("submitting", (digest,))
         assert not sp_fake._submissions
-        assert not plan_path(sd).exists()
+        assert plan_path(sd).is_file()
 
-        result = wf_inventory.submit_prepared_inventory_locked(
-            cfg,
-            sd,
-            prepared,
-            sp_factory=lambda cfg: sp_fake,
-        )
+        result = wf_timestamp.submit_prepared_locked(run, prepared)
 
         assert result.submitted_count == 1
         assert len(sp_fake._submissions) == 1
-        assert sp_fake._submissions[0].digests == (prepared.digest,)
-        assert plan_path(sd).is_file()
+        assert sp_fake._submissions[0].digests == (digest,)
+        state = load_ots(sd)
+        assert state.phase is Phase.INVENTORY_PENDING
+        (sent,) = [s for s in state.submissions if s.target == "inventory"]
+        assert sent.status == "submitted"
 
     def test_prepare_inventory_upgraded_is_noop(
         self,
@@ -394,23 +392,41 @@ class TestInventorySubmissionPrimitives:
         store = StagingStore(staging)
         sr = StorageRoot.open(LocalFS(empty_sha256_root))
 
-        prepared = wf_inventory.prepare_inventory_submission_locked(
-            cfg,
-            store,
-            sr,
-            str(empty_sha256_root.resolve()),
-            "obj:inv-primitive-noop",
-            sd,
-            allow_missing_metadata=False,
+        run = _run(
+            cfg, store, sr, empty_sha256_root, "obj:inv-primitive-noop", sd, sp_fake
         )
-        result = wf_inventory.submit_prepared_inventory_locked(
-            cfg, sd, prepared, sp_factory=lambda cfg: sp_fake
+        prepared = wf_timestamp.prepare_submission_locked(
+            run.area, category_config=641, runtime=run.runtime
         )
+        result = wf_timestamp.submit_prepared_locked(run, prepared)
 
-        assert prepared.digest is None
+        assert prepared.digests == ()
         assert result.submitted_count == 0
         assert load_ots(sd).phase is Phase.INVENTORY_UPGRADED
         assert not sp_fake._submissions
+
+
+def _run(cfg, store, sr, root, object_id, sd, sp_fake) -> wf_timestamp.TimestampRun:
+    from fakes import FakeBitcoinRPC, InMemoryHashBlockStream, RecordingSleeper
+
+    from ocfl_cli.ports import Runtime
+    from ocfl_cli.system import SystemClock
+
+    return wf_timestamp.TimestampRun(
+        cfg=cfg,
+        store=store,
+        sr=sr,
+        root_path=str(root.resolve()),
+        object_id=object_id,
+        staging_dir=sd,
+        sp_factory=lambda cfg: sp_fake,
+        btc_factory=lambda cfg: FakeBitcoinRPC(),
+        runtime=Runtime(
+            clock=SystemClock(),
+            sleeper=RecordingSleeper(),
+            block_streams=lambda cfg: InMemoryHashBlockStream(),
+        ),
+    )
 
 
 class TestUnverifiedContentGate:
@@ -820,7 +836,7 @@ class TestPhaseGate:
 
 
 class TestResubmitAtInventoryPending:
-    def test_idempotent_resubmit_at_inventory_pending(
+    def test_rerun_at_inventory_pending_sends_nothing(
         self,
         runner: CliRunner,
         empty_sha256_root: Path,
@@ -828,9 +844,9 @@ class TestResubmitAtInventoryPending:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Per FSM matrix `_STAY` (`stay  # resubmit`): a second invocation
-        at `inventory-pending` re-POSTs the inventory digest and
-        re-serializes the plan."""
+        """Per FSM matrix `_STAY`: a second invocation at `inventory-pending`
+        sends nothing; the submitted digest keeps its requested proof
+        (ADR-0004), so it is not POSTed again."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -858,7 +874,7 @@ class TestResubmitAtInventoryPending:
         first_inv_digest = s1.inventory.digest
         assert sp_fake._submissions[0].digests == (first_inv_digest,)
 
-        # Second call: stays at inventory-pending; re-POSTs.
+        # Second call: stays at inventory-pending; nothing is sent.
         r = runner.invoke(
             app,
             _stage_args(
@@ -871,8 +887,8 @@ class TestResubmitAtInventoryPending:
         )
         assert r.exit_code == 0, r.output
         assert load_ots(sd).phase is Phase.INVENTORY_PENDING
-        assert len(sp_fake._submissions) == 2
-        assert sp_fake._submissions[1].digests == (first_inv_digest,)
+        assert len(sp_fake._submissions) == 1
+        assert load_ots(sd).inventory == s1.inventory
 
 
 # =========================================================================== #

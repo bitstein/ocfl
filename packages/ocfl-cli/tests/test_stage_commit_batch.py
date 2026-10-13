@@ -13,8 +13,8 @@ from typer.testing import CliRunner
 
 from ocfl_cli.errors import AttestationMismatchError, PhaseError
 from ocfl_cli.main import app
-from ocfl_cli.model import batch as batch_model
 from ocfl_cli.model.batch import BatchFile, BatchObject
+from ocfl_cli.model.phase import TimestampTarget
 from ocfl_cli.ports import Runtime
 from ocfl_cli.store import batch as batch_state
 from ocfl_cli.store.batch import save_batch
@@ -84,7 +84,7 @@ def _batch(
     staging: Path,
     storage_root: Path,
     *,
-    target: batch_model.BatchTarget = "inventory",
+    target: TimestampTarget = TimestampTarget.INVENTORY,
     rows: tuple[BatchObject, ...],
 ) -> BatchFile:
     batch = BatchFile(
@@ -389,7 +389,7 @@ def test_content_target_batch_is_rejected_before_commit_attempt(
     batch = _batch(
         staging,
         storage_root,
-        target="content",
+        target=TimestampTarget.CONTENT,
         rows=(BatchObject(object_id="obj:content", status="upgraded"),),
     )
     result = _invoke(runner, storage_root, staging, "commit", "--batch", batch.batch_id)
