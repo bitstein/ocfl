@@ -1,10 +1,10 @@
-import hashlib
 from pathlib import Path
 
 import pytest
 from fakes import FakeSimpleProof
 from msgspec.structs import replace
-from runner_helpers import runner_obj
+from ots_helpers import inject_fake_sp, new_ots_staging, write_config
+from runner_helpers import stage_args
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -12,88 +12,6 @@ from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Submission
 from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store.ots_state import load_ots, save_ots
-from ocfl_cli.store.staging import StagingStore
-from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
-
-# --------------------------------------------------------------------------- #
-# Config + path helpers (copied from test_stage_timestamp_content_upgrade.py;
-# the workflow rule is "smaller file > shared module before 3rd use").
-# --------------------------------------------------------------------------- #
-
-_SP_OK = """\
-[simpleproof]
-base_url = "https://stage.example"
-proof_category_id = 641
-"""
-
-_BTC_OK_COOKIE = """\
-[bitcoin]
-rpc_url = "http://127.0.0.1:8332"
-zmq_endpoint = "tcp://127.0.0.1:28332"
-confirmations = 3
-"""
-
-
-def _write_config(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    body: str = _SP_OK + _BTC_OK_COOKIE,
-) -> Path:
-    cfg = tmp_path / "ocfl-config" / "config.toml"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(body)
-    monkeypatch.setenv("OCFL_CONFIG", str(cfg))
-    return cfg
-
-
-def _stage_args(root: Path, staging: Path, *args: str) -> list[str]:
-    return ["--root", str(root), "stage", "--staging-root", str(staging), *args]
-
-
-def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
-    store = StagingStore(staging)
-    return store.staging_path(str(root.resolve()), object_id)
-
-
-def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
-    runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
-
-
-@pytest.fixture
-def empty_sha256_root(tmp_path: Path) -> Path:
-    location = tmp_path / "root"
-    location.mkdir()
-    fs = LocalFS(location)
-    layout = get_layout("0002-flat-direct-storage-layout")
-    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
-    return location
-
-
-def _new_ots_staging(
-    runner: CliRunner,
-    root: Path,
-    staging: Path,
-    object_id: str,
-    *files: tuple[str, bytes],
-) -> tuple[Path, dict[str, str], dict[str, str]]:
-    """Run ``stage new --ots`` + ``stage add`` for each file.
-
-    Returns ``(staging_dir, path_by_seed, digest_by_seed)``.
-    """
-    r = runner.invoke(app, _stage_args(root, staging, "new", object_id, "--ots"))
-    assert r.exit_code == ExitCode.SUCCESS, r.output
-
-    paths: dict[str, str] = {}
-    digests: dict[str, str] = {}
-    for name, data in files:
-        src = staging.parent / name
-        src.write_bytes(data)
-        r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(src)))
-        assert r.exit_code == ExitCode.SUCCESS, r.output
-        paths[name] = name
-        digests[name] = hashlib.sha256(data).hexdigest()
-
-    return _staging_dir(root, staging, object_id), paths, digests
 
 
 def _set_state(
@@ -122,11 +40,11 @@ class TestRetryResubmitsOnlyFailed:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -173,7 +91,7 @@ class TestRetryResubmitsOnlyFailed:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "retry",
@@ -211,11 +129,11 @@ class TestRetryEmptyFailedNoop:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -244,7 +162,7 @@ class TestRetryEmptyFailedNoop:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "retry",
@@ -269,11 +187,11 @@ class TestRetryMultipleFailedIndependent:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -309,7 +227,7 @@ class TestRetryMultipleFailedIndependent:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "retry",
@@ -354,11 +272,11 @@ class TestRetryPhaseGate:
         monkeypatch: pytest.MonkeyPatch,
         phase: Phase,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -385,7 +303,7 @@ class TestRetryPhaseGate:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "retry",

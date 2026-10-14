@@ -6,8 +6,13 @@ from pathlib import Path
 import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof
 from msgspec.structs import replace
+from ots_helpers import (
+    inject_fake_sp,
+    setup_at_inventory_upgraded,
+    write_config,
+)
 from pydantic import SecretStr
-from runner_helpers import runner_obj
+from runner_helpers import stage_args, staging_dir
 from typer.testing import CliRunner
 
 from ocfl_cli.config import Config
@@ -28,53 +33,6 @@ from ocfl_lib import (
     get_layout,
     scan_dir,
 )
-
-_SP_OK = """\
-[simpleproof]
-base_url = "https://stage.example"
-proof_category_id = 641
-"""
-
-_BTC_OK_COOKIE = """\
-[bitcoin]
-rpc_url = "http://127.0.0.1:8332"
-zmq_endpoint = "tcp://127.0.0.1:28332"
-"""
-
-
-def _write_config(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    body: str = _SP_OK + _BTC_OK_COOKIE,
-) -> Path:
-    cfg = tmp_path / "ocfl-config" / "config.toml"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(body)
-    monkeypatch.setenv("OCFL_CONFIG", str(cfg))
-    return cfg
-
-
-def _stage_args(root: Path, staging: Path, *args: str) -> list[str]:
-    return ["--root", str(root), "stage", "--staging-root", str(staging), *args]
-
-
-def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
-    store = StagingStore(staging)
-    return store.staging_path(str(root.resolve()), object_id)
-
-
-def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
-    runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
-
-
-@pytest.fixture
-def empty_sha256_root(tmp_path: Path) -> Path:
-    location = tmp_path / "root"
-    location.mkdir()
-    fs = LocalFS(location)
-    layout = get_layout("0002-flat-direct-storage-layout")
-    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
-    return location
 
 
 @pytest.fixture
@@ -103,14 +61,14 @@ class TestFullSubmitFlow:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
 
         r = runner.invoke(
             app,
-            _stage_args(empty_sha256_root, staging, "new", "obj:new", "--ots"),
+            stage_args(empty_sha256_root, staging, "new", "obj:new", "--ots"),
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
@@ -121,13 +79,13 @@ class TestFullSubmitFlow:
         for src in (f1, f2):
             r = runner.invoke(
                 app,
-                _stage_args(empty_sha256_root, staging, "add", "obj:new", str(src)),
+                stage_args(empty_sha256_root, staging, "add", "obj:new", str(src)),
             )
             assert r.exit_code == ExitCode.SUCCESS, r.output
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -145,7 +103,7 @@ class TestFullSubmitFlow:
         assert "Next: ocfl stage upgrade obj:new --watch" in r.output
         assert "INFO " not in r.output
 
-        sd = _staging_dir(empty_sha256_root, staging, "obj:new")
+        sd = staging_dir(empty_sha256_root, staging, "obj:new")
         state = load_ots(sd)
 
         assert state.phase is Phase.CONTENT_PENDING
@@ -173,13 +131,13 @@ class TestFullSubmitFlow:
         """A plain object proves nothing yet (ADR-0004, `timestampFrom`): a
         digest already in its manifest still needs a proof in the first
         covered version, so it is submitted with the new one."""
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         r = runner.invoke(
             app,
-            _stage_args(sha256_root_with_v1, staging, "new", "obj:test", "--ots"),
+            stage_args(sha256_root_with_v1, staging, "new", "obj:test", "--ots"),
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
@@ -189,16 +147,16 @@ class TestFullSubmitFlow:
         new.write_text("brand-new")
         runner.invoke(
             app,
-            _stage_args(sha256_root_with_v1, staging, "add", "obj:test", str(carry)),
+            stage_args(sha256_root_with_v1, staging, "add", "obj:test", str(carry)),
         )
         runner.invoke(
             app,
-            _stage_args(sha256_root_with_v1, staging, "add", "obj:test", str(new)),
+            stage_args(sha256_root_with_v1, staging, "add", "obj:test", str(new)),
         )
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 sha256_root_with_v1,
                 staging,
                 "timestamp",
@@ -209,7 +167,7 @@ class TestFullSubmitFlow:
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
-        sd = _staging_dir(sha256_root_with_v1, staging, "obj:test")
+        sd = staging_dir(sha256_root_with_v1, staging, "obj:test")
         state = load_ots(sd)
         new_d = hashlib.sha256(b"brand-new").hexdigest()
         carry_d = hashlib.sha256(b"carry-over").hexdigest()
@@ -232,13 +190,13 @@ class TestDeleteRenameOnlyNoop:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         r = runner.invoke(
             app,
-            _stage_args(sha256_root_with_v1, staging, "new", "obj:test", "--ots"),
+            stage_args(sha256_root_with_v1, staging, "new", "obj:test", "--ots"),
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
@@ -246,7 +204,7 @@ class TestDeleteRenameOnlyNoop:
         carry.write_text("carry-over")
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 sha256_root_with_v1,
                 staging,
                 "add",
@@ -260,7 +218,7 @@ class TestDeleteRenameOnlyNoop:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 sha256_root_with_v1,
                 staging,
                 "timestamp",
@@ -277,7 +235,7 @@ class TestDeleteRenameOnlyNoop:
         assert "INFO " not in r.output
 
         carry_d = hashlib.sha256(b"carry-over").hexdigest()
-        sd = _staging_dir(sha256_root_with_v1, staging, "obj:test")
+        sd = staging_dir(sha256_root_with_v1, staging, "obj:test")
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
         assert state.pending_digests == (carry_d,)
@@ -324,23 +282,23 @@ class TestChunkingBoundary:
         n: int,
         expected_chunk_count: int,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         r = runner.invoke(
             app,
-            _stage_args(empty_sha256_root, staging, "new", "obj:big", "--ots"),
+            stage_args(empty_sha256_root, staging, "new", "obj:big", "--ots"),
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
-        sd = _staging_dir(empty_sha256_root, staging, "obj:big")
+        sd = staging_dir(empty_sha256_root, staging, "obj:big")
         digests = _seed_many(n)
         _seed_inventory_with_digests(sd, digests)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -376,19 +334,19 @@ class TestContentSubmissionPrimitives:
         monkeypatch: pytest.MonkeyPatch,
         runtime,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
 
         r = runner.invoke(
             app,
-            _stage_args(empty_sha256_root, staging, "new", "obj:primitive", "--ots"),
+            stage_args(empty_sha256_root, staging, "new", "obj:primitive", "--ots"),
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
         f = tmp_path / "primitive.txt"
         f.write_text("primitive")
         r = runner.invoke(
             app,
-            _stage_args(empty_sha256_root, staging, "add", "obj:primitive", str(f)),
+            stage_args(empty_sha256_root, staging, "add", "obj:primitive", str(f)),
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
@@ -402,7 +360,7 @@ class TestContentSubmissionPrimitives:
         )
         store = StagingStore(staging)
         sr = StorageRoot.open(LocalFS(empty_sha256_root))
-        sd = _staging_dir(empty_sha256_root, staging, "obj:primitive")
+        sd = staging_dir(empty_sha256_root, staging, "obj:primitive")
 
         run = wf_timestamp.TimestampRun(
             cfg=cfg,
@@ -464,24 +422,24 @@ class TestCrashSafeResubmit:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         r = runner.invoke(
             app,
-            _stage_args(empty_sha256_root, staging, "new", "obj:crash", "--ots"),
+            stage_args(empty_sha256_root, staging, "new", "obj:crash", "--ots"),
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
-        sd = _staging_dir(empty_sha256_root, staging, "obj:crash")
+        sd = staging_dir(empty_sha256_root, staging, "obj:crash")
         digests = tuple(_seed_many(3))
         _seed_inventory_with_digests(sd, list(digests))
         _seed_submitting_intent(sd, digests)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -513,24 +471,24 @@ class TestDoubleSubmitBenign:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         r = runner.invoke(
             app,
-            _stage_args(empty_sha256_root, staging, "new", "obj:dup", "--ots"),
+            stage_args(empty_sha256_root, staging, "new", "obj:dup", "--ots"),
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
-        sd = _staging_dir(empty_sha256_root, staging, "obj:dup")
+        sd = staging_dir(empty_sha256_root, staging, "obj:dup")
         digests = tuple(_seed_many(2))
         _seed_inventory_with_digests(sd, list(digests))
 
         _seed_submitting_intent(sd, digests)
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -546,7 +504,7 @@ class TestDoubleSubmitBenign:
         _seed_submitting_intent(sd, digests)
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -579,26 +537,13 @@ class TestCarriedProofReuse:
         """v2 of an OTS object re-adds `a.txt`, whose digest v1 proves with
         `a.txt.ots`: nothing is submitted, the phase moves on at once and
         the companion maps to the committed proof's digest (ADR-0004)."""
-        from test_stage_commit_ots import _setup_at_inventory_upgraded
-        from test_stage_timestamp_inventory_upgrade import (
-            _inject_fake_btc,
-        )
-        from test_stage_timestamp_inventory_upgrade import (
-            _inject_fake_sp as _inject_sp,
-        )
-        from test_stage_timestamp_inventory_upgrade import (
-            _write_config as _write_ots_config,
-        )
-
-        _write_ots_config(tmp_path, monkeypatch)
-        _inject_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
         oid = "obj:carried"
-        _setup_at_inventory_upgraded(
-            runner, empty_sha256_root, staging, oid, sp_fake, btc_fake
+        setup_at_inventory_upgraded(
+            runner, empty_sha256_root, staging, oid, sp_fake, btc_fake.rpc
         )
-        r = runner.invoke(app, _stage_args(empty_sha256_root, staging, "commit", oid))
+        r = runner.invoke(app, stage_args(empty_sha256_root, staging, "commit", oid))
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
         sr = StorageRoot.open(LocalFS(empty_sha256_root))
@@ -608,26 +553,26 @@ class TestCarriedProofReuse:
         sent = len(sp_fake._submissions)
 
         r = runner.invoke(
-            app, _stage_args(empty_sha256_root, staging, "new", oid, "--ots")
+            app, stage_args(empty_sha256_root, staging, "new", oid, "--ots")
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
         src = tmp_path / "again" / "a.txt"
         src.parent.mkdir()
         src.write_bytes(b"alpha")
         r = runner.invoke(
-            app, _stage_args(empty_sha256_root, staging, "add", oid, str(src))
+            app, stage_args(empty_sha256_root, staging, "add", oid, str(src))
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root, staging, "timestamp", oid, "--expect", "content"
             ),
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
-        sd = _staging_dir(empty_sha256_root, staging, oid)
+        sd = staging_dir(empty_sha256_root, staging, oid)
         assert len(sp_fake._submissions) == sent
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED

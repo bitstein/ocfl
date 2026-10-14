@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 import typer
 from fakes import FakeSimpleProof
+from ots_helpers import write_config
+from runner_helpers import stage_args
 from typer.testing import CliRunner
 
 from ocfl_cli._appctx import app_ctx
@@ -11,42 +13,6 @@ from ocfl_cli.main import app
 from ocfl_cli.model.phase import Phase
 from ocfl_cli.store.ots_state import load_ots
 from ocfl_cli.store.staging import StagingStore
-from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
-
-_SP_OK = """\
-[simpleproof]
-base_url = "https://stage.example"
-proof_category_id = 641
-"""
-
-_BTC_OK = """\
-[bitcoin]
-rpc_url = "http://127.0.0.1:8332"
-zmq_endpoint = "tcp://127.0.0.1:28332"
-confirmations = 3
-"""
-
-
-def _write_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = tmp_path / "ocfl-config" / "config.toml"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(_SP_OK + _BTC_OK)
-    cfg.chmod(0o600)
-    monkeypatch.setenv("OCFL_CONFIG", str(cfg))
-
-
-def _stage_args(root: Path, staging: Path, *args: str) -> list[str]:
-    return ["--root", str(root), "stage", "--staging-root", str(staging), *args]
-
-
-@pytest.fixture
-def empty_sha256_root(tmp_path: Path) -> Path:
-    location = tmp_path / "root"
-    location.mkdir()
-    fs = LocalFS(location)
-    layout = get_layout("0002-flat-direct-storage-layout")
-    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
-    return location
 
 
 def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
@@ -59,7 +25,7 @@ def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
     """``sp_client_factory`` injected via ``runner.invoke(obj=...)`` drives
     ``stage timestamp content`` — the production default factory MUST NOT
     be called when an injected one is present."""
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
 
     calls: list[str] = []
 
@@ -72,7 +38,7 @@ def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
 
     r = runner.invoke(
         app,
-        _stage_args(empty_sha256_root, staging, "new", "obj:fac", "--ots"),
+        stage_args(empty_sha256_root, staging, "new", "obj:fac", "--ots"),
         obj=obj,
     )
     assert r.exit_code == ExitCode.SUCCESS, r.output
@@ -81,14 +47,14 @@ def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
     src.write_text("alpha")
     r = runner.invoke(
         app,
-        _stage_args(empty_sha256_root, staging, "add", "obj:fac", str(src)),
+        stage_args(empty_sha256_root, staging, "add", "obj:fac", str(src)),
         obj=obj,
     )
     assert r.exit_code == ExitCode.SUCCESS, r.output
 
     r = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root, staging, "timestamp", "obj:fac", "--expect", "content"
         ),
         obj=obj,
@@ -110,7 +76,7 @@ def test_default_factories_registered_when_obj_omits_them(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
 
     seen: dict[str, object] = {}
 

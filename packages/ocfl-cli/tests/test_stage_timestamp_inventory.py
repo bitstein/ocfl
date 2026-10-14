@@ -4,8 +4,18 @@ from pathlib import Path
 import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof
 from msgspec.structs import replace
+from ots_helpers import (
+    VERSION_METADATA,
+    grow_chain_to,
+    inject_fake_btc,
+    inject_fake_sp,
+    new_ots_staging,
+    ots_for,
+    register_attested,
+    write_config,
+)
 from pydantic import SecretStr
-from runner_helpers import runner_obj
+from runner_helpers import stage_args
 from typer.testing import CliRunner
 
 from ocfl_cli.config import Config
@@ -18,103 +28,7 @@ from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store.ots_state import load_ots, ots_cache_path, plan_path, save_ots
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow import timestamp as wf_timestamp
-from ocfl_lib import CommitPlan, LocalFS, Spec, StorageRoot, get_layout
-from tests.helpers.ots import build_attestation
-
-# --------------------------------------------------------------------------- #
-# Config + path helpers (mirrors test_stage_timestamp_content_upgrade.py;
-# no shared-helpers extraction this round per scoping note).
-# --------------------------------------------------------------------------- #
-
-_SP_OK = """\
-[simpleproof]
-base_url = "https://stage.example"
-proof_category_id = 641
-"""
-
-_BTC_OK_COOKIE = """\
-[bitcoin]
-rpc_url = "http://127.0.0.1:8332"
-zmq_endpoint = "tcp://127.0.0.1:28332"
-confirmations = 3
-"""
-
-
-def _write_config(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    body: str = _SP_OK + _BTC_OK_COOKIE,
-) -> Path:
-    cfg = tmp_path / "ocfl-config" / "config.toml"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(body)
-    monkeypatch.setenv("OCFL_CONFIG", str(cfg))
-    return cfg
-
-
-def _stage_args(root: Path, staging: Path, *args: str) -> list[str]:
-    return ["--root", str(root), "stage", "--staging-root", str(staging), *args]
-
-
-def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
-    store = StagingStore(staging)
-    return store.staging_path(str(root.resolve()), object_id)
-
-
-def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
-    runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
-
-
-def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
-    runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
-
-
-@pytest.fixture
-def empty_sha256_root(tmp_path: Path) -> Path:
-    location = tmp_path / "root"
-    location.mkdir()
-    fs = LocalFS(location)
-    layout = get_layout("0002-flat-direct-storage-layout")
-    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
-    return location
-
-
-def _new_ots_staging(
-    runner: CliRunner,
-    root: Path,
-    staging: Path,
-    object_id: str,
-    *files: tuple[str, bytes],
-) -> tuple[Path, dict[str, str], dict[str, str]]:
-    r = runner.invoke(
-        app,
-        _stage_args(
-            root,
-            staging,
-            "new",
-            object_id,
-            "--ots",
-            "-m",
-            "Timestamped inventory",
-            "--name",
-            "Alice",
-            "--address",
-            "mailto:alice@example.org",
-        ),
-    )
-    assert r.exit_code == ExitCode.SUCCESS, r.output
-
-    paths: dict[str, str] = {}
-    digests: dict[str, str] = {}
-    for name, data in files:
-        src = staging.parent / name
-        src.write_bytes(data)
-        r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(src)))
-        assert r.exit_code == ExitCode.SUCCESS, r.output
-        paths[name] = name
-        digests[name] = hashlib.sha256(data).hexdigest()
-
-    return _staging_dir(root, staging, object_id), paths, digests
+from ocfl_lib import CommitPlan, LocalFS, StorageRoot
 
 
 def _setup_content_upgraded(
@@ -134,14 +48,14 @@ def _setup_content_upgraded(
     at ``timestamp inventory`` passes. Phase mutation is the LAST write;
     ``stage add`` regresses phase to drafting per the FSM.
     """
-    sd, _paths, digests = _new_ots_staging(
-        runner, root, staging, object_id, ("a.txt", b"alpha")
+    sd, digests = new_ots_staging(
+        runner, root, staging, object_id, ("a.txt", b"alpha"), new_args=VERSION_METADATA
     )
     da = digests["a.txt"]
 
     ots_src = staging.parent / "a.txt.ots"
     ots_src.write_bytes(b"\x00fake-ots-bytes-opaque-to-this-command")
-    r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(ots_src)))
+    r = runner.invoke(app, stage_args(root, staging, "add", object_id, str(ots_src)))
     assert r.exit_code == ExitCode.SUCCESS, r.output
 
     state = load_ots(sd)
@@ -164,20 +78,6 @@ def _setup_content_upgraded(
     return sd, da, hashlib.sha256(ots_src.read_bytes()).hexdigest()
 
 
-def _grow_chain_to(rpc: FakeBitcoinRPC, height: int) -> None:
-    needed = height - rpc.tip_height
-    if needed > 0:
-        rpc.extend(needed)
-
-
-def _register_attested(rpc: FakeBitcoinRPC, digest_hex: str) -> None:
-    rpc.register_merkle_root(800_000, bytes.fromhex(digest_hex)[::-1].hex())
-
-
-def _ots_for(digest_hex: str) -> bytes:
-    return build_attestation(bytes.fromhex(digest_hex), block_height=800_000)
-
-
 class TestInventoryBuild:
     def test_inventory_build_includes_ots_content_files(
         self,
@@ -187,8 +87,8 @@ class TestInventoryBuild:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, da, ots_digest = _setup_content_upgraded(
@@ -197,7 +97,7 @@ class TestInventoryBuild:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -233,8 +133,8 @@ class TestInventoryBuild:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _da, _ots_digest = _setup_content_upgraded(
@@ -243,7 +143,7 @@ class TestInventoryBuild:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -271,7 +171,7 @@ class TestInventorySubmissionPrimitives:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
         sd, _da, _ots_digest = _setup_content_upgraded(
             runner, empty_sha256_root, staging, "obj:inv-primitive"
@@ -322,7 +222,7 @@ class TestInventorySubmissionPrimitives:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
         sd, _da, _ots_digest = _setup_content_upgraded(
             runner, empty_sha256_root, staging, "obj:inv-primitive-noop"
@@ -354,7 +254,7 @@ class TestInventorySubmissionPrimitives:
 
 
 def _run(cfg, store, sr, root, object_id, sd, sp_fake) -> wf_timestamp.TimestampRun:
-    from fakes import FakeBitcoinRPC, InMemoryHashBlockStream, RecordingSleeper
+    from fakes import InMemoryHashBlockStream, RecordingSleeper
 
     from ocfl_cli.ports import Runtime
     from ocfl_cli.system import SystemClock
@@ -385,8 +285,8 @@ class TestUnverifiedContentGate:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, da, _ots_digest = _setup_content_upgraded(
@@ -401,7 +301,7 @@ class TestUnverifiedContentGate:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -426,21 +326,26 @@ class TestUnverifiedContentGate:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
-            runner, empty_sha256_root, staging, "obj:reorg-real", ("a.txt", b"alpha")
+        sd, digests = new_ots_staging(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:reorg-real",
+            ("a.txt", b"alpha"),
+            new_args=VERSION_METADATA,
         )
         d = digests["a.txt"]
-        ots_bytes = _ots_for(d)
+        ots_bytes = ots_for(d)
         cache = ots_cache_path(sd, d)
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_bytes(ots_bytes)
-        _grow_chain_to(btc_fake.rpc, 800_000 + 3 - 1)
-        _register_attested(btc_fake.rpc, d)
+        grow_chain_to(btc_fake.rpc, 800_000 + 3 - 1)
+        register_attested(btc_fake.rpc, d)
         state = replace(
             load_ots(sd),
             phase=Phase.CONTENT_UPGRADED,
@@ -462,10 +367,10 @@ class TestUnverifiedContentGate:
         save_ots(sd, state)
 
         btc_fake.rpc.reorg_at(800_000)
-        _grow_chain_to(btc_fake.rpc, 800_000 + 3 - 1)
+        grow_chain_to(btc_fake.rpc, 800_000 + 3 - 1)
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -479,7 +384,7 @@ class TestUnverifiedContentGate:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -504,8 +409,8 @@ class TestMetadataGate:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _da, _ots_digest = _setup_content_upgraded(
@@ -520,7 +425,7 @@ class TestMetadataGate:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -545,8 +450,8 @@ class TestMetadataGate:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _da, _ots_digest = _setup_content_upgraded(
@@ -556,7 +461,7 @@ class TestMetadataGate:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -582,8 +487,8 @@ class TestMetadataGate:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _da, _ots_digest = _setup_content_upgraded(
@@ -598,7 +503,7 @@ class TestMetadataGate:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -630,8 +535,8 @@ class TestMetadataGate:
         monkeypatch: pytest.MonkeyPatch,
         verb_args: tuple[str, ...],
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         _setup_content_upgraded(
@@ -641,7 +546,7 @@ class TestMetadataGate:
         verb, *flags = verb_args
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 verb,
@@ -664,8 +569,8 @@ class TestPlanRoundTrip:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _da, _ots_digest = _setup_content_upgraded(
@@ -674,7 +579,7 @@ class TestPlanRoundTrip:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -703,17 +608,22 @@ class TestPhaseGate:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
-        _new_ots_staging(
-            runner, empty_sha256_root, staging, "obj:err-draft", ("a.txt", b"alpha")
+        new_ots_staging(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:err-draft",
+            ("a.txt", b"alpha"),
+            new_args=VERSION_METADATA,
         )
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -736,22 +646,23 @@ class TestPhaseGate:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
-        sd, _paths, _digests = _new_ots_staging(
+        sd, _digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
             "obj:err-pend",
             ("a.txt", b"alpha"),
+            new_args=VERSION_METADATA,
         )
         save_ots(sd, replace(load_ots(sd), phase=Phase.CONTENT_PENDING))
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -779,8 +690,8 @@ class TestResubmitAtInventoryPending:
         """Per FSM matrix `_STAY`: a second invocation at `inventory-pending`
         sends nothing; the submitted digest keeps its requested proof
         (ADR-0004), so it is not POSTed again."""
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _da, _ots_digest = _setup_content_upgraded(
@@ -789,7 +700,7 @@ class TestResubmitAtInventoryPending:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -808,7 +719,7 @@ class TestResubmitAtInventoryPending:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -832,8 +743,8 @@ class TestNoopAtInventoryUpgraded:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
         sd, _da, _ots_digest = _setup_content_upgraded(
@@ -842,7 +753,7 @@ class TestNoopAtInventoryUpgraded:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -859,7 +770,7 @@ class TestNoopAtInventoryUpgraded:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",

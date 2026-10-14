@@ -17,7 +17,17 @@ from fakes import (
 )
 from fakes.locks import held_flock
 from msgspec.structs import replace
-from runner_helpers import runner_obj
+from ots_helpers import (
+    DIGEST_BLOCK_HEIGHT,
+    MIN_CONFS,
+    grow_chain_to,
+    inject_fake_btc,
+    inject_fake_sp,
+    ots_for,
+    register_attested,
+    write_config,
+)
+from runner_helpers import runner_obj, stage_args
 from typer.testing import CliRunner
 
 from ocfl_cli.errors import (
@@ -59,24 +69,7 @@ from ocfl_cli.workflow.batch import report as batch_report
 from ocfl_cli.workflow.batch import upgrade as batch_upgrade
 from ocfl_lib import (
     BitcoinRpcTransientError,
-    LocalFS,
-    Spec,
-    StorageRoot,
-    get_layout,
 )
-from tests.helpers.ots import build_attestation
-
-_SP_OK = """\
-[simpleproof]
-base_url = "https://stage.example"
-proof_category_id = 641
-"""
-
-_BTC_OK = """\
-[bitcoin]
-rpc_url = "http://127.0.0.1:8332"
-zmq_endpoint = "tcp://127.0.0.1:28332"
-"""
 
 
 def _inv_submission(digest: str, batch_id: str, record_id: str | None) -> Submission:
@@ -242,49 +235,9 @@ def _invoke_json(runner: CliRunner, storage_root: Path, staging: Path, *args: st
     )
 
 
-def _write_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    cfg = tmp_path / "ocfl-config" / "config.toml"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(_SP_OK + _BTC_OK)
-    monkeypatch.setenv("OCFL_CONFIG", str(cfg))
-    return cfg
-
-
-def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
-    runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
-
-
-def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
-    runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
-
-
 def _inject_fake_zmq(runner: CliRunner, stream) -> None:
 
     runner_obj(runner)["block_stream_factory"] = lambda *a, **kw: stream
-
-
-def _stage_args(root: Path, staging: Path, *args: str) -> list[str]:
-    return ["--root", str(root), "stage", "--staging-root", str(staging), *args]
-
-
-DIGEST_BLOCK_HEIGHT = 800_000
-MIN_CONFS = 3
-
-
-def _ots_for(digest_hex: str, *, block_height: int = DIGEST_BLOCK_HEIGHT) -> bytes:
-    return build_attestation(bytes.fromhex(digest_hex), block_height=block_height)
-
-
-def _grow_chain_to(rpc: FakeBitcoinRPC, height: int) -> None:
-    needed = height - rpc.tip_height
-    if needed > 0:
-        rpc.extend(needed)
-
-
-def _register_attested(
-    rpc: FakeBitcoinRPC, digest_hex: str, height: int = DIGEST_BLOCK_HEIGHT
-) -> None:
-    rpc.register_merkle_root(height, bytes.fromhex(digest_hex)[::-1].hex())
 
 
 def _run_batch_command_process(
@@ -303,7 +256,7 @@ def _run_batch_command_process(
         )
     else:
         obj["sp_client_factory"] = lambda cfg: FakeSimpleProof()
-    result = runner.invoke(app, _stage_args(Path(root), Path(staging), *args), obj=obj)
+    result = runner.invoke(app, stage_args(Path(root), Path(staging), *args), obj=obj)
     diagnostic = result.output
     if result.exception is not None:
         diagnostic = f"{diagnostic}{result.exception!r}"
@@ -357,16 +310,6 @@ def _process_result(
         raise AssertionError("child process produced no result") from e
 
 
-@pytest.fixture
-def empty_sha256_root(tmp_path: Path) -> Path:
-    location = tmp_path / "root"
-    location.mkdir()
-    fs = LocalFS(location)
-    layout = get_layout("0002-flat-direct-storage-layout")
-    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
-    return location
-
-
 def _new_ots_with_files(
     runner: CliRunner,
     root: Path,
@@ -374,13 +317,13 @@ def _new_ots_with_files(
     object_id: str,
     *files: tuple[str, bytes],
 ) -> None:
-    result = runner.invoke(app, _stage_args(root, staging, "new", object_id, "--ots"))
+    result = runner.invoke(app, stage_args(root, staging, "new", object_id, "--ots"))
     assert result.exit_code == ExitCode.SUCCESS, result.output
     for name, content in files:
         src = staging.parent / f"{object_id.replace(':', '_')}-{name}"
         src.write_bytes(content)
         result = runner.invoke(
-            app, _stage_args(root, staging, "add", object_id, str(src))
+            app, stage_args(root, staging, "add", object_id, str(src))
         )
         assert result.exit_code == ExitCode.SUCCESS, result.output
 
@@ -405,8 +348,8 @@ def test_batch_content_new_batch_submits_one_union_call(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -426,7 +369,7 @@ def test_batch_content_new_batch_submits_one_union_call(
 
     result = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -473,8 +416,8 @@ def test_batch_content_new_batch_json_emits_batch_id_before_submit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(runner, empty_sha256_root, staging, "obj:json", ("a.txt", b"a"))
 
@@ -515,8 +458,8 @@ def test_batch_content_new_batch_json_is_ndjson_driving_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(runner, empty_sha256_root, staging, "obj:json", ("a.txt", b"a"))
 
@@ -550,8 +493,8 @@ def test_batch_content_bare_batch_mirrors_persisted_chunk_without_repost(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner, empty_sha256_root, staging, "obj:resume", ("a.txt", b"a")
@@ -559,7 +502,7 @@ def test_batch_content_bare_batch_mirrors_persisted_chunk_without_repost(
 
     create = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -588,7 +531,7 @@ def test_batch_content_bare_batch_mirrors_persisted_chunk_without_repost(
 
     resume = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -611,8 +554,8 @@ def test_batch_inventory_new_batch_submits_and_mirrors_record_id(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(runner, empty_sha256_root, staging, "obj:inv", ("a.txt", b"a"))
 
@@ -631,7 +574,7 @@ def test_batch_inventory_new_batch_submits_and_mirrors_record_id(
 
     result = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -670,15 +613,15 @@ def test_batch_inventory_same_object_skips_until_content_upgraded(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner, empty_sha256_root, staging, "obj:overlap", ("a.txt", b"a")
     )
     content = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -691,7 +634,7 @@ def test_batch_inventory_same_object_skips_until_content_upgraded(
 
     inventory = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -719,15 +662,15 @@ def test_batch_inventory_after_content_upgraded_ignores_content_batch_owner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner, empty_sha256_root, staging, "obj:after-content", ("a.txt", b"a")
     )
     content = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -754,7 +697,7 @@ def test_batch_inventory_after_content_upgraded_ignores_content_batch_owner(
 
     inventory = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -786,8 +729,8 @@ def test_batch_content_shape_mismatch_fails_chunk_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = MismatchedRecordIdsFake()
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -800,7 +743,7 @@ def test_batch_content_shape_mismatch_fails_chunk_closed(
 
     result = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -833,15 +776,15 @@ def test_batch_content_bare_batch_does_not_repost_failed_chunk(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = MismatchedRecordIdsFake()
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner, empty_sha256_root, staging, "obj:failed", ("a.txt", b"a")
     )
     create = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -856,7 +799,7 @@ def test_batch_content_bare_batch_does_not_repost_failed_chunk(
 
     resume = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -879,8 +822,8 @@ def test_batch_content_new_batch_acquires_lease_before_file_is_visible(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner, empty_sha256_root, staging, "obj:lease", ("a.txt", b"a")
@@ -899,7 +842,7 @@ def test_batch_content_new_batch_acquires_lease_before_file_is_visible(
 
     result = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -919,7 +862,7 @@ def test_batch_content_competing_batch_driver_refuses_live_lease(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner, empty_sha256_root, staging, "obj:driver", ("a.txt", b"a")
@@ -958,7 +901,7 @@ def test_batch_content_competing_same_object_batch_skips_in_batch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     staging = tmp_path / "staging"
     _new_ots_with_files(runner, empty_sha256_root, staging, "obj:same", ("a.txt", b"a"))
     marker = tmp_path / "same-ready"
@@ -1003,7 +946,7 @@ def test_batch_content_competing_cross_object_batches_both_submit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner, empty_sha256_root, staging, "obj:left", ("left.txt", b"left")
@@ -1056,8 +999,8 @@ def test_batch_content_recovers_object_intent_without_batch_row(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner, empty_sha256_root, staging, "obj:orphan", ("a.txt", b"a")
@@ -1112,7 +1055,7 @@ def test_batch_content_recovers_object_intent_without_batch_row(
 
     result = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -1139,15 +1082,15 @@ def test_batch_content_resume_empty_after_revalidation_skips_post(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner, empty_sha256_root, staging, "obj:empty", ("a.txt", b"a")
     )
     create = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -1173,7 +1116,7 @@ def test_batch_content_resume_empty_after_revalidation_skips_post(
 
     resume = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -1197,8 +1140,8 @@ def test_batch_content_chunked_multi_chunk_object_completes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     sp_fake.submit_chunk_size = 2
     staging = tmp_path / "staging"
     _new_ots_with_files(
@@ -1215,7 +1158,7 @@ def test_batch_content_chunked_multi_chunk_object_completes(
 
     result = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -1249,8 +1192,8 @@ def test_batch_content_transient_submit_failure_is_persisted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = TransientSubmitFake()
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -1262,7 +1205,7 @@ def test_batch_content_transient_submit_failure_is_persisted(
 
     result = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             empty_sha256_root,
             staging,
             "batch",
@@ -1289,8 +1232,8 @@ def test_batch_retry_no_resubmit_if_id_present(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner, empty_sha256_root, staging, "obj:no-retry", ("a.txt", b"a")
@@ -1331,8 +1274,8 @@ def test_batch_retry_bidirectional_record_id_propagation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -1427,8 +1370,8 @@ def test_batch_retry_failed_chunk_partial_repair(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -1535,8 +1478,8 @@ def test_batch_retry_inventory_propagates_batch_record_id(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
     digest = "sha256:" + ("a" * 64)
@@ -1609,8 +1552,8 @@ def test_batch_retry_pending_chunk_posts_after_crash_before_post(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner, empty_sha256_root, staging, "obj:pending-retry", ("a.txt", b"a")
@@ -1684,8 +1627,8 @@ def test_batch_retry_revalidates_before_post_and_marks_regressed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner, empty_sha256_root, staging, "obj:retry-regressed", ("a.txt", b"a")
@@ -1750,8 +1693,8 @@ def test_batch_retry_object_record_id_wins_for_non_failed_chunk(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
     digest = "sha256:" + ("b" * 64)
@@ -2441,10 +2384,10 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     btc = FakeBitcoinRPC()
-    _inject_fake_sp(runner, sp_fake)
-    _inject_fake_btc(runner, btc)
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, btc)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -2489,10 +2432,10 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
     _assert_z_timestamp(batch.verify_jobs[0].submitted_at)
     assert batch.objects[0].status == "submitted"
 
-    ots_bytes = _ots_for(digest)
+    ots_bytes = ots_for(digest)
     sp_fake.advance_to_completed(batch.verify_jobs[0].job_id, {digest: ots_bytes})
-    _grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-    _register_attested(btc, digest)
+    grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+    register_attested(btc, digest)
 
     second = _invoke_json(
         runner,
@@ -2540,10 +2483,10 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     btc = FakeBitcoinRPC()
-    _inject_fake_sp(runner, sp_fake)
-    _inject_fake_btc(runner, btc)
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, btc)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -2580,10 +2523,10 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
     returned_digest, missing_digest = batch.verify_jobs[0].digests
 
     sp_fake.advance_to_completed(
-        batch.verify_jobs[0].job_id, {returned_digest: _ots_for(returned_digest)}
+        batch.verify_jobs[0].job_id, {returned_digest: ots_for(returned_digest)}
     )
-    _grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-    _register_attested(btc, returned_digest)
+    grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+    register_attested(btc, returned_digest)
 
     partial = _invoke_json(
         runner,
@@ -2626,9 +2569,9 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
     ]
 
     sp_fake.advance_to_completed(
-        batch.verify_jobs[1].job_id, {missing_digest: _ots_for(missing_digest)}
+        batch.verify_jobs[1].job_id, {missing_digest: ots_for(missing_digest)}
     )
-    _register_attested(btc, missing_digest)
+    register_attested(btc, missing_digest)
     completed = _invoke(
         runner,
         empty_sha256_root,
@@ -2650,9 +2593,9 @@ def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
-    _inject_fake_btc(runner, FakeBitcoinRPC())
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, FakeBitcoinRPC())
 
     runner_obj(runner)["sleeper"] = RecordingSleeper()
     subscribers = 0
@@ -2704,10 +2647,10 @@ def test_batch_watch_human_output_reports_observed_blocks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     btc = FakeBitcoinRPC()
-    _inject_fake_sp(runner, sp_fake)
-    _inject_fake_btc(runner, btc)
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, btc)
 
     runner_obj(runner)["sleeper"] = RecordingSleeper()
 
@@ -2757,10 +2700,10 @@ def test_batch_watch_polls_during_quiet_periods(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     btc = FakeBitcoinRPC()
-    _inject_fake_sp(runner, sp_fake)
-    _inject_fake_btc(runner, btc)
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, btc)
 
     subscribers = 0
     staging = tmp_path / "staging"
@@ -2783,10 +2726,10 @@ def test_batch_watch_polls_during_quiet_periods(
                 batch = batch_state.load_batch(staging, batch_id)
                 digest = batch.objects[0].digests[0]
                 sp_fake.advance_to_completed(
-                    batch.verify_jobs[0].job_id, {digest: _ots_for(digest)}
+                    batch.verify_jobs[0].job_id, {digest: ots_for(digest)}
                 )
-                _grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-                _register_attested(btc, digest)
+                grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+                register_attested(btc, digest)
             if self.timeouts > 3:
                 raise KeyboardInterrupt
             return None
@@ -2825,9 +2768,9 @@ def test_batch_watch_empty_submitted_subset_exits_without_subscriber(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, TransientSubmitFake())
-    _inject_fake_btc(runner, FakeBitcoinRPC())
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, TransientSubmitFake())
+    inject_fake_btc(runner, FakeBitcoinRPC())
 
     runner_obj(runner)["block_stream_factory"] = lambda *a, **kw: pytest.fail(
         "watch subscribed with no submitted rows",
@@ -2867,9 +2810,9 @@ def test_batch_watch_all_skipped_exits_without_subscriber(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
-    _inject_fake_btc(runner, FakeBitcoinRPC())
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, FakeBitcoinRPC())
 
     runner_obj(runner)["block_stream_factory"] = lambda *a, **kw: pytest.fail(
         "watch subscribed with only skipped rows",
@@ -2899,10 +2842,10 @@ def test_batch_watch_enters_upgrade_for_submitted_subset_after_submit_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     sp = SecondSubmitTransientFake()
-    _inject_fake_sp(runner, sp)
-    _inject_fake_btc(runner, FakeBitcoinRPC())
+    inject_fake_sp(runner, sp)
+    inject_fake_btc(runner, FakeBitcoinRPC())
 
     sp.submit_chunk_size = 1
     runner_obj(runner)["sleeper"] = RecordingSleeper()
@@ -2956,10 +2899,10 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     btc = FakeBitcoinRPC()
-    _inject_fake_sp(runner, sp_fake)
-    _inject_fake_btc(runner, btc)
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, btc)
 
     runner_obj(runner)["sleeper"] = RecordingSleeper()
     root_path = str(storage_root)
@@ -2995,7 +2938,7 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
     )
     ots_cache_path(staging_dir, verified_digest).parent.mkdir(parents=True)
     ots_cache_path(staging_dir, verified_digest).write_bytes(
-        _ots_for("de" * 32)  # commits to another digest: a real mismatch
+        ots_for("de" * 32)  # commits to another digest: a real mismatch
     )
     save_batch(
         staging,
@@ -3056,10 +2999,10 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     btc = FakeBitcoinRPC()
-    _inject_fake_sp(runner, sp_fake)
-    _inject_fake_btc(runner, btc)
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, btc)
 
     runner_obj(runner)["sleeper"] = RecordingSleeper()
     root_path = str(storage_root)
@@ -3114,7 +3057,7 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
     )
     ots_cache_path(upgraded_dir, upgraded_digest).parent.mkdir(parents=True)
     ots_cache_path(upgraded_dir, upgraded_digest).write_bytes(
-        _ots_for("de" * 32)  # commits to another digest: a real mismatch
+        ots_for("de" * 32)  # commits to another digest: a real mismatch
     )
     save_batch(
         staging,
@@ -3185,10 +3128,10 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     btc = FakeBitcoinRPC()
-    _inject_fake_sp(runner, sp_fake)
-    _inject_fake_btc(runner, btc)
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, btc)
 
     runner_obj(runner)["sleeper"] = RecordingSleeper()
     root_path = str(storage_root)
@@ -3230,7 +3173,7 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
     )
     ots_cache_path(upgraded_dir, upgraded_digest).parent.mkdir(parents=True)
     ots_cache_path(upgraded_dir, upgraded_digest).write_bytes(
-        _ots_for("de" * 32)  # commits to another digest: a real mismatch
+        ots_for("de" * 32)  # commits to another digest: a real mismatch
     )
     save_batch(
         staging,
@@ -3302,10 +3245,10 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     btc = FakeBitcoinRPC()
-    _inject_fake_sp(runner, sp_fake)
-    _inject_fake_btc(runner, btc)
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, btc)
 
     runner_obj(runner)["sleeper"] = RecordingSleeper()
 
@@ -3362,7 +3305,7 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
     ots_cache_path(failed_dir, failed_digest).parent.mkdir(parents=True)
     ots_cache_path(failed_dir, failed_digest).write_bytes(
         # Attested far above the tip: deeper than the confirmation depth.
-        _ots_for(failed_digest, block_height=btc.tip_height + 1000)
+        ots_for(failed_digest, block_height=btc.tip_height + 1000)
     )
     save_batch(
         staging,
@@ -3433,10 +3376,10 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     btc = FakeBitcoinRPC()
-    _inject_fake_sp(runner, sp_fake)
-    _inject_fake_btc(runner, btc)
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, btc)
 
     runner_obj(runner)["sleeper"] = RecordingSleeper()
 
@@ -3480,7 +3423,7 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
     ots_cache_path(failed_dir, failed_digest).parent.mkdir(parents=True)
     ots_cache_path(failed_dir, failed_digest).write_bytes(
         # Attested far above the tip: deeper than the confirmation depth.
-        _ots_for(failed_digest, block_height=btc.tip_height + 1000)
+        ots_for(failed_digest, block_height=btc.tip_height + 1000)
     )
     save_batch(
         staging,
@@ -3552,9 +3495,9 @@ def test_batch_watch_node_halt_exits_operational_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
-    _inject_fake_btc(runner, TransientBitcoinRPC())
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, TransientBitcoinRPC())
 
     runner_obj(runner)["sleeper"] = RecordingSleeper()
     stream = InMemoryHashBlockStream()
@@ -3595,9 +3538,9 @@ def test_batch_upgrade_failed_verify_job_is_retryable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
-    _inject_fake_btc(runner, FakeBitcoinRPC())
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, FakeBitcoinRPC())
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -3664,10 +3607,10 @@ def test_batch_upgrade_poll_transient_marks_retryable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     sp = TransientPollFake()
-    _inject_fake_sp(runner, sp)
-    _inject_fake_btc(runner, FakeBitcoinRPC())
+    inject_fake_sp(runner, sp)
+    inject_fake_btc(runner, FakeBitcoinRPC())
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -3711,11 +3654,11 @@ def test_batch_upgrade_download_mismatch_marks_terminal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     sp = MismatchDownloadFake()
     btc = FakeBitcoinRPC()
-    _inject_fake_sp(runner, sp)
-    _inject_fake_btc(runner, btc)
+    inject_fake_sp(runner, sp)
+    inject_fake_btc(runner, btc)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -3772,9 +3715,9 @@ def test_batch_upgrade_bitcoin_transient_marks_retryable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
-    _inject_fake_btc(runner, TransientBitcoinRPC())
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, TransientBitcoinRPC())
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -3806,9 +3749,7 @@ def test_batch_upgrade_bitcoin_transient_marks_retryable(
     assert first.exit_code == ExitCode.PENDING, first.output
     batch = batch_state.load_batch(staging, batch_id)
     digest = batch.objects[0].digests[0]
-    sp_fake.advance_to_completed(
-        batch.verify_jobs[0].job_id, {digest: _ots_for(digest)}
-    )
+    sp_fake.advance_to_completed(batch.verify_jobs[0].job_id, {digest: ots_for(digest)})
 
     failed = _invoke(
         runner,
@@ -3832,10 +3773,10 @@ def test_batch_upgrade_expired_poll_gets_fresh_job(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     sp = ExpiredPollFake()
-    _inject_fake_sp(runner, sp)
-    _inject_fake_btc(runner, FakeBitcoinRPC())
+    inject_fake_sp(runner, sp)
+    inject_fake_btc(runner, FakeBitcoinRPC())
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -3889,10 +3830,10 @@ def test_batch_inventory_upgrade_rejects_stale_plan_digest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
+    write_config(tmp_path, monkeypatch)
     btc = FakeBitcoinRPC()
-    _inject_fake_sp(runner, sp_fake)
-    _inject_fake_btc(runner, btc)
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, btc)
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -3948,10 +3889,10 @@ def test_batch_inventory_upgrade_rejects_stale_plan_digest(
     )
     assert first.exit_code == ExitCode.PENDING, first.output
     batch = batch_state.load_batch(staging, batch_id)
-    ots_bytes = _ots_for(inv_digest)
+    ots_bytes = ots_for(inv_digest)
     sp_fake.advance_to_completed(batch.verify_jobs[0].job_id, {inv_digest: ots_bytes})
-    _grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-    _register_attested(btc, inv_digest)
+    grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+    register_attested(btc, inv_digest)
 
     upgraded = _invoke(
         runner,
@@ -4075,8 +4016,8 @@ def test_unstaged_objects_are_named_and_fail_the_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, monkeypatch)
-    _inject_fake_sp(runner, sp_fake)
+    write_config(tmp_path, monkeypatch)
+    inject_fake_sp(runner, sp_fake)
     staging = tmp_path / "staging"
     _new_ots_with_files(runner, empty_sha256_root, staging, "obj:ots", ("a.txt", b"a"))
     plain = _invoke(runner, empty_sha256_root, staging, "new", "obj:plain")

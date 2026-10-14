@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 from msgspec.structs import replace
+from ots_helpers import write_config
+from runner_helpers import staging_dir
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -91,7 +93,7 @@ class TestStageMv:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
         _sd, _digests = _setup_ots_pair(runner, storage_root, staging, "obj:mv-ots")
 
@@ -153,28 +155,6 @@ class TestStageRm:
         assert result.exit_code == ExitCode.GENERIC
 
 
-_SP_OK = """\
-[simpleproof]
-base_url = "https://stage.example"
-proof_category_id = 641
-"""
-
-_BTC_OK_COOKIE = """\
-[bitcoin]
-rpc_url = "http://127.0.0.1:8332"
-zmq_endpoint = "tcp://127.0.0.1:28332"
-confirmations = 3
-"""
-
-
-def _write_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    cfg = tmp_path / "ocfl-config" / "config.toml"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(_SP_OK + _BTC_OK_COOKIE)
-    monkeypatch.setenv("OCFL_CONFIG", str(cfg))
-    return cfg
-
-
 _CONTENT_A = b"alpha-content"
 _CONTENT_B = b"beta-content"
 _OTS_BYTES_A = b"\x00fake-ots-bytes-A-opaque"
@@ -183,10 +163,6 @@ _OTS_BYTES_B = b"\x00fake-ots-bytes-B-opaque"
 
 def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
-
-
-def _staging_dir(storage_root: Path, staging: Path, object_id: str) -> Path:
-    return StagingStore(staging).staging_path(str(storage_root.resolve()), object_id)
 
 
 def _add_file(
@@ -251,7 +227,7 @@ def _setup_ots_pair(
             "b.txt.ots",
             _OTS_BYTES_B,
         )
-    return _staging_dir(storage_root, staging, object_id), digests
+    return staging_dir(storage_root, staging, object_id), digests
 
 
 def _state_paths(store: StagingStore, root_path: str, object_id: str) -> set[str]:
@@ -288,7 +264,7 @@ class TestRmCompanionPairing:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
         sd, _digests = _setup_ots_pair(runner, storage_root, staging, "obj:rm-pair")
 
@@ -318,7 +294,7 @@ class TestMvCompanionPairing:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
         sd, digests = _setup_ots_pair(runner, storage_root, staging, "obj:mv-pair")
 
@@ -374,7 +350,7 @@ class TestRegressionFromContentUpgraded:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
         sd, digests = _setup_ots_pair(
             runner, storage_root, staging, "obj:rm-cu", with_b=True
@@ -403,7 +379,7 @@ class TestRegressionFromContentUpgraded:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
         sd, digests = _setup_ots_pair(
             runner, storage_root, staging, "obj:mv-cu", with_b=True
@@ -429,7 +405,7 @@ class TestRegressionFromContentUpgraded:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
         sd, digests = _setup_ots_pair(
             runner, storage_root, staging, "obj:add-cu", with_b=True
@@ -476,7 +452,7 @@ class TestRegressionFromInventoryPending:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
         sd, digests = _setup_ots_pair(
             runner, storage_root, staging, "obj:rm-ip", with_b=True
@@ -509,7 +485,7 @@ class TestRegressionFromInventoryPending:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
         sd, digests = _setup_ots_pair(
             runner, storage_root, staging, "obj:add-ip", with_b=True
@@ -542,7 +518,7 @@ class TestRegressionFromInventoryUpgraded:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
         sd, digests = _setup_ots_pair(
             runner, storage_root, staging, "obj:mv-iu", with_b=True
@@ -571,7 +547,7 @@ class TestRegressionFromInventoryUpgraded:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
         sd, digests = _setup_ots_pair(
             runner, storage_root, staging, "obj:add-iu", with_b=True
@@ -604,7 +580,7 @@ class TestOtsCacheNotPurgedOnRegression:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
         sd, digests = _setup_ots_pair(
             runner, storage_root, staging, "obj:rm-cache", with_b=True
@@ -635,7 +611,7 @@ class TestNonOtsRegression:
         tmp_path: Path,
     ) -> None:
         staging, store, root_path = _setup_staged(runner, storage_root, tmp_path)
-        sd = _staging_dir(storage_root, staging, "obj:new")
+        sd = staging_dir(storage_root, staging, "obj:new")
         assert not has_ots(sd), "non-OTS staging must not have ots.json"
 
         r = _invoke(runner, storage_root, staging, "rm", "obj:new", "a.txt")
@@ -653,7 +629,7 @@ class TestNonOtsRegression:
         tmp_path: Path,
     ) -> None:
         staging, store, root_path = _setup_staged(runner, storage_root, tmp_path)
-        sd = _staging_dir(storage_root, staging, "obj:new")
+        sd = staging_dir(storage_root, staging, "obj:new")
         assert not has_ots(sd)
 
         r = _invoke(

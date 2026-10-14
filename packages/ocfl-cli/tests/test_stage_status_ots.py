@@ -1,12 +1,18 @@
-import hashlib
 import json
 from pathlib import Path
 
 import pytest
-from fakes import FakeBitcoinRPC, FakeClock, FakeSimpleProof
+from fakes import FakeClock, FakeSimpleProof
 from fakes.locks import held_flock
 from msgspec.structs import replace
-from runner_helpers import runner_obj
+from ots_helpers import (
+    SP_OK,
+    inject_fake_btc,
+    inject_fake_sp,
+    new_ots_staging,
+    write_config,
+)
+from runner_helpers import runner_obj, stage_args, staging_dir
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -19,45 +25,6 @@ from ocfl_cli.model.ots_state import (
 )
 from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store.ots_state import load_ots, save_ots
-from ocfl_cli.store.staging import StagingStore
-from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
-
-# --------------------------------------------------------------------------- #
-# Config + path helpers (mirrors test_stage_timestamp_inventory.py).
-# --------------------------------------------------------------------------- #
-
-_SP_OK = """\
-[simpleproof]
-base_url = "https://stage.example"
-proof_category_id = 641
-"""
-
-_BTC_OK_COOKIE = """\
-[bitcoin]
-rpc_url = "http://127.0.0.1:8332"
-zmq_endpoint = "tcp://127.0.0.1:28332"
-confirmations = 3
-"""
-
-
-def _write_config(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    body: str = _SP_OK + _BTC_OK_COOKIE,
-) -> Path:
-    cfg = tmp_path / "ocfl-config" / "config.toml"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(body)
-    # chmod 600 so the loose-perms WARNING (which lands on stderr and gets
-    # merged into Click's mixed-stream output) doesn't pollute the JSON
-    # captured by `r.output`.
-    cfg.chmod(0o600)
-    monkeypatch.setenv("OCFL_CONFIG", str(cfg))
-    return cfg
-
-
-def _stage_args(root: Path, staging: Path, *args: str) -> list[str]:
-    return ["--root", str(root), "stage", "--staging-root", str(staging), *args]
 
 
 def _stage_args_json(root: Path, staging: Path, *args: str) -> list[str]:
@@ -72,70 +39,12 @@ def _stage_args_json(root: Path, staging: Path, *args: str) -> list[str]:
     ]
 
 
-def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
-    store = StagingStore(staging)
-    return store.staging_path(str(root.resolve()), object_id)
-
-
-def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
-    runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
-
-
-def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
-    runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
-
-
-# --------------------------------------------------------------------------- #
-# Storage-root + staging fixtures (replicated locally per established
-# convention; see test_stage_timestamp_inventory.py).
-# --------------------------------------------------------------------------- #
-
-
-@pytest.fixture
-def empty_sha256_root(tmp_path: Path) -> Path:
-    location = tmp_path / "root"
-    location.mkdir()
-    fs = LocalFS(location)
-    layout = get_layout("0002-flat-direct-storage-layout")
-    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
-    return location
-
-
 # --------------------------------------------------------------------------- #
 # Setup helpers: bring an OTS staging into each phase by mutating ots.json
 # directly. The status command READS ots.json without enforcing the FSM
 # (status itself is `_STAY` in the transition matrix), so direct mutation
 # is sufficient and avoids dragging in unrelated workflow scaffolding.
 # --------------------------------------------------------------------------- #
-
-
-def _new_ots_staging_no_files(
-    runner: CliRunner,
-    root: Path,
-    staging: Path,
-    object_id: str,
-) -> Path:
-    r = runner.invoke(app, _stage_args(root, staging, "new", object_id, "--ots"))
-    assert r.exit_code == ExitCode.SUCCESS, r.output
-    return _staging_dir(root, staging, object_id)
-
-
-def _new_ots_staging(
-    runner: CliRunner,
-    root: Path,
-    staging: Path,
-    object_id: str,
-    *files: tuple[str, bytes],
-) -> tuple[Path, dict[str, str]]:
-    sd = _new_ots_staging_no_files(runner, root, staging, object_id)
-    digests: dict[str, str] = {}
-    for name, data in files:
-        src = staging.parent / name
-        src.write_bytes(data)
-        r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(src)))
-        assert r.exit_code == ExitCode.SUCCESS, r.output
-        digests[name] = hashlib.sha256(data).hexdigest()
-    return sd, digests
 
 
 def _set_phase(
@@ -186,12 +95,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        _new_ots_staging_no_files(runner, empty_sha256_root, staging, "obj:s-empty")
+        new_ots_staging(runner, empty_sha256_root, staging, "obj:s-empty")
 
         r = runner.invoke(
             app, _stage_args_json(empty_sha256_root, staging, "status", "obj:s-empty")
@@ -216,14 +125,14 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "new",
@@ -238,7 +147,7 @@ class TestStageStatusOts:
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
         r = runner.invoke(
-            app, _stage_args(empty_sha256_root, staging, "status", "obj:s-metadata")
+            app, stage_args(empty_sha256_root, staging, "status", "obj:s-metadata")
         )
 
         assert r.exit_code == ExitCode.SUCCESS, r.output
@@ -256,14 +165,14 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "new",
@@ -301,12 +210,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        _new_ots_staging(
+        new_ots_staging(
             runner, empty_sha256_root, staging, "obj:s-draft", ("a.txt", b"alpha")
         )
 
@@ -328,12 +237,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -386,12 +295,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -433,12 +342,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -471,12 +380,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -517,12 +426,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -564,12 +473,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -602,12 +511,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -640,12 +549,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        _new_ots_staging(
+        new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -679,12 +588,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _ = _new_ots_staging(
+        sd, _ = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -713,12 +622,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _ = _new_ots_staging(
+        sd, _ = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -750,12 +659,12 @@ class TestStageStatusOts:
         process holds the staging ``.lock``, with a lock timeout that would
         fail any command that waits for the lock.
         """
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _ = _new_ots_staging(
+        sd, _ = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -780,12 +689,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -812,7 +721,7 @@ class TestStageStatusOts:
         )
 
         r = runner.invoke(
-            app, _stage_args(empty_sha256_root, staging, "status", "obj:s-human")
+            app, stage_args(empty_sha256_root, staging, "status", "obj:s-human")
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
         out = r.output
@@ -840,12 +749,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -881,7 +790,7 @@ class TestStageStatusOts:
         )
 
         r = runner.invoke(
-            app, _stage_args(empty_sha256_root, staging, "status", "obj:s-h-sec")
+            app, stage_args(empty_sha256_root, staging, "status", "obj:s-h-sec")
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "30s ago" in r.output
@@ -895,20 +804,20 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
         r = runner.invoke(
             app,
-            _stage_args(empty_sha256_root, staging, "new", "obj:s-h-hr", "--ots"),
+            stage_args(empty_sha256_root, staging, "new", "obj:s-h-hr", "--ots"),
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
         src = tmp_path / "a.txt"
         src.write_bytes(b"alpha")
         r = runner.invoke(
-            app, _stage_args(empty_sha256_root, staging, "add", "obj:s-h-hr", str(src))
+            app, stage_args(empty_sha256_root, staging, "add", "obj:s-h-hr", str(src))
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
@@ -922,7 +831,7 @@ class TestStageStatusOts:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "timestamp",
@@ -932,11 +841,11 @@ class TestStageStatusOts:
             ),
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
-        sd = _staging_dir(empty_sha256_root, staging, "obj:s-h-hr")
+        sd = staging_dir(empty_sha256_root, staging, "obj:s-h-hr")
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -950,7 +859,7 @@ class TestStageStatusOts:
 
         clock.set(fake_now)
         r = runner.invoke(
-            app, _stage_args(empty_sha256_root, staging, "status", "obj:s-h-hr")
+            app, stage_args(empty_sha256_root, staging, "status", "obj:s-h-hr")
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "2h ago" in r.output
@@ -964,12 +873,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        _new_ots_staging(
+        new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1005,11 +914,11 @@ class TestStageStatusOts:
         created earlier with [bitcoin] present (required by ``stage new
         --ots``); we then drop [bitcoin] from config before invoking status.
         """
-        _write_config(tmp_path, monkeypatch)  # full config to enable `stage new --ots`
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)  # full config to enable `stage new --ots`
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
-        _new_ots_staging(
+        new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1018,7 +927,7 @@ class TestStageStatusOts:
         )
 
         # Now drop [bitcoin] from config; [simpleproof] stays.
-        _write_config(tmp_path, monkeypatch, body=_SP_OK)
+        write_config(tmp_path, monkeypatch, body=SP_OK)
 
         r = runner.invoke(
             app,
@@ -1037,12 +946,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        _new_ots_staging(
+        new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1069,12 +978,12 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        _new_ots_staging(
+        new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1098,11 +1007,11 @@ class TestStageStatusNonOtsFallback:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
         r = runner.invoke(
-            app, _stage_args(empty_sha256_root, staging, "new", "obj:non-ots")
+            app, stage_args(empty_sha256_root, staging, "new", "obj:non-ots")
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
@@ -1110,12 +1019,12 @@ class TestStageStatusNonOtsFallback:
         src.write_text("hello")
         r = runner.invoke(
             app,
-            _stage_args(empty_sha256_root, staging, "add", "obj:non-ots", str(src)),
+            stage_args(empty_sha256_root, staging, "add", "obj:non-ots", str(src)),
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
         r = runner.invoke(
-            app, _stage_args(empty_sha256_root, staging, "status", "obj:non-ots")
+            app, stage_args(empty_sha256_root, staging, "status", "obj:non-ots")
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "src.txt" in r.output
@@ -1127,20 +1036,18 @@ class TestStageStatusNonOtsFallback:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
         r = runner.invoke(
-            app, _stage_args(empty_sha256_root, staging, "new", "obj:non-ots-json")
+            app, stage_args(empty_sha256_root, staging, "new", "obj:non-ots-json")
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
         src = tmp_path / "src.txt"
         src.write_text("hello")
         r = runner.invoke(
             app,
-            _stage_args(
-                empty_sha256_root, staging, "add", "obj:non-ots-json", str(src)
-            ),
+            stage_args(empty_sha256_root, staging, "add", "obj:non-ots-json", str(src)),
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 

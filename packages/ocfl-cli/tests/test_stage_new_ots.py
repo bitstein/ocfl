@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from ots_helpers import BTC_OK, SP_OK, write_config
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -8,30 +9,6 @@ from ocfl_cli.main import app
 from ocfl_cli.model.phase import Phase
 from ocfl_cli.store.ots_state import has_ots, load_ots
 from ocfl_cli.store.staging import StagingStore
-
-_SP_OK = """\
-[simpleproof]
-base_url = "https://stage.example"
-proof_category_id = 641
-"""
-
-_BTC_OK_COOKIE = """\
-[bitcoin]
-rpc_url = "http://127.0.0.1:8332"
-zmq_endpoint = "tcp://127.0.0.1:28332"
-"""
-
-
-def _write_config(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    body: str,
-) -> Path:
-    cfg = tmp_path / "ocfl-config" / "config.toml"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(body)
-    monkeypatch.setenv("OCFL_CONFIG", str(cfg))
-    return cfg
 
 
 def _stage_new_ots_args(
@@ -73,7 +50,7 @@ class TestDigestForcing:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
+        write_config(tmp_path, monkeypatch, SP_OK + BTC_OK)
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -96,7 +73,7 @@ class TestDigestForcing:
         monkeypatch: pytest.MonkeyPatch,
         alg: str,
     ) -> None:
-        _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
+        write_config(tmp_path, monkeypatch, SP_OK + BTC_OK)
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -116,7 +93,7 @@ class TestDigestForcing:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
+        write_config(tmp_path, monkeypatch, SP_OK + BTC_OK)
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -134,7 +111,7 @@ class TestDigestForcing:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
+        write_config(tmp_path, monkeypatch, SP_OK + BTC_OK)
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -156,7 +133,7 @@ class TestConfigValidation:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch, _BTC_OK_COOKIE)  # only [bitcoin]
+        write_config(tmp_path, monkeypatch, BTC_OK)
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -176,7 +153,7 @@ class TestConfigValidation:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch, _SP_OK)  # only [simpleproof]
+        write_config(tmp_path, monkeypatch, SP_OK)
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -196,7 +173,7 @@ class TestConfigValidation:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch, "")
+        write_config(tmp_path, monkeypatch, "")
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -218,7 +195,7 @@ class TestInitialOtsJson:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
+        write_config(tmp_path, monkeypatch, SP_OK + BTC_OK)
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -236,7 +213,7 @@ class TestInitialOtsJson:
 
         assert state.schema_version == 2
         assert state.phase is Phase.DRAFTING
-        # Matches [simpleproof].proof_category_id from _SP_OK.
+        # Matches [simpleproof].proof_category_id from SP_OK.
         assert state.category_id == 641
         assert state.pending_digests == ()
         assert state.submissions == ()
@@ -251,7 +228,7 @@ class TestInitialOtsJson:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
+        write_config(tmp_path, monkeypatch, SP_OK + BTC_OK)
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -270,8 +247,8 @@ class TestInitialOtsJson:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        custom = _SP_OK.replace("proof_category_id = 641", "proof_category_id = 7777")
-        _write_config(tmp_path, monkeypatch, custom + _BTC_OK_COOKIE)
+        custom = SP_OK.replace("proof_category_id = 641", "proof_category_id = 7777")
+        write_config(tmp_path, monkeypatch, custom + BTC_OK)
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -291,7 +268,7 @@ class TestInitialOtsJson:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
+        write_config(tmp_path, monkeypatch, SP_OK + BTC_OK)
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -311,7 +288,7 @@ class TestDoubleOtsStaging:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
+        write_config(tmp_path, monkeypatch, SP_OK + BTC_OK)
         staging = tmp_path / "staging"
         args = _stage_new_ots_args(storage_root, staging, "obj:new")
 
@@ -332,7 +309,7 @@ class TestNonOtsRegression:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
+        write_config(tmp_path, monkeypatch, SP_OK + BTC_OK)
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,

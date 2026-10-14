@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 from msgspec.structs import replace
+from runner_helpers import staging_dir
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -50,10 +51,6 @@ class TestStageDiscard:
         assert "no staging" in result.output.lower() or "warn" in result.output.lower()
 
 
-def _staging_dir(storage_root: Path, staging: Path, object_id: str) -> Path:
-    return StagingStore(staging).staging_path(str(storage_root.resolve()), object_id)
-
-
 def _mk_ots_staging(
     runner: CliRunner,
     storage_root: Path,
@@ -68,7 +65,7 @@ def _mk_ots_staging(
     """
     r = _invoke(runner, storage_root, staging, "new", object_id)
     assert r.exit_code == ExitCode.SUCCESS, r.output
-    sd = _staging_dir(storage_root, staging, object_id)
+    sd = staging_dir(storage_root, staging, object_id)
     save_ots(sd, OtsState(phase=Phase.DRAFTING, category_id=641))
     assert has_ots(sd)
     return sd
@@ -459,7 +456,7 @@ class TestNonOtsDiscardUnchanged:
         r = _invoke(runner, storage_root, staging, "new", "obj:plain")
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
-        sd = _staging_dir(storage_root, staging, "obj:plain")
+        sd = staging_dir(storage_root, staging, "obj:plain")
         assert not has_ots(sd), "non-OTS staging must not have ots.json"
 
         store = StagingStore(staging)

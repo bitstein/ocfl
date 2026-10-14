@@ -3,30 +3,25 @@ import json
 from pathlib import Path
 
 import pytest
-from fakes import FakeSimpleProof
+from fakes import FakeBitcoinRPC, FakeSimpleProof
 from fakes.fault_fs import raise_on_content_write
 from fakes.locks import lock_runtime
 from msgspec.structs import replace
-from runner_helpers import injected, runner_obj
-
-# Re-use the inventory-upgrade test harness verbatim instead of
-# duplicating its setup helpers — that file already documents them as
-# the canonical "get to phase=INVENTORY_UPGRADED with cached ots bytes"
-# scaffolding (see test_stage_timestamp_inventory_upgrade.py docstring).
-from test_stage_timestamp_inventory_upgrade import (
+from ots_helpers import (
     DIGEST_BLOCK_HEIGHT,
     MIN_CONFS,
-    _grow_chain_to,
-    _inject_fake_btc,
-    _inject_fake_sp,
-    _new_ots_staging,
-    _ots_for,
-    _register_attested,
-    _seed_inv_completed_verify_job,
-    _setup_at_inventory_pending,
-    _stage_args,
-    _write_config,
+    VERSION_METADATA,
+    grow_chain_to,
+    inject_fake_btc,
+    inject_fake_sp,
+    new_ots_staging,
+    ots_for,
+    register_attested,
+    seed_inv_completed_verify_job,
+    setup_at_inventory_upgraded,
+    write_config,
 )
+from runner_helpers import injected, runner_obj, stage_args
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -42,50 +37,8 @@ from ocfl_cli.store.ots_state import (
     save_ots,
 )
 from ocfl_cli.store.staging import StagingStore
-from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
+from ocfl_lib import LocalFS, StorageRoot
 from tests.helpers.ots import build_attestation
-
-# Local fixture (sibling tests redefine `empty_sha256_root` because it
-# is not in conftest; replicate here per the established convention).
-
-
-@pytest.fixture
-def empty_sha256_root(tmp_path: Path) -> Path:
-    location = tmp_path / "root"
-    location.mkdir()
-    fs = LocalFS(location)
-    layout = get_layout("0002-flat-direct-storage-layout")
-    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
-    return location
-
-
-def _setup_at_inventory_upgraded(
-    runner: CliRunner,
-    root: Path,
-    staging: Path,
-    object_id: str,
-    sp_fake: FakeSimpleProof,
-    btc_fake,  # BtcFake from conftest — has .rpc + .stream
-) -> tuple[Path, str, str, bytes]:
-    """Returns ``(staging_dir, content_digest, inv_digest, cached_ots_bytes)``.
-
-    Caller MUST have already wired ``_inject_fake_sp`` + ``_inject_fake_btc``.
-    """
-    sd, da, inv_digest = _setup_at_inventory_pending(runner, root, staging, object_id)
-    ots_bytes = _ots_for(inv_digest)
-    _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-    _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-    _register_attested(btc_fake.rpc, inv_digest)
-
-    r = runner.invoke(
-        app,
-        _stage_args(root, staging, "upgrade", object_id, "--expect", "inventory"),
-    )
-    assert r.exit_code == ExitCode.SUCCESS, r.output
-    state = load_ots(sd)
-    assert state.phase is Phase.INVENTORY_UPGRADED
-    assert ots_cache_path(sd, inv_digest).read_bytes() == ots_bytes
-    return sd, da, inv_digest, ots_bytes
 
 
 def _setup_missing_metadata_inventory_upgraded(
@@ -94,10 +47,17 @@ def _setup_missing_metadata_inventory_upgraded(
     staging: Path,
     object_id: str,
     sp_fake: FakeSimpleProof,
-    btc_fake,
+    btc_rpc: FakeBitcoinRPC,
 ) -> tuple[Path, bytes]:
-    sd, _paths, digests = _new_ots_staging(
-        runner, root, staging, object_id, ("a.txt", b"alpha")
+    inject_fake_sp(runner, sp_fake)
+    inject_fake_btc(runner, btc_rpc)
+    sd, digests = new_ots_staging(
+        runner,
+        root,
+        staging,
+        object_id,
+        ("a.txt", b"alpha"),
+        new_args=VERSION_METADATA,
     )
     store = StagingStore(staging)
     store.save_metadata(
@@ -119,7 +79,7 @@ def _setup_missing_metadata_inventory_upgraded(
             hashlib.sha256(b"alpha").digest(), block_height=DIGEST_BLOCK_HEIGHT
         )
     )
-    r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(ots_src)))
+    r = runner.invoke(app, stage_args(root, staging, "add", object_id, str(ots_src)))
     assert r.exit_code == ExitCode.SUCCESS, r.output
 
     state = load_ots(sd)
@@ -142,7 +102,7 @@ def _setup_missing_metadata_inventory_upgraded(
 
     r = runner.invoke(
         app,
-        _stage_args(
+        stage_args(
             root,
             staging,
             "timestamp",
@@ -157,14 +117,14 @@ def _setup_missing_metadata_inventory_upgraded(
     state = load_ots(sd)
     assert state.inventory is not None
     inv_digest = state.inventory.digest
-    ots_bytes = _ots_for(inv_digest)
-    _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-    _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-    _register_attested(btc_fake.rpc, inv_digest)
+    ots_bytes = ots_for(inv_digest)
+    seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
+    grow_chain_to(btc_rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+    register_attested(btc_rpc, inv_digest)
 
     r = runner.invoke(
         app,
-        _stage_args(root, staging, "upgrade", object_id, "--expect", "inventory"),
+        stage_args(root, staging, "upgrade", object_id, "--expect", "inventory"),
     )
     assert r.exit_code == ExitCode.SUCCESS, r.output
     assert load_ots(sd).phase is Phase.INVENTORY_UPGRADED
@@ -186,18 +146,16 @@ class TestStageCommitOtsHappyPath:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
-        sd, _da, _inv_digest, ots_bytes = _setup_at_inventory_upgraded(
-            runner, empty_sha256_root, staging, "obj:commit-ok", sp_fake, btc_fake
+        sd, _da, _inv_digest, ots_bytes = setup_at_inventory_upgraded(
+            runner, empty_sha256_root, staging, "obj:commit-ok", sp_fake, btc_fake.rpc
         )
 
         r = runner.invoke(
             app,
-            _stage_args(empty_sha256_root, staging, "commit", "obj:commit-ok"),
+            stage_args(empty_sha256_root, staging, "commit", "obj:commit-ok"),
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
@@ -237,18 +195,16 @@ class TestStageCommitOtsHappyPath:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
-        sd, da, _inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
+        sd, da, _inv_digest, _ots_bytes = setup_at_inventory_upgraded(
             runner,
             empty_sha256_root,
             staging,
             "obj:commit-content-invalid",
             sp_fake,
-            btc_fake,
+            btc_fake.rpc,
         )
         state = load_ots(sd)
         state = replace(
@@ -259,7 +215,7 @@ class TestStageCommitOtsHappyPath:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "commit",
@@ -285,23 +241,21 @@ class TestStageCommitOtsAfterMetadataInvalidation:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
-        sd, _da, _inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
+        sd, _da, _inv_digest, _ots_bytes = setup_at_inventory_upgraded(
             runner,
             empty_sha256_root,
             staging,
             "obj:commit-invalidated",
             sp_fake,
-            btc_fake,
+            btc_fake.rpc,
         )
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "metadata",
@@ -318,7 +272,7 @@ class TestStageCommitOtsAfterMetadataInvalidation:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "commit",
@@ -347,9 +301,7 @@ class TestStageCommitOtsMetadataGate:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
         _setup_missing_metadata_inventory_upgraded(
@@ -358,12 +310,12 @@ class TestStageCommitOtsMetadataGate:
             staging,
             "obj:commit-missing-metadata",
             sp_fake,
-            btc_fake,
+            btc_fake.rpc,
         )
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "commit",
@@ -385,9 +337,7 @@ class TestStageCommitOtsMetadataGate:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
         _sd, ots_bytes = _setup_missing_metadata_inventory_upgraded(
@@ -396,12 +346,12 @@ class TestStageCommitOtsMetadataGate:
             staging,
             "obj:commit-missing-metadata-allowed",
             sp_fake,
-            btc_fake,
+            btc_fake.rpc,
         )
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "commit",
@@ -440,27 +390,25 @@ class TestStageCommitOtsCorruptedCache:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
+        sd, _da, inv_digest, _ots_bytes = setup_at_inventory_upgraded(
             runner,
             empty_sha256_root,
             staging,
             "obj:commit-plan-mismatch",
             sp_fake,
-            btc_fake,
+            btc_fake.rpc,
         )
         other_sd, _other_da, other_inv_digest, _other_ots_bytes = (
-            _setup_at_inventory_upgraded(
+            setup_at_inventory_upgraded(
                 runner,
                 empty_sha256_root,
                 staging,
                 "obj:commit-plan-other",
                 sp_fake,
-                btc_fake,
+                btc_fake.rpc,
             )
         )
         assert other_inv_digest != inv_digest
@@ -468,7 +416,7 @@ class TestStageCommitOtsCorruptedCache:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "commit",
@@ -498,13 +446,16 @@ class TestStageCommitOtsCorruptedCache:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
-            runner, empty_sha256_root, staging, "obj:commit-corrupt", sp_fake, btc_fake
+        sd, _da, inv_digest, _ots_bytes = setup_at_inventory_upgraded(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:commit-corrupt",
+            sp_fake,
+            btc_fake.rpc,
         )
 
         bad_bytes = build_attestation(
@@ -514,7 +465,7 @@ class TestStageCommitOtsCorruptedCache:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "commit",
@@ -542,20 +493,23 @@ class TestStageCommitOtsMissingCache:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
-            runner, empty_sha256_root, staging, "obj:commit-missing", sp_fake, btc_fake
+        sd, _da, inv_digest, _ots_bytes = setup_at_inventory_upgraded(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:commit-missing",
+            sp_fake,
+            btc_fake.rpc,
         )
 
         ots_cache_path(sd, inv_digest).unlink()
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "commit",
@@ -582,18 +536,16 @@ class TestStageCommitOtsPreExecuteErrors:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
-        _sd, _da, _inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
+        _sd, _da, _inv_digest, _ots_bytes = setup_at_inventory_upgraded(
             runner,
             empty_sha256_root,
             staging,
             "obj:commit-changed-source",
             sp_fake,
-            btc_fake,
+            btc_fake.rpc,
         )
         store = StagingStore(staging)
         root_path = str(empty_sha256_root.resolve())
@@ -603,7 +555,7 @@ class TestStageCommitOtsPreExecuteErrors:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "commit",
@@ -630,18 +582,16 @@ class TestStageCommitOtsPreExecuteErrors:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
-        _sd, _da, _inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
+        _sd, _da, _inv_digest, _ots_bytes = setup_at_inventory_upgraded(
             runner,
             empty_sha256_root,
             staging,
             "obj:commit-missing-source",
             sp_fake,
-            btc_fake,
+            btc_fake.rpc,
         )
         store = StagingStore(staging)
         root_path = str(empty_sha256_root.resolve())
@@ -651,7 +601,7 @@ class TestStageCommitOtsPreExecuteErrors:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "commit",
@@ -678,18 +628,16 @@ class TestStageCommitOtsPreExecuteErrors:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
-        _setup_at_inventory_upgraded(
+        setup_at_inventory_upgraded(
             runner,
             empty_sha256_root,
             staging,
             "obj:commit-lock-timeout",
             sp_fake,
-            btc_fake,
+            btc_fake.rpc,
         )
         root_path = str(empty_sha256_root.resolve())
         runner_obj(runner)["lock_timeout"] = 0.01
@@ -699,7 +647,7 @@ class TestStageCommitOtsPreExecuteErrors:
         ):
             r = runner.invoke(
                 app,
-                _stage_args(
+                stage_args(
                     empty_sha256_root,
                     staging,
                     "commit",
@@ -729,19 +677,22 @@ class TestStageCommitOtsKeyboardInterrupt:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
-        _sd, _da, _inv_digest, _ots_bytes = _setup_at_inventory_upgraded(
-            runner, empty_sha256_root, staging, "obj:commit-sigint", sp_fake, btc_fake
+        _sd, _da, _inv_digest, _ots_bytes = setup_at_inventory_upgraded(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:commit-sigint",
+            sp_fake,
+            btc_fake.rpc,
         )
 
         with injected(runner, fs_factory=raise_on_content_write(KeyboardInterrupt())):
             r = runner.invoke(
                 app,
-                _stage_args(
+                stage_args(
                     empty_sha256_root,
                     staging,
                     "commit",
@@ -774,13 +725,16 @@ class TestStageCommitOtsCrashRecovery:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest, ots_bytes = _setup_at_inventory_upgraded(
-            runner, empty_sha256_root, staging, "obj:commit-crash", sp_fake, btc_fake
+        sd, _da, inv_digest, ots_bytes = setup_at_inventory_upgraded(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:commit-crash",
+            sp_fake,
+            btc_fake.rpc,
         )
 
         with injected(
@@ -789,7 +743,7 @@ class TestStageCommitOtsCrashRecovery:
         ):
             r1 = runner.invoke(
                 app,
-                _stage_args(
+                stage_args(
                     empty_sha256_root,
                     staging,
                     "commit",
@@ -807,7 +761,7 @@ class TestStageCommitOtsCrashRecovery:
 
         r2 = runner.invoke(
             app,
-            _stage_args(empty_sha256_root, staging, "commit", "obj:commit-crash"),
+            stage_args(empty_sha256_root, staging, "commit", "obj:commit-crash"),
         )
         assert r2.exit_code == ExitCode.SUCCESS, r2.output
 

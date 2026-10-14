@@ -120,6 +120,16 @@ def storage_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.fixture
+def empty_sha256_root(tmp_path: Path) -> Path:
+    location = tmp_path / "root"
+    location.mkdir()
+    fs = LocalFS(location)
+    layout = get_layout("0002-flat-direct-storage-layout")
+    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
+    return location
+
+
 @dataclass
 class BtcFake:
     rpc: FakeBitcoinRPC

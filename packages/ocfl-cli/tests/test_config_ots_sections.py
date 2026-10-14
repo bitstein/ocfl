@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from ots_helpers import BTC_OK, SP_OK
 from pydantic import SecretStr
 
 from ocfl_cli.config import (
@@ -29,19 +30,6 @@ def _write(path: Path, body: str) -> Path:
     return path
 
 
-_SP_OK = """\
-[simpleproof]
-base_url = "https://stage.example"
-proof_category_id = 641
-"""
-
-_BTC_OK = """\
-[bitcoin]
-rpc_url = "http://127.0.0.1:8332"
-zmq_endpoint = "tcp://127.0.0.1:28332"
-"""
-
-
 def _load_strict(path: Path | None = None) -> Config:
     """Load, then require both OTS sections, as a command that needs them does.
 
@@ -56,7 +44,7 @@ def _load_strict(path: Path | None = None) -> Config:
 
 class TestValidLoad:
     def test_both_sections_populated(self, tmp_path: Path) -> None:
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         cfg = load_config(path)
         assert isinstance(cfg, Config)
         assert isinstance(cfg.simpleproof, SimpleProofConfig)
@@ -76,9 +64,9 @@ class TestValidLoad:
 
     def test_explicit_overrides(self, tmp_path: Path) -> None:
         body = (
-            _SP_OK.replace("proof_category_id = 641", "proof_category_id = 99")
+            SP_OK.replace("proof_category_id = 641", "proof_category_id = 99")
             + "timeout_s = 60\n"
-            + _BTC_OK
+            + BTC_OK
             + "confirmations = 6\nrpc_timeout_s = 25\n"
         )
         path = _write(tmp_path / "c.toml", body)
@@ -106,7 +94,7 @@ class TestUrlSchemes:
         ],
     )
     def test_simpleproof_base_url_ok(self, url: str, tmp_path: Path) -> None:
-        body = _SP_OK.replace("https://stage.example", url) + _BTC_OK
+        body = SP_OK.replace("https://stage.example", url) + BTC_OK
         path = _write(tmp_path / "c.toml", body)
         cfg = load_config(path)
         assert cfg.simpleproof is not None
@@ -126,7 +114,7 @@ class TestUrlSchemes:
     def test_simpleproof_base_url_rejects_non_http(
         self, bad_url: str, tmp_path: Path
     ) -> None:
-        body = _SP_OK.replace("https://stage.example", bad_url) + _BTC_OK
+        body = SP_OK.replace("https://stage.example", bad_url) + BTC_OK
         path = _write(tmp_path / "c.toml", body)
         with pytest.raises(ConfigError):
             _load_strict(path)
@@ -143,7 +131,7 @@ class TestUrlSchemes:
         ],
     )
     def test_bitcoin_rpc_url_ok(self, url: str, tmp_path: Path) -> None:
-        body = _SP_OK + _BTC_OK.replace("http://127.0.0.1:8332", url)
+        body = SP_OK + BTC_OK.replace("http://127.0.0.1:8332", url)
         path = _write(tmp_path / "c.toml", body)
         cfg = load_config(path)
         assert cfg.bitcoin is not None
@@ -162,7 +150,7 @@ class TestUrlSchemes:
     def test_bitcoin_rpc_url_rejects_non_http(
         self, bad_url: str, tmp_path: Path
     ) -> None:
-        body = _SP_OK + _BTC_OK.replace("http://127.0.0.1:8332", bad_url)
+        body = SP_OK + BTC_OK.replace("http://127.0.0.1:8332", bad_url)
         path = _write(tmp_path / "c.toml", body)
         with pytest.raises(ConfigError):
             _load_strict(path)
@@ -172,7 +160,7 @@ class TestUrlSchemes:
         ["tcp://127.0.0.1:28332", "ipc:///tmp/zmq.sock"],
     )
     def test_zmq_endpoint_ok(self, endpoint: str, tmp_path: Path) -> None:
-        body = _SP_OK + _BTC_OK.replace("tcp://127.0.0.1:28332", endpoint)
+        body = SP_OK + BTC_OK.replace("tcp://127.0.0.1:28332", endpoint)
         path = _write(tmp_path / "c.toml", body)
         cfg = load_config(path)
         assert cfg.bitcoin is not None
@@ -183,7 +171,7 @@ class TestUrlSchemes:
         ["http://127.0.0.1:28332", "https://x", "127.0.0.1:28332"],
     )
     def test_zmq_endpoint_rejects_non_tcp_ipc(self, bad: str, tmp_path: Path) -> None:
-        body = _SP_OK + _BTC_OK.replace("tcp://127.0.0.1:28332", bad)
+        body = SP_OK + BTC_OK.replace("tcp://127.0.0.1:28332", bad)
         path = _write(tmp_path / "c.toml", body)
         with pytest.raises(ConfigError):
             _load_strict(path)
@@ -191,7 +179,7 @@ class TestUrlSchemes:
 
 class TestRpcAuth:
     def test_user_pass_ok(self, tmp_path: Path) -> None:
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         cfg = load_config(path)
         assert cfg.bitcoin is not None
         assert cfg.bitcoin.rpc_user == "u"
@@ -208,7 +196,7 @@ class TestRpcAuth:
         )
         os.chmod(env_file, 0o600)
         monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
-        body = _SP_OK + (
+        body = SP_OK + (
             "[bitcoin]\n"
             'rpc_url = "http://127.0.0.1:8332"\n'
             'zmq_endpoint = "tcp://127.0.0.1:28332"\n'
@@ -228,7 +216,7 @@ class TestRpcAuth:
         )
         os.chmod(env_file, 0o600)
         monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
-        body = _SP_OK + (
+        body = SP_OK + (
             "[bitcoin]\n"
             'rpc_url = "http://127.0.0.1:8332"\n'
             'zmq_endpoint = "tcp://127.0.0.1:28332"\n'
@@ -246,7 +234,7 @@ class TestRpcAuth:
         )
         os.chmod(env_file, 0o600)
         monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
-        body = _SP_OK + (
+        body = SP_OK + (
             "[bitcoin]\n"
             'rpc_url = "http://127.0.0.1:8332"\n'
             'zmq_endpoint = "tcp://127.0.0.1:28332"\n'
@@ -257,13 +245,13 @@ class TestRpcAuth:
 
 
 def _btc_with_conf(n: int) -> str:
-    return _BTC_OK + f"confirmations = {n}\n"
+    return BTC_OK + f"confirmations = {n}\n"
 
 
 class TestConfirmationsRange:
     @pytest.mark.parametrize("n", [0, -1, 101, 1000])
     def test_out_of_range_errors(self, n: int, tmp_path: Path) -> None:
-        path = _write(tmp_path / "c.toml", _SP_OK + _btc_with_conf(n))
+        path = _write(tmp_path / "c.toml", SP_OK + _btc_with_conf(n))
         with pytest.raises(ConfigError):
             _load_strict(path)
 
@@ -271,7 +259,7 @@ class TestConfirmationsRange:
     def test_below_three_warns(
         self, n: int, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        path = _write(tmp_path / "c.toml", _SP_OK + _btc_with_conf(n))
+        path = _write(tmp_path / "c.toml", SP_OK + _btc_with_conf(n))
         with caplog.at_level(logging.WARNING):
             cfg = load_config(path)
         assert cfg.bitcoin is not None
@@ -287,7 +275,7 @@ class TestConfirmationsRange:
     def test_three_and_above_no_warn(
         self, n: int, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        path = _write(tmp_path / "c.toml", _SP_OK + _btc_with_conf(n))
+        path = _write(tmp_path / "c.toml", SP_OK + _btc_with_conf(n))
         with caplog.at_level(logging.WARNING):
             cfg = load_config(path)
         assert cfg.bitcoin is not None
@@ -305,7 +293,7 @@ class TestEnvOverride:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("SIMPLEPROOF_BASE_URL", "https://prod.example")
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         cfg = load_config(path)
         assert cfg.simpleproof is not None
         assert cfg.simpleproof.base_url == "https://prod.example"
@@ -314,7 +302,7 @@ class TestEnvOverride:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("SIMPLEPROOF_ACCESS_TOKEN", "ENVTOKEN")
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         cfg = load_config(path)
         assert cfg.simpleproof is not None
         assert cfg.simpleproof.access_token.get_secret_value() == "ENVTOKEN"
@@ -323,7 +311,7 @@ class TestEnvOverride:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("SIMPLEPROOF_API_KEY", "ENVKEY")
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         cfg = load_config(path)
         assert cfg.simpleproof is not None
         assert cfg.simpleproof.api_key.get_secret_value() == "ENVKEY"
@@ -333,7 +321,7 @@ class TestEnvOverride:
     ) -> None:
         """Env override participates in validation — bad scheme in env still fails."""
         monkeypatch.setenv("SIMPLEPROOF_BASE_URL", "ftp://bad")
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         with pytest.raises(ConfigError):
             _load_strict(path)
 
@@ -351,7 +339,7 @@ class TestDotenv:
         )
         os.chmod(env_file, 0o600)
         monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
-        cfg = load_config(_write(tmp_path / "c.toml", _SP_OK + _BTC_OK))
+        cfg = load_config(_write(tmp_path / "c.toml", SP_OK + BTC_OK))
         assert cfg.simpleproof is not None
         assert cfg.bitcoin is not None
         assert cfg.simpleproof.access_token.get_secret_value() == "dot-token"
@@ -372,7 +360,7 @@ class TestDotenv:
         os.chmod(env_file, 0o600)
         monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
         monkeypatch.setenv("SIMPLEPROOF_ACCESS_TOKEN", "env-token")
-        cfg = load_config(_write(tmp_path / "c.toml", _SP_OK + _BTC_OK))
+        cfg = load_config(_write(tmp_path / "c.toml", SP_OK + BTC_OK))
         assert cfg.simpleproof is not None
         assert cfg.simpleproof.access_token.get_secret_value() == "env-token"
 
@@ -389,7 +377,7 @@ class TestDotenv:
         )
         os.chmod(env_file, 0o600)
         monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
-        cfg = load_config(_write(tmp_path / "c.toml", _SP_OK + _BTC_OK))
+        cfg = load_config(_write(tmp_path / "c.toml", SP_OK + BTC_OK))
         assert cfg.simpleproof is not None
         assert cfg.simpleproof.base_url == "https://dotenv.example"
 
@@ -407,7 +395,7 @@ class TestDotenv:
         os.chmod(env_file, 0o600)
         monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
         with pytest.raises(ConfigError, match="Extra"):
-            _load_strict(_write(tmp_path / "c.toml", _SP_OK + _BTC_OK))
+            _load_strict(_write(tmp_path / "c.toml", SP_OK + BTC_OK))
 
     def test_explicit_missing_dotenv_errors(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -415,7 +403,7 @@ class TestDotenv:
         missing = tmp_path / "missing.env"
         monkeypatch.setenv("OCFL_ENV_FILE", str(missing))
         with pytest.raises(ConfigError, match="OCFL_ENV_FILE does not exist"):
-            _load_strict(_write(tmp_path / "c.toml", _SP_OK + _BTC_OK))
+            _load_strict(_write(tmp_path / "c.toml", SP_OK + BTC_OK))
 
 
 class TestBitcoinEnvOverride:
@@ -423,7 +411,7 @@ class TestBitcoinEnvOverride:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("BITCOIN_RPC_URL", "http://10.0.0.1:8332")
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         cfg = load_config(path)
         assert cfg.bitcoin is not None
         assert cfg.bitcoin.rpc_url == "http://10.0.0.1:8332"
@@ -432,7 +420,7 @@ class TestBitcoinEnvOverride:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("BITCOIN_RPC_USER", "envuser")
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         cfg = load_config(path)
         assert cfg.bitcoin is not None
         assert cfg.bitcoin.rpc_user == "envuser"
@@ -441,7 +429,7 @@ class TestBitcoinEnvOverride:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("BITCOIN_RPC_PASSWORD", "ENVPASS")
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         cfg = load_config(path)
         assert cfg.bitcoin is not None
         assert cfg.bitcoin.rpc_password.get_secret_value() == "ENVPASS"
@@ -450,7 +438,7 @@ class TestBitcoinEnvOverride:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("BITCOIN_ZMQ_ENDPOINT", "tcp://10.0.0.1:28332")
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         cfg = load_config(path)
         assert cfg.bitcoin is not None
         assert cfg.bitcoin.zmq_endpoint == "tcp://10.0.0.1:28332"
@@ -460,14 +448,14 @@ class TestBitcoinEnvOverride:
     ) -> None:
         """Env override participates in validation — bad scheme in env still fails."""
         monkeypatch.setenv("BITCOIN_RPC_URL", "ftp://bad")
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         with pytest.raises(ConfigError):
             _load_strict(path)
 
 
 class TestSecretStrAPI:
     def test_simpleproof_secrets_are_secret_str(self, tmp_path: Path) -> None:
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         cfg = load_config(path)
         assert cfg.simpleproof is not None
         assert isinstance(cfg.simpleproof.access_token, SecretStr)
@@ -476,14 +464,14 @@ class TestSecretStrAPI:
         assert cfg.simpleproof.api_key.get_secret_value() == "key"
 
     def test_bitcoin_password_is_secret_str(self, tmp_path: Path) -> None:
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         cfg = load_config(path)
         assert cfg.bitcoin is not None
         assert isinstance(cfg.bitcoin.rpc_password, SecretStr)
         assert cfg.bitcoin.rpc_password.get_secret_value() == "p"
 
     def test_str_of_secret_masks_plaintext(self, tmp_path: Path) -> None:
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         cfg = load_config(path)
         assert cfg.simpleproof is not None
         assert cfg.bitcoin is not None
@@ -502,7 +490,7 @@ class TestConfigErrorNotValueError:
     def test_validation_failure_does_not_leak_value_error(self, tmp_path: Path) -> None:
         path = _write(
             tmp_path / "c.toml",
-            _SP_OK.replace("https://stage.example", "ftp://bad") + _BTC_OK,
+            SP_OK.replace("https://stage.example", "ftp://bad") + BTC_OK,
         )
         try:
             _load_strict(path)
@@ -520,7 +508,7 @@ class TestBrokenSectionIsDeferred:
     ) -> None:
         path = _write(
             tmp_path / "c.toml",
-            _SP_OK + _BTC_OK + "confirmations = 0\n",
+            SP_OK + BTC_OK + "confirmations = 0\n",
         )
         cfg = load_config(path)
         assert cfg.bitcoin is None and cfg.simpleproof is not None
@@ -579,7 +567,7 @@ class TestLooseEnvPerms:
         )
         os.chmod(env_file, 0o644)
         monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         with pytest.raises(ConfigError, match=r"chmod 600"):
             _load_strict(path)
 
@@ -595,7 +583,7 @@ class TestLooseEnvPerms:
         )
         os.chmod(env_file, 0o600)
         monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
-        path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
+        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         assert load_config(path).bitcoin is not None
 
 
@@ -614,9 +602,9 @@ class TestTomlSecretsRejected:
     ) -> None:
         extra = f'{field} = "secret-in-toml"\n'
         if section == "simpleproof":
-            body = _SP_OK + extra + _BTC_OK
+            body = SP_OK + extra + BTC_OK
         else:
-            body = _SP_OK + _BTC_OK + extra
+            body = SP_OK + BTC_OK + extra
         path = _write(tmp_path / "c.toml", body)
         with pytest.raises(ConfigError, match=env_name):
             _load_strict(path)
@@ -624,13 +612,13 @@ class TestTomlSecretsRejected:
 
 class TestSectionAbsent:
     def test_simpleproof_absent_is_none(self, tmp_path: Path) -> None:
-        path = _write(tmp_path / "c.toml", _BTC_OK)
+        path = _write(tmp_path / "c.toml", BTC_OK)
         cfg = load_config(path)
         assert cfg.simpleproof is None
         assert cfg.bitcoin is not None
 
     def test_bitcoin_absent_is_none(self, tmp_path: Path) -> None:
-        path = _write(tmp_path / "c.toml", _SP_OK)
+        path = _write(tmp_path / "c.toml", SP_OK)
         cfg = load_config(path)
         assert cfg.bitcoin is None
         assert cfg.simpleproof is not None

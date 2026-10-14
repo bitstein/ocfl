@@ -1,4 +1,3 @@
-import hashlib
 import json
 import logging
 import os
@@ -8,18 +7,30 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fakes import FakeBitcoinRPC, FakeSimpleProof, RecordingSleeper
+from fakes import FakeSimpleProof, RecordingSleeper
 from fakes.locks import held_flock
 from msgspec.structs import replace
+from ots_helpers import (
+    DIGEST_BLOCK_HEIGHT,
+    MIN_CONFS,
+    SP_OK,
+    grow_chain_to,
+    inject_fake_btc,
+    ots_for,
+    register_attested,
+    seed_inv_completed_verify_job,
+    setup_at_inventory_pending,
+    write_config,
+)
 from pydantic import SecretStr
-from runner_helpers import runner_obj
+from runner_helpers import runner_obj, stage_args
 from typer.testing import CliRunner
 
 from ocfl_cli.config import BitcoinConfig, Config
 from ocfl_cli.config.ots import SimpleProofConfig
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
-from ocfl_cli.model.ots_state import Proof, VerifyJob
+from ocfl_cli.model.ots_state import VerifyJob
 from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.ports import BlockStream
 from ocfl_cli.store.ots_state import load_ots, ots_cache_path, save_ots
@@ -30,56 +41,8 @@ from ocfl_cli.workflow.common import (
     poll_outstanding_jobs,
     snapshot_results,
 )
-from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
+from ocfl_lib import LocalFS, StorageRoot
 from tests.helpers.ots import build_attestation
-
-# --------------------------------------------------------------------------- #
-# Config + path helpers (DUPLICATED from test_stage_timestamp_content_upgrade.py
-# / test_stage_timestamp_inventory.py per workflow rule
-# "smaller file > shared module before 3rd use"; reviewer decides extraction).
-# --------------------------------------------------------------------------- #
-
-_SP_OK = """\
-[simpleproof]
-base_url = "https://stage.example"
-proof_category_id = 641
-"""
-
-_BTC_OK_COOKIE = """\
-[bitcoin]
-rpc_url = "http://127.0.0.1:8332"
-zmq_endpoint = "tcp://127.0.0.1:28332"
-confirmations = 3
-"""
-
-
-def _write_config(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    body: str = _SP_OK + _BTC_OK_COOKIE,
-) -> Path:
-    cfg = tmp_path / "ocfl-config" / "config.toml"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(body)
-    monkeypatch.setenv("OCFL_CONFIG", str(cfg))
-    return cfg
-
-
-def _stage_args(root: Path, staging: Path, *args: str) -> list[str]:
-    return ["--root", str(root), "stage", "--staging-root", str(staging), *args]
-
-
-def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
-    store = StagingStore(staging)
-    return store.staging_path(str(root.resolve()), object_id)
-
-
-def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
-    runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
-
-
-def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
-    runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
 
 
 def _inject_fake_zmq(runner: CliRunner, stream: BlockStream) -> None:
@@ -93,191 +56,11 @@ def no_block_processing_delay(runner: CliRunner) -> None:
     runner_obj(runner)["sleeper"] = RecordingSleeper()
 
 
-# --------------------------------------------------------------------------- #
-# Storage-root + .ots/chain helpers (copied from content-upgrade tests).
-# --------------------------------------------------------------------------- #
-
-
-@pytest.fixture
-def empty_sha256_root(tmp_path: Path) -> Path:
-    location = tmp_path / "root"
-    location.mkdir()
-    fs = LocalFS(location)
-    layout = get_layout("0002-flat-direct-storage-layout")
-    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
-    return location
-
-
-DIGEST_BLOCK_HEIGHT = 800_000
-MIN_CONFS = 3
-
-
-def _ots_for(digest_hex: str, *, block_height: int = DIGEST_BLOCK_HEIGHT) -> bytes:
-    return build_attestation(bytes.fromhex(digest_hex), block_height=block_height)
-
-
 def _ots_pending(digest_hex: str) -> bytes:
     return build_attestation(
         bytes.fromhex(digest_hex),
         pending_uri="https://a.pool.opentimestamps.org",
     )
-
-
-def _grow_chain_to(rpc: FakeBitcoinRPC, height: int) -> None:
-    needed = height - rpc.tip_height
-    if needed > 0:
-        rpc.extend(needed)
-
-
-def _register_attested(
-    rpc: FakeBitcoinRPC, digest_hex: str, height: int = DIGEST_BLOCK_HEIGHT
-) -> None:
-    rpc.register_merkle_root(height, bytes.fromhex(digest_hex)[::-1].hex())
-
-
-# --------------------------------------------------------------------------- #
-# Setup: bring an OTS staging to phase=inventory-pending.
-#
-# Strategy (mirrors test_stage_timestamp_inventory.py::_setup_content_upgraded):
-#   1. ``stage new --ots`` + ``stage add a.txt`` + ``stage add a.txt.ots``
-#   2. mutate ots.json to CONTENT_UPGRADED with a verified content_proof
-#      so the FSM legality check at ``timestamp inventory`` passes
-#   3. run ``stage timestamp inventory`` to land at INVENTORY_PENDING
-#      (this populates inventory_proof + writes plan.json)
-# --------------------------------------------------------------------------- #
-
-
-def _new_ots_staging(
-    runner: CliRunner,
-    root: Path,
-    staging: Path,
-    object_id: str,
-    *files: tuple[str, bytes],
-) -> tuple[Path, dict[str, str], dict[str, str]]:
-    r = runner.invoke(
-        app,
-        _stage_args(
-            root,
-            staging,
-            "new",
-            object_id,
-            "--ots",
-            "-m",
-            "Timestamped inventory",
-            "--name",
-            "Alice",
-            "--address",
-            "mailto:alice@example.org",
-        ),
-    )
-    assert r.exit_code == ExitCode.SUCCESS, r.output
-
-    paths: dict[str, str] = {}
-    digests: dict[str, str] = {}
-    for name, data in files:
-        src = staging.parent / name
-        src.write_bytes(data)
-        r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(src)))
-        assert r.exit_code == ExitCode.SUCCESS, r.output
-        paths[name] = name
-        digests[name] = hashlib.sha256(data).hexdigest()
-
-    return _staging_dir(root, staging, object_id), paths, digests
-
-
-def _setup_at_inventory_pending(
-    runner: CliRunner,
-    root: Path,
-    staging: Path,
-    object_id: str,
-) -> tuple[Path, str, str]:
-    """Build a staging at phase=inventory-pending with a populated
-    ``inventory_proof`` and a serialized ``plan.json``.
-
-    Returns ``(staging_dir, content_digest, inv_digest)``.
-
-    Caller MUST have already called ``_inject_fake_sp`` (the
-    ``stage timestamp inventory`` invocation here POSTs the inv digest).
-    """
-    sd, _paths, digests = _new_ots_staging(
-        runner, root, staging, object_id, ("a.txt", b"alpha")
-    )
-    da = digests["a.txt"]
-
-    ots_src = staging.parent / "a.txt.ots"
-    # A final proof of a.txt: the commit refuses an invalid or pending one.
-    ots_src.write_bytes(
-        build_attestation(
-            hashlib.sha256(b"alpha").digest(), block_height=DIGEST_BLOCK_HEIGHT
-        )
-    )
-    r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(ots_src)))
-    assert r.exit_code == ExitCode.SUCCESS, r.output
-
-    state = load_ots(sd)
-    state = replace(
-        state,
-        phase=Phase.CONTENT_UPGRADED,
-        pending_digests=(da,),
-        proofs={
-            da: Proof(
-                target=TimestampTarget.CONTENT,
-                ots_path=f"ots-cache/{da}.ots",
-                verified=True,
-                block_height=DIGEST_BLOCK_HEIGHT,
-                confirmations_at_verify=MIN_CONFS,
-                verified_at="2026-04-23T16:30:00+00:00",
-            )
-        },
-    )
-    save_ots(sd, state)
-
-    r = runner.invoke(
-        app, _stage_args(root, staging, "timestamp", object_id, "--expect", "inventory")
-    )
-    assert r.exit_code == ExitCode.SUCCESS, r.output
-
-    state = load_ots(sd)
-    assert state.phase is Phase.INVENTORY_PENDING
-    assert state.inventory is not None
-    assert state.inventory_proof is not None
-    return sd, da, state.inventory.digest
-
-
-def _seed_inv_completed_verify_job(
-    sp_fake: FakeSimpleProof,
-    sd: Path,
-    inv_digest: str,
-    ots_bytes: bytes,
-) -> str:
-    """Pre-create a COMPLETED job on the fake covering ``inv_digest``.
-
-    Records the job in BOTH common storage locations so the implementer
-    has latitude (per the spec's "implementer chooses the storage
-    location" note):
-      - ``state.verify_jobs`` (mirrors content --upgrade shape)
-      - ``state.inventory.job_id`` (single-digest convenience)
-
-    The upgrade pass should detect the existing job, poll, see
-    COMPLETED, then download + verify.
-    """
-    job_id = sp_fake.verify_batch([inv_digest]).job_id
-    sp_fake.advance_to_completed(job_id, {inv_digest: ots_bytes})
-
-    state = load_ots(sd)
-    assert state.inventory is not None
-    assert state.inventory_proof is not None
-    new_inv = replace(state.inventory, job_id=job_id)
-    state = replace(
-        state,
-        inventory=new_inv,
-        verify_jobs=(
-            *state.verify_jobs,
-            VerifyJob(job_id=job_id, digests=(inv_digest,), status="IN_PROGRESS"),
-        ),
-    )
-    save_ots(sd, state)
-    return job_id
 
 
 class TestInventoryUpgradePrimitives:
@@ -290,11 +73,10 @@ class TestInventoryUpgradePrimitives:
         monkeypatch: pytest.MonkeyPatch,
         runtime,
     ):
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, _content_digest, inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-progress"
+        sd, _content_digest, inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-progress", sp_fake
         )
         job_id = sp_fake.verify_batch([inv_digest]).job_id
         sp_fake.advance_to_processing(job_id, {inv_digest: ()})
@@ -329,12 +111,11 @@ class TestInventoryUpgradePrimitives:
         monkeypatch: pytest.MonkeyPatch,
         runtime,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-upgrade-primitive"
+        sd, _da, inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-upgrade-primitive", sp_fake
         )
         cfg = Config(
             simpleproof=SimpleProofConfig(
@@ -354,8 +135,8 @@ class TestInventoryUpgradePrimitives:
         assert cfg.simpleproof is not None
         assert cfg.bitcoin is not None
 
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS)
-        _register_attested(btc_fake.rpc, inv_digest)
+        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS)
+        register_attested(btc_fake.rpc, inv_digest)
 
         run = wf_timestamp.TimestampRun(
             cfg=cfg,
@@ -376,7 +157,7 @@ class TestInventoryUpgradePrimitives:
         assert len(state.verify_jobs) == 1
         job_id = state.verify_jobs[0].job_id
 
-        sp_fake.advance_to_completed(job_id, {inv_digest: _ots_for(inv_digest)})
+        sp_fake.advance_to_completed(job_id, {inv_digest: ots_for(inv_digest)})
         second = wf_timestamp.upgrade_locked(run)
         assert second.phase is Phase.INVENTORY_UPGRADED
         state = load_ots(sd)
@@ -399,19 +180,18 @@ class TestInventoryUpgradeHappyPath:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-up"
+        sd, _da, inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-up", sp_fake
         )
 
-        ots_bytes = _ots_for(inv_digest)
-        _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        _register_attested(btc_fake.rpc, inv_digest)
+        ots_bytes = ots_for(inv_digest)
+        seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
+        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        register_attested(btc_fake.rpc, inv_digest)
 
         store = StagingStore(staging)
         root_path = str(empty_sha256_root.resolve())
@@ -423,7 +203,7 @@ class TestInventoryUpgradeHappyPath:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -467,13 +247,12 @@ class TestInventoryUpgradeExpired:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-exp"
+        sd, _da, inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-exp", sp_fake
         )
 
         dead_id = sp_fake.verify_batch([inv_digest]).job_id
@@ -494,7 +273,7 @@ class TestInventoryUpgradeExpired:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -536,25 +315,24 @@ class TestInventoryCrashRecovery:
         monkeypatch: pytest.MonkeyPatch,
         fault_at: str,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-crash"
+        sd, _da, inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-crash", sp_fake
         )
 
-        ots_bytes = _ots_for(inv_digest)
-        _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        _register_attested(btc_fake.rpc, inv_digest)
+        ots_bytes = ots_for(inv_digest)
+        seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
+        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        register_attested(btc_fake.rpc, inv_digest)
 
         _install_inv_crash_fault(monkeypatch, fault_at, sd, inv_digest)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -577,7 +355,7 @@ class TestInventoryCrashRecovery:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -672,23 +450,22 @@ class TestInventoryPhaseAdvance:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-adv"
+        sd, _da, inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-adv", sp_fake
         )
 
-        ots_bytes = _ots_for(inv_digest)
-        _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        _register_attested(btc_fake.rpc, inv_digest)
+        ots_bytes = ots_for(inv_digest)
+        seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
+        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        register_attested(btc_fake.rpc, inv_digest)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -713,22 +490,21 @@ class TestInventoryPhaseAdvance:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-pend"
+        sd, _da, inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-pend", sp_fake
         )
 
         pending_bytes = _ots_pending(inv_digest)
-        _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, pending_bytes)
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        seed_inv_completed_verify_job(sp_fake, sd, inv_digest, pending_bytes)
+        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -754,24 +530,23 @@ class TestInventoryPhaseAdvance:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-shallow"
+        sd, _da, inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-shallow", sp_fake
         )
 
-        ots_bytes = _ots_for(inv_digest)
-        _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
+        ots_bytes = ots_for(inv_digest)
+        seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
         # Tip only 1 confirmation past attested height.
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT)
-        _register_attested(btc_fake.rpc, inv_digest)
+        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT)
+        register_attested(btc_fake.rpc, inv_digest)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -798,21 +573,20 @@ class TestInventoryWatchLoop:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-watch-delay"
+        sd, _da, inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-watch-delay", sp_fake
         )
 
-        ots_bytes = _ots_for(inv_digest)
-        _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
+        ots_bytes = ots_for(inv_digest)
+        seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
         # One confirmation short: the watch's first pass leaves the proof
         # pending, and the block below confirms it.
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
-        _register_attested(btc_fake.rpc, inv_digest)
+        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
+        register_attested(btc_fake.rpc, inv_digest)
 
         class _OneBlockStream:
             def __init__(self) -> None:
@@ -837,7 +611,7 @@ class TestInventoryWatchLoop:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -860,21 +634,20 @@ class TestInventoryWatchLoop:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-watch-ok"
+        sd, _da, inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-watch-ok", sp_fake
         )
 
-        ots_bytes = _ots_for(inv_digest)
-        _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
+        ots_bytes = ots_for(inv_digest)
+        seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
         # One confirmation short: the watch's first pass leaves the proof
         # pending, and the block below confirms it.
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
-        _register_attested(btc_fake.rpc, inv_digest)
+        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
+        register_attested(btc_fake.rpc, inv_digest)
 
         class _OneBlockStream:
             def __init__(self) -> None:
@@ -893,7 +666,7 @@ class TestInventoryWatchLoop:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -925,21 +698,20 @@ class TestInventoryWatchLoop:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-watch-sigint"
+        sd, _da, inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-watch-sigint", sp_fake
         )
 
-        ots_bytes = _ots_for(inv_digest)
-        _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
+        ots_bytes = ots_for(inv_digest)
+        seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
         # One confirmation short: the watch's first pass leaves the proof
         # pending, and the block below confirms it.
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
-        _register_attested(btc_fake.rpc, inv_digest)
+        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
+        register_attested(btc_fake.rpc, inv_digest)
 
         class _SigintStream:
             def wait_for_block(self, timeout_ms: int) -> bytes | None:
@@ -949,7 +721,7 @@ class TestInventoryWatchLoop:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -972,21 +744,20 @@ class TestInventoryWatchLoop:
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         runner_obj(runner)["lock_timeout"] = 1
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-watch-lock"
+        sd, _da, inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-watch-lock", sp_fake
         )
 
-        ots_bytes = _ots_for(inv_digest)
-        _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        _register_attested(btc_fake.rpc, inv_digest)
+        ots_bytes = ots_for(inv_digest)
+        seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
+        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        register_attested(btc_fake.rpc, inv_digest)
 
         sibling = ExitStack()
         sibling.enter_context(held_flock(sd / ".lock"))
@@ -1009,7 +780,7 @@ class TestInventoryWatchLoop:
             with caplog.at_level(logging.WARNING):
                 r = runner.invoke(
                     app,
-                    _stage_args(
+                    stage_args(
                         empty_sha256_root,
                         staging,
                         "upgrade",
@@ -1051,12 +822,11 @@ class TestInventoryRetryPhaseGate:
         monkeypatch: pytest.MonkeyPatch,
         phase: Phase,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
-        sd, _da, _inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-retry-phase"
+        sd, _da, _inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-retry-phase", sp_fake
         )
         save_ots(sd, replace(load_ots(sd), phase=phase))
 
@@ -1064,7 +834,7 @@ class TestInventoryRetryPhaseGate:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "retry",
@@ -1082,7 +852,7 @@ class TestInventoryRetryHappyPath:
     def _retry(self, runner: CliRunner, root: Path, staging: Path, oid: str):
         return runner.invoke(
             app,
-            _stage_args(root, staging, "retry", oid, "--expect", "inventory"),
+            stage_args(root, staging, "retry", oid, "--expect", "inventory"),
         )
 
     def test_retry_resends_a_failed_inventory_submission(
@@ -1093,12 +863,11 @@ class TestInventoryRetryHappyPath:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-retry-ok"
+        sd, _da, inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-retry-ok", sp_fake
         )
         state = load_ots(sd)
         subs = tuple(
@@ -1127,12 +896,11 @@ class TestInventoryRetryHappyPath:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
-        sd, _da, _inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:inv-retry-none"
+        sd, _da, _inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:inv-retry-none", sp_fake
         )
         before = (sd / "ots.json").read_bytes()
         pre_calls = len(sp_fake._submissions)
@@ -1158,26 +926,25 @@ class TestRegtestEndToEndInventoryUpgrade:
         from tests.helpers.ots import build_regtest_attestation
         from tests.helpers.regtest import bitcoin_config_toml, bury_to_confs
 
-        cfg_body = _SP_OK + bitcoin_config_toml(bitcoind_regtest, confirmations=3)
+        cfg_body = SP_OK + bitcoin_config_toml(bitcoind_regtest, confirmations=3)
         monkeypatch.setenv("BITCOIN_RPC_USER", bitcoind_regtest.rpc_user)
         monkeypatch.setenv("BITCOIN_RPC_PASSWORD", bitcoind_regtest.rpc_password)
-        _write_config(tmp_path, monkeypatch, body=cfg_body)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch, body=cfg_body)
 
         staging = tmp_path / "staging"
-        sd, _da, inv_digest = _setup_at_inventory_pending(
-            runner, empty_sha256_root, staging, "obj:rt-inv"
+        sd, _da, inv_digest = setup_at_inventory_pending(
+            runner, empty_sha256_root, staging, "obj:rt-inv", sp_fake
         )
 
         ots_bytes, attest_height, _ = build_regtest_attestation(
             bitcoind_regtest, bytes.fromhex(inv_digest)
         )
-        _seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
+        seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
         bury_to_confs(bitcoind_regtest, attest_height, MIN_CONFS, "ocfltest")
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
