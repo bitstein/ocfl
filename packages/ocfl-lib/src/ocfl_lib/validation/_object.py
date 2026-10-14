@@ -473,7 +473,7 @@ def _check_first_version_content_dir(
     try:
         vinv_bytes = fs_utils.read_all(fsys, vinv_path)
         vinv_data = parse_json(vinv_bytes)
-    except (OSError, json.JSONDecodeError, ValueError):
+    except OSError, json.JSONDecodeError, ValueError:
         return
 
     if not isinstance(vinv_data, dict):
@@ -590,7 +590,7 @@ def _verify_digests(
                         content_path=content_path,
                         content_digest=actual,
                     )
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 pass
 
 

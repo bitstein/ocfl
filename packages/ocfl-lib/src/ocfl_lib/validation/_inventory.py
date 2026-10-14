@@ -42,7 +42,6 @@ _TYPE_RE = re.compile(r"^https://ocfl\.io/(\d+\.\d+)/spec/#inventory$")
 _URI_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*:")
 
 
-
 def validate_inventory(
     data: JsonObject,
     result: FindingCollector,
