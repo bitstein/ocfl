@@ -25,6 +25,8 @@ from ocfl_lib.fs._protocols import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from ocfl_lib.fs._protocols import Readable
+
 
 def _not_found(e: ClientError) -> bool:
     """Return True if the ClientError indicates a missing object or bucket."""
@@ -59,7 +61,7 @@ class S3FileReader(io.RawIOBase):
 
 
 class _CountingReader:
-    def __init__(self, data: BinaryIO) -> None:
+    def __init__(self, data: Readable) -> None:
         self._data = data
         self.bytes_read = 0
 
@@ -168,7 +170,7 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
         if not found_any:
             raise FileNotFoundError(f"s3://{self._bucket}/{key}")
 
-    def write(self, name: str, data: BinaryIO) -> int:
+    def write(self, name: str, data: Readable) -> int:
         key = self._resolve(name)
         counter = _CountingReader(data)
         self._client.upload_fileobj(counter, self._bucket, key)

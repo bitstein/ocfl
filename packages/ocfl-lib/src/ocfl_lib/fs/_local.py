@@ -57,6 +57,8 @@ def _check_entry_type(entry: os.DirEntry[str]) -> tuple[bool, bool]:
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
 
+    from ocfl_lib.fs._protocols import Readable
+
 _CHUNK_SIZE = 32 * 1024
 
 _AT_FDCWD = -100
@@ -178,7 +180,7 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
                     size=entry.stat(follow_symlinks=False).st_size if is_file else None,
                 )
 
-    def write(self, name: str, data: BinaryIO) -> int:
+    def write(self, name: str, data: Readable) -> int:
         """Write data to a file atomically and durably.
 
         The bytes are fsynced before the rename, and the directory after it,

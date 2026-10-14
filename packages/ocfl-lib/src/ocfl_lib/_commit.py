@@ -19,7 +19,7 @@ import errno
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, BinaryIO, TypeGuard
 
 from ocfl_lib import ots
 from ocfl_lib._concurrent import bounded_map
@@ -55,6 +55,7 @@ if TYPE_CHECKING:
 WORK_DIR_EXTENSION = "NNNN-work-dir"
 LOCK_TIMEOUT = 5.0
 
+_PRUNE_RACE_RETRIES = 3
 _NO_RENAMEAT2 = {errno.EINVAL, errno.ENOSYS, errno.EXDEV, errno.EOPNOTSUPP}
 
 
@@ -63,8 +64,7 @@ def work_dir(root_path: str, object_id: str) -> str:
     return join_path(root_path, "extensions", WORK_DIR_EXTENSION, key)
 
 
-def is_s3(fsys: WriteFS) -> bool:
-    """True for a store that claims by conditional write, not by rename."""
+def claims_by_conditional_write(fsys: WriteFS) -> TypeGuard[ConditionalFS]:
     return isinstance(fsys, ConditionalFS) and not isinstance(fsys, ClaimFS)
 
 
@@ -97,7 +97,7 @@ class Target:
     @property
     def claim(self) -> str:
         """The local claim (`vN/` or the new object) or the S3 claim key."""
-        if is_s3(self.fsys):
+        if claims_by_conditional_write(self.fsys):
             return self.obj(self.vn, INVENTORY_FILENAME)
         return self.obj_path if self.plan.is_new_object else self.obj(self.vn)
 
@@ -180,36 +180,41 @@ def _build(t: Target, fsys: ClaimFS, content: ContentSource) -> None:
     copy_content(fsys, content, items, plan.inventory.digest_algorithm)
     files = version_files(plan)
     if plan.is_new_object:
-        files |= new_object_files(plan) | root_files(plan)
+        files |= new_object_files(plan) | inventory_proof_files(plan) | root_files(plan)
     for rel, data in files.items():
         fs_utils.write_bytes(fsys, dest(rel), data)
 
 
 def _claim_local(t: Target, fsys: ClaimFS) -> None:
     """Rename the build into the object; the loser has written nothing there."""
-    for _ in range(3):
+    try:
         if t.plan.is_new_object:
-            parent = t.obj_path.rpartition("/")[0]
-            if parent and parent != t.root_path:
-                fsys.mkdir(parent)
+            _mkdir_parent_and_rename(t, fsys)
+        else:
+            fsys.rename_noreplace(t.build, t.claim)
+    except FileExistsError as e:
+        raise ClaimLostError(
+            f"{t.plan.object_id} {t.vn} was claimed by another writer"
+        ) from e
+    except OSError as e:
+        if e.errno in _NO_RENAMEAT2:
+            raise UnsupportedBackendError(
+                f"cannot claim {t.claim}: renameat2(RENAME_NOREPLACE) "
+                f"failed ({e.strerror})"
+            ) from e
+        raise
+
+
+def _mkdir_parent_and_rename(t: Target, fsys: ClaimFS) -> None:
+    parent = t.obj_path.rpartition("/")[0]
+    for _ in range(_PRUNE_RACE_RETRIES):
+        if parent and parent != t.root_path:
+            fsys.mkdir(parent)
         try:
             fsys.rename_noreplace(t.build, t.claim)
             return
-        except FileExistsError as e:
-            raise ClaimLostError(
-                f"{t.plan.object_id} {t.vn} was claimed by another writer"
-            ) from e
         except FileNotFoundError:
-            if not t.plan.is_new_object:
-                raise
-            # a concurrent prune removed the parent; make it again
-        except OSError as e:
-            if e.errno in _NO_RENAMEAT2:
-                raise UnsupportedBackendError(
-                    f"cannot claim {t.claim}: renameat2(RENAME_NOREPLACE) "
-                    f"failed ({e.strerror})"
-                ) from e
-            raise
+            continue
     raise ClaimLostError(f"cannot claim {t.claim}: its parent keeps disappearing")
 
 
@@ -259,8 +264,6 @@ def fill_claim(t: Target, content: ContentSource) -> None:
 
 def _write_missing(t: Target, files: dict[str, bytes]) -> None:
     for rel, data in files.items():
-        if rel == ots.inventory_proof_path(t.vn):
-            continue  # written by write_proof, after the content
         path = t.obj(rel)
         if read_or_none(t.fsys, path) != data:
             fs_utils.write_bytes(t.fsys, path, data)
@@ -443,7 +446,7 @@ def publish(t: Target, base: StoredInventory | None, *, tag: str | None = None) 
         remove_if_exists(fsys, t.obj(old.filename))
 
     rinv = t.obj(INVENTORY_FILENAME)
-    if isinstance(fsys, ConditionalFS) and is_s3(fsys):
+    if claims_by_conditional_write(fsys):
         if base is None:
             try:
                 fsys.write_new(rinv, plan.inventory.raw_bytes)
@@ -503,7 +506,7 @@ def finish(t: Target) -> None:
 
 def discard(t: Target) -> None:
     """Undo an unclaimed commit: nothing of it is in the object."""
-    if not is_s3(t.fsys) and t.fsys.exists(t.build):
+    if not claims_by_conditional_write(t.fsys) and t.fsys.exists(t.build):
         t.fsys.remove_all(t.build)
     remove_if_exists(t.fsys, join_path(t.wd, "probe"))
     remove_if_exists(t.fsys, t.plan_file)
@@ -526,7 +529,7 @@ def revert_claimed(t: Target, base: StoredInventory | None) -> None:
         remove_if_exists(fsys, t.obj(new.filename))
     remove_if_exists(fsys, t.obj(ots.inventory_proof_path(t.vn)))
     unstart_extension(fsys, t.obj_path, t.vn)
-    if isinstance(fsys, ConditionalFS) and is_s3(fsys):
+    if claims_by_conditional_write(fsys):
         prefix = t.obj_path if t.plan.is_new_object else t.obj(t.vn)
         for ref in list(fsys.walk_files(prefix)):
             if ref.path != t.claim:
@@ -629,8 +632,13 @@ def new_object_files(plan: CommitPlan) -> dict[str, bytes]:
     files = {namaste.filename: namaste.content.encode()}
     if plan.inventory_proof is not None:
         files[ots.CONFIG_PATH] = start_config(plan).to_json()
-        files[ots.inventory_proof_path(plan.version)] = plan.inventory_proof
     return files
+
+
+def inventory_proof_files(plan: CommitPlan) -> dict[str, bytes]:
+    if plan.inventory_proof is None:
+        return {}
+    return {ots.inventory_proof_path(plan.version): plan.inventory_proof}
 
 
 def root_files(plan: CommitPlan) -> dict[str, bytes]:
@@ -679,7 +687,7 @@ def copy_content(
         else:
             with src_fs.open_file(src_path) as f:
                 reader = _HashingReader(f, alg)
-                fsys.write(dst, reader)  # ty: ignore[invalid-argument-type]
+                fsys.write(dst, reader)
             actual = reader.hexdigest()
         if actual.lower() != digest.lower():
             remove_if_exists(fsys, dst)

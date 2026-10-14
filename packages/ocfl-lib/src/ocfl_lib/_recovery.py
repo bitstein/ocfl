@@ -17,11 +17,11 @@ import msgspec
 from ocfl_lib import ots
 from ocfl_lib._commit import (
     Target,
+    claims_by_conditional_write,
     discard,
     fill_claim,
     finish,
     finish_sidecar,
-    is_s3,
     object_lock,
     prune_parents,
     read_or_none,
@@ -216,7 +216,9 @@ def _tidy(ctx: _Ctx) -> None:
     """Drop work-dir leftovers that hold no plan (a probe, empty dirs)."""
     wd = work_dir(ctx.root_path, ctx.object_id)
     if not ctx.fsys.exists(join_path(wd, "plan.json")):
-        if not is_s3(ctx.fsys) and ctx.fsys.exists(join_path(wd, "build")):
+        if not claims_by_conditional_write(ctx.fsys) and ctx.fsys.exists(
+            join_path(wd, "build")
+        ):
             ctx.fsys.remove_all(join_path(wd, "build"))
         remove_if_exists(ctx.fsys, join_path(wd, "probe"))
     tidy_work_dir(ctx.fsys, ctx.root_path, wd)

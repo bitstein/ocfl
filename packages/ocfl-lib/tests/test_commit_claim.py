@@ -158,6 +158,30 @@ class TestLocal:
         assert sorted(p for p in d.rglob("*") if p.is_file()) == before
         assert not any(target.iterdir())
 
+    @pytest.mark.parametrize(("prunes", "claimed"), [(2, True), (3, False)])
+    def test_new_object_claim_outlasts_pruned_parent(self, tmp_path, prunes, claimed):
+        d = tmp_path / "root"
+        d.mkdir()
+
+        class PrunedParent(LocalFS):
+            left = prunes
+
+            def rename_noreplace(self, src, dst):
+                if self.left:
+                    self.left -= 1
+                    (d / dst).parent.rmdir()
+                return super().rename_noreplace(src, dst)
+
+        fs = PrunedParent(d)
+        root = _root(fs)
+        vs = _stage(tmp_path, "s", {"a.txt": b"a"})
+        if claimed:
+            root.commit(fs, OID, root.plan(OID, vs), content=vs.content_source)
+            assert validate_root(LocalFS(d), "").is_valid
+        else:
+            with pytest.raises(ClaimLostError, match="parent keeps disappearing"):
+                root.commit(fs, OID, root.plan(OID, vs), content=vs.content_source)
+
     def test_empty_target_is_not_replaced(self, tmp_path):
         fs = LocalFS(tmp_path)
         (tmp_path / "a").mkdir()

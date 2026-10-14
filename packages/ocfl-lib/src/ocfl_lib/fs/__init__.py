@@ -10,6 +10,7 @@ from ocfl_lib.fs._protocols import (
     FileRef,
     FileWalker,
     FsEntry,
+    Readable,
     WriteFS,
 )
 from ocfl_lib.fs._utils import copy, read_all, read_text, write_bytes
@@ -23,6 +24,7 @@ __all__ = [
     "FileWalker",
     "FsEntry",
     "LocalFS",
+    "Readable",
     "WriteFS",
     "copy",
     "open_fs",

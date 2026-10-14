@@ -17,6 +17,7 @@ __all__ = [
     "FileWalker",
     "FsEntry",
     "OcflFileTypeError",
+    "Readable",
     "WriteFS",
 ]
 
@@ -39,6 +40,12 @@ class FsEntry:
     size: int | None
 
 
+class Readable(Protocol):
+    """A byte source that `WriteFS.write` reads to its end."""
+
+    def read(self, size: int = -1, /) -> bytes: ...
+
+
 class FS(Protocol):
     """Read-only filesystem."""
 
@@ -50,7 +57,7 @@ class FS(Protocol):
 class WriteFS(FS, Protocol):
     """Filesystem with write operations."""
 
-    def write(self, name: str, data: BinaryIO) -> int: ...
+    def write(self, name: str, data: Readable) -> int: ...
     def remove(self, name: str) -> None: ...
     def remove_all(self, name: str) -> None: ...
     def mkdir(self, name: str) -> None: ...
