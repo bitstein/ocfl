@@ -5,6 +5,7 @@ from typer.testing import CliRunner
 
 from ocfl_cli.main import app
 from ocfl_cli.store.staging import StagingStore
+from ocfl_lib import LocalFS, StorageRoot
 
 
 @pytest.fixture
@@ -233,53 +234,28 @@ class TestStageAdd:
     def test_dedup_with_prior_manifest(self, runner, storage_root, tmp_path):
         """Content already in prior manifest shouldn't appear in content.json."""
         staging = tmp_path / "staging"
-
-        # Stage for existing object (obj:test has files from conftest)
         _invoke_new(runner, storage_root, staging, "obj:test")
-
         store, root_path = _store_and_root(storage_root, staging)
 
-        # Create a file with same content as one in the object
-        # Read one of the existing files to get its content
-        from ocfl_lib import LocalFS
-
-        fs = LocalFS(storage_root)
-        from ocfl_lib import StorageRoot
-
-        sr = StorageRoot.open(fs)
-        obj = sr.get_object("obj:test")
-        # Get digest of file1.txt from head version
-        head_state = obj.inventory.inventory.versions[
-            obj.inventory.inventory.head
-        ].state
-        target_digest = None
-        for d, ps in head_state.items():
-            if "file1.txt" in ps:
-                target_digest = d
-                break
-
-        if target_digest:
-            # Read content of file1.txt from the object
-            with obj.open_logical_path(obj.head, "file1.txt") as f:
-                content = f.read()
-
-            # Write same content to a new file
+        obj = StorageRoot.open(LocalFS(storage_root)).get_object("obj:test")
+        inv = obj.inventory.inventory
+        [target_digest] = [
+            d for d, ps in inv.versions[inv.head].state.items() if "file1.txt" in ps
+        ]
+        with obj.open_logical_path(obj.head, "file1.txt") as f:
             dup_file = tmp_path / "dup.txt"
-            dup_file.write_bytes(content)
+            dup_file.write_bytes(f.read())
 
-            result = _invoke_add(
-                runner,
-                storage_root,
-                staging,
-                "obj:test",
-                dup_file,
-                extra_args=["--as", "dup.txt"],
-            )
-            assert result.exit_code == 0, result.output
-
-            # Content map should NOT have this digest (it's in prior manifest)
-            cm = store.load_content_map(root_path, "obj:test")
-            assert target_digest not in cm
+        result = _invoke_add(
+            runner,
+            storage_root,
+            staging,
+            "obj:test",
+            dup_file,
+            extra_args=["--as", "dup.txt"],
+        )
+        assert result.exit_code == 0, result.output
+        assert target_digest not in store.load_content_map(root_path, "obj:test")
 
     def test_skip_symlinks(self, runner, storage_root, tmp_path):
         """Symlinks are skipped."""
