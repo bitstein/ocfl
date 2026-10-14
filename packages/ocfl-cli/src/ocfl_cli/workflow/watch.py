@@ -53,9 +53,6 @@ def watch(
     )
     try:
         with stream_cm as blocks:
-            # One pass before the first block: proofs that are already final
-            # need not wait for the next one. Subscribed first, so no block
-            # is missed meanwhile.
             try:
                 with with_lock(run.staging_dir, runtime) as staging:
                     before = load_ots(staging)

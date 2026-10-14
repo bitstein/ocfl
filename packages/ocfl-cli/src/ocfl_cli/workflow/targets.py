@@ -149,8 +149,6 @@ class _InventoryRules(TargetRules):
             if existing is not None and existing.digest == digest
             else None,
         )
-        # The plan is the intent: written before the digest is sent, so a
-        # crash leaves the plan its submission names.
         plan_path(area.staging_dir).write_bytes(plan.to_json())
         return replace(state, inventory=staged), (digest,)
 

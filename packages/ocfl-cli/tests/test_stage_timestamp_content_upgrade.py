@@ -1,7 +1,5 @@
 import hashlib
-import json
 import os
-import shutil
 from pathlib import Path
 
 import pytest
@@ -12,6 +10,7 @@ from ots_helpers import (
     MIN_CONFS,
     SP_OK,
     bury,
+    crash_at,
     end_chain_below,
     inject_fake_btc,
     inject_fake_sp,
@@ -41,6 +40,7 @@ from ocfl_cli.store.ots_state import load_ots, ots_cache_path, save_ots
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow import common as wf_common
 from ocfl_cli.workflow import timestamp as wf_timestamp
+from tests.helpers.faults import Crash, CrashBoundary
 from tests.helpers.ots import build_attestation
 
 
@@ -1192,24 +1192,16 @@ class TestConfirmationsBeforeMerkleCli:
 
 
 class TestCrashRecovery:
-    """Inject a fault at each step boundary; assert restart converges.
-
-    Boundaries tested:
-      - ``before_cache``: fault before atomic cache write
-      - ``after_cache``: cache written, ingest_file fails
-      - ``after_ingest``: cache + ingest done, ots.json save fails
-      - ``during_ots_save``: ots.json save raises mid-write (atomicity guards)
-
-    For each: first --upgrade pass crashes (non-zero exit); a second pass
-    with no fault converges to phase=content-upgraded, proofs[d]
-    .verified=True, cached bytes intact, .ots companion ingested.
-    """
-
     @pytest.mark.parametrize(
-        "fault_at",
-        ["before_cache", "after_cache", "after_ingest", "during_ots_save"],
+        ("boundary", "cached", "verified"),
+        [
+            ("cache", False, False),
+            ("proof", True, False),
+            ("proof_torn", True, False),
+            ("companion", True, True),
+        ],
     )
-    def test_fault_at_boundary_converges_on_restart(
+    def test_crash_at_boundary_heals_on_next_pass(
         self,
         runner: ObjRunner,
         empty_sha256_root: Path,
@@ -1217,7 +1209,9 @@ class TestCrashRecovery:
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        fault_at: str,
+        boundary: str,
+        cached: bool,
+        verified: bool,
     ) -> None:
         write_config(tmp_path, monkeypatch)
         inject_fake_sp(runner, sp_fake)
@@ -1238,123 +1232,36 @@ class TestCrashRecovery:
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
         bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
-
-        _install_crash_fault(monkeypatch, fault_at, sd, d)
-
-        r = runner.invoke(
-            app,
-            stage_args(
-                empty_sha256_root,
-                staging,
-                "upgrade",
-                "obj:crash",
-                "--expect",
-                "content",
-            ),
+        upgrade = stage_args(
+            empty_sha256_root, staging, "upgrade", "obj:crash", "--expect", "content"
         )
-        assert r.exit_code != ExitCode.SUCCESS, r.output
-        load_ots(sd)
-        post_crash = load_ots(sd)
-        if d in post_crash.proofs and post_crash.proofs[d].verified is True:
-            assert ots_cache_path(sd, d).is_file(), "verified implies cached"
+        store = StagingStore(staging)
 
-        _uninstall_crash_fault(monkeypatch)
+        def staged_paths() -> set[str]:
+            inv = store.load_inventory(str(empty_sha256_root.resolve()), "obj:crash")
+            return {p for ps in inv.versions[inv.head].state.values() for p in ps}
 
-        r = runner.invoke(
-            app,
-            stage_args(
-                empty_sha256_root,
-                staging,
-                "upgrade",
-                "obj:crash",
-                "--expect",
-                "content",
-            ),
+        with (
+            CrashBoundary(os, "replace", crash_at(boundary, sd, d)),
+            pytest.raises(Crash),
+        ):
+            runner.invoke(app, upgrade)
+
+        state = load_ots(sd)
+        assert state.phase is Phase.CONTENT_PENDING
+        assert (ots_cache_path(sd, d).is_file(), state.verified(d)) == (
+            cached,
+            verified,
         )
+        assert "a.txt.ots" not in staged_paths()
+
+        r = runner.invoke(app, upgrade)
         assert r.exit_code == ExitCode.SUCCESS, r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
-        assert state.proofs[d].verified is True
+        assert state.verified(d)
         assert ots_cache_path(sd, d).read_bytes() == ots_bytes
-        store = StagingStore(staging)
-        inv = store.load_inventory(str(empty_sha256_root.resolve()), "obj:crash")
-        paths = {p for ps in inv.versions[inv.head].state.values() for p in ps}
-        assert "a.txt.ots" in paths
-
-
-_CRASH_FAULT_RESTORERS: list = []
-
-
-def _patch_attr(target: object, attr: str, value: object) -> None:
-    sentinel = object()
-    original = getattr(target, attr, sentinel)
-    setattr(target, attr, value)
-    if original is sentinel:
-        _CRASH_FAULT_RESTORERS.append(lambda: delattr(target, attr))
-    else:
-        _CRASH_FAULT_RESTORERS.append(lambda: setattr(target, attr, original))
-
-
-def _install_crash_fault(
-    monkeypatch: pytest.MonkeyPatch,
-    fault_at: str,
-    sd: Path,
-    digest: str,
-) -> None:
-    """Crash at one boundary of the upgrade's per-digest ingest.
-
-    Every staging write (the ots-cache entry, the staged inventory and
-    content map, ``ots.json``) is an atomic write that ends in
-    ``os.replace``. The fault fails the replace that would publish the
-    file at the chosen boundary, the same way a crash before that point
-    would leave the staging area:
-
-      - ``before_cache``: the ots-cache entry is never written.
-      - ``after_cache``: the cache is written; ingesting the companion
-        (the staged inventory / content map) fails.
-      - ``after_ingest``: cache and ingest done; saving the verified
-        ``ots.json`` fails.
-      - ``during_ots_save``: as ``after_ingest``, and a dead process's
-        temp file is left next to ``ots.json``.
-    """
-    cache_path = ots_cache_path(sd, digest)
-    ots_json_path = sd / "ots.json"
-    ingest_paths = {sd / "inventory.json", sd / "content.json"}
-
-    def verified_save(src: object) -> bool:
-        try:
-            parsed = json.loads(Path(str(src)).read_bytes())
-        except OSError, json.JSONDecodeError:
-            return False
-        entry = (parsed.get("proofs") or {}).get(digest)
-        return bool(entry and entry.get("verified") is True)
-
-    def fails(src: object, dst: Path) -> bool:
-        match fault_at:
-            case "before_cache":
-                return dst == cache_path
-            case "after_cache":
-                return dst in ingest_paths and cache_path.is_file()
-            case "after_ingest" | "during_ots_save":
-                return dst == ots_json_path and verified_save(src)
-        raise AssertionError(f"unknown fault_at: {fault_at!r}")
-
-    real_replace = os.replace
-
-    def faulty_replace(src, dst, *args, **kwargs):
-        dst_path = Path(dst)
-        if fails(src, dst_path):
-            if fault_at == "during_ots_save":
-                shutil.copyfile(src, dst_path.with_name(f"{dst_path.name}.tmp.1"))
-            raise OSError(f"injected: {fault_at}")
-        return real_replace(src, dst, *args, **kwargs)
-
-    _patch_attr(os, "replace", faulty_replace)
-
-
-def _uninstall_crash_fault(monkeypatch: pytest.MonkeyPatch) -> None:
-    while _CRASH_FAULT_RESTORERS:
-        _CRASH_FAULT_RESTORERS.pop()()
+        assert "a.txt.ots" in staged_paths()
 
 
 class TestOrphanGuard:

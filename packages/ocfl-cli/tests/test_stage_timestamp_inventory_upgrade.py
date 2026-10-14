@@ -1,7 +1,5 @@
-import json
 import logging
 import os
-import shutil
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -14,6 +12,7 @@ from ots_helpers import (
     MIN_CONFS,
     SP_OK,
     bury,
+    crash_at,
     inject_fake_btc,
     ots_for,
     register_attested,
@@ -40,6 +39,7 @@ from ocfl_cli.workflow.common import (
     snapshot_results,
 )
 from ocfl_lib import LocalFS, StorageRoot
+from tests.helpers.faults import Crash, CrashBoundary
 from tests.helpers.ots import build_attestation
 
 
@@ -293,19 +293,11 @@ class TestInventoryUpgradeExpired:
 
 
 class TestInventoryCrashRecovery:
-    """Inject a fault at each step boundary; assert restart converges.
-
-    Boundaries tested (mirrors content --upgrade with step 2 vacuous):
-      - ``before_cache``: fault before atomic cache write
-      - ``during_ots_save``: ots.json save raises mid-write (atomicity
-        guards must keep the prior file readable)
-    """
-
     @pytest.mark.parametrize(
-        "fault_at",
-        ["before_cache", "during_ots_save"],
+        ("boundary", "cached"),
+        [("cache", False), ("proof", True), ("proof_torn", True)],
     )
-    def test_fault_at_boundary_converges_on_restart(
+    def test_crash_at_boundary_heals_on_next_pass(
         self,
         runner: ObjRunner,
         empty_sha256_root: Path,
@@ -313,7 +305,8 @@ class TestInventoryCrashRecovery:
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        fault_at: str,
+        boundary: str,
+        cached: bool,
     ) -> None:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, btc_fake.rpc)
@@ -327,41 +320,27 @@ class TestInventoryCrashRecovery:
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
         bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, inv_digest)
-
-        _install_inv_crash_fault(monkeypatch, fault_at, sd, inv_digest)
-
-        r = runner.invoke(
-            app,
-            stage_args(
-                empty_sha256_root,
-                staging,
-                "upgrade",
-                "obj:inv-crash",
-                "--expect",
-                "inventory",
-            ),
+        upgrade = stage_args(
+            empty_sha256_root,
+            staging,
+            "upgrade",
+            "obj:inv-crash",
+            "--expect",
+            "inventory",
         )
-        assert r.exit_code != ExitCode.SUCCESS, r.output
-        post_crash = load_ots(sd)
-        if (
-            post_crash.inventory_proof is not None
-            and post_crash.inventory_proof.verified is True
+
+        with (
+            CrashBoundary(os, "replace", crash_at(boundary, sd, inv_digest)),
+            pytest.raises(Crash),
         ):
-            assert ots_cache_path(sd, inv_digest).is_file(), "verified implies cached"
+            runner.invoke(app, upgrade)
 
-        _uninstall_crash_fault(monkeypatch)
+        state = load_ots(sd)
+        assert state.phase is Phase.INVENTORY_PENDING
+        assert ots_cache_path(sd, inv_digest).is_file() is cached
+        assert not state.verified(inv_digest)
 
-        r = runner.invoke(
-            app,
-            stage_args(
-                empty_sha256_root,
-                staging,
-                "upgrade",
-                "obj:inv-crash",
-                "--expect",
-                "inventory",
-            ),
-        )
+        r = runner.invoke(app, upgrade)
         assert r.exit_code == ExitCode.SUCCESS, r.output
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_UPGRADED
@@ -369,73 +348,6 @@ class TestInventoryCrashRecovery:
         assert state.inventory_proof is not None
         assert state.inventory_proof.verified is True
         assert ots_cache_path(sd, inv_digest).read_bytes() == ots_bytes
-
-
-_CRASH_FAULT_RESTORERS: list = []
-
-
-def _patch_attr(target: object, attr: str, value: object) -> None:
-    sentinel = object()
-    original = getattr(target, attr, sentinel)
-    setattr(target, attr, value)
-    if original is sentinel:
-        _CRASH_FAULT_RESTORERS.append(lambda: delattr(target, attr))
-    else:
-        _CRASH_FAULT_RESTORERS.append(lambda: setattr(target, attr, original))
-
-
-def _install_inv_crash_fault(
-    monkeypatch: pytest.MonkeyPatch,
-    fault_at: str,
-    sd: Path,
-    inv_digest: str,
-) -> None:
-    """Crash at one boundary of the inventory upgrade's ingest.
-
-    Every staging write ends in ``os.replace``; the fault fails the replace
-    that would publish the file at the chosen boundary:
-
-      - ``before_cache``: the inventory proof's ots-cache entry is never
-        written.
-      - ``during_ots_save``: saving the verified ``ots.json`` fails and a
-        dead process's temp file is left next to it. The proof sits in
-        ``proofs[<inventory digest>]``.
-    """
-    cache_path = ots_cache_path(sd, inv_digest)
-    ots_json_path = sd / "ots.json"
-
-    def verified_save(src: object) -> bool:
-        try:
-            parsed = json.loads(Path(str(src)).read_bytes())
-        except OSError, json.JSONDecodeError:
-            return False
-        proofs = parsed.get("proofs") or {}
-        ip = proofs.get(inv_digest) if isinstance(proofs, dict) else None
-        return isinstance(ip, dict) and ip.get("verified") is True
-
-    real_replace = os.replace
-
-    def faulty_replace(src, dst, *args, **kwargs):
-        dst_path = Path(dst)
-        if fault_at == "before_cache" and dst_path == cache_path:
-            raise OSError("injected: inventory cache write failed")
-        if (
-            fault_at == "during_ots_save"
-            and dst_path == ots_json_path
-            and verified_save(src)
-        ):
-            shutil.copyfile(src, dst_path.with_name(f"{dst_path.name}.tmp.1"))
-            raise OSError("injected: crash mid-save (inventory)")
-        return real_replace(src, dst, *args, **kwargs)
-
-    if fault_at not in ("before_cache", "during_ots_save"):
-        raise AssertionError(f"unknown fault_at: {fault_at!r}")
-    _patch_attr(os, "replace", faulty_replace)
-
-
-def _uninstall_crash_fault(monkeypatch: pytest.MonkeyPatch) -> None:
-    while _CRASH_FAULT_RESTORERS:
-        _CRASH_FAULT_RESTORERS.pop()()
 
 
 class TestInventoryPhaseAdvance:

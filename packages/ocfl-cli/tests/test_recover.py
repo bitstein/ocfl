@@ -17,12 +17,9 @@ from ocfl_lib import (
     scan_dir,
 )
 from ocfl_lib.validation import validate_root
+from tests.helpers.faults import Crash
 
 OID = "obj:rec"
-
-
-class ProcessDied(BaseException):
-    pass
 
 
 def _root(tmp_path: Path) -> tuple[Path, LocalFS, StorageRoot]:
@@ -50,10 +47,10 @@ def _v2_claimed_by_dead_writer(tmp_path: Path) -> tuple[Path, LocalFS, StorageRo
     class DiesAtRootInventory(LocalFS):
         def write(self, name, data):
             if name == f"{OID}/inventory.json":
-                raise ProcessDied
+                raise Crash
             return super().write(name, data)
 
-    with pytest.raises(ProcessDied):
+    with pytest.raises(Crash):
         root.commit(DiesAtRootInventory(d), OID, _stage(tmp_path, "s2", {"b": b"b"}))
     assert root.commit_status(OID).state is CommitState.CLAIMED
     return d, fs, root

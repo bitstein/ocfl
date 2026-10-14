@@ -11,6 +11,7 @@ from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Submission
 from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store.ots_state import load_ots, save_ots
+from tests.helpers.faults import Crash, CrashBoundary
 
 
 def _set_state(
@@ -314,3 +315,110 @@ class TestRetryPhaseGate:
         assert r.exit_code != ExitCode.SUCCESS, r.output
         assert phase.value in r.output
         assert len(sp_fake._submissions) == pre_calls
+
+
+class TestRetryCrashAtPost:
+    def test_crash_leaves_intents_that_timestamp_resends(
+        self,
+        runner: ObjRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        staging = tmp_path / "staging"
+        sd, digests = new_ots_staging(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:retry-crash",
+            ("a.txt", b"alpha"),
+            ("b.txt", b"bravo"),
+        )
+        da, db = digests["a.txt"], digests["b.txt"]
+        failed = Submission(
+            submitted_at="2026-04-23T16:30:00+00:00",
+            digests=(da,),
+            status="failed",
+            target=TimestampTarget.CONTENT,
+            attempts=1,
+        )
+        _set_state(
+            sd,
+            phase=Phase.CONTENT_PENDING,
+            pending_digests=(da, db),
+            submissions=(failed, replace(failed, digests=(db,), attempts=3)),
+        )
+
+        with CrashBoundary(sp_fake, "submit_hashes"), pytest.raises(Crash):
+            runner.invoke(
+                app,
+                stage_args(empty_sha256_root, staging, "retry", "obj:retry-crash"),
+            )
+
+        state = load_ots(sd)
+        assert [(s.status, s.digests, s.attempts) for s in state.submissions] == [
+            ("submitting", (da,), 2),
+            ("submitting", (db,), 4),
+        ]
+
+        r = runner.invoke(
+            app,
+            stage_args(empty_sha256_root, staging, "timestamp", "obj:retry-crash"),
+        )
+        assert r.exit_code == ExitCode.SUCCESS, r.output
+        both = tuple(sorted((da, db)))
+        assert [s.digests for s in sp_fake._submissions] == [both]
+        state = load_ots(sd)
+        assert state.phase is Phase.CONTENT_PENDING
+        assert [(s.status, s.digests, s.attempts) for s in state.submissions] == [
+            ("submitted", both, 5)
+        ]
+
+
+class TestRetrySameDigests:
+    def test_only_the_failed_one_of_two_same_digest_submissions_is_resent(
+        self,
+        runner: ObjRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        staging = tmp_path / "staging"
+        sd, digests = new_ots_staging(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:retry-twins",
+            ("a.txt", b"alpha"),
+        )
+        da = digests["a.txt"]
+        failed = Submission(
+            submitted_at="2026-04-23T16:30:00+00:00",
+            digests=(da,),
+            status="failed",
+            target=TimestampTarget.CONTENT,
+            attempts=1,
+        )
+        submitted = replace(failed, status="submitted")
+        _set_state(
+            sd,
+            phase=Phase.CONTENT_PENDING,
+            pending_digests=(da,),
+            submissions=(failed, submitted),
+        )
+
+        r = runner.invoke(
+            app, stage_args(empty_sha256_root, staging, "retry", "obj:retry-twins")
+        )
+
+        assert r.exit_code == ExitCode.SUCCESS, r.output
+        assert [s.digests for s in sp_fake._submissions] == [(da,)]
+        state = load_ots(sd)
+        assert state.submissions[0].attempts == 2
+        assert state.submissions[1] == submitted

@@ -220,9 +220,7 @@ def prepare_submission_locked(
     expect: TimestampTarget | None = None,
     allow_missing_metadata: bool = False,
 ) -> PreparedSubmission:
-    """Record the submission intent (`submitting`) before anything is sent.
-
-    Sends only digests with no proof, requested or received (ADR-0004); with
+    """Send only digests with no proof, requested or received (ADR-0004); with
     none to send the phase moves on at once when every proof is final. The
     batch engine calls this per object and sends the digests itself.
     """
@@ -373,14 +371,6 @@ def verify_digest(
     min_confirmations: int,
     runtime: Runtime,
 ) -> OtsState:
-    """Check one downloaded proof, cache its bytes, record it.
-
-    Ordering (must not change): atomic cache write `ots-cache/<d>.ots`, then
-    the atomic `ots.json` update. What the proof enables (companions, the
-    next phase) follows on every pass, so a crash between the steps heals on
-    the next one. A pending result records an unverified proof; the next
-    pass re-downloads and re-verifies.
-    """
     result = verify_attestation(
         rpc=btc,
         ots_bytes=ots_bytes,
@@ -580,9 +570,6 @@ def retry_locked(
     """Re-send the target's `failed` submissions.
 
     With none failed it sends nothing (`retried == 0`).
-
-    Crash-safe: intent (`submitting`, attempts + 1), POST, then `submitted`.
-    Index-based so two submissions with the same digests stay apart.
     """
     state = load_ots(staging)
     rules = resolve(state, expect)

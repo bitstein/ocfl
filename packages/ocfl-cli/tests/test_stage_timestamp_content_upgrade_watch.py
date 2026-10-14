@@ -36,6 +36,7 @@ from ocfl_cli.ports import BlockStream
 from ocfl_cli.store.ots_state import load_ots, save_ots
 from ocfl_cli.store.staging import StagingStore
 from ocfl_lib import LocalFS, StorageRoot
+from ocfl_lib.bitcoin import BlockHeader
 
 
 def _inject_fake_zmq(runner: ObjRunner, stream: BlockStream) -> None:
@@ -762,3 +763,66 @@ class TestWatchFirstPass:
         assert stream.waits == 0
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
         assert "Phase: content-pending -> content-upgraded" in r.output
+
+    def test_block_found_during_first_pass_is_not_missed(
+        self,
+        runner: ObjRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class _Subscription:
+            def __init__(self) -> None:
+                self.feed: list[bytes] = []
+
+            def wait_for_block(self, timeout_ms: int) -> bytes | None:
+                if not self.feed:
+                    raise KeyboardInterrupt("no block delivered")
+                return self.feed.pop(0)
+
+        subscriptions: list[_Subscription] = []
+
+        def subscribe(*a: object, **kw: object) -> _Subscription:
+            subscriptions.append(_Subscription())
+            return subscriptions[-1]
+
+        class _MinesAfterFirstHeader(FakeBitcoinRPC):
+            mined = False
+
+            def getblockheader(self, block_hash: str) -> BlockHeader:
+                header = super().getblockheader(block_hash)
+                if not self.mined:
+                    self.mined = True
+                    self.extend(1)
+                    tip = bytes.fromhex(self.getblockchaininfo().best_block_hash)
+                    for s in subscriptions:
+                        s.feed.append(tip)
+                return header
+
+        rpc = _MinesAfterFirstHeader()
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, rpc)
+        runner.ports.block_stream_factory = subscribe
+
+        staging = tmp_path / "staging"
+        sd, digests = new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:mid-pass", ("a.txt", b"alpha")
+        )
+        d = digests["a.txt"]
+        _force_content_pending(sd, (d,))
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_for(d)})
+        bury(rpc, MIN_CONFS - 1)
+        register_attested(rpc, d)
+
+        r = runner.invoke(
+            app,
+            stage_args(
+                empty_sha256_root, staging, "upgrade", "obj:mid-pass", "--watch"
+            ),
+        )
+
+        assert rpc.mined
+        assert r.exit_code == ExitCode.SUCCESS, r.output
+        assert load_ots(sd).phase is Phase.CONTENT_UPGRADED

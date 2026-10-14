@@ -1,5 +1,7 @@
 import hashlib
-from collections.abc import Sequence
+import json
+import shutil
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -252,3 +254,35 @@ def setup_at_inventory_upgraded(
     assert state.phase is Phase.INVENTORY_UPGRADED
     assert ots_cache_path(sd, inv_digest).read_bytes() == ots_bytes
     return sd, da, inv_digest, ots_bytes
+
+
+def _verified_in(src: object, digest: str) -> bool:
+    try:
+        parsed = json.loads(Path(str(src)).read_bytes())
+    except OSError, json.JSONDecodeError:
+        return False
+    entry = (parsed.get("proofs") or {}).get(digest)
+    return bool(entry and entry.get("verified") is True)
+
+
+def crash_at(boundary: str, sd: Path, digest: str) -> Callable[..., bool]:
+    cache = ots_cache_path(sd, digest)
+
+    def when(src: object, dst: object, *args: object, **kwargs: object) -> bool:
+        to = Path(str(dst))
+        match boundary:
+            case "cache":
+                return to == cache
+            case "proof":
+                return to == sd / "ots.json" and _verified_in(src, digest)
+            case "proof_torn":
+                if to == sd / "ots.json" and _verified_in(src, digest):
+                    shutil.copyfile(str(src), to.with_name(f"{to.name}.tmp.1"))
+                    return True
+                return False
+            case "companion":
+                staged = to.name in {"inventory.json", "content.json"}
+                return staged and cache.is_file()
+        raise AssertionError(boundary)
+
+    return when

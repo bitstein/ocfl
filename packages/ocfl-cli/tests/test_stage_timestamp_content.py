@@ -8,6 +8,7 @@ from fakes import FakeBitcoinRPC, FakeSimpleProof
 from msgspec.structs import replace
 from ots_helpers import (
     inject_fake_sp,
+    new_ots_staging,
     setup_at_inventory_upgraded,
     write_config,
 )
@@ -32,6 +33,7 @@ from ocfl_lib import (
     get_layout,
     scan_dir,
 )
+from tests.helpers.faults import Crash, CrashBoundary
 
 
 @pytest.fixture
@@ -408,7 +410,7 @@ def _seed_submitting_intent(staging_dir: Path, digests: tuple[str, ...]) -> None
 
 
 class TestCrashSafeResubmit:
-    def test_submitting_intent_is_resubmitted_on_next_run(
+    def test_crash_at_post_leaves_intent_that_next_run_resends(
         self,
         runner: ObjRunner,
         empty_sha256_root: Path,
@@ -418,41 +420,38 @@ class TestCrashSafeResubmit:
     ) -> None:
         write_config(tmp_path, monkeypatch)
         inject_fake_sp(runner, sp_fake)
-
         staging = tmp_path / "staging"
-        r = runner.invoke(
-            app,
-            stage_args(empty_sha256_root, staging, "new", "obj:crash", "--ots"),
+        sd, digests = new_ots_staging(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:crash",
+            ("a.txt", b"alpha"),
+            ("b.txt", b"bravo"),
         )
-        assert r.exit_code == ExitCode.SUCCESS, r.output
-
-        sd = staging_dir(empty_sha256_root, staging, "obj:crash")
-        digests = tuple(_seed_many(3))
-        _seed_inventory_with_digests(sd, list(digests))
-        _seed_submitting_intent(sd, digests)
-
-        r = runner.invoke(
-            app,
-            stage_args(
-                empty_sha256_root,
-                staging,
-                "timestamp",
-                "obj:crash",
-                "--expect",
-                "content",
-            ),
+        sent = tuple(sorted(digests.values()))
+        timestamp = stage_args(
+            empty_sha256_root, staging, "timestamp", "obj:crash", "--expect", "content"
         )
-        assert r.exit_code == ExitCode.SUCCESS, r.output
 
-        assert len(sp_fake._submissions) >= 1
-        recorded_digests = {d for s in sp_fake._submissions for d in s.digests}
-        assert recorded_digests == set(digests)
+        with CrashBoundary(sp_fake, "submit_hashes"), pytest.raises(Crash):
+            runner.invoke(app, timestamp)
 
         state = load_ots(sd)
+        assert state.phase is Phase.DRAFTING
+        assert [(s.status, s.digests, s.attempts) for s in state.submissions] == [
+            ("submitting", sent, 1)
+        ]
+        assert sp_fake._submissions == []
+
+        r = runner.invoke(app, timestamp)
+        assert r.exit_code == ExitCode.SUCCESS, r.output
+        assert [s.digests for s in sp_fake._submissions] == [sent]
+        state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
-        assert all(s.status != "submitting" for s in state.submissions), (
-            "a stale `submitting` intent would resubmit on every run"
-        )
+        assert [(s.status, s.digests, s.attempts) for s in state.submissions] == [
+            ("submitted", sent, 2)
+        ]
 
 
 class TestDoubleSubmitBenign:

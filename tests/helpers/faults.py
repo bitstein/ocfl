@@ -1,5 +1,6 @@
-from dataclasses import dataclass
-from typing import cast
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any, Self, cast
 
 READS = frozenset({"open_file", "read_dir", "exists", "walk_files", "read_tagged"})
 
@@ -44,3 +45,40 @@ def fail_at[F](fs: F, n: int | None) -> tuple[F, Counter]:
     wrapped = cast("F", object.__new__(faulty))
     wrapped.__dict__.update(fs.__dict__)
     return wrapped, counter
+
+
+_ABSENT = object()
+
+
+@dataclass
+class CrashBoundary:
+    """Within the block, `owner.name(...)` raises Crash where `when` holds.
+
+    Crash is a BaseException: no `except Exception` handler runs, so the disk
+    is left as a killed process leaves it.
+    """
+
+    owner: object
+    name: str
+    when: Callable[..., bool] = lambda *args, **kwargs: True
+    crashed: bool = False
+    _saved: object = field(default=_ABSENT, init=False, repr=False)
+
+    def __enter__(self) -> Self:
+        real = getattr(self.owner, self.name)
+        self._saved = vars(self.owner).get(self.name, _ABSENT)
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            if self.when(*args, **kwargs):
+                self.crashed = True
+                raise Crash(f"{self.name}{args[:1]}")
+            return real(*args, **kwargs)
+
+        setattr(self.owner, self.name, call)
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        if self._saved is _ABSENT:
+            delattr(self.owner, self.name)
+        else:
+            setattr(self.owner, self.name, self._saved)

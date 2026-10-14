@@ -38,6 +38,7 @@ from ocfl_cli.store.ots_state import (
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow import timestamp as wf_timestamp
 from ocfl_lib import CommitPlan, LocalFS, StorageRoot
+from tests.helpers.faults import Crash, CrashBoundary
 
 
 class ContentUpgradedStaging(NamedTuple):
@@ -720,6 +721,52 @@ class TestResubmitAtInventoryPending:
         assert load_ots(sd).phase is Phase.INVENTORY_PENDING
         assert len(sp_fake._submissions) == 1
         assert load_ots(sd).inventory == s1.inventory
+
+
+class TestInventoryCrashAtPost:
+    def test_plan_names_the_intent_and_next_run_resends_it(
+        self,
+        runner: ObjRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        staging = tmp_path / "staging"
+        sd, _da, _ots_digest = _setup_content_upgraded(
+            runner, empty_sha256_root, staging, "obj:inv-crash"
+        )
+        timestamp = stage_args(
+            empty_sha256_root,
+            staging,
+            "timestamp",
+            "obj:inv-crash",
+            "--expect",
+            "inventory",
+        )
+
+        with CrashBoundary(sp_fake, "submit_hashes"), pytest.raises(Crash):
+            runner.invoke(app, timestamp)
+
+        state = load_ots(sd)
+        assert state.phase is Phase.CONTENT_UPGRADED
+        assert state.inventory is not None
+        digest = state.inventory.digest
+        (intent,) = [s for s in state.submissions if s.target == "inventory"]
+        assert (intent.status, intent.digests) == ("submitting", (digest,))
+        plan_bytes = plan_path(sd).read_bytes()
+        assert CommitPlan.from_json(plan_bytes).inventory.digest == digest
+
+        r = runner.invoke(app, timestamp)
+        assert r.exit_code == ExitCode.SUCCESS, r.output
+        assert [s.digests for s in sp_fake._submissions] == [(digest,)]
+        state = load_ots(sd)
+        assert state.phase is Phase.INVENTORY_PENDING
+        assert state.inventory is not None
+        assert state.inventory.digest == digest
+        assert plan_path(sd).read_bytes() == plan_bytes
 
 
 class TestNoopAtInventoryUpgraded:

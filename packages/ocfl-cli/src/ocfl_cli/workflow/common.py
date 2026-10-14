@@ -129,9 +129,7 @@ def place_companions(
 
     The companion is the object's committed proof of the digest, or else the
     cached verified one. A path keeps the proof of its digest wherever it
-    moves, so a renamed or re-added file needs no new submission. Idempotent:
-    it runs on every pass, so a crash after the proof was recorded and before
-    its companions were placed heals on the next one.
+    moves, so a renamed or re-added file needs no new submission.
     """
     changed = False
     for d, paths in need.items():
