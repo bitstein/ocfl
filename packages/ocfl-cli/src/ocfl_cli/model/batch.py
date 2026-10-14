@@ -3,20 +3,13 @@ from typing import Literal
 import msgspec
 
 from ocfl_cli.model.phase import TimestampTarget  # noqa: TC001 - msgspec decodes it.
+from ocfl_cli.model.simpleproof import VerifyJobStatus  # noqa: TC001 - msgspec decodes it.
 
 BATCH_FILE_SCHEMA_VERSION = 1
 
 
 BatchObjectStatus = Literal["prepared", "submitted", "upgraded", "failed", "skipped"]
 BatchSubmissionStatus = Literal["pending", "submitted", "failed"]
-BatchVerifyJobStatus = Literal[
-    "PENDING", "IN_PROGRESS", "PROCESSING", "COMPLETED", "FAILED", "EXPIRED"
-]
-BATCH_VERIFY_ACTIVE_STATUSES = frozenset({"PENDING", "IN_PROGRESS", "PROCESSING"})
-BATCH_VERIFY_JOB_STATUSES = frozenset(
-    {*BATCH_VERIFY_ACTIVE_STATUSES, "COMPLETED", "FAILED", "EXPIRED"}
-)
-BATCH_VERIFY_TERMINAL_STATUSES = frozenset({"COMPLETED", "FAILED", "EXPIRED"})
 
 
 class BatchObject(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
@@ -40,7 +33,7 @@ class BatchSubmission(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 class BatchVerifyJob(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     job_id: str
     digests: tuple[str, ...]
-    status: BatchVerifyJobStatus
+    status: VerifyJobStatus
     submitted_at: str
     results_url: str | None = None
     results_url_expires_at: str | None = None

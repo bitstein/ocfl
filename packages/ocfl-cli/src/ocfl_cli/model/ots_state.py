@@ -1,3 +1,5 @@
+from typing import Literal
+
 import msgspec
 
 from ocfl_cli.model.phase import (  # noqa: TC001 - msgspec decodes these at runtime.
@@ -6,6 +8,8 @@ from ocfl_cli.model.phase import (  # noqa: TC001 - msgspec decodes these at run
 )
 
 OTS_STATE_VERSION = 2
+
+SubmissionStatus = Literal["submitting", "submitted", "failed"]
 
 
 class Proof(msgspec.Struct, frozen=True, kw_only=True):
@@ -21,7 +25,7 @@ class Proof(msgspec.Struct, frozen=True, kw_only=True):
 class Submission(msgspec.Struct, frozen=True):
     submitted_at: str
     digests: tuple[str, ...]
-    status: str  # "submitting" | "submitted" | "failed"
+    status: SubmissionStatus
     target: TimestampTarget
     attempts: int = 0
     batch_id: str | None = None
@@ -38,7 +42,6 @@ class CalendarAttestation(msgspec.Struct, frozen=True):
 class VerifyJob(msgspec.Struct, frozen=True):
     job_id: str
     digests: tuple[str, ...]
-    # Canonical SimpleProof statuses; unknown future statuses remain loadable.
     status: str
     total_hashes: int | None = None
     verified_hashes: int | None = None
@@ -51,11 +54,6 @@ class VerifyJob(msgspec.Struct, frozen=True):
     attestation_snapshots: dict[str, tuple[CalendarAttestation, ...]] = msgspec.field(
         default_factory=dict
     )
-
-
-VERIFY_JOB_STATUSES = frozenset(
-    {"PENDING", "IN_PROGRESS", "PROCESSING", "COMPLETED", "FAILED", "EXPIRED"}
-)
 
 
 class StagedInventory(msgspec.Struct, frozen=True):

@@ -29,7 +29,8 @@ def encode_ots_state(state: OtsState) -> dict[str, Any]:
 
 
 def decode_ots_state(raw: dict[str, Any]) -> OtsState:
-    from ocfl_cli.model.ots_state import VERIFY_JOB_STATUSES, OtsState
+    from ocfl_cli.model.ots_state import OtsState
+    from ocfl_cli.model.simpleproof import VerifyJobStatus
 
     raw = copy.deepcopy(raw)
     try:
@@ -37,7 +38,7 @@ def decode_ots_state(raw: dict[str, Any]) -> OtsState:
     except msgspec.ValidationError as e:
         raise StagingError(f"ots.json: invalid OTS state: {e}") from None
     for job in state.verify_jobs:
-        if job.status not in VERIFY_JOB_STATUSES:
+        if job.status not in VerifyJobStatus:
             logger.warning(
                 "unknown verify job status %r for job %s; treating as in-progress",
                 job.status,

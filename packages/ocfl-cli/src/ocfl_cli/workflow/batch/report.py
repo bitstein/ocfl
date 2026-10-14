@@ -8,12 +8,16 @@ from ocfl_cli.errors import (
     StagingError,
     UsageError,
 )
-from ocfl_cli.model import batch as batch_model
+from ocfl_cli.model import batch as batch_model  # noqa: TC001 - get_type_hints reads it.
 from ocfl_cli.model.ots_state import (  # noqa: TC001 - get_type_hints reads it.
     OtsState,
 )
 from ocfl_cli.model.phase import (
     TimestampTarget,  # noqa: TC001 - get_type_hints reads it.
+)
+from ocfl_cli.model.simpleproof import (
+    ACTIVE_VERIFY_STATUSES,
+    VerifyJobStatus,
 )
 from ocfl_cli.store import batch as batch_state
 from ocfl_cli.store.ots_state import (
@@ -46,7 +50,7 @@ class BatchVerboseDigestOutput(TypedDict):
     verified: bool
     record_id: str | None
     submit_status: batch_model.BatchSubmissionStatus | None
-    verify_status: batch_model.BatchVerifyJobStatus | None
+    verify_status: VerifyJobStatus | None
 
 
 class BatchStatusObjectOutput(TypedDict):
@@ -76,7 +80,7 @@ class BatchSubmissionOutput(TypedDict):
 class BatchVerifyJobOutput(TypedDict):
     job_id: str
     digests: list[str]
-    status: batch_model.BatchVerifyJobStatus
+    status: VerifyJobStatus
     submitted_at: str
     results_url: str | None
     results_url_expires_at: str | None
@@ -400,10 +404,8 @@ def submit_status_by_digest(
 
 def verify_status_by_digest(
     batch: batch_model.BatchFile, row: batch_model.BatchObject
-) -> dict[str, batch_model.BatchVerifyJobStatus | None]:
-    statuses: dict[str, batch_model.BatchVerifyJobStatus | None] = dict.fromkeys(
-        row.digests
-    )
+) -> dict[str, VerifyJobStatus | None]:
+    statuses: dict[str, VerifyJobStatus | None] = dict.fromkeys(row.digests)
     wanted = set(row.digests)
     for job in batch.verify_jobs:
         for digest in job.digests:
@@ -455,8 +457,7 @@ def verify_job_covers(
 ) -> bool:
     wanted = set(row.digests)
     return any(
-        job.status in batch_model.BATCH_VERIFY_ACTIVE_STATUSES
-        and wanted.issubset(set(job.digests))
+        job.status in ACTIVE_VERIFY_STATUSES and wanted.issubset(set(job.digests))
         for job in batch.verify_jobs
     )
 
@@ -572,7 +573,7 @@ def batch_verified_digest_counts(
 def batch_verify_job_status_counts(batch: batch_model.BatchFile) -> str:
     if not batch.verify_jobs:
         return "none"
-    counts: dict[str, int] = dict.fromkeys(batch_model.BATCH_VERIFY_JOB_STATUSES, 0)
+    counts = dict.fromkeys(VerifyJobStatus, 0)
     for job in batch.verify_jobs:
         counts[job.status] += 1
     return " ".join(

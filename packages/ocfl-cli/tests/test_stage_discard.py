@@ -13,6 +13,7 @@ from ocfl_cli.model.ots_state import (
     Proof,
     StagedInventory,
     Submission,
+    SubmissionStatus,
     VerifyJob,
 )
 from ocfl_cli.model.phase import Phase, TimestampTarget
@@ -80,7 +81,7 @@ def _inv_proof_entry() -> Proof:
 def _submission(
     digest: str,
     *,
-    status: str = "submitted",
+    status: SubmissionStatus = "submitted",
     batch_id: str | None = None,
     target: TimestampTarget = TimestampTarget.CONTENT,
 ) -> Submission:

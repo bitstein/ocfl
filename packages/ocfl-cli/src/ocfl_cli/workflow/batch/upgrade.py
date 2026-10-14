@@ -11,6 +11,11 @@ from ocfl_cli.errors import (
     SimpleProofTransient,
 )
 from ocfl_cli.model import batch as batch_model
+from ocfl_cli.model.simpleproof import (
+    ACTIVE_VERIFY_STATUSES,
+    TERMINAL_VERIFY_STATUSES,
+    VerifyJobStatus,
+)
 from ocfl_cli.ots.simpleproof import VERIFY_BATCH_CHUNK_SIZE
 from ocfl_cli.store import batch as batch_state
 from ocfl_cli.store.ots_state import (
@@ -45,9 +50,9 @@ def covered_verify_digests(batch: batch_model.BatchFile) -> set[str]:
     return {
         digest
         for job in batch.verify_jobs
-        if job.status in batch_model.BATCH_VERIFY_ACTIVE_STATUSES
+        if job.status in ACTIVE_VERIFY_STATUSES
         or (
-            job.status == "COMPLETED"
+            job.status == VerifyJobStatus.COMPLETED
             and job.last_error != fixed_batch_reason("sp_partial_results")
         )
         for digest in job.digests
@@ -114,7 +119,7 @@ def submit_batch_verify_jobs(
             failed = batch_model.BatchVerifyJob(
                 job_id=f"failed-{len(jobs) + 1}",
                 digests=chunk,
-                status="FAILED",
+                status=VerifyJobStatus.FAILED,
                 submitted_at=batch_state.utc_iso_z(runtime.clock.now()),
                 attempts=1,
                 last_error=str(e),
@@ -136,7 +141,7 @@ def submit_batch_verify_jobs(
             batch_model.BatchVerifyJob(
                 job_id=job_id,
                 digests=chunk,
-                status="IN_PROGRESS",
+                status=VerifyJobStatus.IN_PROGRESS,
                 submitted_at=batch_state.utc_iso_z(runtime.clock.now()),
                 attempts=1,
             )
@@ -159,7 +164,7 @@ def poll_batch_verify_jobs(
     rows = list(batch.objects)
     changed = False
     for job in batch.verify_jobs:
-        if job.status not in batch_model.BATCH_VERIFY_ACTIVE_STATUSES:
+        if job.status not in ACTIVE_VERIFY_STATUSES:
             jobs.append(job)
             continue
         try:
@@ -168,7 +173,7 @@ def poll_batch_verify_jobs(
             jobs.append(
                 msgspec.structs.replace(
                     job,
-                    status="FAILED",
+                    status=VerifyJobStatus.FAILED,
                     completed_at=batch_state.utc_iso_z(runtime.clock.now()),
                     last_error=str(e),
                 )
@@ -188,7 +193,7 @@ def poll_batch_verify_jobs(
             jobs.append(
                 msgspec.structs.replace(
                     job,
-                    status="FAILED",
+                    status=VerifyJobStatus.FAILED,
                     completed_at=batch_state.utc_iso_z(runtime.clock.now()),
                     last_error=str(e),
                 )
@@ -205,9 +210,9 @@ def poll_batch_verify_jobs(
             changed = True
             continue
         status = (
-            poll.status
-            if poll.status in batch_model.BATCH_VERIFY_JOB_STATUSES
-            else "IN_PROGRESS"
+            VerifyJobStatus(poll.status)
+            if poll.status in VerifyJobStatus
+            else VerifyJobStatus.IN_PROGRESS
         )
         updated = msgspec.structs.replace(
             job,
@@ -215,20 +220,20 @@ def poll_batch_verify_jobs(
             results_url=poll.results_url or job.results_url,
             completed_at=(
                 batch_state.utc_iso_z(runtime.clock.now())
-                if status in batch_model.BATCH_VERIFY_TERMINAL_STATUSES
+                if status in TERMINAL_VERIFY_STATUSES
                 else None
             ),
             last_error=(
                 fixed_batch_reason("verify_job_failed")
-                if status == "FAILED"
+                if status == VerifyJobStatus.FAILED
                 else fixed_batch_reason("results_expired")
-                if status == "EXPIRED"
+                if status == VerifyJobStatus.EXPIRED
                 else job.last_error
             ),
         )
         jobs.append(updated)
         changed = changed or updated != job
-        if status == "FAILED":
+        if status == VerifyJobStatus.FAILED:
             affected = set(job.digests)
             rows = [
                 msgspec.structs.replace(
@@ -238,7 +243,7 @@ def poll_batch_verify_jobs(
                 else row
                 for row in rows
             ]
-        if status == "EXPIRED":
+        if status == VerifyJobStatus.EXPIRED:
             affected = set(job.digests)
             rows = [
                 msgspec.structs.replace(
@@ -333,13 +338,13 @@ def ingest_batch_verify_jobs(
     jobs = list(batch.verify_jobs)
     changed = False
     for index, job in enumerate(jobs):
-        if job.status != "COMPLETED" or job.results_url is None:
+        if job.status != VerifyJobStatus.COMPLETED or job.results_url is None:
             continue
         try:
             downloads = sp.download_results(job.results_url, set(job.digests))
         except SimpleProofBadRequest as e:
             jobs[index] = msgspec.structs.replace(
-                job, status="EXPIRED", last_error=str(e)
+                job, status=VerifyJobStatus.EXPIRED, last_error=str(e)
             )
             affected = set(job.digests)
             rows = {
@@ -356,7 +361,7 @@ def ingest_batch_verify_jobs(
             continue
         except SimpleProofTransient as e:
             jobs[index] = msgspec.structs.replace(
-                job, status="FAILED", last_error=str(e)
+                job, status=VerifyJobStatus.FAILED, last_error=str(e)
             )
             affected = set(job.digests)
             rows = {
@@ -374,7 +379,7 @@ def ingest_batch_verify_jobs(
         except AttestationMismatchError:
             jobs[index] = msgspec.structs.replace(
                 job,
-                status="COMPLETED",
+                status=VerifyJobStatus.COMPLETED,
                 last_error=fixed_batch_reason("attestation_mismatch"),
             )
             affected = set(job.digests)

@@ -15,6 +15,7 @@ from ocfl_cli.model.ots_state import (
     Proof,
     VerifyJob,
 )
+from ocfl_cli.model.simpleproof import TERMINAL_VERIFY_STATUSES, VerifyJobStatus
 from ocfl_cli.store.ingest import ingest_file
 from ocfl_cli.store.ots_state import (
     ots_cache_path,
@@ -160,17 +161,6 @@ def place_companions(
     return changed
 
 
-def is_failed_verify_job(status: str) -> bool:
-    # EXPIRED is dead like FAILED: the job will never yield a result, so its
-    # digests are not covered and must be resubmitted (cf. batch.py terminal
-    # set). Treating it as still-active stalls per-object --upgrade forever.
-    return status in {"FAILED", "EXPIRED"}
-
-
-def is_terminal_verify_job(status: str) -> bool:
-    return status in {"COMPLETED", "FAILED", "EXPIRED"}
-
-
 def verify_job_from_ack(
     ack: VerifyBatchAck,
     digests: tuple[str, ...],
@@ -178,7 +168,7 @@ def verify_job_from_ack(
     return VerifyJob(
         job_id=ack.job_id,
         digests=digests,
-        status="IN_PROGRESS",
+        status=VerifyJobStatus.IN_PROGRESS,
         submitted_hashes=ack.submitted_hashes,
         total_documents_found=ack.total_documents_found,
     )
@@ -222,7 +212,7 @@ def update_head_state(inv: Inventory, state: StateMap) -> Inventory:
 def poll_outstanding_jobs(state: OtsState, sp: SimpleProofClient) -> OtsState:
     jobs: list[VerifyJob] = []
     for job in state.verify_jobs:
-        if is_terminal_verify_job(job.status):
+        if job.status in TERMINAL_VERIFY_STATUSES:
             jobs.append(job)
             continue
         poll = sp.poll_job(job.job_id)

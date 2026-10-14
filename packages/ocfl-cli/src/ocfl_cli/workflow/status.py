@@ -4,14 +4,16 @@ from typing import TYPE_CHECKING, Any, TypedDict
 
 from ocfl_cli.model.metadata import NextActionKind
 from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.simpleproof import (
+    RESUBMIT_VERIFY_STATUSES,
+    TERMINAL_VERIFY_STATUSES,
+)
 from ocfl_cli.store.ots_state import (
     load_ots,
 )
 from ocfl_cli.workflow import hints
 from ocfl_cli.workflow.common import (
     StateMap,
-    is_failed_verify_job,
-    is_terminal_verify_job,
     ordinary_digests,
 )
 from ocfl_lib import (
@@ -85,7 +87,8 @@ def next_action_for(
             verified = {d for d in state.pending_digests if state.verified(d)}
             still_pending = set(state.pending_digests) - verified
             failed_covers = any(
-                is_failed_verify_job(j.status) and (set(j.digests) & still_pending)
+                j.status in RESUBMIT_VERIFY_STATUSES
+                and (set(j.digests) & still_pending)
                 for j in state.verify_jobs
             )
             kind = (
@@ -101,7 +104,7 @@ def next_action_for(
                 NextActionKind.RETRY_INVENTORY
                 if ip is not None
                 and any(
-                    is_failed_verify_job(j.status) and ip.digest in j.digests
+                    j.status in RESUBMIT_VERIFY_STATUSES and ip.digest in j.digests
                     for j in state.verify_jobs
                 )
                 else NextActionKind.UPGRADE_INVENTORY
@@ -154,7 +157,7 @@ def _build_outstanding_jobs(
 ) -> list[_OutstandingJobJson]:
     outstanding: list[_OutstandingJobJson] = []
     for j in state.verify_jobs:
-        if is_terminal_verify_job(j.status):
+        if j.status in TERMINAL_VERIFY_STATUSES:
             continue
         submitted_at = _submission_submitted_at(state, j.digests)
         outstanding.append(
@@ -177,7 +180,7 @@ def _build_counts(state: OtsState, non_ots: set[str]) -> dict[str, int]:
     non_failed_set: set[str] = set()
     failed_set: set[str] = set()
     for j in state.verify_jobs:
-        (failed_set if is_failed_verify_job(j.status) else non_failed_set).update(
+        (failed_set if j.status in RESUBMIT_VERIFY_STATUSES else non_failed_set).update(
             j.digests
         )
     return {

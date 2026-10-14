@@ -38,7 +38,6 @@ from ocfl_cli.errors import (
 )
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app, production_ports
-from ocfl_cli.model import batch as batch_model
 from ocfl_cli.model.batch import (
     BatchFile,
     BatchObject,
@@ -59,6 +58,7 @@ from ocfl_cli.model.simpleproof import (
     JobStatus,
     SimpleProofDownloadResult,
     SubmitResult,
+    VerifyJobStatus,
 )
 from ocfl_cli.stage import batch as stage_batch
 from ocfl_cli.store import batch as batch_state
@@ -111,9 +111,11 @@ def test_fixed_batch_reasons_are_canonicalized_through_helper() -> None:
     ] == list(batch_reasons.FIXED_BATCH_REASONS)
 
 
-@pytest.mark.parametrize("status", ["PENDING", "PROCESSING"])
+@pytest.mark.parametrize(
+    "status", [VerifyJobStatus.PENDING, VerifyJobStatus.PROCESSING]
+)
 def test_batch_verify_active_statuses_include_simpleproof_v2_states(
-    status: batch_model.BatchVerifyJobStatus,
+    status: VerifyJobStatus,
 ) -> None:
     digest = "a" * 64
     batch = BatchFile(
@@ -1929,7 +1931,7 @@ def test_batch_status_json_contract_uses_canonical_next(
                 BatchVerifyJob(
                     job_id="verify-1",
                     digests=(digest_a, digest_b),
-                    status="IN_PROGRESS",
+                    status=VerifyJobStatus.IN_PROGRESS,
                     submitted_at="2026-05-12T10:03:00Z",
                     attempts=1,
                 ),
@@ -2037,7 +2039,7 @@ def test_batch_status_healthy_next_strings_are_canonical(
                 BatchVerifyJob(
                     job_id="verify-d",
                     digests=(digest_d,),
-                    status="IN_PROGRESS",
+                    status=VerifyJobStatus.IN_PROGRESS,
                     submitted_at="2026-05-12T10:03:00Z",
                 ),
             ),

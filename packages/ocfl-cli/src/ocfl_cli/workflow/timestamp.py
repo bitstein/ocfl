@@ -15,6 +15,7 @@ from ocfl_cli.model.phase import (
     is_legal,
     target_for,
 )
+from ocfl_cli.model.simpleproof import RESUBMIT_VERIFY_STATUSES, VerifyJobStatus
 from ocfl_cli.ots.bitcoin import (
     PendingVerification,
     VerifiedAttestation,
@@ -34,7 +35,6 @@ from ocfl_cli.workflow import targets
 from ocfl_cli.workflow.common import (
     JobProgress,
     compute_job_progress,
-    is_failed_verify_job,
     log_phase,
     poll_outstanding_jobs,
     record_proof,
@@ -447,7 +447,7 @@ def _queue_verify_jobs(
     covered = {
         d
         for j in state.verify_jobs
-        if not is_failed_verify_job(j.status)
+        if j.status not in RESUBMIT_VERIFY_STATUSES
         for d in j.digests
     }
     jobs = list(state.verify_jobs)
@@ -481,7 +481,7 @@ def _ingest_completed_jobs(
     btc: BitcoinRPC,
 ) -> OtsState:
     for job in state.verify_jobs:
-        if job.status != "COMPLETED":
+        if job.status != VerifyJobStatus.COMPLETED:
             continue
         wanted = {
             d for d in job.digests if not state.verified(d) and rules.in_scope(state, d)
