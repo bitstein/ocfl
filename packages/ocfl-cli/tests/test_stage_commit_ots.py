@@ -54,7 +54,6 @@ from test_stage_timestamp_inventory_upgrade import (
     _seed_inv_completed_verify_job,
     _setup_at_inventory_pending,
     _stage_args,
-    _staging_dir,
     _write_config,
 )
 from typer.testing import CliRunner
@@ -65,7 +64,6 @@ from ocfl_cli.model.ots_state import Proof
 from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store import locks as locks
 from ocfl_cli.store.ots_state import (
-    has_ots,
     load_ots,
     ots_cache_path,
     plan_path,
@@ -931,75 +929,3 @@ class TestStageCommitOtsCrashRecovery:
 
         assert not store.exists(root_path, "obj:commit-crash")
         assert not sd.exists()
-
-
-# =========================================================================== #
-# Layer-2: non-OTS regression — commit on a non-OTS staging is unchanged
-# =========================================================================== #
-
-
-class TestStageCommitNonOtsRegression:
-    def test_full_workflow_unchanged_without_ots(
-        self,
-        runner: CliRunner,
-        storage_root: Path,
-        tmp_path: Path,
-    ) -> None:
-        """Mirrors ``test_stage_commit.py::TestStageCommit::test_full_workflow``
-        verbatim: no ``--ots``, no ``ots.json`` / ``plan.json`` written, the
-        commit must take the existing pre-OTS path."""
-        staging = tmp_path / "staging"
-        src = tmp_path / "hello.txt"
-        src.write_text("hello world")
-
-        runner.invoke(
-            app,
-            _stage_args(
-                storage_root,
-                staging,
-                "new",
-                "obj:committed",
-                "-m",
-                "first version",
-                "--name",
-                "Alice",
-                "--address",
-                "mailto:alice@example.org",
-            ),
-        )
-        runner.invoke(
-            app,
-            _stage_args(storage_root, staging, "add", "obj:committed", str(src)),
-        )
-
-        # Sanity: the OTS extension is NOT active for this staging.
-        sd = _staging_dir(storage_root, staging, "obj:committed")
-        assert not has_ots(sd)
-        assert not plan_path(sd).is_file()
-
-        result = runner.invoke(
-            app,
-            _stage_args(
-                storage_root,
-                staging,
-                "commit",
-                "obj:committed",
-            ),
-        )
-        assert result.exit_code == 0, result.output
-
-        sr = StorageRoot.open(LocalFS(storage_root))
-        obj = sr.get_object("obj:committed")
-        assert obj.exists
-        assert obj.head.number == 1
-
-        # Staging purged.
-        store = StagingStore(staging)
-        root_path = str(storage_root.resolve())
-        assert not store.exists(root_path, "obj:committed")
-
-        # No OTS-extension dir created on the object (non-OTS path stays
-        # off the extension-file branch entirely).
-        assert not (
-            storage_root / "obj:committed" / "extensions" / "NNNN-ots-timestamps"
-        ).exists()

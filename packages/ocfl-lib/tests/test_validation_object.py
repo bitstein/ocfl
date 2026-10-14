@@ -16,11 +16,6 @@ FIXTURES_ROOT = Path(__file__).resolve().parents[3] / "tests" / "fixtures"
 
 _CODE_RE = re.compile(r"[EW]\d+")
 
-# Fixtures requiring deeper cross-version checks not yet implemented
-_XFAIL_BAD: frozenset[str] = frozenset()
-
-_XFAIL_BAD_EXPECTED_CODES: dict[str, str] = {}
-
 
 def _parse_codes(dirname: str) -> list[str]:
     """Extract base codes from fixture dir names."""
@@ -63,25 +58,17 @@ class TestGoodObjects:
 )
 class TestBadObjects:
     def test_invalid(self, name: str, path: Path):
-        if name in _XFAIL_BAD:
-            pytest.xfail("not yet implemented")
         fsys = LocalFS(path)
         r = validate_object(fsys, "")
         assert not r.is_valid, f"{name}: expected invalid"
 
     def test_expected_codes(self, name: str, path: Path):
-        if name in _XFAIL_BAD:
-            pytest.xfail("not yet implemented")
         codes = _parse_codes(name)
         if not codes:
             pytest.skip("no code in dir name")
         fsys = LocalFS(path)
         r = validate_object(fsys, "")
         actual = [e.code for e in r.errors]
-        if name in _XFAIL_BAD_EXPECTED_CODES and not all(
-            _has_fixture_error_code(r, code) for code in codes
-        ):
-            pytest.xfail(_XFAIL_BAD_EXPECTED_CODES[name])
         for code in codes:
             assert _has_fixture_error_code(r, code), (
                 f"{name}: expected {code}, got {actual}"

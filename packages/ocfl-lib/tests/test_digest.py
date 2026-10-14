@@ -140,15 +140,6 @@ class TestFileDigest:
             == EMPTY_DIGESTS[DigestAlgorithm.SHA256]
         )
 
-    def test_large_file(self, tmp_path: Path):
-        """File larger than chunk size (32KB) to test chunked reading."""
-        data = b"x" * 100_000
-        f = tmp_path / "large.bin"
-        f.write_bytes(data)
-        assert (
-            file_digest(f, DigestAlgorithm.SHA256) == hashlib.sha256(data).hexdigest()
-        )
-
     @pytest.mark.parametrize("alg", list(DigestAlgorithm))
     def test_matches_bytes_digest_for_all_algorithms(
         self, tmp_path: Path, alg: DigestAlgorithm

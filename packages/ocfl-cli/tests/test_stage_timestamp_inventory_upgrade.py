@@ -571,15 +571,13 @@ class TestInventoryCrashRecovery:
 
     Boundaries tested (mirrors content --upgrade with step 2 vacuous):
       - ``before_cache``: fault before atomic cache write
-      - ``after_cache_no_op``: ingest step is vacuous for inventory; no
-        fault to install — assert single-pass convergence trivially
       - ``during_ots_save``: ots.json save raises mid-write (atomicity
         guards must keep the prior file readable)
     """
 
     @pytest.mark.parametrize(
         "fault_at",
-        ["before_cache", "after_cache_no_op", "during_ots_save"],
+        ["before_cache", "during_ots_save"],
     )
     def test_fault_at_boundary_converges_on_restart(
         self,
@@ -605,35 +603,34 @@ class TestInventoryCrashRecovery:
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
         _register_attested(btc_fake.rpc, inv_digest)
 
-        if fault_at != "after_cache_no_op":
-            _install_inv_crash_fault(monkeypatch, fault_at, sd, inv_digest)
+        _install_inv_crash_fault(monkeypatch, fault_at, sd, inv_digest)
 
-            # Round 1: expect non-zero exit (crash).
-            r = runner.invoke(
-                app,
-                _stage_args(
-                    empty_sha256_root,
-                    staging,
-                    "upgrade",
-                    "obj:inv-crash",
-                    "--expect",
-                    "inventory",
-                ),
-            )
-            assert r.exit_code != 0, r.output
-            # Crash-recovery invariant: ots.json is never torn (always parses).
-            post_crash = load_ots(sd)
-            # If verified=True is recorded, cache bytes must already exist
-            # (the implication direction of the three-step invariant).
-            if (
-                post_crash.inventory_proof is not None
-                and post_crash.inventory_proof.verified is True
-            ):
-                assert ots_cache_path(sd, inv_digest).is_file()
+        # Round 1: expect non-zero exit (crash).
+        r = runner.invoke(
+            app,
+            _stage_args(
+                empty_sha256_root,
+                staging,
+                "upgrade",
+                "obj:inv-crash",
+                "--expect",
+                "inventory",
+            ),
+        )
+        assert r.exit_code != 0, r.output
+        # Crash-recovery invariant: ots.json is never torn (always parses).
+        post_crash = load_ots(sd)
+        # If verified=True is recorded, cache bytes must already exist
+        # (the implication direction of the three-step invariant).
+        if (
+            post_crash.inventory_proof is not None
+            and post_crash.inventory_proof.verified is True
+        ):
+            assert ots_cache_path(sd, inv_digest).is_file()
 
-            _uninstall_crash_fault(monkeypatch)
+        _uninstall_crash_fault(monkeypatch)
 
-        # Round 2 (or sole pass): converges to inventory-upgraded.
+        # Round 2: converges to inventory-upgraded.
         r = runner.invoke(
             app,
             _stage_args(
