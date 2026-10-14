@@ -2,7 +2,7 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from platformdirs import user_config_path
 from pydantic import BaseModel, ValidationError
@@ -37,6 +37,13 @@ __all__ = [
 _SECRET_KEYS = frozenset({"access_token", "api_key", "rpc_user", "rpc_password"})
 REDACTED = "<redacted>"
 
+type SectionName = Literal["simpleproof", "bitcoin"]
+type Section[T: BaseSettings] = T | ConfigError | None
+
+
+def _loaded[T: BaseSettings](section: Section[T]) -> T | None:
+    return None if isinstance(section, ConfigError) else section
+
 
 @dataclass(frozen=True)
 class Config:
@@ -44,17 +51,27 @@ class Config:
     defaults_digest: str | None = None
     defaults_suppress: tuple[str, ...] = ()
     archives: dict[str, ArchiveConfig] = field(default_factory=dict)
-    simpleproof: SimpleProofConfig | None = None
-    bitcoin: BitcoinConfig | None = None
-    # Why a present `[simpleproof]` / `[bitcoin]` section did not load. The
-    # section is then None: only commands that need it fail (`require`).
-    section_errors: dict[str, ConfigError] = field(default_factory=dict)
+    simpleproof_section: Section[SimpleProofConfig] = None
+    bitcoin_section: Section[BitcoinConfig] = None
 
-    def require(self, section: str) -> None:
+    @property
+    def simpleproof(self) -> SimpleProofConfig | None:
+        return _loaded(self.simpleproof_section)
+
+    @property
+    def bitcoin(self) -> BitcoinConfig | None:
+        return _loaded(self.bitcoin_section)
+
+    def sections(self) -> dict[SectionName, Section[BaseSettings]]:
+        return {
+            "simpleproof": self.simpleproof_section,
+            "bitcoin": self.bitcoin_section,
+        }
+
+    def require(self, section: SectionName) -> None:
         """Raise the error that kept `[section]` from loading, if one did."""
-        error = self.section_errors.get(section)
-        if error is not None:
-            raise error
+        if isinstance(state := self.sections()[section], ConfigError):
+            raise state
 
     def archive(self, name: str) -> ArchiveConfig | None:
         return self.archives.get(name)
@@ -121,38 +138,25 @@ def _build(data: dict[str, Any], path: Path) -> Config:
             f"archives.{name}",
         )
 
-    # The OTS sections carry secrets from the environment; a missing or bad
-    # one fails only the commands that need the section (`Config.require`).
-    section_errors: dict[str, ConfigError] = {}
-    try:
-        simpleproof = _build_section(
-            SimpleProofConfig,
-            data.get("simpleproof"),
-            path,
-            "simpleproof",
-            forbidden_keys=("access_token", "api_key"),
-        )
-    except ConfigError as e:
-        simpleproof, section_errors["simpleproof"] = None, e
-    try:
-        bitcoin = _build_section(
-            BitcoinConfig,
-            data.get("bitcoin"),
-            path,
-            "bitcoin",
-            forbidden_keys=("rpc_user", "rpc_password"),
-        )
-    except ConfigError as e:
-        bitcoin, section_errors["bitcoin"] = None, e
-
     return Config(
         path=path,
         defaults_digest=d_digest,
         defaults_suppress=d_suppress or (),
         archives=archives,
-        simpleproof=simpleproof,
-        bitcoin=bitcoin,
-        section_errors=section_errors,
+        simpleproof_section=_build_section(
+            SimpleProofConfig,
+            data.get("simpleproof"),
+            path,
+            "simpleproof",
+            forbidden_keys=("access_token", "api_key"),
+        ),
+        bitcoin_section=_build_section(
+            BitcoinConfig,
+            data.get("bitcoin"),
+            path,
+            "bitcoin",
+            forbidden_keys=("rpc_user", "rpc_password"),
+        ),
     )
 
 
@@ -163,12 +167,15 @@ def _build_section[T: BaseSettings](
     label: str,
     *,
     forbidden_keys: tuple[str, ...] = (),
-) -> T | None:
+) -> Section[T]:
     if section is None:
         return None
-    section = _require_table(section, path, label)
-    _reject_forbidden_keys(cls, section, path, label, forbidden_keys)
-    return _validate(cls, section, path, label)
+    try:
+        section = _require_table(section, path, label)
+        _reject_forbidden_keys(cls, section, path, label, forbidden_keys)
+        return _validate(cls, section, path, label)
+    except ConfigError as e:
+        return e
 
 
 def _validate[T: BaseModel](
@@ -232,7 +239,11 @@ def redacted(cfg: Config) -> dict[str, Any]:
         "archives": {name: section(archive) for name, archive in cfg.archives.items()},
         "simpleproof": section(cfg.simpleproof),
         "bitcoin": section(cfg.bitcoin),
-        "errors": {name: str(e) for name, e in cfg.section_errors.items()},
+        "errors": {
+            name: str(state)
+            for name, state in cfg.sections().items()
+            if isinstance(state, ConfigError)
+        },
     }
 
 

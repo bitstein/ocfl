@@ -201,6 +201,36 @@ class TestEffective:
         arch = cfg.archive("strict")
         assert cfg.effective_suppress(arch) == frozenset()
 
+    def test_loaded_suppress_unset_empty_and_list(self, tmp_path):
+        path = _write_config(
+            tmp_path / "c.toml",
+            """
+            [defaults]
+            suppress = ["W004"]
+
+            [archives.inherit]
+            root = "/a"
+
+            [archives.strict]
+            root = "/b"
+            suppress = []
+
+            [archives.own]
+            root = "/c"
+            suppress = ["W007", "W013"]
+            """,
+        )
+        cfg = load_config(path)
+        assert {
+            name: cfg.effective_suppress(cfg.archive(name))
+            for name in ("inherit", "strict", "own")
+        } == {
+            "inherit": frozenset({"W004"}),
+            "strict": frozenset(),
+            "own": frozenset({"W007", "W013"}),
+        }
+        assert cfg.effective_suppress(None) == frozenset({"W004"})
+
     def test_implicit_default_single_archive(self):
         cfg = Config(archives={"only": ArchiveConfig(name="only", root="/x")})
         default = cfg.implicit_default()

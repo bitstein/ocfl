@@ -51,51 +51,52 @@ def _env_file() -> Check:
     return _ok("env_file", str(path) if path is not None else "none (no secrets file)")
 
 
-def _section_error(cfg: Config, name: str) -> Check | None:
-    error = cfg.section_errors.get(name)
-    return None if error is None else _fail(name, str(error), ErrorClass.CONFIG)
-
-
 def _simpleproof(cfg: Config, sp_factory: SpClientFactory) -> Check:
-    if (failed := _section_error(cfg, "simpleproof")) is not None:
-        return failed
-    if cfg.simpleproof is None:
-        return _ok("simpleproof", "not configured")
-    try:
-        sp_factory(cfg).check_access()
-    except SimpleProofAuthError as e:
-        return _fail("simpleproof", str(e), ErrorClass.CONFIG)
-    except SimpleProofError as e:
-        return _fail("simpleproof", str(e), ErrorClass.SERVICE)
-    return _ok("simpleproof", f"{cfg.simpleproof.base_url}: access token accepted")
+    match cfg.simpleproof_section:
+        case ConfigError() as error:
+            return _fail("simpleproof", str(error), ErrorClass.CONFIG)
+        case None:
+            return _ok("simpleproof", "not configured")
+        case sp:
+            try:
+                sp_factory(cfg).check_access()
+            except SimpleProofAuthError as e:
+                return _fail("simpleproof", str(e), ErrorClass.CONFIG)
+            except SimpleProofError as e:
+                return _fail("simpleproof", str(e), ErrorClass.SERVICE)
+            return _ok("simpleproof", f"{sp.base_url}: access token accepted")
 
 
 def _bitcoin_rpc(cfg: Config, btc_factory: BtcRpcFactory) -> Check:
-    if (error := cfg.section_errors.get("bitcoin")) is not None:
-        return _fail("bitcoin_rpc", str(error), ErrorClass.CONFIG)
-    if cfg.bitcoin is None:
-        return _ok("bitcoin_rpc", "not configured")
-    try:
-        info = btc_factory(cfg).getblockchaininfo()
-    except BitcoinRpcAuthError as e:
-        return _fail("bitcoin_rpc", str(e), ErrorClass.CONFIG)
-    except BitcoinRpcError as e:
-        return _fail("bitcoin_rpc", str(e), ErrorClass.SERVICE)
-    sync = "syncing" if info.initial_block_download else "in sync"
-    return _ok("bitcoin_rpc", f"{cfg.bitcoin.rpc_url}: height {info.height}, {sync}")
+    match cfg.bitcoin_section:
+        case ConfigError() as error:
+            return _fail("bitcoin_rpc", str(error), ErrorClass.CONFIG)
+        case None:
+            return _ok("bitcoin_rpc", "not configured")
+        case btc:
+            try:
+                info = btc_factory(cfg).getblockchaininfo()
+            except BitcoinRpcAuthError as e:
+                return _fail("bitcoin_rpc", str(e), ErrorClass.CONFIG)
+            except BitcoinRpcError as e:
+                return _fail("bitcoin_rpc", str(e), ErrorClass.SERVICE)
+            sync = "syncing" if info.initial_block_download else "in sync"
+            return _ok("bitcoin_rpc", f"{btc.rpc_url}: height {info.height}, {sync}")
 
 
 def _bitcoin_zmq(cfg: Config) -> Check:
-    if "bitcoin" in cfg.section_errors:
-        return _fail("bitcoin_zmq", "[bitcoin] did not load", ErrorClass.CONFIG)
-    if cfg.bitcoin is None:
-        return _ok("bitcoin_zmq", "not configured")
-    endpoint = cfg.bitcoin.zmq_endpoint
-    try:
-        probe_zmq_endpoint(endpoint, timeout_s=ZMQ_PROBE_TIMEOUT_SECONDS)
-    except OSError as e:
-        return _fail("bitcoin_zmq", f"{endpoint}: {e}", ErrorClass.SERVICE)
-    return _ok("bitcoin_zmq", f"{endpoint}: listening")
+    match cfg.bitcoin_section:
+        case ConfigError():
+            return _fail("bitcoin_zmq", "[bitcoin] did not load", ErrorClass.CONFIG)
+        case None:
+            return _ok("bitcoin_zmq", "not configured")
+        case btc:
+            endpoint = btc.zmq_endpoint
+            try:
+                probe_zmq_endpoint(endpoint, timeout_s=ZMQ_PROBE_TIMEOUT_SECONDS)
+            except OSError as e:
+                return _fail("bitcoin_zmq", f"{endpoint}: {e}", ErrorClass.SERVICE)
+            return _ok("bitcoin_zmq", f"{endpoint}: listening")
 
 
 def broken_config_checks(error: ConfigError) -> tuple[Check, ...]:

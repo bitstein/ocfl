@@ -175,7 +175,7 @@ class TestInventorySubmissionPrimitives:
             runner, empty_sha256_root, staging, "obj:inv-primitive"
         )
         cfg = Config(
-            simpleproof=SimpleProofConfig(
+            simpleproof_section=SimpleProofConfig(
                 base_url="https://stage.example",
                 proof_category_id=641,
                 access_token=SecretStr("tok"),
@@ -227,7 +227,7 @@ class TestInventorySubmissionPrimitives:
         )
         save_ots(sd, replace(load_ots(sd), phase=Phase.INVENTORY_UPGRADED))
         cfg = Config(
-            simpleproof=SimpleProofConfig(
+            simpleproof_section=SimpleProofConfig(
                 base_url="https://stage.example",
                 proof_category_id=641,
                 access_token=SecretStr("tok"),

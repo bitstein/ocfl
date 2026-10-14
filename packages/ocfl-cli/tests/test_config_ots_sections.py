@@ -13,6 +13,7 @@ from ocfl_cli.config import (
     ConfigError,
     SimpleProofConfig,
     load_config,
+    redacted,
 )
 
 
@@ -491,7 +492,9 @@ class TestBrokenSectionIsDeferred:
         )
         cfg = load_config(path)
         assert cfg.bitcoin is None and cfg.simpleproof is not None
-        assert set(cfg.section_errors) == {"bitcoin"}
+        errors = redacted(cfg)["errors"]
+        assert list(errors) == ["bitcoin"]
+        assert errors["bitcoin"].startswith(f"{path}: bitcoin.confirmations: ")
         cfg.require("simpleproof")
         with pytest.raises(ConfigError, match=r"bitcoin\.confirmations"):
             cfg.require("bitcoin")

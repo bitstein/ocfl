@@ -692,13 +692,13 @@ class TestDiscardAndConfig:
         }
         assert secret_fields == {"access_token", "api_key", "rpc_password"}
         cfg = Config(
-            simpleproof=SimpleProofConfig(
+            simpleproof_section=SimpleProofConfig(
                 base_url="https://sp.example",
                 proof_category_id=1,
                 access_token=SecretStr("s-1"),
                 api_key=SecretStr("s-2"),
             ),
-            bitcoin=BitcoinConfig(
+            bitcoin_section=BitcoinConfig(
                 rpc_url="http://127.0.0.1:8332",
                 zmq_endpoint="tcp://127.0.0.1:28332",
                 rpc_user="s-3",

@@ -116,13 +116,13 @@ class TestInventoryUpgradePrimitives:
             runner, empty_sha256_root, staging, "obj:inv-upgrade-primitive", sp_fake
         )
         cfg = Config(
-            simpleproof=SimpleProofConfig(
+            simpleproof_section=SimpleProofConfig(
                 base_url="https://stage.example",
                 proof_category_id=641,
                 access_token=SecretStr("tok"),
                 api_key=SecretStr("key"),
             ),
-            bitcoin=BitcoinConfig(
+            bitcoin_section=BitcoinConfig(
                 rpc_url="http://127.0.0.1:8332",
                 zmq_endpoint="tcp://127.0.0.1:28332",
                 rpc_user="u",

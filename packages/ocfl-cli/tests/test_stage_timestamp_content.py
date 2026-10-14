@@ -345,7 +345,7 @@ class TestContentSubmissionPrimitives:
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
         cfg = Config(
-            simpleproof=SimpleProofConfig(
+            simpleproof_section=SimpleProofConfig(
                 base_url="https://stage.example",
                 proof_category_id=641,
                 access_token=SecretStr("tok"),

@@ -111,13 +111,13 @@ def test_require_timestamp_preflight_returns_validated_context(tmp_path) -> None
     ports.btc_rpc_factory = lambda _cfg: btc_client
 
     cfg = Config(
-        simpleproof=SimpleProofConfig(
+        simpleproof_section=SimpleProofConfig(
             base_url="https://simpleproof.example",
             proof_category_id=641,
             access_token=SecretStr("token"),
             api_key=SecretStr("key"),
         ),
-        bitcoin=BitcoinConfig(
+        bitcoin_section=BitcoinConfig(
             rpc_url="https://bitcoin.example",
             zmq_endpoint="tcp://127.0.0.1:28332",
             rpc_user="user",

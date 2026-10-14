@@ -18,7 +18,6 @@ class ArchiveConfig(BaseModel):
     name: str
     root: str
     digest: str | None = None
-    # None = inherit defaults, () = suppress nothing
     suppress: tuple[str, ...] | None = None
 
     @field_validator("digest")
