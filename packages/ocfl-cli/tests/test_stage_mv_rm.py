@@ -142,28 +142,13 @@ class TestStageRm:
     def test_rm_cleans_unreferenced_content(self, runner, storage_root, tmp_path):
         """Content.json entries for unreferenced digests are cleaned."""
         staging, store, root_path = _setup_staged(runner, storage_root, tmp_path)
-
-        # Get digest of a.txt before removing
         inv = store.load_inventory(root_path, "obj:new")
-        a_digest = None
-        for d, ps in inv.versions["v1"].state.items():
-            if "a.txt" in ps:
-                a_digest = d
-                break
-        assert a_digest is not None
-
-        cm_before = store.load_content_map(root_path, "obj:new")
-        assert a_digest in cm_before
+        [a_digest] = [d for d, ps in inv.versions["v1"].state.items() if "a.txt" in ps]
+        assert a_digest in store.load_content_map(root_path, "obj:new")
 
         _invoke(runner, storage_root, staging, "rm", "obj:new", "a.txt")
 
-        cm_after = store.load_content_map(root_path, "obj:new")
-        # Digest for a.txt should be cleaned from content map
-        # (unless it's still referenced by another logical path)
-        inv_after = store.load_inventory(root_path, "obj:new")
-        all_digests = set(inv_after.versions[inv_after.head].state.keys())
-        if a_digest not in all_digests:
-            assert a_digest not in cm_after
+        assert a_digest not in store.load_content_map(root_path, "obj:new")
 
     def test_rm_nonexistent_path_errors(self, runner, storage_root, tmp_path):
         staging, _store, _root_path = _setup_staged(runner, storage_root, tmp_path)
