@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, BinaryIO, Literal
 
 from ocfl_lib._digest import DigestAlgorithm
-from ocfl_lib._digest_map import to_path_map
+from ocfl_lib._digest_map import PathMap, to_path_map
 from ocfl_lib._errors import (
     ContentNotFound,
     InventorySidecarMismatch,
@@ -156,8 +156,8 @@ class Object:
         pm2 = to_path_map(self.version_info(v2).state)
 
         all_paths = set(pm1) | set(pm2)
-        added: dict[str, str] = {}  # path → digest
-        removed: dict[str, str] = {}  # path → digest
+        added: PathMap = {}
+        removed: PathMap = {}
         entries: list[DiffEntry] = []
 
         for path in sorted(all_paths):

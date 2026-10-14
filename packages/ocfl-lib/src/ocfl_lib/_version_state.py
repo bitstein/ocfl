@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from ocfl_lib._digest import DigestAlgorithm, stream_multi_digest
 from ocfl_lib._errors import ContentNotFound, DigestAlgorithmMismatch
@@ -10,6 +10,13 @@ if TYPE_CHECKING:
 
     from ocfl_lib._digest_map import DigestMap
     from ocfl_lib.fs._protocols import FS, FileWalker
+
+
+class _DigestedFile(NamedTuple):
+    state_path: str
+    walk_path: str
+    digest: str
+    fixity: dict[DigestAlgorithm, str]
 
 
 @dataclass
@@ -131,15 +138,15 @@ def scan_dir(
 
     dir_prefix = f"{dir}/" if dir else ""
 
-    def _digest_file(
-        walk_path: str,
-    ) -> tuple[str, str, str, dict[DigestAlgorithm, str]]:
-        """Return (state_path, walk_path, primary_digest, fixity_digests)."""
-        state_path = walk_path.removeprefix(dir_prefix)
+    def _digest_file(walk_path: str) -> _DigestedFile:
         with fsys.open_file(walk_path) as f:
             digests = stream_multi_digest(f, all_algs)
-        fixity = {a: digests[a] for a in fixity_algs}
-        return state_path, walk_path, digests[alg], fixity
+        return _DigestedFile(
+            state_path=walk_path.removeprefix(dir_prefix),
+            walk_path=walk_path,
+            digest=digests[alg],
+            fixity={a: digests[a] for a in fixity_algs},
+        )
 
     results = list(bounded_map(lambda fr: _digest_file(fr.path), files))
 

@@ -1,5 +1,5 @@
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import msgspec
 
@@ -41,6 +41,12 @@ _REQUIRED_KEYS = (
     ("manifest", "E041a"),
     ("versions", "E041b"),
 )
+
+
+class _VersionKey(NamedTuple):
+    number: int
+    key: str
+
 
 _ALLOWED_ALGORITHMS = frozenset({"sha512", "sha256"})
 
@@ -185,7 +191,7 @@ def _validate_manifest(
         return
 
     digest_re = alg.regex
-    seen_digests: dict[str, str] = {}  # lowercase → original
+    original_by_lower: dict[str, str] = {}
     all_content_paths: list[str] = []
 
     for digest, paths in manifest.items():
@@ -193,9 +199,9 @@ def _validate_manifest(
             result.error("E025b", where=where, digest=digest, algorithm=alg_name)
 
         lower = digest.lower()
-        if lower in seen_digests and seen_digests[lower] != digest:
+        if lower in original_by_lower and original_by_lower[lower] != digest:
             result.error("E096", where=where, digest=digest)
-        seen_digests[lower] = digest
+        original_by_lower[lower] = digest
 
         if not isinstance(paths, list):
             result.error("E091", where=where, digest=digest)
@@ -251,8 +257,8 @@ def _validate_versions(
     manifest = object_field(data, "manifest")
     head = data["head"]
 
-    vnums: list[tuple[int, str]] = []  # (number, key)
-    pad_lengths: set[int] = set()  # 0 = unpadded, >0 = padded width
+    vnums: list[_VersionKey] = []
+    pad_widths: set[int | None] = set()
     for vkey in versions:
         m = VERSION_DIR_RE.match(vkey)
         if not m:
@@ -260,35 +266,35 @@ def _validate_versions(
             continue
         digits = vkey[1:]
         num = int(digits)
-        pad_lengths.add(len(digits) if digits[0] == "0" else 0)
-        vnums.append((num, vkey))
+        pad_widths.add(len(digits) if digits[0] == "0" else None)
+        vnums.append(_VersionKey(num, vkey))
 
     if not vnums:
         result.error("E008", where=where)
         return
 
-    has_padded = any(p > 0 for p in pad_lengths)
-    has_unpadded = 0 in pad_lengths
+    has_padded = any(w is not None for w in pad_widths)
+    has_unpadded = None in pad_widths
     if has_padded and has_unpadded:
         result.error("E011", where=where)
         result.error("E012", where=where)
         result.error("E013", where=where)
-    elif has_padded and len(pad_lengths) > 1:
+    elif has_padded and len(pad_widths) > 1:
         result.error("E012", where=where)
     elif has_padded:
         result.warning("W001", where=where)
 
     vnums.sort()
 
-    if vnums[0][0] != 1:
+    if vnums[0].number != 1:
         result.error("E009", where=where)
 
     for i in range(1, len(vnums)):
-        if vnums[i][0] != vnums[i - 1][0] + 1:
+        if vnums[i].number != vnums[i - 1].number + 1:
             result.error("E010", where=where)
             break
 
-    highest_key = vnums[-1][1]
+    highest_key = vnums[-1].key
     if head != highest_key:
         result.error("E040", where=where, got=head, expected=highest_key)
 
@@ -552,16 +558,16 @@ def _validate_fixity(
             continue
 
         digest_re = alg.regex
-        seen_digests: dict[str, str] = {}
+        original_by_lower: dict[str, str] = {}
 
         for digest, paths in digest_map.items():
             if not digest_re.match(digest):
                 result.error("E057b", where=where, algorithm=alg_name, digest=digest)
 
             lower = digest.lower()
-            if lower in seen_digests and seen_digests[lower] != digest:
+            if lower in original_by_lower and original_by_lower[lower] != digest:
                 result.error("E097", where=where, algorithm=alg_name, digest=digest)
-            seen_digests[lower] = digest
+            original_by_lower[lower] = digest
 
             if not isinstance(paths, list):
                 result.error("E057c", where=where, algorithm=alg_name, digest=digest)

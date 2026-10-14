@@ -1,7 +1,7 @@
 import contextlib
 import json
 import re
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from ocfl_lib import ots
 from ocfl_lib._digest import DigestAlgorithm, bytes_digest, stream_digest
@@ -122,7 +122,7 @@ def _validate_object(
     )
     validate_ots_extension(fsys, path, inv_data, alg, inv_versions, result)
 
-    prev_spec: tuple[str, str] | None = None  # (version dir, spec version)
+    prev_spec: _SpecAt | None = None
     for vkey, _vnum in sorted(inv_versions.items(), key=lambda x: x[1]):
         vdir = join_path(path, vkey)
         vspec = _validate_version_dir(
@@ -548,27 +548,32 @@ def _inventory_spec(inv_data: JsonObject) -> str | None:
     return m.group(1) if m else None
 
 
+class _SpecAt(NamedTuple):
+    where: str
+    spec: str
+
+
 def _check_spec_sequence(
-    prev: tuple[str, str] | None,
+    prev: _SpecAt | None,
     where: str,
     spec: str | None,
     result: FindingCollector,
-) -> tuple[str, str] | None:
-    """E103: *spec* must not be older than the preceding version's *prev*.
+) -> _SpecAt | None:
+    """E103: `spec` must not be older than `prev`, the last version's spec.
 
-    Returns the new (where, spec) to compare the next version against.
+    Returns what the next version compares against.
     """
     if spec is None:
         return prev
-    if prev is not None and _spec_tuple(spec) < _spec_tuple(prev[1]):
+    if prev is not None and _spec_tuple(spec) < _spec_tuple(prev.spec):
         result.error(
             "E103",
             where=where,
             this_spec_version=spec,
-            prev_version_dir=prev[0],
-            prev_spec_version=prev[1],
+            prev_version_dir=prev.where,
+            prev_spec_version=prev.spec,
         )
-    return (where, spec)
+    return _SpecAt(where, spec)
 
 
 def _spec_tuple(version: str) -> tuple[int, int]:
