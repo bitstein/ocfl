@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from ocfl_cli.errors import LockTimeoutError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
     from ocfl_cli.ports import Runtime
 
@@ -28,7 +28,7 @@ _OBJECT_LOCK_DIR = "ocfl-cli-object-locks"
 
 
 @contextmanager
-def flock(path: Path, runtime: Runtime, *, what: str) -> Iterator[None]:
+def flock(path: Path, runtime: Runtime, *, what: str) -> Generator[None]:
     """Hold an exclusive `flock` on `path` (created if missing).
 
     Waits up to `runtime.lock_timeout` seconds, in `POLL_SECONDS` steps
@@ -64,7 +64,7 @@ def object_lock_path(root_path: str, object_id: str) -> Path:
 @contextmanager
 def object_commit_lock(
     root_path: str, object_id: str, runtime: Runtime
-) -> Iterator[None]:
+) -> Generator[None]:
     """Serialize local CLI commits for one storage-root/object pair.
 
     This is an operator-ergonomics lock: it prevents ordinary same-machine CLI

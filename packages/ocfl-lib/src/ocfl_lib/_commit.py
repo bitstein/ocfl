@@ -46,7 +46,7 @@ from ocfl_lib.fs import _utils as fs_utils
 from ocfl_lib.fs._protocols import ClaimFS, ConditionalFS, CopyFS
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
     from ocfl_lib._commit_plan import CommitPlan
     from ocfl_lib._sources import ContentSource
@@ -159,7 +159,7 @@ def _commit_local(t: Target, fsys: ClaimFS, content: ContentSource) -> None:
 
 
 @contextlib.contextmanager
-def object_lock(fsys: ClaimFS, wd: str, *, timeout: float) -> Iterator[None]:
+def object_lock(fsys: ClaimFS, wd: str, *, timeout: float) -> Generator[None]:
     """Hold the object's commit lock. ObjectLockedError if it is busy."""
     with contextlib.ExitStack() as stack:
         try:

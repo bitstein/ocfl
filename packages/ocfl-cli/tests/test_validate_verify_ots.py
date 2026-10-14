@@ -242,7 +242,7 @@ class TestDefaultOnVerifyOts:
                 calls.append(name)
                 return getattr(btc_fake.rpc, name)
 
-        _inject_fake_btc(runner, _SpyRPC())  # type: ignore[arg-type]
+        _inject_fake_btc(runner, _SpyRPC())  # ty: ignore[invalid-argument-type]
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
 

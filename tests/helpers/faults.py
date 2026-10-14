@@ -1,6 +1,7 @@
 """A filesystem that dies at write N, for crash tests (ADR-0001)."""
 
 from dataclasses import dataclass
+from typing import cast
 
 # Calls that only read. Every other public method call counts as a write.
 READS = frozenset({"open_file", "read_dir", "exists", "walk_files", "read_tagged"})
@@ -46,6 +47,6 @@ def fail_at[F](fs: F, n: int | None) -> tuple[F, Counter]:
     faulty = type(
         f"FailAt{cls.__name__}", (cls,), {"__getattribute__": __getattribute__}
     )
-    wrapped = object.__new__(faulty)
+    wrapped = cast("F", object.__new__(faulty))
     wrapped.__dict__.update(fs.__dict__)
     return wrapped, counter

@@ -44,8 +44,8 @@ class TestErrors:
         import ocfl_lib
 
         base = ocfl_lib.OcflError
-        seen = []
-        stack = [base]
+        seen: list[type[ocfl_lib.OcflError]] = []
+        stack: list[type[ocfl_lib.OcflError]] = [base]
         while stack:
             c = stack.pop()
             if c.__module__.startswith("ocfl_lib"):
@@ -366,7 +366,7 @@ class TestLayoutRegistry:
         with pytest.raises(
             (AttributeError, TypeError, dataclasses.FrozenInstanceError)
         ):
-            DEFAULT_LAYOUTS.foo = 1  # type: ignore[attr-defined]
+            DEFAULT_LAYOUTS.foo = 1  # ty: ignore[invalid-assignment]
 
     def test_custom_registry_passed_explicitly(self, tmp_path):
         from ocfl_lib import (

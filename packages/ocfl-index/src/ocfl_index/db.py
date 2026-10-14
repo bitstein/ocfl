@@ -1,7 +1,7 @@
 """SQLite connection and schema management."""
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from importlib import resources
@@ -61,7 +61,7 @@ def connect(path: Path | str) -> sqlite3.Connection:
 
 
 @contextmanager
-def immediate_transaction(conn: sqlite3.Connection) -> Iterator[None]:
+def immediate_transaction(conn: sqlite3.Connection) -> Generator[None]:
     """Run a multi-statement write inside a single ``BEGIN IMMEDIATE`` tx.
 
     The only sanctioned grouping primitive outside ``scanner.scan``. Rejects

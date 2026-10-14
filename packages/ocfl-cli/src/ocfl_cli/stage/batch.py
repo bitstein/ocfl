@@ -6,7 +6,7 @@ renders the events it reports (JSON lines under `--json`, text otherwise).
 
 import json
 from pathlib import Path  # noqa: TC003 - Typer reads option annotations at runtime.
-from typing import TYPE_CHECKING, Annotated, cast
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
@@ -193,10 +193,9 @@ class _CliBatchEvents:
             typer.echo(json.dumps(data, separators=(",", ":")))
             return
         if data["event"] == "summary":
-            summary = cast("CommitSummaryEventOutput", data)
-            counts = summary["counts"]
+            counts = data["counts"]
             typer.echo(
-                f"batch committed: {summary['batch_id']} "
+                f"batch committed: {data['batch_id']} "
                 f"committed={counts['committed']} "
                 f"skipped={counts['skipped']} failed={counts['failed']} "
                 f"total={counts['total']}"

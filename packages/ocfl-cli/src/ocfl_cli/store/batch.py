@@ -22,7 +22,7 @@ from ocfl_cli.store import staging as store
 from ocfl_cli.store.locks import flock
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
     from pathlib import Path
 
     from ocfl_cli.ports import Runtime
@@ -98,7 +98,7 @@ def save_batch(staging_root: Path, batch: BatchFile) -> None:
 
 
 @contextmanager
-def batch_lock(staging_root: Path, batch_id: str, runtime: Runtime) -> Iterator[None]:
+def batch_lock(staging_root: Path, batch_id: str, runtime: Runtime) -> Generator[None]:
     """Hold the batch's lock for a whole run (`store.locks.flock`).
 
     Every command that drives, commits or removes the batch holds it; a

@@ -20,7 +20,7 @@ from ocfl_cli.store import staging as store
 from ocfl_cli.store.locks import flock
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
     from pathlib import Path
 
     from ocfl_cli.ports import Runtime
@@ -99,7 +99,7 @@ def save_ots(staging: Path, state: OtsState) -> None:
 
 
 @contextmanager
-def with_lock(staging: Path, runtime: Runtime) -> Iterator[None]:
+def with_lock(staging: Path, runtime: Runtime) -> Generator[None]:
     """Hold the Staging Area's lock, `<staging>/.lock` (`store.locks.flock`).
 
     Held by every command that mutates `ots.json`; `stage status` runs

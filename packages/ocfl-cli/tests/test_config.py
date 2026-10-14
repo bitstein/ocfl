@@ -205,8 +205,9 @@ class TestEffective:
 
     def test_implicit_default_single_archive(self):
         cfg = Config(archives={"only": ArchiveConfig(name="only", root="/x")})
-        assert cfg.implicit_default() is not None
-        assert cfg.implicit_default().name == "only"  # type: ignore[union-attr]
+        default = cfg.implicit_default()
+        assert default is not None
+        assert default.name == "only"
 
     def test_implicit_default_multi_returns_none(self):
         cfg = Config(

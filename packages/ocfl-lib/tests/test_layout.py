@@ -73,7 +73,7 @@ class TestLayoutRegistry:
         with pytest.raises(AttributeError):
             DEFAULT_LAYOUTS._factories = {}  # ty: ignore[invalid-assignment]
         with pytest.raises(TypeError):
-            DEFAULT_LAYOUTS._factories["x"] = lambda config: _DummyLayout()
+            DEFAULT_LAYOUTS._factories["x"] = lambda config: _DummyLayout()  # ty: ignore[invalid-assignment]
 
     def test_get_layout_uses_explicit_registry(self):
         reg = LayoutRegistry({"x": lambda config: _DummyLayout()})

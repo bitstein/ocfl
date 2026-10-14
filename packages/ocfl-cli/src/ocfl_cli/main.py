@@ -54,7 +54,7 @@ def configure_logging(json_mode: bool, verbose: bool, quiet: bool) -> None:
         if getattr(h, "_ocfl_handler", False):
             root.removeHandler(h)
     handler = logging.StreamHandler(sys.stderr)
-    handler._ocfl_handler = True  # type: ignore[attr-defined]
+    handler._ocfl_handler = True  # ty: ignore[unresolved-attribute]
     if json_mode:
         handler.setFormatter(_JsonFormatter())
     else:

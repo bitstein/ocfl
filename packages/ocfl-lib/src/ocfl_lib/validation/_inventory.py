@@ -688,16 +688,9 @@ def validate_inventory_against_prior(
         if vkey not in cur_versions:
             continue
 
-        pri_state = (
-            pri_versions[vkey].get("state", {})
-            if isinstance(pri_versions[vkey], dict)
-            else {}
-        )
-        cur_state = (
-            cur_versions[vkey].get("state", {})
-            if isinstance(cur_versions[vkey], dict)
-            else {}
-        )
+        pri, cur = pri_versions[vkey], cur_versions[vkey]
+        pri_state = pri.get("state", {}) if isinstance(pri, dict) else {}
+        cur_state = cur.get("state", {}) if isinstance(cur, dict) else {}
 
         if not isinstance(pri_state, dict) or not isinstance(cur_state, dict):
             continue

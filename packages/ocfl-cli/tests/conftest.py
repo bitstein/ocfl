@@ -83,14 +83,14 @@ def runner():
     """
     runner = CliRunner()
     obj: dict = {}
-    runner.obj = obj  # type: ignore[attr-defined]
+    runner.obj = obj  # ty: ignore[unresolved-attribute]
     original_invoke = runner.invoke
 
     def invoke(*args, **kwargs):
         kwargs.setdefault("obj", obj)
         return original_invoke(*args, **kwargs)
 
-    runner.invoke = invoke  # type: ignore[method-assign]
+    runner.invoke = invoke  # ty: ignore[invalid-assignment]
     return runner
 
 

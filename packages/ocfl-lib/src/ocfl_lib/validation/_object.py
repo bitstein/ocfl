@@ -138,8 +138,8 @@ def _validate_object(
     if not isinstance(inv_data, dict):
         result.error("E034", where="root")
         return
-    if isinstance(inv_data.get("id"), str):
-        result.object_id = inv_data["id"]
+    if isinstance(object_id := inv_data.get("id"), str):
+        result.object_id = object_id
 
     inv = validate_inventory(inv_data, result, lax_digests=lax_digests, where="root")
     if inv is None:

@@ -57,7 +57,7 @@ def _check_entry_type(entry: os.DirEntry[str]) -> tuple[bool, bool]:
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator, Iterator
 
 _CHUNK_SIZE = 32 * 1024
 
@@ -265,7 +265,7 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
             _fsync_dir(src_path.parent)
 
     @contextmanager
-    def lock(self, name: str, *, timeout: float = 0.0) -> Iterator[None]:
+    def lock(self, name: str, *, timeout: float = 0.0) -> Generator[None]:
         """Hold an exclusive flock on directory `name`, creating it if missing.
 
         The directory may be removed while locked; a waiter that then gets the
