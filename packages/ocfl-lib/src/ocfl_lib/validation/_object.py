@@ -17,6 +17,8 @@ from ocfl_lib.validation._inventory import (
 from ocfl_lib.validation._report import FindingCollector
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from ocfl_lib._json_value import JsonObject
     from ocfl_lib.fs._protocols import FS, FileWalker, FsEntry
     from ocfl_lib.validation._report import ValidationReport
@@ -302,10 +304,13 @@ def _validate_version_dir(
     content_path = join_path(vdir, content_dir)
     try:
         content_entries = list(fsys.read_dir(content_path))
+    except OSError:
+        content_entries = []
+    else:
         if not content_entries:
             result.warning("W003", where=vkey)
-    except OSError:
-        pass
+    for empty in _empty_dirs_below(fsys, content_path, content_entries):
+        result.error("E024", where=vkey, path=empty[len(content_path) + 1 :])
 
     vinv_path = join_path(vdir, "inventory.json")
     try:
@@ -381,6 +386,23 @@ def _validate_version_dir(
     _check_version_metadata(vinv_data, root_inv_data, result, vkey=vkey)
 
     return _inventory_spec(vinv_data)
+
+
+def _empty_dirs_below(fsys: FS, dir_path: str, entries: list[FsEntry]) -> Iterator[str]:
+    for entry in entries:
+        if entry.is_dir:
+            sub = join_path(dir_path, entry.name)
+            sub_entries = _dir_entries_or_empty(fsys, sub)
+            if not sub_entries:
+                yield sub
+            yield from _empty_dirs_below(fsys, sub, sub_entries)
+
+
+def _dir_entries_or_empty(fsys: FS, dir_path: str) -> list[FsEntry]:
+    try:
+        return list(fsys.read_dir(dir_path))
+    except FileNotFoundError:
+        return []
 
 
 def _check_version_metadata(

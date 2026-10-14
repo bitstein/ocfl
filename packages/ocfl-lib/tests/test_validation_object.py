@@ -4,11 +4,14 @@ import re
 import shutil
 from pathlib import Path
 
+import boto3
 import pytest
 from builders import FIXTURES_ROOT, inventory
 from digests import D1
+from moto import mock_aws
 
 from ocfl_lib.fs._local import LocalFS
+from ocfl_lib.fs.s3 import S3FS
 from ocfl_lib.validation._object import validate_object
 from ocfl_lib.validation._report import ValidationReport
 
@@ -536,6 +539,53 @@ class TestW003EmptyContentDir:
         fsys = LocalFS(tmp_path)
         r = validate_object(fsys, "", check_digests=False)
         assert r.has_code("W003")
+
+
+class TestE024EmptyDirInContent:
+    @pytest.mark.parametrize(
+        "fixture,content_dir,empty_dir",
+        [
+            ("minimal_one_version_one_file", "content", "empty"),
+            ("minimal_one_version_one_file", "content", "outer/inner"),
+            ("minimal_content_dir_called_stuff", "stuff", "empty"),
+        ],
+    )
+    def test_empty_dir_in_version_content_fires_E024(
+        self, tmp_path: Path, fixture: str, content_dir: str, empty_dir: str
+    ):
+        obj = tmp_path / "obj"
+        shutil.copytree(FIXTURES_ROOT / "1.1" / "good-objects" / fixture, obj)
+        (obj / "v1" / content_dir / empty_dir).mkdir(parents=True)
+
+        r = validate_object(LocalFS(obj), "")
+
+        assert not r.is_valid
+        assert [e.render() for e in r.errors] == [
+            f"OCFL Object version v1 content directory includes empty path {empty_dir}"
+        ]
+
+    def test_s3_folder_marker_in_version_content_fires_E024(self):
+        fixture = (
+            FIXTURES_ROOT / "1.1" / "good-objects" / "minimal_one_version_one_file"
+        )
+        with mock_aws():
+            client = boto3.client("s3", region_name="us-east-1")
+            client.create_bucket(Bucket="test-bucket")
+            for f in fixture.rglob("*"):
+                if f.is_file():
+                    key = f"obj/{f.relative_to(fixture).as_posix()}"
+                    client.put_object(
+                        Bucket="test-bucket", Key=key, Body=f.read_bytes()
+                    )
+            client.put_object(
+                Bucket="test-bucket", Key="obj/v1/content/empty/", Body=b""
+            )
+
+            r = validate_object(S3FS("test-bucket", client=client), "obj")
+
+        assert [e.render() for e in r.errors] == [
+            "OCFL Object version v1 content directory includes empty path empty"
+        ]
 
 
 def _set_inventory_type(vdir: Path, spec: str) -> None:

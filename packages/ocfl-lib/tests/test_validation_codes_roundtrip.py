@@ -16,10 +16,6 @@ _ERRORS_JSON = (
 )
 
 _KNOWN_UNREACHED: dict[str, str] = {
-    "E024": (
-        "not implemented: validator ignores empty dirs in version content "
-        "(walk_files sees files only)"
-    ),
     "E026a": "unknown digest type fails at algorithm parse, before validation",
     "E038a": "inventory type mismatch reported via E038b/E038c",
     "E058b": "sidecar filename parsed before validation entry",
