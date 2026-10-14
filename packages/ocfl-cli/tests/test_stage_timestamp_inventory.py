@@ -676,9 +676,8 @@ class TestResubmitAtInventoryPending:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Per FSM matrix `_STAY`: a second invocation at `inventory-pending`
-        sends nothing; the submitted digest keeps its requested proof
-        (ADR-0004), so it is not POSTed again."""
+        """The submitted digest keeps its requested proof (ADR-0004), so a
+        second run at `inventory-pending` does not POST it again."""
         write_config(tmp_path, monkeypatch)
         inject_fake_sp(runner, sp_fake)
 
