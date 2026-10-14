@@ -1,5 +1,3 @@
-"""Tests for StorageRoot.purge()."""
-
 from typing import TYPE_CHECKING
 
 import pytest
@@ -41,7 +39,6 @@ class TestStorageRootPurge:
 
         root.purge(fsys, "obj-a")
 
-        # Object gone
         obj = root.get_object("obj-a")
         assert not obj.exists
         assert not (tmp_path / "obj-a").exists()
@@ -58,21 +55,17 @@ class TestStorageRootPurge:
         assert root.get_object("obj-b").exists
 
     def test_purge_cleans_empty_parents(self, tmp_path: Path):
-        """Hashed layout creates nested dirs; purge should clean empty parents."""
         fsys = LocalFS(tmp_path)
         layout = HashedNTupleLayout()
         root = StorageRoot.init(fsys, fsys, layout=layout)
         _commit_object(tmp_path, root, fsys, "test:purge", {"file.txt": "x"})
 
         obj_path = root.object_path("test:purge")
-        # Verify nested dirs exist
         assert (tmp_path / obj_path).exists()
 
         root.purge(fsys, "test:purge")
 
-        # Object dir gone
         assert not (tmp_path / obj_path).exists()
-        # Parent tuple dirs should be cleaned up too
         parts = obj_path.split("/")
         for i in range(len(parts)):
             partial = "/".join(parts[: i + 1])
@@ -127,8 +120,6 @@ class Died(BaseException):
 
 
 class _Recorder(LocalFS):
-    """Records deletions; dies at deletion number `die_at` if given."""
-
     def __init__(self, root: Path, die_at: int | None = None) -> None:
         super().__init__(root)
         self.ops: list[str] = []
@@ -153,7 +144,6 @@ class _Recorder(LocalFS):
 
 
 def _three_versions(tmp_path: Path) -> tuple[LocalFS, StorageRoot, Path, str]:
-    """A 3-version object in the root `tmp_path/root` (sources stay outside)."""
     d = tmp_path / "root"
     d.mkdir()
     fsys = LocalFS(d)

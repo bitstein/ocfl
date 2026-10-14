@@ -1,5 +1,3 @@
-"""Tests for inventory validation — structural checks (raw dict)."""
-
 from ocfl_lib.validation._inventory import validate_inventory
 from ocfl_lib.validation._report import FindingCollector
 

@@ -1,5 +1,3 @@
-"""Tests for DigestMap operations."""
-
 from ocfl_lib._digest_map import (
     DigestMap,
     PathMap,
@@ -96,7 +94,6 @@ class TestMerge:
         a: DigestMap = {"abc": ["a.txt"]}
         b: DigestMap = {"def": ["a.txt"]}
         result = merge(a, b, replace=True)
-        # b's mapping for a.txt should win
         pm = to_path_map(result)
         assert pm["a.txt"] == "def"
 
@@ -140,7 +137,6 @@ class TestRenamePaths:
         assert result == dm
 
     def test_does_not_rename_similar_prefix(self):
-        """'old' prefix should not match 'older'."""
         dm: DigestMap = {"abc": ["older/a.txt"]}
         result = rename_paths(dm, "old", "new")
         assert result == dm
@@ -157,7 +153,6 @@ class TestRenamePaths:
         import pytest
 
         dm: DigestMap = {"abc": ["x/a.txt"], "def": ["y/a.txt"]}
-        # rename y -> x causes both to land at x/a.txt
         with pytest.raises(ValueError, match="collision"):
             rename_paths(dm, "y", "x")
 

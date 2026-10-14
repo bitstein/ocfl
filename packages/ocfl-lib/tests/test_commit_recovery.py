@@ -126,7 +126,6 @@ def _clean(fs, root):
 
 
 def _claimed(fs, die, tmp_path):
-    """Die right before the root inventory is replaced: vN is claimed."""
     root, plan, content = _setup(fs, tmp_path)
     obj = root.object_path(OID)
     with pytest.raises(Died):

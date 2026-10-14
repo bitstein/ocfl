@@ -1,5 +1,3 @@
-"""Tests for core types: Spec, VNum, Namaste."""
-
 import pytest
 
 from ocfl_lib._spec import (

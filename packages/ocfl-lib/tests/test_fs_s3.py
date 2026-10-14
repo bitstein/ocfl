@@ -1,5 +1,3 @@
-"""Tests for S3FS backend."""
-
 from io import BytesIO
 from typing import TYPE_CHECKING
 
@@ -29,7 +27,6 @@ def s3_client():
 
 
 def _seed(client: S3Client) -> None:
-    """Seed standard test objects directly via boto3."""
     client.put_object(Bucket=BUCKET, Key="a.txt", Body=b"hello")
     client.put_object(Bucket=BUCKET, Key="sub/b.txt", Body=b"world")
     client.put_object(Bucket=BUCKET, Key="sub/deep/c.txt", Body=b"\x00\x01\x02")
@@ -253,7 +250,6 @@ class TestRemoveAll:
 
 class TestMkdir:
     def test_noop(self, fs: S3FS, s3_client: S3Client):
-        """mkdir is a no-op on S3 -- should not create any objects."""
         fs.mkdir("newdir")
         resp = s3_client.list_objects_v2(Bucket=BUCKET, Prefix="newdir/")
         assert resp.get("KeyCount", 0) == 0
@@ -264,7 +260,7 @@ class TestMkdir:
         assert resp.get("KeyCount", 0) == 0
 
     def test_existing_ok(self, fs: S3FS):
-        fs.mkdir("sub")  # already has keys under sub/ -- should not raise
+        fs.mkdir("sub")
 
 
 class TestCopy:
@@ -273,7 +269,6 @@ class TestCopy:
         assert n == 5
         body = s3_client.get_object(Bucket=BUCKET, Key="copy.txt")["Body"].read()
         assert body == b"hello"
-        # Source unchanged
         src = s3_client.get_object(Bucket=BUCKET, Key="a.txt")["Body"].read()
         assert src == b"hello"
 
@@ -350,19 +345,15 @@ class TestRepr:
 
 
 class TestPrefix:
-    """Verify S3FS with prefix correctly scopes all operations."""
-
     @pytest.fixture
     def prefixed_fs(self, s3_client: S3Client) -> S3FS:
         from ocfl_lib.fs.s3 import S3FS
 
-        # Seed objects under the prefix via raw boto3
         s3_client.put_object(Bucket=BUCKET, Key="myprefix/a.txt", Body=b"hello")
         s3_client.put_object(Bucket=BUCKET, Key="myprefix/sub/b.txt", Body=b"world")
         s3_client.put_object(
             Bucket=BUCKET, Key="myprefix/sub/deep/c.txt", Body=b"\x00\x01\x02"
         )
-        # Also put an object outside the prefix to verify isolation
         s3_client.put_object(Bucket=BUCKET, Key="other/outside.txt", Body=b"nope")
         return S3FS(BUCKET, prefix="myprefix", client=s3_client)
 
@@ -383,7 +374,6 @@ class TestPrefix:
         names = [e.name for e in entries]
         assert "a.txt" in names
         assert "sub" in names
-        # Object outside prefix must not appear
         assert "other" not in names
         assert "outside.txt" not in names
 

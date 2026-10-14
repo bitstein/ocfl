@@ -1,5 +1,3 @@
-"""Tests for ``ocfl_lib.ots`` parsing."""
-
 import hashlib
 
 import pytest

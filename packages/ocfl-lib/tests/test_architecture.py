@@ -1,5 +1,3 @@
-"""Architecture guards for the lib cleanup (docs/roadmap.md §2)."""
-
 import annotationlib
 import ast
 import dataclasses
@@ -34,9 +32,6 @@ def _lib_module_name(p: Path) -> str:
     if parts[-1] == "__init__":
         parts.pop()
     return ".".join(parts)
-
-
-# --- 1. errors
 
 
 class TestErrors:
@@ -88,8 +83,6 @@ class TestErrors:
             assert getattr(ocfl_lib, c.__name__) is c
 
     def test_lib_raises_only_ocfl_errors(self):
-        """Every `raise X(...)` / `raise X` in lib src (FS backends excepted)
-        names an OcflError subclass."""
         import ocfl_lib
 
         allowed_builtin = {"ExceptionGroup"}
@@ -113,7 +106,6 @@ class TestErrors:
         assert not bad, "\n".join(bad)
 
     def test_no_unused_error_classes(self):
-        """Every error class is raised in lib src or is a base of one that is."""
         raised: set[str] = set()
         for p in _py_files(LIB_SRC):
             for node in ast.walk(_tree(p)):
@@ -135,8 +127,6 @@ class TestErrors:
         assert issubclass(ocfl_lib.ObjectNotFound, LookupError)
         assert issubclass(ocfl_lib.VersionNotFound, LookupError)
 
-
-# --- 2. public API
 
 PUBLIC_MODULES = {
     "ocfl_lib",
@@ -205,9 +195,6 @@ class TestPublicApi:
         assert (REPO / "packages/ocfl-lib/CHANGELOG.md").is_file()
 
 
-# --- 3. Object reads; StorageRoot.open
-
-
 class _BoomFS:
     def __getattr__(self, name):
         raise AssertionError(f"I/O in constructor: {name}")
@@ -239,9 +226,6 @@ class TestReadOnlyObjectAndOpen:
         root = StorageRoot.open(fs)
         assert root.spec is Spec.V1_0
         assert root.layout is None
-
-
-# --- 4. Stage -> VersionState
 
 
 class TestVersionState:
@@ -278,9 +262,6 @@ class TestVersionState:
         assert cs.__module__ != ocfl_lib.CommitPlan.__module__
 
 
-# --- 5. JsonValue
-
-
 class TestJsonValue:
     def test_json_value_exported(self):
         import ocfl_lib
@@ -298,9 +279,6 @@ class TestJsonValue:
                 if isinstance(node, ast.alias) and node.name in ("Any", "cast"):
                     bad.append(f"{p.name}: import {node.name}")
         assert not bad, bad
-
-
-# --- 6. ValidationReport
 
 
 class TestValidationReport:
@@ -355,9 +333,6 @@ class TestValidationReport:
         assert w[0].path == "a/obj"
 
 
-# --- 7. layout registry
-
-
 class TestLayoutRegistry:
     def test_default_frozen(self):
         from ocfl_lib import DEFAULT_LAYOUTS, LayoutRegistry
@@ -396,9 +371,6 @@ class TestLayoutRegistry:
         root = StorageRoot.open(fs, layouts=custom)
         assert root.layout is not None and root.layout.name == name
         assert name not in DEFAULT_LAYOUTS
-
-
-# --- 8. duplicates
 
 
 class TestNoDuplicates:
@@ -464,9 +436,6 @@ class TestNoDuplicates:
         assert not hasattr(fs, "exists")
 
 
-# --- phase 3 (docs/roadmap.md §3, ADR-0001)
-
-
 def _plan(tmp_path):
     from ocfl_lib import (
         DigestAlgorithm,
@@ -487,9 +456,6 @@ def _plan(tmp_path):
     StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
     vs = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
     return StorageRoot.open(fs).plan("x:1", vs, created="2026-01-01T00:00:00Z")
-
-
-# --- 3.1 the plan records only the intent
 
 
 class TestPlanIntent:
@@ -531,8 +497,6 @@ class TestPlanIntent:
         ]
         assert not bad, bad
 
-
-# --- 3.4 StorageRoot.commit is the only write entry point
 
 _OLD_WRITE_API = (
     "update_object",
@@ -597,9 +561,6 @@ class TestSingleWriteEntryPoint:
         assert not bad, bad
 
 
-# --- 3.2 claim, then publish
-
-
 class TestClaimThenPublish:
     def test_backends_declare_their_claim(self):
         from ocfl_lib.fs import ClaimFS, ConditionalFS, LocalFS
@@ -651,9 +612,6 @@ class TestClaimThenPublish:
         assert WORK_DIR_EXTENSION not in text
 
 
-# --- 3.3 recovery tables, one per backend
-
-
 class TestRecoveryTables:
     def test_one_full_table_per_backend(self):
         from ocfl_lib import CommitState, RecoveryAction
@@ -695,15 +653,11 @@ class TestRecoveryTables:
         assert plan is None and status.state.value == "clean"
 
     def test_recovery_reads_progress_from_storage_only(self):
-        """No module records commit progress next to the plan."""
         text = (LIB_SRC / "_recovery.py").read_text() + (
             LIB_SRC / "_commit.py"
         ).read_text()
         for word in ("completed", "journal", "progress.json"):
             assert word not in text, word
-
-
-# --- 3.5 purge follows the ADR-0001 order, refuses live or stray claims
 
 
 class TestPurgeGuards:
@@ -733,9 +687,6 @@ class TestPurgeGuards:
         assert order == sorted(order)
 
 
-# --- 3.6 ocfl recover OBJ --resume|--revert|--remove-stray VN
-
-
 class TestRecoverCommand:
     def test_registered_with_its_actions(self):
         import typer.main
@@ -753,9 +704,6 @@ class TestRecoverCommand:
         assert "recover" in attrs
         names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
         assert "RecoveryAction" in names
-
-
-# --- 3.7 fail at write N; commit -> crash -> recover state machines
 
 
 class TestCrashTests:
@@ -791,12 +739,7 @@ class TestCrashTests:
         assert "mock_aws" in text and "LocalFS(" in text and "fail_at(" in text
 
 
-# --- phase 4 (docs/roadmap.md §4, ADR-0002)
-
 OTS_SPEC = REPO / "docs/ext/NNNN-ots-timestamps.md"
-
-
-# --- 4.1 the revised extension spec
 
 
 class TestOtsExtensionSpec:
@@ -834,8 +777,6 @@ class TestOtsExtensionSpec:
         f = Finding("E905", Severity.ERROR, None, "", {"proof": "x", "reason": "r"})
         assert f.render().endswith("(reason: r)")
 
-
-# --- 4.2 the extension rules, the .ots walk and the FS factory live in the lib
 
 OTS_NAME = "NNNN-ots-timestamps"
 
@@ -881,7 +822,6 @@ class TestOtsRulesInLib:
             assert not hasattr(_commit, name), name
 
     def test_consumers_build_no_proof_paths(self):
-        """Inventory-proof paths come from ots.inventory_proof_path."""
         bad = []
         for root in (CLI_SRC, INDEX_SRC, LIB_SRC):
             for p in _py_files(root):
@@ -912,8 +852,6 @@ class TestOtsRulesInLib:
         assert "ots.check_object_chain(" in text or "ots.object_proofs(" in text
         assert "_enumerate_versions" not in text
 
-
-# --- 4.3 BlockHeaderSource, a pure attestation check, RPC client in [bitcoin]
 
 _NETWORK = {"httpx", "httpx2", "requests", "urllib3", "zmq", "socket", "http"}
 
@@ -962,7 +900,6 @@ class TestBitcoinBoundary:
         assert proj["optional-dependencies"]["bitcoin"] == ["httpx2>=2.0"]
 
     def test_attestation_check_is_pure(self):
-        """The check reaches the chain only through the BlockHeaderSource."""
         tree = _tree(LIB_SRC / "ots.py")
         fn = next(
             n
@@ -990,9 +927,6 @@ class TestBitcoinBoundary:
         cli = "".join(p.read_text() for p in _py_files(CLI_SRC))
         assert '"merkleroot"' not in cli and "[::-1]" not in cli
         assert "verify_attestation" not in (CLI_SRC / "archive/validate.py").read_text()
-
-
-# --- 4.4 StorageRoot.commit refuses a version the extension rejects
 
 
 def _func(path: Path, name: str) -> ast.FunctionDef:
@@ -1049,9 +983,6 @@ class TestCommitRefusesUnproved:
         assert {"LocalOtsCommitCrash", "S3OtsCommitCrash"} <= set(machines)
         text = path.read_text()
         assert "inventory_proof" in text and "MissingInventoryProofError" in text
-
-
-# --- 4.5 an existing object can start timestamping
 
 
 class TestStartTimestamping:

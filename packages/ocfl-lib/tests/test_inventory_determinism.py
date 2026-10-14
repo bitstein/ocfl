@@ -1,5 +1,3 @@
-"""Tests for byte-identical StoredInventory regardless of insertion order."""
-
 import json
 
 from ocfl_lib._digest import DigestAlgorithm
@@ -22,10 +20,7 @@ ALG = DigestAlgorithm.SHA512
 
 
 class TestPathListDeterminism:
-    """Same (digest, paths) in different insertion order produce identical bytes."""
-
     def test_manifest_path_order(self):
-        """Manifest path lists sorted regardless of insertion order."""
         inv_a = _make_inventory(
             manifest={"aaa": ["z.txt", "a.txt", "m.txt"]},
             versions={
@@ -51,7 +46,6 @@ class TestPathListDeterminism:
         assert parsed["manifest"]["aaa"] == ["a.txt", "m.txt", "z.txt"]
 
     def test_state_path_order(self):
-        """Version state path lists sorted regardless of insertion order."""
         inv_a = _make_inventory(
             manifest={"aaa": ["v1/content/file.txt"]},
             versions={
@@ -75,7 +69,6 @@ class TestPathListDeterminism:
         assert sa.raw_bytes == sb.raw_bytes
 
     def test_fixity_path_order(self):
-        """Fixity path lists sorted regardless of insertion order."""
         inv_a = _make_inventory(
             manifest={"aaa": ["v1/content/file.txt"]},
             versions={
@@ -103,7 +96,6 @@ class TestPathListDeterminism:
         assert parsed["fixity"]["md5"]["fff"] == ["a.txt", "z.txt"]
 
     def test_multiple_versions_path_order(self):
-        """Path lists sorted across multiple versions."""
         inv_a = _make_inventory(
             manifest={
                 "aaa": ["v1/content/file.txt"],
@@ -141,7 +133,6 @@ class TestPathListDeterminism:
         assert sa.raw_bytes == sb.raw_bytes
 
     def test_multi_digest_all_sorted(self):
-        """Multiple digests each with shuffled paths all get sorted."""
         inv = _make_inventory(
             manifest={
                 "aaa": ["z.txt", "a.txt"],

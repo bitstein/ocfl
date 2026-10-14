@@ -1,5 +1,3 @@
-"""Tests for bounded_map."""
-
 import math
 import threading
 import time
@@ -114,8 +112,6 @@ class TestBoundedMap:
         assert call_count[0] < 100
 
     def test_preserves_order(self):
-        """Results come back in submission order even with varying latency."""
-
         def fn(x: int) -> int:
             time.sleep(0.001 * (x % 3))
             return x

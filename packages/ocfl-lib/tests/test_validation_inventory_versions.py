@@ -1,5 +1,3 @@
-"""Tests for inventory validation — versions checks."""
-
 from ocfl_lib.validation._inventory import validate_inventory
 from ocfl_lib.validation._report import FindingCollector
 

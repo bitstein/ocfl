@@ -1,5 +1,3 @@
-"""StorageRoot.commit and the OTS extension: no commit publishes an invalid version."""
-
 import dataclasses
 import hashlib
 from pathlib import Path
@@ -97,9 +95,6 @@ def root(request, tmp_path, monkeypatch):
         yield Root(S3FS("ots-commit", client=client), tmp_path)
 
 
-# --- 4.4 refuse a version the extension rejects
-
-
 def test_refuses_version_without_inventory_proof(root):
     root.commit(proved(FILES), proof=True)
     before = root.read("inventory.json")
@@ -161,9 +156,6 @@ def test_proof_and_content_proofs_commit(root):
     root.commit(proved({**FILES, "c": b"c"}), proof=True)
     assert root.read(ots.inventory_proof_path("v2")) is not None
     root.assert_clean()
-
-
-# --- 4.5 an existing object starts timestamping
 
 
 def test_start_on_existing_object(root):
@@ -242,9 +234,6 @@ def test_start_crash_at_every_write(root, action):
         pytest.fail("commit never finished")
     assert (CommitState.CLAIMED, True, False) in seen  # config, no proof yet
     assert (CommitState.CLAIMED, True, True) in seen  # config and proof
-
-
-# --- content proofs are final and correct before their version is committed
 
 
 def _refused(root: Root, files: dict[str, bytes], exc: type[Exception], code: str):

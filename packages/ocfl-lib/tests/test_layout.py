@@ -1,5 +1,3 @@
-"""Tests for layout protocol and registry."""
-
 import pytest
 
 from ocfl_lib._errors import UnknownLayout
@@ -7,8 +5,6 @@ from ocfl_lib._layout import DEFAULT_LAYOUTS, Layout, LayoutRegistry, get_layout
 
 
 class _DummyLayout(Layout):
-    """Minimal Layout implementation for testing."""
-
     @property
     def name(self) -> str:
         return "dummy-layout"
@@ -94,7 +90,6 @@ class TestDefaultRegistry:
         ],
     )
     def test_builtin_layouts_registered(self, name):
-        # 0006 requires config with delimiter
         if name == "0006-flat-omit-prefix-storage-layout":
             layout = get_layout(name, config={"delimiter": ":"})
         else:

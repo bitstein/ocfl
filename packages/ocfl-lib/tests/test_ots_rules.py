@@ -1,5 +1,3 @@
-"""The OTS extension rules in ocfl_lib.ots: config, proofs of an object, FS factory."""
-
 import hashlib
 import json
 from pathlib import Path

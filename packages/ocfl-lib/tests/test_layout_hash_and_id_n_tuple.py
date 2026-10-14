@@ -54,8 +54,6 @@ class TestHashAndIdNTupleLayout:
         layout = HashAndIdNTupleLayout(tuple_size=0, number_of_tuples=0)
         assert layout.resolve("..hor/rib:le-$id") == "%2e%2ehor%2frib%3ale-%24id"
 
-    # -- Percent encoding --
-
     def test_encode_dot(self):
         assert _percent_encode(".") == "%2e"
 
@@ -64,8 +62,6 @@ class TestHashAndIdNTupleLayout:
 
     def test_encode_safe_chars_unchanged(self):
         assert _percent_encode("abc-XYZ_012") == "abc-XYZ_012"
-
-    # -- Truncation at 100 chars --
 
     def test_truncation_long_id(self):
         # 260-char ID → encoded exceeds 100, truncated + digest appended
@@ -100,8 +96,6 @@ class TestHashAndIdNTupleLayout:
         # 100 chars, no truncation needed
         assert leaf == id_100
 
-    # -- Config --
-
     def test_config_defaults(self):
         cfg = HashAndIdNTupleConfig()
         data = msgspec.json.decode(msgspec.json.encode(cfg))
@@ -126,8 +120,6 @@ class TestHashAndIdNTupleLayout:
         assert layout.resolve("object-01") == (
             "ff/75/53/44/92/48/5e/ab/b3/9f/86/35/67/28/88/object-01"
         )
-
-    # -- Validation --
 
     def test_tuple_size_zero_requires_number_zero(self):
         with pytest.raises(ValueError):

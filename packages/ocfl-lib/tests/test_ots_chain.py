@@ -1,5 +1,3 @@
-"""Bitcoin checks: the pure check, validation and the RPC client."""
-
 import hashlib
 import json
 
@@ -122,9 +120,6 @@ def test_validate_object_chain(tmp_path):
         ("inventory", AttestationStatus.VERIFIED),
     ]
     assert results[0].verified is not None and results[0].verified.height == 50
-
-
-# --- the [bitcoin] extra client
 
 
 def _client(handler, *, sleeps: list[float] | None = None) -> BitcoinRpcClient:

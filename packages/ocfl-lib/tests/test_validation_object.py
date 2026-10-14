@@ -1,5 +1,3 @@
-"""Tests for OCFL object validation using official fixtures."""
-
 import hashlib
 import json
 import re
@@ -18,7 +16,6 @@ _CODE_RE = re.compile(r"[EW]\d+")
 
 
 def _parse_codes(dirname: str) -> list[str]:
-    """Extract base codes from fixture dir names."""
     return _CODE_RE.findall(dirname)
 
 
@@ -37,7 +34,6 @@ def _collect_fixtures(spec_ver: str, category: str) -> list[tuple[str, Path]]:
     return [(p.name, p) for p in sorted(p for p in d.iterdir() if p.is_dir())]
 
 
-# Good objects — both spec versions
 @pytest.mark.parametrize(
     "name,path",
     _collect_fixtures("1.1", "good-objects") + _collect_fixtures("1.0", "good-objects"),
@@ -50,7 +46,6 @@ class TestGoodObjects:
         assert r.is_valid, f"{name}: {[(e.code, e.render()) for e in r.errors]}"
 
 
-# Bad objects — both spec versions
 @pytest.mark.parametrize(
     "name,path",
     _collect_fixtures("1.1", "bad-objects") + _collect_fixtures("1.0", "bad-objects"),
@@ -75,7 +70,6 @@ class TestBadObjects:
             )
 
 
-# Warn objects — both spec versions
 @pytest.mark.parametrize(
     "name,path",
     _collect_fixtures("1.1", "warn-objects") + _collect_fixtures("1.0", "warn-objects"),
@@ -103,13 +97,9 @@ class TestWarnObjects:
 def test_spec_tuple_orders_numerically():
     from ocfl_lib.validation._object import _spec_tuple
 
-    # Lex compare bug: "1.10" < "1.2"; numeric: 1.10 > 1.2
     assert _spec_tuple("1.2") < _spec_tuple("1.10")
     assert _spec_tuple("1.0") < _spec_tuple("1.1")
     assert _spec_tuple("2.0") > _spec_tuple("1.10")
-
-
-# -- Unit tests for E019/E020/W003 --
 
 
 def _make_object(
@@ -141,7 +131,6 @@ def _make_object(
         content_path.mkdir(exist_ok=True)
     elif not content_path.exists():
         content_path.mkdir(exist_ok=True)
-        # Only create files if manifest has entries
         manifest = root_inv.get("manifest", {})
         for paths in manifest.values():
             if isinstance(paths, list):
@@ -176,7 +165,7 @@ def _base_inv(**overrides):
 
 class TestE019ContentDirectoryAdded:
     def test_version_sets_cd_when_root_absent(self, tmp_path: Path):
-        root_inv = _base_inv()  # no contentDirectory key
+        root_inv = _base_inv()
         ver_inv = _base_inv(contentDirectory="content")
         _make_object(tmp_path, root_inv, version_inv=ver_inv)
         fsys = LocalFS(tmp_path)
@@ -303,8 +292,6 @@ class TestVersionInventoryJson:
         assert r.has_code("E092")
 
     def test_non_head_alg_mismatch_fires_e092_even_in_lax_mode(self, tmp_path: Path):
-        # A non-head version whose digestAlgorithm differs from root must always
-        # have its manifest digests verified, even under check_digests=False.
         content = b"data"
         digest = hashlib.sha512(content).hexdigest()
         v1_alg_digest = hashlib.sha256(content).hexdigest()
@@ -517,7 +504,6 @@ class TestVersionInventoryJson:
 
 class TestE003cUnparseableDecl:
     def test_unparseable_zero_eq_fires_E003c(self, tmp_path: Path):
-        """Dir has 0= files but none parse as valid NAMASTE -> E003c."""
         (tmp_path / "0=garbage_1.1").write_text("garbage\n")
         (tmp_path / "v1").mkdir()
         fsys = LocalFS(tmp_path)
@@ -526,7 +512,6 @@ class TestE003cUnparseableDecl:
         assert not any(e.code == "E003a" for e in r.errors)
 
     def test_no_zero_eq_at_all_fires_E003a(self, tmp_path: Path):
-        """Dir has no 0= files at all -> E003a (not E003c)."""
         (tmp_path / "v1").mkdir()
         (tmp_path / "readme.txt").write_text("hello\n")
         fsys = LocalFS(tmp_path)
@@ -537,7 +522,6 @@ class TestE003cUnparseableDecl:
 
 class TestE006InvalidNamaste:
     def test_unparseable_zero_eq_fires_E006(self, tmp_path: Path):
-        """Each unparseable 0= file fires E006 with filename."""
         (tmp_path / "0=garbage_1.1").write_text("garbage\n")
         (tmp_path / "0=alsogarbage").write_text("nope\n")
         (tmp_path / "v1").mkdir()
@@ -549,7 +533,6 @@ class TestE006InvalidNamaste:
         assert any("0=alsogarbage" in m for m in msgs)
 
     def test_valid_plus_unparseable_fires_E006_for_extra(self, tmp_path: Path):
-        """Valid decl + extra unparseable 0= file -> E006 for the extra."""
         root_inv = _base_inv()
         _make_object(tmp_path, root_inv)
         (tmp_path / "0=garbage").write_text("nope\n")

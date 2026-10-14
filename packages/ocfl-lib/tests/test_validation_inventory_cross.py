@@ -1,5 +1,3 @@
-"""Tests for inventory cross-version validation."""
-
 from ocfl_lib.validation._inventory import validate_inventory_against_prior
 from ocfl_lib.validation._report import FindingCollector
 
@@ -67,7 +65,6 @@ class TestVersionSubset:
             manifest={_D1: ["v1/content/file.txt"], _D2: ["v2/content/file2.txt"]},
             versions={"v1": _v1_block(), "v2": _v2_block()},
         )
-        # Current only has v1 — missing v2
         current = _inv(versions={"v1": _v1_block()})
         r = FindingCollector()
         validate_inventory_against_prior(current, prior, r)
@@ -77,7 +74,6 @@ class TestVersionSubset:
 class TestVersionStateConsistency:
     def test_logical_paths_differ(self):
         prior = _inv(versions={"v1": _v1_block()})
-        # Current v1 has different state
         current = _inv(
             manifest={_D1: ["v1/content/file.txt"], _D2: ["v2/content/file2.txt"]},
             versions={

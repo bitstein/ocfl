@@ -1,5 +1,3 @@
-"""Tests for inventory model."""
-
 import json
 import pathlib
 
@@ -13,8 +11,6 @@ from ocfl_lib._inventory import (
     UserInfo,
     VersionInfo,
 )
-
-# --- Minimal valid inventory data ---
 
 MINIMAL_INV_DICT = {
     "id": "http://example.org/obj1",
@@ -41,9 +37,6 @@ def _inv_json(**overrides: object) -> bytes:
     return json.dumps(d).encode()
 
 
-# --- UserInfo ---
-
-
 class TestUserInfo:
     def test_decode_full(self):
         data = b'{"name": "Alice", "address": "mailto:alice@example.org"}'
@@ -67,9 +60,6 @@ class TestUserInfo:
         u = UserInfo(name="Bob")
         data = msgspec.json.decode(msgspec.json.encode(u))
         assert "address" not in data
-
-
-# --- VersionInfo ---
 
 
 class TestVersionInfo:
@@ -111,9 +101,6 @@ class TestVersionInfo:
         assert "user" not in data
 
 
-# --- Inventory ---
-
-
 class TestInventory:
     def test_decode_minimal(self):
         inv = msgspec.json.decode(_inv_json(), type=Inventory)
@@ -127,7 +114,6 @@ class TestInventory:
         assert inv.fixity is None
 
     def test_decode_camel_case_aliases(self):
-        """digestAlgorithm and contentDirectory map to snake_case attrs."""
         data = _inv_json(contentDirectory="stuff")
         inv = msgspec.json.decode(data, type=Inventory)
         assert inv.digest_algorithm == "sha512"
@@ -139,7 +125,6 @@ class TestInventory:
         assert inv.fixity == fixity
 
     def test_decode_full_fixture(self):
-        """Decode a real OCFL fixture inventory."""
         fixture = (
             pathlib.Path(__file__).parents[3]
             / "tests"
@@ -170,7 +155,6 @@ class TestInventory:
         encoded = msgspec.json.decode(msgspec.json.encode(inv))
         assert "digestAlgorithm" in encoded
         assert "contentDirectory" in encoded
-        # snake_case should NOT appear
         assert "digest_algorithm" not in encoded
         assert "content_directory" not in encoded
 
@@ -206,7 +190,6 @@ class TestInventory:
         assert inv.versions["v2"].message == "added b"
 
     def test_decode_rejects_missing_required(self):
-        """Missing required fields should raise."""
         for field in ("id", "type", "digestAlgorithm", "head", "manifest", "versions"):
             d = {**MINIMAL_INV_DICT}
             del d[field]
@@ -220,12 +203,8 @@ class TestInventory:
             msgspec.json.decode(_inv_json(manifest="not-a-dict"), type=Inventory)
 
 
-# --- StoredInventory ---
-
-
 class TestStoredInventory:
     def test_from_bytes_round_trip(self):
-        """Raw bytes are preserved exactly."""
         raw = _inv_json()
         si = StoredInventory.from_bytes(raw, DigestAlgorithm.SHA512)
         assert si.raw_bytes == raw
@@ -233,23 +212,18 @@ class TestStoredInventory:
         assert si.digest_algorithm == DigestAlgorithm.SHA512
 
     def test_from_bytes_digest_matches(self):
-        """Stored digest matches independent computation."""
         raw = _inv_json()
         si = StoredInventory.from_bytes(raw, DigestAlgorithm.SHA512)
         expected = bytes_digest(raw, DigestAlgorithm.SHA512)
         assert si.digest == expected
 
     def test_from_inventory_produces_compact_sorted_json(self):
-        """from_inventory creates compact JSON with sorted keys."""
         inv = msgspec.json.decode(_inv_json(), type=Inventory)
         si = StoredInventory.from_inventory(inv, DigestAlgorithm.SHA512)
-        # Verify it's valid JSON
         parsed = json.loads(si.raw_bytes)
         assert parsed["id"] == "http://example.org/obj1"
-        # Verify sorted keys at top level
         keys = list(parsed.keys())
         assert keys == sorted(keys)
-        # Verify compact (no whitespace)
         text = si.raw_bytes.decode()
         assert "\n" not in text
         assert "  " not in text
@@ -262,7 +236,6 @@ class TestStoredInventory:
         assert si.digest_algorithm == DigestAlgorithm.SHA256
 
     def test_from_inventory_camel_case_keys(self):
-        """JSON output uses camelCase keys."""
         inv = msgspec.json.decode(_inv_json(contentDirectory="stuff"), type=Inventory)
         si = StoredInventory.from_inventory(inv, DigestAlgorithm.SHA512)
         parsed = json.loads(si.raw_bytes)
@@ -284,7 +257,6 @@ class TestStoredInventory:
         assert si.sidecar_content == expected
 
     def test_byte_preservation_from_fixture(self):
-        """Bytes read from disk are preserved exactly through StoredInventory."""
         fixture = (
             pathlib.Path(__file__).parents[3]
             / "tests"
@@ -301,7 +273,6 @@ class TestStoredInventory:
         assert si.raw_bytes == raw
 
     def test_from_inventory_omits_none_fields(self):
-        """Optional None fields not in JSON output."""
         inv = msgspec.json.decode(_inv_json(), type=Inventory)
         si = StoredInventory.from_inventory(inv, DigestAlgorithm.SHA512)
         parsed = json.loads(si.raw_bytes)
@@ -309,7 +280,6 @@ class TestStoredInventory:
         assert "fixity" not in parsed
 
     def test_from_inventory_emits_raw_utf8(self):
-        """Non-ASCII strings serialize as raw UTF-8 bytes, not \\u escapes."""
         inv = Inventory(
             id="http://example.org/obj1",
             type="https://ocfl.io/1.1/spec/#inventory",

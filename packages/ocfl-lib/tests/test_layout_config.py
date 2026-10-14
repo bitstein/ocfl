@@ -1,5 +1,3 @@
-"""Tests for layout config I/O."""
-
 import json
 
 import pytest

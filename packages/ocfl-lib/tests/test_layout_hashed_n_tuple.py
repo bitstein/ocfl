@@ -67,8 +67,6 @@ class TestHashedNTupleLayout:
             "487326d8c2a3c0b885e23da1469b4d6671fd4e76978924b4443e9e3c316cda6d"
         )
 
-    # -- config --
-
     def test_config_defaults(self):
         cfg = HashedNTupleConfig()
         data = msgspec.json.encode(cfg)
@@ -96,8 +94,6 @@ class TestHashedNTupleLayout:
         assert layout.resolve("object-01") == (
             "ff/75/53/44/92/48/5e/ab/b3/9f/86/35/67/28/88/4e"
         )
-
-    # -- validation --
 
     def test_tuple_size_zero_requires_number_zero(self):
         with pytest.raises(ValueError):

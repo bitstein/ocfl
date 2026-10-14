@@ -1,5 +1,3 @@
-"""Tests for validation codes and findings."""
-
 import dataclasses
 from types import MappingProxyType
 
@@ -43,7 +41,7 @@ class TestValidationCode:
     def test_no_params_code(self):
         code = get_code("E063")
         assert code.params == []
-        assert code.description  # still has a description
+        assert code.description
 
 
 class TestFinding:

@@ -1,5 +1,3 @@
-"""Tests for VersionState, FixitySource protocol, and scan_dir."""
-
 from typing import TYPE_CHECKING
 
 import pytest
@@ -28,8 +26,6 @@ class _DummyFS:
 
 
 class _DummyContentSource(ContentSource):
-    """Minimal ContentSource for testing."""
-
     def __init__(self, files: dict[str, tuple[FS, str]]):
         self._files = files
 
@@ -38,8 +34,6 @@ class _DummyContentSource(ContentSource):
 
 
 class _DummyFixitySource(FixitySource):
-    """Minimal FixitySource for testing."""
-
     def __init__(self, fixity: dict[str, dict[DigestAlgorithm, str]]):
         self._fixity = fixity
 
@@ -122,7 +116,6 @@ class TestStageDir:
 
         assert stage.digest_algorithm is DigestAlgorithm.SHA512
         assert len(stage.state) == 1
-        # Verify digest is correct
         expected = file_digest(tmp_path / "hello.txt", DigestAlgorithm.SHA512)
         assert expected in stage.state
         assert stage.state[expected] == ["hello.txt"]
@@ -136,25 +129,21 @@ class TestStageDir:
         fsys = LocalFS(tmp_path)
         stage = scan_dir(fsys, "", DigestAlgorithm.SHA256)
 
-        # Should have 2 digests
         paths = {p for d, ps in stage.state.items() for p in ps}
         assert paths == {"a.txt", "sub/b.txt"}
 
     def test_duplicate_content(self, tmp_path: Path):
-        """Files with same content share a digest entry."""
         (tmp_path / "orig.txt").write_text("same content")
         (tmp_path / "copy.txt").write_text("same content")
 
         fsys = LocalFS(tmp_path)
         stage = scan_dir(fsys, "", DigestAlgorithm.SHA256)
 
-        # One digest with two paths
         assert len(stage.state) == 1
         digest = next(iter(stage.state))
         assert sorted(stage.state[digest]) == ["copy.txt", "orig.txt"]
 
     def test_content_source_resolves(self, tmp_path: Path):
-        """ContentSource from scan_dir can retrieve files."""
         (tmp_path / "data.bin").write_bytes(b"\x00\x01\x02")
 
         fsys = LocalFS(tmp_path)
@@ -166,7 +155,6 @@ class TestStageDir:
             assert f.read() == b"\x00\x01\x02"
 
     def test_subdirectory_stage(self, tmp_path: Path):
-        """Scan a subdirectory, not root."""
         sub = tmp_path / "payload"
         sub.mkdir()
         (sub / "file.txt").write_text("payload")
@@ -183,7 +171,6 @@ class TestStageDir:
         assert stage.state == {}
 
     def test_fixity_algorithms(self, tmp_path: Path):
-        """scan_dir with fixity_algs computes additional digests."""
         (tmp_path / "f.txt").write_text("fixity test")
 
         fsys = LocalFS(tmp_path)
@@ -199,7 +186,6 @@ class TestStageDir:
         fixity = stage.fixity_source.get_fixity(digest)
         assert DigestAlgorithm.SHA256 in fixity
         assert DigestAlgorithm.MD5 in fixity
-        # Verify fixity digests are correct
         expected = multi_digest(
             tmp_path / "f.txt", [DigestAlgorithm.SHA256, DigestAlgorithm.MD5]
         )
@@ -219,7 +205,6 @@ def _make_stage(
     files: dict[str, tuple[FS, str]] | None = None,
     fixity: dict[str, dict[DigestAlgorithm, str]] | None = None,
 ) -> VersionState:
-    """Helper to build a VersionState with dummy sources."""
     cs = _DummyContentSource(files or {})
     fs = _DummyFixitySource(fixity) if fixity else None
     return VersionState(
@@ -236,7 +221,6 @@ class TestStageOverlay:
         assert "d2" in merged.state
 
     def test_overlay_replaces_by_path(self):
-        """Overlay's path->digest wins over base."""
         base = _make_stage({"old_digest": ["file.txt"]})
         overlay = _make_stage({"new_digest": ["file.txt"]})
         merged = base.overlay(overlay)
@@ -259,7 +243,6 @@ class TestStageOverlay:
             s1.overlay(s2)
 
     def test_overlay_content_source_chain(self):
-        """Content source tries each stage's source in order."""
         fs1 = _DummyFS()
         fs2 = _DummyFS()
         s1 = _make_stage(
@@ -277,7 +260,6 @@ class TestStageOverlay:
         assert result_fs is fs2
 
     def test_overlay_fixity_chain(self):
-        """Fixity source chains through all stages."""
         s1 = _make_stage(
             {"d1": ["a.txt"]},
             fixity={"d1": {DigestAlgorithm.SHA256: "aaa"}},
@@ -292,7 +274,6 @@ class TestStageOverlay:
         assert merged.fixity_source.get_fixity("d2") == {DigestAlgorithm.SHA256: "bbb"}
 
     def test_overlay_no_fixity(self):
-        """If no stages have fixity, result has none."""
         s1 = _make_stage({"d1": ["a.txt"]})
         s2 = _make_stage({"d2": ["b.txt"]})
         merged = s1.overlay(s2)
@@ -307,7 +288,6 @@ class TestStageOverlay:
 
 class TestObjectVersionState:
     def test_version_stage_state_matches(self, good_objects_1_1: Path):
-        """version_stage state matches version_state."""
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
@@ -316,7 +296,6 @@ class TestObjectVersionState:
         assert stage.state == obj.version_info(v1).state
 
     def test_version_stage_algorithm(self, good_objects_1_1: Path):
-        """version_stage uses object's digest algorithm."""
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
@@ -324,23 +303,19 @@ class TestObjectVersionState:
         assert stage.digest_algorithm is DigestAlgorithm.SHA512
 
     def test_version_stage_content_source(self, good_objects_1_1: Path):
-        """Content source from version_stage can open files."""
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
         v1 = VNum(1)
         stage = obj.version_state(v1)
 
-        # Get first digest from state
         digest = next(iter(stage.state))
         src_fs, src_path = stage.content_source.get_content(digest)
-        # Should be able to open and read the content
         with src_fs.open_file(src_path) as f:
             data = f.read()
         assert len(data) > 0
 
     def test_version_stage_head(self, good_objects_1_1: Path):
-        """version_stage works for head version."""
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
@@ -348,7 +323,6 @@ class TestObjectVersionState:
         assert stage.state == obj.version_info(obj.head).state
 
     def test_version_stage_invalid_version(self, good_objects_1_1: Path):
-        """version_stage raises VersionNotFound for nonexistent version."""
         from ocfl_lib._errors import VersionNotFound
 
         obj_path = good_objects_1_1 / "spec-ex-full"

@@ -1,5 +1,3 @@
-"""Tests for JsonValue narrowing helpers."""
-
 import pytest
 
 from ocfl_lib._json_value import (

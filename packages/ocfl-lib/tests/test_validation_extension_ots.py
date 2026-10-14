@@ -1,5 +1,3 @@
-"""Tests for NNNN-ots-timestamps extension validation."""
-
 import hashlib
 import json
 from pathlib import Path
@@ -32,10 +30,6 @@ def _build_ots_object(
     pending_inventory_ots: bool = False,
     pending_companions: set[str] | None = None,
 ) -> Path:
-    """Build a minimal SHA-256 OCFL object on disk for ots-extension tests.
-
-    Knobs let individual tests break one invariant at a time.
-    """
     files = {"file.txt": b"hello world"} if files is None else files
     pending_companions = pending_companions or set()
     companion_overrides = companion_overrides or {}
@@ -163,7 +157,6 @@ def test_companion_file_missing_for_content(tmp_path: Path) -> None:
 
 
 def test_proof_of_a_proof_is_allowed(tmp_path: Path) -> None:
-    """`P.ots.ots` is the content proof of `P.ots`; E903 is gone."""
     file_data = b"hello world"
     file_sha256 = hashlib.sha256(file_data).digest()
     inner_ots = build_attestation(file_sha256, block_height=800_000)
@@ -199,7 +192,6 @@ def test_inventory_ots_digest_mismatch(tmp_path: Path) -> None:
 
 
 def test_corrupt_inventory_ots_reports_e905(tmp_path: Path) -> None:
-    """Unparseable inventory `.ots` bytes → E905."""
     _build_ots_object(tmp_path, inventory_ots_override=b"not an ots file")
 
     r = _validate(tmp_path)
@@ -217,7 +209,6 @@ def test_inventory_ots_match_no_error(tmp_path: Path) -> None:
 
 
 def test_pending_inventory_ots_warns_w902(tmp_path: Path) -> None:
-    """A pending inventory proof is a warning (W902), not an error."""
     _build_ots_object(tmp_path, pending_inventory_ots=True)
 
     r = _validate(tmp_path)
@@ -242,7 +233,6 @@ def test_embedded_digest_mismatch(tmp_path: Path) -> None:
 
 
 def test_corrupt_companion_file_reports_e905(tmp_path: Path) -> None:
-    """Unparseable `.ots` companion bytes → E905."""
     _build_ots_object(
         tmp_path,
         companion_overrides={"file.txt": b"not an ots file"},
@@ -268,7 +258,6 @@ _OTS_ERROR_CODES = frozenset(
 
 
 def test_pending_content_proof_is_e907(tmp_path: Path) -> None:
-    """A content proof with only a PendingAttestation is an error (E907)."""
     _build_ots_object(tmp_path, pending_companions={"file.txt"})
     r = _validate(tmp_path)
     assert r.has_code("E907"), [e.code for e in r.errors]
@@ -293,7 +282,6 @@ def test_pending_content_proof_is_e907(tmp_path: Path) -> None:
     ],
 )
 def test_ots_codes_registered(code: str) -> None:
-    """Codes used by the extension must be registered in validation-errors.json."""
     from ocfl_lib.validation._codes import get_code
 
     get_code(code)

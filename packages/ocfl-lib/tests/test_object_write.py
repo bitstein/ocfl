@@ -1,5 +1,3 @@
-"""Tests for writing object versions through StorageRoot.commit."""
-
 from typing import TYPE_CHECKING
 
 import pytest
@@ -65,8 +63,6 @@ class _FailingSource:
 
 
 class TestCommit:
-    """StorageRoot.commit with a VersionState."""
-
     def test_create_new_object(self, tmp_path: Path):
         fs, root = _root(tmp_path)
         assert not root.get_object(OID).exists
@@ -102,7 +98,6 @@ class TestCommit:
         _valid(fs, obj)
 
     def test_forward_delta_dedup(self, tmp_path: Path):
-        """Unchanged files reuse v1 content paths (no duplication)."""
         fs, root = _root(tmp_path)
         root.commit(fs, OID, _stage(tmp_path, {"a.txt": "same", "b.txt": "old"}))
         stage2 = _stage(tmp_path, {"a.txt": "same", "b.txt": "new"}, "src2")
@@ -210,8 +205,6 @@ class TestCommit:
 
 
 class TestPlanThenCommit:
-    """StorageRoot.plan, then StorageRoot.commit of the CommitPlan."""
-
     def test_plan_writes_nothing(self, tmp_path: Path):
         _fs, root = _root(tmp_path)
         plan = root.plan(OID, _stage(tmp_path, {"file.txt": "hello"}))
@@ -252,7 +245,6 @@ class TestPlanThenCommit:
             root.commit(fs, OID, plan, content=stage.content_source, message="m")
 
     def test_dropping_paths_needs_no_content(self, tmp_path: Path):
-        """A version that only drops paths reads no content."""
         fs, root = _root(tmp_path)
         obj = root.commit(fs, OID, _stage(tmp_path, {"a.txt": "a", "b.txt": "b"}))
         v1 = obj.version_state(VNum(1))
@@ -267,7 +259,6 @@ class TestPlanThenCommit:
         _valid(fs, obj)
 
     def test_independently_built_stale_plan_cannot_publish(self, tmp_path: Path):
-        """Two v2 plans built from the same v1 head cannot both publish."""
         fs, root = _root(tmp_path)
         root.commit(fs, OID, _stage(tmp_path, {"base.txt": "v1"}))
         stage_a = _stage(tmp_path, {"a.txt": "writer a"}, "src2a")

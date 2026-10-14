@@ -1,5 +1,3 @@
-"""Tests for FS protocols, FileRef, and FsEntry."""
-
 from io import BytesIO
 from typing import TYPE_CHECKING, BinaryIO
 
@@ -67,8 +65,6 @@ class TestFsEntry:
 
 
 class TestCopyFSRuntimeCheckable:
-    """CopyFS is the only @runtime_checkable FS protocol (isinstance in fs/utils.py)."""
-
     def test_copy_fs_protocol(self):
         class MyCopyFS:
             def open_file(self, name: str) -> BinaryIO:

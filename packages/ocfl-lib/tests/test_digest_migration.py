@@ -1,5 +1,3 @@
-"""Tests for digest algorithm migration."""
-
 from typing import TYPE_CHECKING
 
 import pytest
@@ -62,8 +60,6 @@ def _create_v1(
 
 
 class TestAlgorithmMigration:
-    """Algorithm migration between versions."""
-
     def test_sha256_to_sha512(self, tmp_path: Path):
         """Create v1 sha256, v2 sha512 — fixity has sha256 digests."""
         obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
@@ -86,7 +82,6 @@ class TestAlgorithmMigration:
         assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
 
     def test_version_states_remapped(self, tmp_path: Path):
-        """All version states use new algorithm digests after migration."""
         obj, obj_fs = _create_v1(tmp_path, {"a.txt": "aaa"})
 
         src2 = tmp_path / "src2"
@@ -105,7 +100,6 @@ class TestAlgorithmMigration:
             assert len(digest) == 128, f"manifest digest not sha512: {digest[:16]}..."
 
     def test_content_files_unchanged(self, tmp_path: Path):
-        """Content files on disk not modified during migration."""
         obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
         obj_dir = tmp_path / "obj"
 
@@ -127,7 +121,6 @@ class TestAlgorithmMigration:
             assert (obj_dir / cp).read_bytes() == content
 
     def test_read_back_after_migration(self, tmp_path: Path):
-        """Content accessible via logical paths after migration."""
         obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
 
         src2 = tmp_path / "src2"
@@ -146,7 +139,6 @@ class TestAlgorithmMigration:
             assert f.read() == b"world"
 
     def test_old_root_sidecar_removed(self, tmp_path: Path):
-        """Old root sidecar removed after migration."""
         _obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
         obj_dir = tmp_path / "obj"
         assert (obj_dir / "inventory.json.sha256").exists()
@@ -162,7 +154,6 @@ class TestAlgorithmMigration:
         assert (obj_dir / "inventory.json.sha512").exists()
 
     def test_fixity_preserves_old_digests(self, tmp_path: Path):
-        """Fixity maps old digest → same content paths as old manifest."""
         obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
         old_manifest = dict(obj.inventory.inventory.manifest)
 
@@ -181,7 +172,6 @@ class TestAlgorithmMigration:
             assert sha256_fixity[old_digest] == old_paths
 
     def test_dedup_across_migration(self, tmp_path: Path):
-        """Unchanged files deduplicated across algorithm change."""
         obj, obj_fs = _create_v1(tmp_path, {"file.txt": "same content"})
 
         src2 = tmp_path / "src2"
@@ -198,7 +188,6 @@ class TestAlgorithmMigration:
         assert len(v2_paths) == 0
 
     def test_two_step_migration(self, tmp_path: Path):
-        """Algorithm migration works with two-step API."""
         obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
 
         src2 = tmp_path / "src2"
@@ -217,7 +206,6 @@ class TestAlgorithmMigration:
         assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
 
     def test_existing_fixity_preserved(self, tmp_path: Path):
-        """Pre-existing fixity (e.g. md5) preserved through migration."""
         src = _make_src_dir(tmp_path, {"file.txt": "hello"})
         stage1 = scan_dir(
             LocalFS(src.parent),
@@ -231,7 +219,6 @@ class TestAlgorithmMigration:
         assert obj.inventory.inventory.fixity is not None
         assert "md5" in obj.inventory.inventory.fixity
 
-        # Migrate to sha512
         src2 = tmp_path / "src2"
         src2.mkdir()
         (src2 / "file.txt").write_text("hello")
@@ -241,14 +228,13 @@ class TestAlgorithmMigration:
 
         inv = obj.inventory.inventory
         assert inv.fixity is not None
-        assert "md5" in inv.fixity  # preserved
-        assert "sha256" in inv.fixity  # added from migration
+        assert "md5" in inv.fixity
+        assert "sha256" in inv.fixity
 
         result = validate_object(obj_fs, OID)
         assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
 
     def test_migration_error_reverts(self, tmp_path: Path):
-        """commit auto-reverts on error during migration write."""
         _obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
 
         new_digest = bytes_digest(b"brand_new", DigestAlgorithm.SHA512)
@@ -270,25 +256,19 @@ class TestAlgorithmMigration:
         with pytest.raises(OSError, match="disk full"):
             _commit(obj_fs, stage, created="2024-06-01T00:00:00Z")
 
-        # v2 directory should be cleaned up by revert
         obj_dir = tmp_path / "obj"
         assert not (obj_dir / "v2").exists()
 
-        # Root inventory must be restored to original SHA256 bytes
         original_inv_bytes = (obj_dir / "v1" / "inventory.json").read_bytes()
         assert (obj_dir / "inventory.json").read_bytes() == original_inv_bytes
 
-        # Original SHA256 sidecar must be restored
         assert (obj_dir / "inventory.json.sha256").is_file()
-        # New SHA512 sidecar must not exist
         assert not (obj_dir / "inventory.json.sha512").exists()
 
-        # Object should still validate
         result = validate_object(obj_fs, OID)
         assert result.is_valid, result.errors
 
     def test_migration_revert_restores_original_inventory(self, tmp_path: Path):
-        """A failed root inventory write restores the original inventory."""
         _obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
         obj_dir = tmp_path / "obj"
         orig_inv_bytes = (obj_dir / "inventory.json").read_bytes()

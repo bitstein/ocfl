@@ -1,5 +1,3 @@
-"""Tests for DigestAlgorithm and digest computation."""
-
 import hashlib
 import io
 from typing import TYPE_CHECKING
@@ -83,7 +81,6 @@ class TestRegex:
         assert not alg.regex.match("a" * (alg.hex_length - 1))
 
 
-# Known test vectors: digest of empty bytes b""
 EMPTY_DIGESTS = {
     DigestAlgorithm.SHA512: hashlib.sha512(b"").hexdigest(),
     DigestAlgorithm.SHA256: hashlib.sha256(b"").hexdigest(),
@@ -115,7 +112,6 @@ class TestNewHasher:
         assert DigestAlgorithm.SHA512_256.regex.match(digest)
 
 
-# Known SHA-256 of b"hello world"
 HELLO_WORLD = b"hello world"
 HELLO_SHA256 = hashlib.sha256(HELLO_WORLD).hexdigest()
 HELLO_SHA512 = hashlib.sha512(HELLO_WORLD).hexdigest()
@@ -228,7 +224,6 @@ class TestMultiDigest:
 
 
 def _make_files(tmp_path: Path, count: int = 5) -> list[Path]:
-    """Create test files with distinct content."""
     paths = []
     for i in range(count):
         f = tmp_path / f"file_{i}.bin"
@@ -291,7 +286,6 @@ class TestDigestFilesErrors:
             digest_files([missing1, missing2], DigestAlgorithm.SHA256)
         assert len(exc_info.value.exceptions) == 2
         assert all(isinstance(e, FileNotFoundError) for e in exc_info.value.exceptions)
-        # add_note attaches path context
         for exc in exc_info.value.exceptions:
             assert any("while digesting" in n for n in exc.__notes__)
 

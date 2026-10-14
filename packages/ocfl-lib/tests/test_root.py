@@ -1,5 +1,3 @@
-"""Tests for OCFL StorageRoot read operations."""
-
 import hashlib
 import json
 from typing import TYPE_CHECKING
@@ -72,7 +70,6 @@ def _make_object(
     (v1 / "inventory.json").write_bytes(inv_bytes)
     (v1 / "inventory.json.sha512").write_text(f"{digest} inventory.json\n")
 
-    # Write content files
     for logical_path, data in content.items():
         content_file = v1 / content_dir / logical_path
         content_file.parent.mkdir(parents=True, exist_ok=True)
@@ -300,7 +297,6 @@ class TestStorageRootObjectsBatch:
         assert objs[1].id == "http://example.org/b"
 
     def test_objects_batch_loads_inventories(self, tmp_path: Path):
-        """Verify batch-loaded objects have accessible inventories."""
         _make_root(tmp_path)
         _make_object(
             tmp_path,

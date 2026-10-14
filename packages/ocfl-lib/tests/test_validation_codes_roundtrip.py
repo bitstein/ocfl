@@ -1,5 +1,3 @@
-"""Round-trip: every code raised in validation/*.py is in validation-errors.json."""
-
 import ast
 import json
 import re
@@ -16,9 +14,6 @@ _ERRORS_JSON = (
     / "validation-errors.json"
 )
 
-# Codes in validation-errors.json that are implicitly covered by adjacent
-# validators or only raised via transitive paths not visible to static
-# analysis.  Each entry has a brief rationale.
 _KNOWN_UNREACHED: frozenset[str] = frozenset(
     {
         # Content path empty segment — subsumed by E099 segment check
@@ -88,14 +83,12 @@ def _load_table_codes() -> set[str]:
 
 class TestCodesRoundtrip:
     def test_all_raised_codes_in_table(self):
-        """Every code emitted by validation code must exist in the table."""
         raised = _collect_raised_codes()
         table = _load_table_codes()
         missing = raised - table
         assert not missing, f"codes raised but not in table: {sorted(missing)}"
 
     def test_unreached_codes_match_expectation(self):
-        """Table codes not raised must equal _KNOWN_UNREACHED exactly."""
         raised = _collect_raised_codes()
         table = _load_table_codes()
         unreached = table - raised

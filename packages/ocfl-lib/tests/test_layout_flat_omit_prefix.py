@@ -50,8 +50,6 @@ class TestFlatOmitPrefixLayout:
         layout = FlatOmitPrefixLayout(delimiter="ss/")
         assert layout.resolve("prefix-ß/value") == "value"
 
-    # -- Validation --
-
     def test_no_delimiter_found_raises(self):
         layout = FlatOmitPrefixLayout(delimiter=":")
         with pytest.raises(ValueError, match="delimiter"):
@@ -60,8 +58,6 @@ class TestFlatOmitPrefixLayout:
     def test_empty_delimiter_raises(self):
         with pytest.raises(ValueError, match="empty"):
             FlatOmitPrefixLayout(delimiter="")
-
-    # -- Config --
 
     def test_config_struct(self):
         cfg = FlatOmitPrefixConfig(delimiter=":")

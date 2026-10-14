@@ -1,5 +1,3 @@
-"""Tests for inventory validation — manifest checks."""
-
 import unicodedata
 
 from ocfl_lib.validation._inventory import validate_inventory
@@ -174,23 +172,18 @@ class TestManifestPathSegments:
 
 
 class TestManifestTraversalGaps:
-    """Adversarial path traversal — verify existing checks cover gaps."""
-
     def test_absolute_path_rejected(self):
         r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["/etc/passwd"]}), r)
         assert r.has_code("E100")
 
     def test_backslash_treated_as_literal(self):
-        # Characterization: backslash is a valid filename char on POSIX,
-        # not a path separator. Accepted as part of segment.
         r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["v1/content/foo\\bar"]}), r)
         assert not r.has_code("E099")
         assert not r.has_code("E100")
 
     def test_url_encoded_dotdot_treated_as_literal(self):
-        # Characterization: %2e%2e is a literal segment, not decoded.
         r = FindingCollector()
         validate_inventory(_inv_with_manifest({_D1: ["v1/content/%2e%2e/file.txt"]}), r)
         assert not r.has_code("E099")
@@ -293,8 +286,6 @@ def _error_codes(r: FindingCollector) -> list[str]:
 
 
 class TestLimitsAreInfoOnly:
-    """L-codes are non-spec: reported as info, never affect validity."""
-
     def test_long_object_id_is_valid(self):
         r = FindingCollector()
         inv = _inv_with_manifest({_D1: ["v1/content/file.txt"]})
@@ -348,12 +339,6 @@ class TestLimitsAreInfoOnly:
 
 
 class TestUnicodeNormalizationCharacterization:
-    """Pin current behavior: NFC and NFD are treated as DISTINCT.
-
-    TODO: revisit policy — see REVIEW_PLAN.md. Other OCFL impls (ocfl-go,
-    ocfl-py, gocfl, rocfl) all do byte-exact compare; matching the field.
-    """
-
     def test_nfc_and_nfd_treated_as_distinct_paths(self):
         nfc = unicodedata.normalize("NFC", "café.txt")
         nfd = unicodedata.normalize("NFD", "café.txt")
@@ -370,6 +355,5 @@ class TestUnicodeNormalizationCharacterization:
             },
         }
         validate_inventory(_inv_with_manifest(manifest, versions=versions), r)
-        # Currently no duplicate detected — pinning this behavior.
         assert not r.has_code("E101a")
         assert not r.has_code("E095a")

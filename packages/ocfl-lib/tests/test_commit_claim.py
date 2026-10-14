@@ -371,8 +371,6 @@ class TestS3:
 
 
 class _Swapped:
-    """A content source that hands over the wrong bytes for every digest."""
-
     def __init__(self, tmp_path: Path) -> None:
         (tmp_path / "wrong").write_bytes(b"not what the manifest says")
         self.fs = LocalFS(tmp_path)

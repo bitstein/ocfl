@@ -41,7 +41,6 @@ class TestNTupleOmitPrefixLayout:
         )
 
     def test_ex1_no_delimiter(self):
-        # delimiter ":" not found → use whole ID
         layout = NTupleOmitPrefixLayout(
             delimiter=":",
             tuple_size=4,
@@ -110,13 +109,9 @@ class TestNTupleOmitPrefixLayout:
         )
         assert layout.resolve("prefix-ß/value") == "va/lu/value"
 
-    # -- Validation --
-
     def test_empty_delimiter_raises(self):
         with pytest.raises(ValueError, match="empty"):
             NTupleOmitPrefixLayout(delimiter="")
-
-    # -- Config --
 
     def test_config_defaults(self):
         cfg = NTupleOmitPrefixConfig()

@@ -58,8 +58,6 @@ CRASH_AT = st.none() | st.integers(min_value=1, max_value=60)
 
 
 class CommitCrashRules:
-    """Rules shared by the local and the S3 machine."""
-
     fs: LocalFS
     root: StorageRoot
     tmp: Path
@@ -148,7 +146,6 @@ class CommitCrashRules:
         self._settle()
 
     def _settle(self):
-        """The pending commit is finished or undone; it must be clean now."""
         assert self.pending is not None
         assert self.root.commit_status(OID).state is CommitState.CLEAN
         current = self._root_inventory()

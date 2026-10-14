@@ -1,5 +1,3 @@
-"""Tests for LocalFS backend."""
-
 from io import BytesIO
 from typing import TYPE_CHECKING
 
@@ -14,7 +12,6 @@ from ocfl_lib.fs._local import LocalFS
 
 @pytest.fixture
 def fs_dir(tmp_path: Path) -> Path:
-    """Create a temp dir with some files for testing."""
     (tmp_path / "a.txt").write_text("hello")
     (tmp_path / "sub").mkdir()
     (tmp_path / "sub" / "b.txt").write_text("world")
@@ -101,7 +98,6 @@ class TestWrite:
         assert (fs_dir / "large.bin").read_bytes() == data
 
     def test_write_atomic_no_partial_on_error(self, fs: LocalFS, fs_dir: Path):
-        """If the source stream errors mid-read, no partial file should remain."""
         (fs_dir / "existing.txt").write_text("original")
 
         class BadStream:
@@ -110,7 +106,6 @@ class TestWrite:
 
         with pytest.raises(OSError, match="read failed"):
             fs.write("existing.txt", BadStream())  # ty: ignore[invalid-argument-type]
-        # Original file should be unchanged
         assert (fs_dir / "existing.txt").read_text() == "original"
 
 
@@ -148,7 +143,7 @@ class TestMkdir:
         assert (fs_dir / "a" / "b" / "c").is_dir()
 
     def test_existing_ok(self, fs: LocalFS):
-        fs.mkdir("sub")  # already exists — should not raise
+        fs.mkdir("sub")
 
 
 class TestCopy:
@@ -156,7 +151,6 @@ class TestCopy:
         n = fs.copy("a.txt", "copy.txt")
         assert n == 5
         assert (fs_dir / "copy.txt").read_bytes() == b"hello"
-        # Source unchanged
         assert (fs_dir / "a.txt").read_bytes() == b"hello"
 
     def test_copy_nested(self, fs: LocalFS, fs_dir: Path):
@@ -280,8 +274,6 @@ def test_exists_local(tmp_path):
 
 
 class TestDurability:
-    """Writes, renames and removes are fsynced (file, then its directory)."""
-
     @pytest.fixture
     def synced(self, monkeypatch):
         import os

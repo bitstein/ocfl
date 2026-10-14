@@ -10,15 +10,11 @@ class TestFlatDirectLayout:
     def test_name(self):
         assert FlatDirectLayout().name == "0002-flat-direct-storage-layout"
 
-    # -- spec test vectors --
-
     def test_resolve_simple_id(self):
         assert FlatDirectLayout().resolve("object-01") == "object-01"
 
     def test_resolve_special_chars(self):
         assert FlatDirectLayout().resolve("..hor_rib:le-$id") == "..hor_rib:le-$id"
-
-    # -- validation --
 
     def test_reject_id_with_slash(self):
         with pytest.raises(ValueError, match="separator"):
@@ -35,8 +31,6 @@ class TestFlatDirectLayout:
     def test_reject_dotdot(self):
         with pytest.raises(ValueError, match=r"'\.\.'"):
             FlatDirectLayout().resolve("..")
-
-    # -- config --
 
     def test_config_struct(self):
         cfg = FlatDirectConfig()
