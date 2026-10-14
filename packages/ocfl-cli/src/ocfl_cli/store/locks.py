@@ -56,7 +56,6 @@ def flock(path: Path, runtime: Runtime, *, what: str) -> Generator[None]:
 
 
 def object_lock_path(root_path: str, object_id: str) -> Path:
-    """`$TMPDIR/ocfl-cli-object-locks/<sha256(root \\0 object)>.lock`."""
     key = hashlib.sha256(f"{root_path}\0{object_id}".encode()).hexdigest()
     return Path(tempfile.gettempdir()) / _OBJECT_LOCK_DIR / f"{key}.lock"
 

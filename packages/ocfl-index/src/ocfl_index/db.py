@@ -1,5 +1,3 @@
-"""SQLite connection and schema management."""
-
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -43,7 +41,6 @@ _LOCK_MESSAGE_FRAGMENTS = (
 
 
 def is_lock_error(err: sqlite3.OperationalError) -> bool:
-    """True when ``err`` is SQLite contention (BUSY/LOCKED), not a hard failure."""
     code = getattr(err, "sqlite_errorcode", None)
     if code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
         return True
@@ -52,7 +49,6 @@ def is_lock_error(err: sqlite3.OperationalError) -> bool:
 
 
 def connect(path: Path | str) -> sqlite3.Connection:
-    """Open a SQLite connection in autocommit mode with WAL + foreign keys."""
     conn = sqlite3.connect(path, timeout=0, autocommit=True)
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
@@ -85,11 +81,6 @@ def immediate_transaction(conn: sqlite3.Connection) -> Generator[None]:
 
 
 def ensure_schema(conn: sqlite3.Connection, root_path: str) -> None:
-    """Create schema if missing; drop+recreate on schema_version mismatch.
-
-    Rebuild runs drop+create+meta-seed inside one transaction so a failure
-    midway leaves the prior schema and rows intact.
-    """
     stored = _stored_schema_version(conn)
     if stored is None:
         with immediate_transaction(conn):
@@ -106,7 +97,6 @@ def meta_get(conn: sqlite3.Connection, key: str) -> str | None:
 
 
 def reset_cache(conn: sqlite3.Connection) -> None:
-    """Truncate all index tables (everything except meta)."""
     for table in _CACHE_TABLES:
         conn.execute(f"DELETE FROM {table}")
 
@@ -140,10 +130,7 @@ def _execute_schema_sql_uncommitted(conn: sqlite3.Connection, sql: str) -> None:
 
     ``conn.executescript`` issues an implicit ``COMMIT`` before its body, which
     would commit a pending drop step inside the rebuild and break atomicity.
-    Splitting on ``sqlite3.complete_statement`` avoids that. Sufficient for
-    plain ``CREATE TABLE`` / ``CREATE INDEX`` DDL; revisit if ``schema.sql``
-    grows triggers, CTEs, or dollar-quoting that ``complete_statement``
-    mis-splits.
+    Splitting on ``sqlite3.complete_statement`` avoids that.
     """
     buf: list[str] = []
     for line in sql.splitlines():

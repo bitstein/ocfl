@@ -1,5 +1,3 @@
-"""Batch row reasons: the fixed reason codes and the next command to run."""
-
 from typing import TYPE_CHECKING, Literal
 
 from ocfl_cli import errors as errors

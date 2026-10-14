@@ -1,5 +1,3 @@
-"""OCFL CLI package."""
-
 from ocfl_cli.main import app
 
 

@@ -1,19 +1,3 @@
-"""The block-watch loop for `stage timestamp|upgrade --watch`.
-
-One upgrade pass runs at the start (proofs already final need not wait for
-a block). Per-block invariant: under the staging lock, decide whether the chain
-moved (height jumped or stable-height tip swapped — the reorg/stale-tip
-window) and re-verify the target's cached proofs accordingly, then run one
-upgrade pass. Returns when the target's phase is reached or the user
-interrupts. One loop serves both Timestamp Targets: the target comes from
-the Phase (or the caller's `expect`).
-
-Blocks come from `runtime.block_streams` (ZMQ `hashblock` in production)
-and the wait for SimpleProof after each block is `runtime.sleeper`; the
-clients come from `sp_factory` / `btc_factory`. All are ports from `AppCtx`,
-so tests inject fakes through `runner.invoke(obj=...)`.
-"""
-
 import contextlib
 import logging
 from collections.abc import Callable
@@ -41,7 +25,6 @@ def watch(
     expect: TimestampTarget | None = None,
     progress: WatchProgress | None = None,
 ) -> int:
-    """Upgrade on each block until the target's proofs are final; the exit code."""
     runtime = run.runtime
     btc = run.btc_factory(run.cfg)
     min_confs = run.min_confirmations

@@ -1,5 +1,3 @@
-"""Batch retry: resubmit the failed chunks."""
-
 from typing import TYPE_CHECKING
 
 import msgspec

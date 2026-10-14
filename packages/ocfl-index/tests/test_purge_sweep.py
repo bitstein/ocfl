@@ -306,6 +306,5 @@ def test_commit_failure_releases_writer_lock(
             scan(idx._conn, idx.storage_root, full=False)
 
         assert idx._conn.in_transaction is False
-        # Writer lock released — a fresh tx must succeed.
         with db.immediate_transaction(idx._conn):
             pass

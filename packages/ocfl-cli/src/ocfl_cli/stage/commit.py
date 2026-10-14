@@ -1,5 +1,3 @@
-"""stage commit."""
-
 from typing import Annotated
 
 import typer
@@ -31,8 +29,6 @@ def commit(
     root_path = resolved.root_path
     staging_dir = resolved.staging_dir
 
-    # OTS commit path: ots.json makes this an OTS staging even when the
-    # deferred inventory plan is missing or stale.
     if wf_staging.is_ots_staging(staging_dir):
         try:
             wf_commit.commit_ots(

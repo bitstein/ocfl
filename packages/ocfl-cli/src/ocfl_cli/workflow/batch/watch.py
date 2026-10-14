@@ -1,5 +1,3 @@
-"""Batch watch: re-verify rows when the chain moves."""
-
 from typing import TYPE_CHECKING
 
 import msgspec
@@ -63,7 +61,6 @@ def reverify_batch_row(
     row: batch_model.BatchObject,
     min_confirmations: int,
 ) -> tuple[OtsState, set[str], set[str]]:
-    """Re-verify the row's verified proofs; `(state, reset, reorged)` digests."""
     proofs = dict(state.proofs)
     reset: set[str] = set()
     reorg: set[str] = set()

@@ -1,5 +1,3 @@
-"""Batch submission to SimpleProof, chunk by chunk, mirrored into each object."""
-
 from typing import TYPE_CHECKING
 
 import msgspec
@@ -290,7 +288,6 @@ def revalidate_submission(
     target: TimestampTarget,
     row: batch_model.BatchObject,
 ) -> set[str] | None:
-    """The row's digests still to send; None when the object moved on."""
     for submission in state.submissions:
         if submission.batch_id != batch_id or submission.target is not target:
             continue

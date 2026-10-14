@@ -1,5 +1,3 @@
-"""User configuration for the ocfl CLI (XDG-located config.toml)."""
-
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -36,15 +34,12 @@ __all__ = [
     "user_env_file_path",
 ]
 
-# Values of these keys are secrets: `redacted` never shows them.
 _SECRET_KEYS = frozenset({"access_token", "api_key", "rpc_user", "rpc_password"})
 REDACTED = "<redacted>"
 
 
 @dataclass(frozen=True)
 class Config:
-    """Loaded user config. `path is None` when no file existed."""
-
     path: Path | None = None
     defaults_digest: str | None = None
     defaults_suppress: tuple[str, ...] = ()
@@ -65,7 +60,6 @@ class Config:
         return self.archives.get(name)
 
     def implicit_default(self) -> ArchiveConfig | None:
-        """The sole archive if exactly one is configured, else None."""
         if len(self.archives) == 1:
             return next(iter(self.archives.values()))
         return None
@@ -82,7 +76,6 @@ class Config:
 
 
 def config_path() -> Path:
-    """Return the canonical config path, honoring `$OCFL_CONFIG` then XDG."""
     override = os.environ.get("OCFL_CONFIG")
     if override:
         return Path(override)
@@ -90,7 +83,6 @@ def config_path() -> Path:
 
 
 def load_config(path: Path | None = None) -> Config:
-    """Load config from *path* (default: `config_path()`). Missing file → empty."""
     if path is None:
         path = config_path()
     check_env_file()
@@ -206,7 +198,6 @@ def _reject_forbidden_keys[T: BaseSettings](
 
 
 def check_env_file() -> None:
-    """Refuse a secrets file that is missing (when named) or not mode 0600."""
     path = env_file_path()
     if path is None:
         return
@@ -226,8 +217,6 @@ def check_env_file() -> None:
 
 
 def redacted(cfg: Config) -> dict[str, Any]:
-    """The effective config as plain data, every secret replaced by `REDACTED`."""
-
     def section(model: BaseModel | None) -> dict[str, Any] | None:
         if model is None:
             return None
@@ -256,7 +245,6 @@ def _format_validation_error(e: ValidationError, path: Path, label: str) -> str:
 
 
 def _clean_msg(err: Mapping[str, Any]) -> str:
-    """Make pydantic's default messages read like the rest of our errors."""
     # Map pydantic error types to phrasing that reads as a continuation of
     # the "<section>.<field>: " label. Fall through to the raw `msg` for
     # anything we haven't tuned, after stripping the "Value error, " prefix

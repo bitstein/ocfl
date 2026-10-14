@@ -27,7 +27,6 @@ HANDLED = (OcflError, CLIError, OSError, KeyboardInterrupt)
 
 
 def error_class_of(exc: BaseException) -> ErrorClass:
-    """How the CLI reacts to `exc`; context wrappers report their cause."""
     match exc:
         case ErrorContext():
             return error_class_of(exc.cause)
@@ -40,7 +39,6 @@ def error_class_of(exc: BaseException) -> ErrorClass:
 
 
 def error_code_of(exc: BaseException) -> str:
-    """The stable snake_case code reported under `--json`."""
     match exc:
         case ErrorContext():
             return error_code_of(exc.cause)
@@ -55,14 +53,12 @@ def error_code_of(exc: BaseException) -> str:
 
 
 def error_line(message: str) -> Text:
-    """An error as the CLI prints it: `Error: <message>`."""
     return _style.error(f"Error: {message}")
 
 
 def handle_error(
     exc: BaseException, *, json_mode: bool, console: Console | None = None
 ) -> NoReturn:
-    """Report `exc` on stderr (this run's `console`) and exit with its code."""
     code = exit_code_for_class(error_class_of(exc))
     message = str(exc) or ("interrupted" if isinstance(exc, KeyboardInterrupt) else "")
     if json_mode:
@@ -82,8 +78,6 @@ def handle_error(
 
 
 class OcflGroup(TyperGroup):
-    """Root command group that routes every error through `handle_error`."""
-
     def invoke(self, ctx: Context) -> Any:
         try:
             return super().invoke(ctx)

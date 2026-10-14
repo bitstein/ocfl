@@ -1,5 +1,3 @@
-"""ocfl validate command."""
-
 import json
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, cast
@@ -33,15 +31,9 @@ if TYPE_CHECKING:
 
 
 class OtsMode(StrEnum):
-    """How far `validate` checks the OTS extension's proofs.
-
-    Every mode runs the extension's own checks (the lib always does); the
-    modes differ only in whether the proofs are also checked against Bitcoin.
-    """
-
-    AUTO = "auto"  # chain when [bitcoin] is configured, else local
-    LOCAL = "local"  # the proofs' structure and digests only
-    CHAIN = "chain"  # also against the configured Bitcoin node
+    AUTO = "auto"
+    LOCAL = "local"
+    CHAIN = "chain"
 
 
 def validate(
@@ -78,11 +70,6 @@ def validate(
 
 
 def _chain_for(ctx: typer.Context, mode: OtsMode) -> ots.ChainCheck | None:
-    """The Bitcoin check `mode` asks for; None means local checks only.
-
-    `auto` uses the node when `[bitcoin]` is configured; a section that is
-    present but does not load is still a config error (exit 6).
-    """
     cfg = appctx.config(ctx)
     match mode:
         case OtsMode.LOCAL:
@@ -199,7 +186,6 @@ def _ots_extension_present(fs: FS, obj_path: str) -> bool:
 
 
 def _chain_check(cfg: Config | None, btc_factory: BtcRpcFactory) -> ots.ChainCheck:
-    """The Bitcoin checks of the OTS extension, against the configured node."""
     if cfg is not None:
         cfg.require("bitcoin")
     if cfg is None or cfg.bitcoin is None:

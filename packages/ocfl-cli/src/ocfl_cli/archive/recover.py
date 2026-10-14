@@ -1,5 +1,3 @@
-"""ocfl recover command (ADR-0001)."""
-
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -85,6 +83,5 @@ def recover(
 def _staged_content(
     ctx: typer.Context, staging_root: str | None, object_id: str
 ) -> ContentSource | None:
-    """The object's staged content, if it is still staged."""
     path = Path(staging_root) if staging_root else default_staging_root()
     return staged_content_for_recovery(path, resolve_root(appctx.root(ctx)), object_id)

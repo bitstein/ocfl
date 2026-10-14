@@ -1,5 +1,3 @@
-"""Batch creation: pick the objects, prepare each row, recover lost intents."""
-
 from typing import TYPE_CHECKING
 
 import msgspec
@@ -61,7 +59,6 @@ def replace_batch_object(
 def object_has_other_batch(
     state: OtsState, batch_id: str, target: TimestampTarget
 ) -> str | None:
-    """The other batch still waiting on one of the object's submissions of `target`."""
     for submission in state.submissions:
         if (
             submission.target is target
@@ -227,7 +224,6 @@ def merge_recovered_object_intents(
 def recover_intent(
     batch: batch_model.BatchFile, object_id: str, state: OtsState
 ) -> batch_model.BatchObject | None:
-    """The row of the object's submission tagged with this batch, if any."""
     for submission in state.submissions:
         if (
             submission.batch_id != batch.batch_id

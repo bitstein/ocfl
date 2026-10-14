@@ -129,7 +129,6 @@ def test_refresh_error_exit_code_1(tmp_path: Path) -> None:
 def _stale_db_with_writer_lock(
     tmp_path: Path,
 ) -> tuple[Path, sqlite3.Connection]:
-    """Build an initialized DB with stale schema_version, hold a writer lock."""
     fixture = FixtureRoot(tmp_path)
     fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
     db_path = _db(tmp_path)
@@ -168,7 +167,6 @@ def test_cli_open_time_contention_is_friendly(tmp_path: Path, argv: list[str]) -
 
 
 def test_cli_refresh_time_contention_is_friendly(tmp_path: Path) -> None:
-    """Clean schema: open succeeds, refresh's BEGIN IMMEDIATE hits the lock."""
     fixture = FixtureRoot(tmp_path)
     fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
     db_path = _db(tmp_path)

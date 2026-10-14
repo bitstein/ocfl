@@ -1,5 +1,3 @@
-"""Staging-area use cases: metadata, and keeping OTS state in step with edits."""
-
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -39,8 +37,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class MetadataInputError(ValueError):
-    """Invalid staged metadata CLI input."""
+class MetadataInputError(ValueError): ...
 
 
 def _validate_metadata_input(value: str | None, *, field: str) -> str | None:
@@ -71,7 +68,6 @@ def staged_metadata_from_options(
     name: str | None,
     address: str | None,
 ) -> StagedMetadata:
-    """Build staged metadata from initial CLI options."""
     message = _validate_metadata_input(message, field="message")
     name = _validate_metadata_input(name, field="user.name")
     address = _validate_metadata_input(address, field="user.address")
@@ -90,7 +86,6 @@ def validate_metadata_update_options(
     clear_name: bool,
     clear_address: bool,
 ) -> None:
-    """Validate staged metadata update options without reading staging state."""
     _check_metadata_conflict(field="message", value=message, clear=clear_message)
     _check_metadata_conflict(field="name", value=name, clear=clear_name)
     _check_metadata_conflict(field="address", value=address, clear=clear_address)
@@ -113,11 +108,6 @@ def update_metadata(
     clear_address: bool,
     before_save: Callable[[StagedMetadata, StagedMetadata], None] | None = None,
 ) -> StagedMetadata:
-    """Apply set/update/clear semantics to staged metadata and persist it.
-
-    ``before_save`` lets callers invalidate dependent state after the new
-    metadata is known but before metadata.json is rewritten.
-    """
     validate_metadata_update_options(
         message=message,
         name=name,
@@ -161,12 +151,6 @@ def update_metadata(
 
 
 def pair_ots_companion_remove(state: StateMap, removed: dict[str, str]) -> None:
-    """Remove the companion `P.ots` of each removed ordinary path `P`.
-
-    `removed` maps each removed path to whether it was ordinary or a content
-    proof in the state before the removal (`ordinary_paths`); removing a
-    proof leaves its file to be proved again.
-    """
     for p, kind in removed.items():
         if kind != "ordinary":
             continue
@@ -180,7 +164,6 @@ def pair_ots_companion_remove(state: StateMap, removed: dict[str, str]) -> None:
 
 
 def pair_ots_companion_rename(state: StateMap, src: str, dst: str) -> None:
-    """Rename `<src>.ots` to `<dst>.ots` within *state* if present."""
     src_ots = f"{src}{ots.PROOF_SUFFIX}"
     dst_ots = f"{dst}{ots.PROOF_SUFFIX}"
     for d in state:
@@ -191,7 +174,6 @@ def pair_ots_companion_rename(state: StateMap, src: str, dst: str) -> None:
 
 
 def path_kinds(state: StateMap, paths: list[str]) -> dict[str, str]:
-    """`{path: "ordinary" | "proof"}` for `paths` in `state`."""
     ordinary = ordinary_paths(state)
     return {p: "ordinary" if p in ordinary else "proof" for p in paths}
 
@@ -235,13 +217,6 @@ def apply_rm_mv_regression(
 
 
 def apply_metadata_ots_regression(staging_dir: Path) -> None:
-    """Move back to content-upgraded after a staged metadata change.
-
-    Metadata affects the inventory bytes but not staged content bytes. Once an
-    inventory timestamp exists, regress only the inventory side of the
-    workflow. Every proof stays (ADR-0004): reverting the edit rebuilds the
-    same inventory bytes, which reuse their proof.
-    """
     state = load_ots(staging_dir)
     if state.phase not in (Phase.INVENTORY_PENDING, Phase.INVENTORY_UPGRADED):
         return
@@ -256,24 +231,16 @@ def apply_metadata_ots_regression(staging_dir: Path) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Staging Area use cases behind `stage new|metadata|add|mv|rm|ls|discard`.
-# ---------------------------------------------------------------------------
-
-
 def default_staging_root() -> Path:
-    """The per-user staging directory when `--staging-root` is not given."""
     return user_state_path("ocfl-cli") / "staging"
 
 
 def open_store(staging_root: Path) -> StagingStore:
-    """The Staging Area store under `staging_root`, created if missing."""
     staging_root.mkdir(parents=True, exist_ok=True)
     return StagingStore(staging_root)
 
 
 def require_store(value: object) -> StagingStore:
-    """`value` as the store `stage` opened; an internal error otherwise."""
     if not isinstance(value, StagingStore):
         raise RuntimeError("internal error: missing ctx.obj['staging']")
     return value
@@ -289,7 +256,6 @@ class StagingResolved:
 def resolve_staging(
     store: StagingStore, root_path: str, object_id: str, *, hint: str | None = None
 ) -> StagingResolved:
-    """The object's existing Staging Area; `StagingError` when there is none."""
     staging_dir = store.staging_path(root_path, object_id)
     if not store.exists(root_path, object_id):
         message = f"no staging exists for {object_id!r}"
@@ -300,7 +266,6 @@ def resolve_staging(
 
 
 def is_ots_staging(staging_dir: Path) -> bool:
-    """Whether the Staging Area runs the OTS workflow (has `ots.json`)."""
     return has_ots(staging_dir)
 
 
@@ -312,7 +277,6 @@ def require_ots_staging(staging_dir: Path, object_id: str) -> None:
 
 
 def ots_state(staging_dir: Path) -> OtsState:
-    """The Staging Area's OTS state, read without the lock."""
     return load_ots(staging_dir)
 
 
@@ -336,11 +300,6 @@ def new_staging(
     digest_name: str | None,
     ots_category_id: int | None,
 ) -> None:
-    """Start a Staging Area from the object's head (or an empty new object).
-
-    `digest_name` applies to a new object only (default sha512). With
-    `ots_category_id` the area runs the OTS workflow, which needs sha256.
-    """
     if store.exists(root_path, object_id):
         raise CLIError(f"staging already exists for {object_id!r}")
 
@@ -399,7 +358,6 @@ def edit_metadata(
     clear_address: bool,
     runtime: Runtime,
 ) -> None:
-    """Set or clear staged version metadata; regress OTS progress it invalidates."""
     validate_metadata_update_options(
         message=message,
         name=name,
@@ -439,7 +397,6 @@ def add_sources(
     command: str,
     runtime: Runtime,
 ) -> None:
-    """Stage files and directories (by reference) at their logical paths."""
     store = resolved.store
     root_path = resolved.root_path
     staging_dir = resolved.staging_dir
@@ -525,7 +482,6 @@ def move_path(
     *,
     runtime: Runtime,
 ) -> None:
-    """Rename a logical path (and its `.ots` companion in an OTS area)."""
     store = resolved.store
     root_path = resolved.root_path
     staging_dir = resolved.staging_dir
@@ -582,7 +538,6 @@ def remove_paths(
     recursive: bool,
     runtime: Runtime,
 ) -> None:
-    """Remove logical paths (prefixes with `recursive`) from the staged version."""
     store = resolved.store
     root_path = resolved.root_path
     staging_dir = resolved.staging_dir
@@ -642,14 +597,11 @@ def remove_paths(
 
 @dataclass(frozen=True, slots=True)
 class StagingSummary:
-    """One Staging Area of a storage root; `phase` is None for a plain one."""
-
     object_id: str
     phase: Phase | None
 
 
 def list_stagings(store: StagingStore, root_path: str) -> list[StagingSummary]:
-    """Every Staging Area of the storage root, by object id."""
     summaries = []
     for object_id in store.object_ids(root_path):
         staging_dir = store.staging_path(root_path, object_id)
@@ -659,7 +611,6 @@ def list_stagings(store: StagingStore, root_path: str) -> list[StagingSummary]:
 
 
 def list_entries(resolved: StagingResolved, object_id: str) -> list[tuple[str, str]]:
-    """`(logical path, digest)` pairs of the staged version, sorted by path."""
     inv = resolved.store.load_inventory(resolved.root_path, object_id)
     state = inv.versions[inv.head].state
     return sorted((p, d) for d, paths in state.items() for p in paths)
@@ -679,10 +630,6 @@ def _active_batch_ids(state: OtsState) -> tuple[str, ...]:
 def discard_staging(
     store: StagingStore, root_path: str, object_id: str, *, force: bool
 ) -> bool:
-    """Delete the Staging Area; False when there is none.
-
-    Refuses (`CLIError`) to discard persisted OTS progress unless `force`.
-    """
     if not store.exists(root_path, object_id):
         return False
 

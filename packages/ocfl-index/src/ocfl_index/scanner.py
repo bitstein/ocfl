@@ -1,5 +1,3 @@
-"""Walk an OCFL root and update the index cache."""
-
 import logging
 import sqlite3
 import time
@@ -48,10 +46,6 @@ class _Counters:
 
 
 def _read_sidecar(fs: FS, relpath: str) -> tuple[DigestAlgorithm, str] | None:
-    """Find the inventory sidecar for an object and return (algo, digest).
-
-    Probes sha256 then sha512. Returns None if neither sidecar is present.
-    """
     for alg in _SIDECAR_PROBE_ORDER:
         sidecar = f"{relpath}/inventory.json.{alg.ocfl_name}"
         try:
@@ -346,7 +340,6 @@ def _ingest_ots_inventory_proofs(
 def _content_path_for_digest(
     conn: sqlite3.Connection, fs: FS, digest: str
 ) -> str | None:
-    """Resolve any physical path under root that stores ``digest``."""
     row = conn.execute(
         "SELECT objects.root_relpath FROM objects "
         "JOIN content_paths ON content_paths.object_id = objects.object_id "
@@ -386,7 +379,6 @@ def sniff_pass(
     *,
     sniffer: Callable[[bytes], str] = sniff,
 ) -> int:
-    """Populate media_type for blobs where it is NULL. Returns row count."""
     rows = conn.execute("SELECT digest FROM blobs WHERE media_type IS NULL").fetchall()
     updated = 0
     for (digest,) in rows:
@@ -403,7 +395,6 @@ def sniff_pass(
 
 
 def sweep_objects(conn: sqlite3.Connection, walked: set[str]) -> int:
-    """Delete object rows whose root_relpath is not in walked. Returns count."""
     rows = conn.execute("SELECT root_relpath FROM objects").fetchall()
     db_relpaths = {r[0] for r in rows}
     missing = db_relpaths - walked

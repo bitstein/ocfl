@@ -1,5 +1,3 @@
-"""OCFL CLI entry point."""
-
 import json
 import logging
 import os
@@ -154,8 +152,6 @@ def main(
         config = Config()
         ctx.obj["config_error"] = e
 
-    # Resolve `-r` through config: alias → archive root. Precedence:
-    # flag > OCFL_ROOT env > implicit-single-archive default.
     archive = None
     resolved_root = root
     if root is not None:

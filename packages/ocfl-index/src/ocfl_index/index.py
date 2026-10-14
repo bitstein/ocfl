@@ -1,5 +1,3 @@
-"""Public Index API: open, refresh, lookup."""
-
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -71,7 +69,6 @@ def _open_root_path(
                 "another writer holds the index lock"
             ) from err
         raise
-    # Catch malformed meta or future schema paths that fail to preserve root_path.
     stored_after = db.meta_get(conn, "root_path")
     if stored_after != root_path:
         raise IndexRootMismatch(

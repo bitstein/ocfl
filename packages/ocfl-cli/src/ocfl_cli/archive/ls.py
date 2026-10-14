@@ -1,5 +1,3 @@
-"""ocfl ls command."""
-
 from typing import TYPE_CHECKING, Annotated
 
 import typer

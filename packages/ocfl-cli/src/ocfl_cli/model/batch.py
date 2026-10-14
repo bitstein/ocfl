@@ -1,5 +1,3 @@
-"""Batch timestamping state: the batch file model."""
-
 from typing import Literal
 
 import msgspec
@@ -22,8 +20,6 @@ BATCH_VERIFY_TERMINAL_STATUSES = frozenset({"COMPLETED", "FAILED", "EXPIRED"})
 
 
 class BatchObject(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
-    """One object row in a batch file."""
-
     object_id: str
     status: BatchObjectStatus
     digests: tuple[str, ...] = ()
@@ -32,8 +28,6 @@ class BatchObject(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 
 
 class BatchSubmission(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
-    """One SimpleProof submit chunk tracked by a batch file."""
-
     chunk_index: int
     digests: tuple[str, ...]
     status: BatchSubmissionStatus
@@ -44,8 +38,6 @@ class BatchSubmission(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 
 
 class BatchVerifyJob(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
-    """One SimpleProof verify-batches job tracked by a batch file."""
-
     job_id: str
     digests: tuple[str, ...]
     status: BatchVerifyJobStatus
@@ -58,8 +50,6 @@ class BatchVerifyJob(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 
 
 class BatchFile(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
-    """On-disk batch file schema."""
-
     schema_version: int = BATCH_FILE_SCHEMA_VERSION
     batch_id: str
     target: TimestampTarget

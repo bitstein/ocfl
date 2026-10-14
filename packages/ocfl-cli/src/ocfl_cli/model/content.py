@@ -1,5 +1,3 @@
-"""Content map: staged digest -> source file."""
-
 from dataclasses import dataclass
 from typing import TypedDict
 

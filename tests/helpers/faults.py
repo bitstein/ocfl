@@ -1,20 +1,14 @@
-"""A filesystem that dies at write N, for crash tests (ADR-0001)."""
-
 from dataclasses import dataclass
 from typing import cast
 
-# Calls that only read. Every other public method call counts as a write.
 READS = frozenset({"open_file", "read_dir", "exists", "walk_files", "read_tagged"})
 
 
-class Crash(BaseException):
-    """The writing process died. Not an Exception, so no undo or cleanup runs."""
+class Crash(BaseException): ...
 
 
 @dataclass
 class Counter:
-    """Writes seen so far; `crashed` once the fault fired."""
-
     writes: int = 0
     crashed: bool = False
 

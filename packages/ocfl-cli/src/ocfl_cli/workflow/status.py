@@ -1,5 +1,3 @@
-"""Status use cases: what is staged, where the OTS workflow is, what to do next."""
-
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -54,7 +52,6 @@ def compute_in_sync(info: BlockchainInfo) -> bool:
 
 
 def humanize_age(seconds: int) -> str:
-    """Floor-rounded ASCII single-unit age (`30s ago`, `5m ago`, `2h ago`, `3d ago`)."""
     if seconds < 60:
         return f"{seconds}s ago"
     if seconds < 3600:
@@ -77,7 +74,6 @@ def _submission_age_seconds(submitted_at: str, now: datetime) -> int:
 def next_action_for(
     state: OtsState, has_files: bool, object_id: str
 ) -> tuple[NextActionKind, str]:
-    """FSM-aware `(kind, command)` pair for the OTS status next-action surface."""
     match state.phase:
         case Phase.DRAFTING:
             kind = (
@@ -122,7 +118,6 @@ def next_action_for(
 def next_step(
     store: StagingStore, root_path: str, object_id: str, staging_dir: Path
 ) -> str:
-    """The command that takes an OTS Staging Area on from where it is now."""
     state = load_ots(staging_dir)
     inv = store.load_inventory(root_path, object_id)
     has_files = bool(ordinary_digests(inv.versions[inv.head].state))
@@ -215,7 +210,6 @@ def _build_bitcoin_section(
 def metadata_status_dict(
     store: StagingStore, root_path: str, object_id: str
 ) -> dict[str, str | None]:
-    """Return saved values for required staged metadata fields."""
     metadata = store.load_metadata(root_path, object_id)
     user = metadata.user
     return {
@@ -268,7 +262,6 @@ def status_ots_dict(
 def status_diff_dict(
     store: StagingStore, root_path: str, object_id: str
 ) -> dict[str, Any]:
-    """Build the staged-vs-prior diff payload."""
     from ocfl_lib import VNum, to_path_map
 
     inv = store.load_inventory(root_path, object_id)

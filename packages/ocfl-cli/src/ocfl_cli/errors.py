@@ -23,22 +23,16 @@ if TYPE_CHECKING:
 
 
 class CLIError(Exception):
-    """Base class for all ocfl_cli raised exceptions."""
-
     code: str = "cli_error"
     error_class: ErrorClass = ErrorClass.INVALID
 
 
 class UsageError(CLIError):
-    """A command line that parses but is still wrong once the CLI checks it."""
-
     code = "usage_error"
     error_class = ErrorClass.USAGE
 
 
 class ErrorContext(CLIError):
-    """Adds context to another error's message; keeps its class and code."""
-
     code = "error_context"
     error_class = ErrorClass.INVALID
 
@@ -48,71 +42,51 @@ class ErrorContext(CLIError):
 
 
 class ConfigError(CLIError):
-    """Raised when the user config file is malformed or invalid."""
-
     code = "config_error"
     error_class = ErrorClass.CONFIG
 
 
 class ConfigCheckFailedError(CLIError):
-    """`config check`: the config or a credential does not work."""
-
     code = "config_check_failed"
     error_class = ErrorClass.CONFIG
 
 
 class ServiceCheckFailedError(CLIError):
-    """`config check`: a configured service cannot be reached."""
-
     code = "service_check_failed"
     error_class = ErrorClass.SERVICE
 
 
 class StagingError(CLIError):
-    """Base class for staging-directory faults."""
-
     code = "staging_error"
     error_class = ErrorClass.INVALID
 
 
 class StagingFileMissingError(StagingError):
-    """A content map entry refers to a missing source file."""
-
     code = "staging_file_missing"
     error_class = ErrorClass.INVALID
 
 
 class StagingFileChangedError(StagingError):
-    """A content map entry's source file changed since staging."""
-
     code = "staging_file_changed"
     error_class = ErrorClass.INVALID
 
 
 class BatchFileMissingError(StagingError):
-    """No batch file exists for the requested batch id (or id prefix)."""
-
     code = "batch_file_missing"
     error_class = ErrorClass.NOT_FOUND
 
 
 class BatchMismatchError(StagingError):
-    """The batch cannot do this: wrong target, or another storage root."""
-
     code = "batch_mismatch"
     error_class = ErrorClass.STATE
 
 
 class ObjectsNotStagedError(StagingError):
-    """A batch named objects that have no Staging Area under this root."""
-
     code = "objects_not_staged"
     error_class = ErrorClass.NOT_FOUND
 
 
 class PhaseError(StagingError):
-    """Command is not legal in the staging directory's current phase."""
-
     code = "phase_error"
     error_class = ErrorClass.STATE
 
@@ -126,43 +100,31 @@ class InventoryProofMissingError(PhaseError):
 
 
 class LockTimeoutError(StagingError):
-    """Could not acquire the staging lock within the allowed timeout."""
-
     code = "lock_timeout"
     error_class = ErrorClass.BUSY
 
 
 class MissingStagedMetadataError(StagingError):
-    """Required staged version metadata is absent."""
-
     code = "missing_staged_metadata"
     error_class = ErrorClass.INVALID
 
 
 class CommitFailedError(StagingError):
-    """The commit failed; staging was preserved for retry."""
-
     code = "commit_failed"
     error_class = ErrorClass.INVALID
 
 
 class CommitClaimLostError(CommitFailedError):
-    """Another writer claimed the version first; nothing was written."""
-
     code = "commit_claim_lost"
     error_class = ErrorClass.STATE
 
 
 class CommitInterruptedError(CommitFailedError):
-    """The commit was interrupted and reverted."""
-
     code = "commit_interrupted"
     error_class = ErrorClass.INTERRUPTED
 
 
 class OTSError(CLIError):
-    """Base class for OpenTimestamps-related faults."""
-
     code = "ots_error"
     error_class = ErrorClass.SERVICE
 
@@ -194,42 +156,30 @@ class SimpleProofError(OTSError):
 
 
 class SimpleProofAuthError(SimpleProofError):
-    """401/403 from SimpleProof — fail fast, operator must fix credentials."""
-
     code = "simpleproof_auth"
     error_class = ErrorClass.CONFIG
 
 
 class SimpleProofBadRequest(SimpleProofError):
-    """400/422 from SimpleProof — fail fast, indicates a bug or bad config."""
-
     code = "simpleproof_bad_request"
     error_class = ErrorClass.SERVICE
 
 
 class SimpleProofTransient(SimpleProofError, Transient):
-    """5xx/429/timeout/connection error from SimpleProof — retriable."""
-
     code = "simpleproof_transient"
     error_class = ErrorClass.SERVICE
 
 
 class AttestationError(OTSError):
-    """Base class for attestation-verification faults."""
-
     code = "attestation_error"
     error_class = ErrorClass.HALT
 
 
 class ReorgDetectedError(AttestationError):
-    """Reorg deeper than confirmation depth — HALT for operator review."""
-
     code = "reorg_detected"
     error_class = ErrorClass.HALT
 
 
 class AttestationMismatchError(AttestationError):
-    """Attestation merkle path does not match local chain — HALT."""
-
     code = "attestation_mismatch"
     error_class = ErrorClass.HALT

@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 
 
 def encode_ots_state(state: OtsState) -> dict[str, Any]:
-    """Encode an in-memory OTS state into the current ots.json wire shape."""
     raw = msgspec.to_builtins(state)
     _omit_absent_proof_fields(raw)
     _omit_absent_batch_fields(raw)
@@ -30,7 +29,6 @@ def encode_ots_state(state: OtsState) -> dict[str, Any]:
 
 
 def decode_ots_state(raw: dict[str, Any]) -> OtsState:
-    """Decode a current-schema ots.json dict. No I/O, no migrations."""
     from ocfl_cli.model.ots_state import VERIFY_JOB_STATUSES, OtsState
 
     raw = copy.deepcopy(raw)

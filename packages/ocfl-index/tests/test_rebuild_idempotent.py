@@ -66,7 +66,6 @@ def test_rebuild_clears_ots_tables(tmp_path: Path) -> None:
         ]
         assert before > 0
 
-        # Remove the proof file and rebuild
         relpath = fixture.root.object_path("alpha")
         proof_path = (
             fixture.root_dir

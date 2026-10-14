@@ -1,5 +1,3 @@
-"""stage status."""
-
 from typing import TYPE_CHECKING, Annotated
 
 import typer

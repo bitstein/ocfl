@@ -1,5 +1,3 @@
-"""SimpleProof API results, as the workflows see them."""
-
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType

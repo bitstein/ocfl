@@ -1,5 +1,3 @@
-"""Frozen dataclasses returned by Index queries and refresh."""
-
 from collections.abc import Mapping
 from dataclasses import dataclass
 

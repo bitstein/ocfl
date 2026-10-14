@@ -1,5 +1,3 @@
-"""Shared helpers for ocfl-index tests."""
-
 import hashlib
 import json
 from collections.abc import Mapping
@@ -38,8 +36,6 @@ def write_files(dir_path: Path, files: Mapping[str, bytes | str]) -> None:
 
 
 class FixtureRoot:
-    """Helper to build, mutate, and inspect a local OCFL storage root."""
-
     def __init__(self, base: Path) -> None:
         self.base = base
         self.base.mkdir(parents=True, exist_ok=True)

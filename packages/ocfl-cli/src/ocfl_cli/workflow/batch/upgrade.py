@@ -1,5 +1,3 @@
-"""Batch upgrade: verify jobs, download proofs, verify them against Bitcoin."""
-
 from typing import TYPE_CHECKING
 
 import msgspec
@@ -40,7 +38,6 @@ if TYPE_CHECKING:
 def batch_digest_verified(
     *, target: TimestampTarget, state: OtsState, digest: str
 ) -> bool:
-    """Whether `digest` is proved for the object's staged version."""
     return rules_for(target).row_upgraded(state, (digest,))
 
 
@@ -272,7 +269,6 @@ def ingest_batch_downloads(
     min_confirmations: int,
     runtime: Runtime,
 ) -> tuple[batch_model.BatchObject, bool]:
-    """Verify and record one row's downloaded proofs; advance its phase when done."""
     rules = rules_for(target)
     staging_dir = store.staging_path(batch.root_path, row.object_id)
     area = Area(

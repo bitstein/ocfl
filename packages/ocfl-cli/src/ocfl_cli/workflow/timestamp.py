@@ -1,12 +1,3 @@
-"""One timestamp workflow for both Timestamp Targets: submit, upgrade, retry.
-
-The target comes from the Staging Area's Phase (`target_for`); a caller may
-name the one it expects, and a mismatch is a phase error (exit 3). Without
-one, a verb that has nothing to do in the Phase is `idle` and the caller
-names the next step (`next_step`). What differs between the targets is asked
-of `ocfl_cli.workflow.targets`.
-"""
-
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -72,8 +63,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class TimestampRun:
-    """What one timestamp use case needs: the Staging Area and the ports."""
-
     cfg: Config
     store: StagingStore
     sr: StorageRoot
@@ -132,7 +121,6 @@ class SubmitResult:
 
     @property
     def done(self) -> bool:
-        """The target's proofs are all final."""
         return _done(self.target, self.phase)
 
 
@@ -147,7 +135,6 @@ class UpgradeResult:
 
     @property
     def done(self) -> bool:
-        """The target's proofs are all final."""
         return _done(self.target, self.phase)
 
 
@@ -159,32 +146,22 @@ class RetryResult:
 
     @property
     def done(self) -> bool:
-        """The target's proofs are all final."""
         return _done(self.target, self.phase)
 
 
 @dataclass(frozen=True, slots=True)
 class Idle:
-    """A verb with nothing to do in `phase`; `target` is the one it shows."""
-
     target: TimestampTarget
     phase: Phase
 
     @property
     def done(self) -> bool:
-        """The shown target's proofs are all final."""
         return _done(self.target, self.phase)
 
 
 def idle(
     run: TimestampRun, verb: str, *, expect: TimestampTarget | None = None
 ) -> Idle | None:
-    """`Idle` when `verb` has nothing to do in the Phase, else None.
-
-    Only without `expect`: an expected target that does not fit is a phase
-    error of the verb itself. Reads `ots.json` without the lock (it is
-    replaced atomically), like `stage status`.
-    """
     if expect is not None:
         return None
     state = load_ots(run.staging_dir)
@@ -198,7 +175,6 @@ def idle(
 def check(
     run: TimestampRun, verb: str, *, expect: TimestampTarget | None = None
 ) -> TimestampTarget:
-    """The target `verb` works on now; `PhaseError` when it may not run."""
     state = load_ots(run.staging_dir)
     rules = resolve(state, expect)
     check_transition(state.phase, rules.command(verb))
@@ -206,15 +182,10 @@ def check(
 
 
 def next_step(run: TimestampRun) -> str:
-    """The command that takes the Staging Area on from where it is now."""
     return wf_status.next_step(run.store, run.root_path, run.object_id, run.staging_dir)
 
 
 def resolve(state: OtsState, expect: TimestampTarget | None) -> TargetRules:
-    """The rules of the target the Phase works on, or of the expected one.
-
-    A mismatched `expect` fails the phase check of the verb that follows.
-    """
     target = expect if expect is not None else target_for(state.phase)
     if target is None:
         raise PhaseError(f"nothing to timestamp in phase {state.phase.value!r}")
@@ -224,7 +195,6 @@ def resolve(state: OtsState, expect: TimestampTarget | None) -> TargetRules:
 def target_jobs(
     state: OtsState, rules: TargetRules, *, runtime: Runtime
 ) -> tuple[JobProgress, ...]:
-    """Progress of the verify jobs that cover the target's proofs."""
     mine = {
         j.job_id
         for j in state.verify_jobs
@@ -236,9 +206,6 @@ def target_jobs(
     return tuple(
         j for j in compute_job_progress(state, runtime=runtime) if j.job_id in mine
     )
-
-
-# --- submit
 
 
 def prepare_submission_locked(
@@ -326,7 +293,6 @@ def prepare_submission_locked(
 def submit_prepared_locked(
     run: TimestampRun, prepared: PreparedSubmission
 ) -> SubmitResult:
-    """POST the prepared digests and mark their submission `submitted`."""
     if not prepared.digests:
         return SubmitResult(
             target=prepared.target,
@@ -378,7 +344,6 @@ def submit(
     expect: TimestampTarget | None = None,
     allow_missing_metadata: bool = False,
 ) -> SubmitResult:
-    """`stage timestamp`: submit the target's digests, under the staging lock."""
     with with_lock(run.staging_dir, run.runtime):
         prepared = prepare_submission_locked(
             run.area,
@@ -388,9 +353,6 @@ def submit(
             allow_missing_metadata=allow_missing_metadata,
         )
         return submit_prepared_locked(run, prepared)
-
-
-# --- upgrade
 
 
 def verify_digest(
@@ -441,13 +403,6 @@ def reverify(
     min_confirmations: int,
     category_id: int,
 ) -> OtsState:
-    """Re-verify the verified proofs of `digests` against the local chain.
-
-    Uses the cached `.ots` bytes (attested height + merkle path). On a
-    mismatch or too few confirmations a proof resets to unverified, the jobs
-    covering it are dropped and a fresh verify job is queued, so the next
-    pass re-fetches it. `ReorgDetectedError` propagates to HALT.
-    """
     proofs = dict(state.proofs)
     reset: list[str] = []
     for d in digests:
@@ -485,7 +440,6 @@ def reverify(
 def _queue_verify_jobs(
     state: OtsState, rules: TargetRules, sp: SimpleProofClient, category_id: int
 ) -> OtsState:
-    """POST `verify-batches` for each submitted, unverified digest no job covers."""
     covered = {
         d
         for j in state.verify_jobs
@@ -522,7 +476,6 @@ def _ingest_completed_jobs(
     sp: SimpleProofClient,
     btc: BitcoinRPC,
 ) -> OtsState:
-    """Download, verify and record the target's digests of every completed job."""
     for job in state.verify_jobs:
         if job.status != "COMPLETED":
             continue
@@ -610,12 +563,8 @@ def upgrade_locked(
 def upgrade(
     run: TimestampRun, *, expect: TimestampTarget | None = None
 ) -> UpgradeResult:
-    """`stage upgrade`: one upgrade pass under the staging lock."""
     with with_lock(run.staging_dir, run.runtime):
         return upgrade_locked(run, expect=expect)
-
-
-# --- retry
 
 
 def retry_locked(
@@ -674,6 +623,5 @@ def retry_locked(
 
 
 def retry(run: TimestampRun, *, expect: TimestampTarget | None = None) -> RetryResult:
-    """`stage retry` under the staging lock."""
     with with_lock(run.staging_dir, run.runtime):
         return retry_locked(run, expect=expect)

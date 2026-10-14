@@ -1,5 +1,3 @@
-"""ocfl-index command-line entrypoint."""
-
 import dataclasses
 import json
 from pathlib import Path
@@ -27,7 +25,6 @@ def _require_db(db_path: Path) -> None:
 
 
 def _open_index_or_exit(db_path: Path) -> Index:
-    """Open an index, exiting with a friendly message on writer-lock contention."""
     try:
         return Index.open(db_path)
     except RefreshInProgress as exc:

@@ -1,5 +1,3 @@
-"""ocfl purge command."""
-
 from typing import Annotated
 
 import typer

@@ -1,5 +1,3 @@
-"""ocfl show command."""
-
 from typing import Annotated
 
 import typer
@@ -36,7 +34,6 @@ def show(
     v = parse_version(version) if version else obj.head
     info = obj.version_info(v)
 
-    # Diff: v1 diffs against empty (all added), others diff against previous
     if v.number == 1:
         state = obj.version_info(v).state
         pm = to_path_map(state)

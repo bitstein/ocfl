@@ -1,5 +1,3 @@
-"""The stage command group: Typer apps, the group callback, shared preflight."""
-
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -42,17 +40,11 @@ class TimestampPreflight:
 
 
 class DigestOption(StrEnum):
-    """The content digests OCFL 1.1 allows for a new object (§3.5.1)."""
-
     SHA512 = "sha512"
     SHA256 = "sha256"
 
 
 def resolve_root_path(ctx: typer.Context) -> str:
-    """Resolve absolute root path string for staging path hashing.
-
-    S3 URIs are returned as-is: ``Path.resolve`` would prefix the cwd.
-    """
     root = appctx.root(ctx)
     if root is not None and root.startswith("s3://"):
         return root
@@ -60,7 +52,6 @@ def resolve_root_path(ctx: typer.Context) -> str:
 
 
 def stage_store(ctx: typer.Context):
-    """The Staging Area store the group callback opened for this run."""
     obj = ctx.obj
     if not isinstance(obj, dict):
         raise RuntimeError("internal error: expected ctx.obj to be a dict")
@@ -102,7 +93,6 @@ def get_factories(ctx: typer.Context) -> tuple[SpClientFactory, BtcRpcFactory]:
 def require_timestamp_preflight(
     ctx: typer.Context, object_id: str, *, bitcoin: bool
 ) -> TimestampPreflight:
-    """Config the verb needs (`[bitcoin]` too when `bitcoin`), an OTS staging."""
     cfg = require_config(ctx)
     require_simpleproof(ctx, cfg)
     if bitcoin:
@@ -122,7 +112,6 @@ def require_timestamp_preflight(
 def require_ots_config(
     cfg: Config | None, digest: DigestOption | None
 ) -> SimpleProofConfig:
-    """Preflight `stage new --ots`. Returns validated [simpleproof] config."""
     if digest is not None and digest is not DigestOption.SHA256:
         raise UsageError(
             f"--ots requires SHA-256 (SimpleProof API constraint); "

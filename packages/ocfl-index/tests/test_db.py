@@ -7,8 +7,6 @@ from ocfl_index import db
 
 
 class _CodedOperationalError(sqlite3.OperationalError):
-    """OperationalError subclass that allows assigning sqlite_errorcode in tests."""
-
     sqlite_errorcode: int
 
 
@@ -217,8 +215,6 @@ def test_immediate_transaction_rolls_back_on_base_exception(tmp_path: Path) -> N
 def test_immediate_transaction_rejects_nesting(tmp_path: Path) -> None:
     conn = db.connect(tmp_path / "i.db")
     db.ensure_schema(conn, root_path="/srv/root")
-    # Inner immediate_transaction(conn).__enter__ raises before the body runs;
-    # pytest.raises catches it, the outer tx commits cleanly on exit.
     with (
         db.immediate_transaction(conn),
         pytest.raises(RuntimeError, match="nested SQLite transaction"),

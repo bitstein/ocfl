@@ -1,5 +1,3 @@
-"""ocfl init command."""
-
 import json
 from typing import Annotated
 

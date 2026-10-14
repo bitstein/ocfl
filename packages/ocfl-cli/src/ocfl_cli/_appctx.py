@@ -29,8 +29,7 @@ if TYPE_CHECKING:
     )
 
 
-class AppCtxError(RuntimeError):
-    """Raised when Typer context application state is missing or malformed."""
+class AppCtxError(RuntimeError): ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,8 +61,6 @@ _CLIENT_LIFECYCLE = "client_lifecycle"
 
 @dataclass(slots=True)
 class ClientLifecycle:
-    """Per-invocation client cache with best-effort close support."""
-
     sp_source: SpClientFactory
     btc_source: BtcRpcFactory
 
@@ -155,7 +152,6 @@ def install_app_ctx(
     obj["quiet"] = quiet
     obj["verbose"] = verbose
     obj["no_color"] = no_color
-    # Fresh consoles per run: colour follows this run's flag, env and TTY.
     obj["console"] = make_console(no_color=no_color)
     obj["err_console"] = make_console(stderr=True, no_color=no_color)
     obj.setdefault("clock", clock)
@@ -193,7 +189,6 @@ def install_app_ctx(
 
 
 def app_ctx(ctx: typer.Context) -> AppCtx:
-    """Return the typed application context view backed by ``ctx.obj``."""
     return AppCtx(
         root=cast("str | None", _required(ctx, "root")),
         config=cast("Config", _required(ctx, "config")),
@@ -217,7 +212,6 @@ def app_ctx(ctx: typer.Context) -> AppCtx:
 
 
 def command_path(ctx: typer.Context) -> str:
-    """Return Click's command path without the root program name."""
     prog = ctx.find_root().info_name
     if not prog:
         return ctx.command_path
@@ -258,12 +252,10 @@ def btc_rpc_factory(ctx: typer.Context) -> BtcRpcFactory:
 
 
 def fs_factory(ctx: typer.Context) -> FsFactory:
-    """How this run opens the storage root's filesystem."""
     return cast("FsFactory", _required(ctx, "fs_factory"))
 
 
 def runtime(ctx: typer.Context) -> Runtime:
-    """This run's time ports and lock timeout, for the use cases."""
     return Runtime(
         clock=cast("Clock", _required(ctx, "clock")),
         sleeper=cast("Sleeper", _required(ctx, "sleeper")),
@@ -275,10 +267,8 @@ def runtime(ctx: typer.Context) -> Runtime:
 
 
 def console(ctx: typer.Context) -> Console:
-    """This run's stdout console."""
     return cast("Console", _required(ctx, "console"))
 
 
 def err_console(ctx: typer.Context) -> Console:
-    """This run's stderr console."""
     return cast("Console", _required(ctx, "err_console"))

@@ -21,7 +21,6 @@ def test_second_refresh_raises_busy_error(
     with Index.open(db_path, fixture.path) as idx:
         idx.refresh()
 
-        # Hold the writer lock on a second connection
         other = db.connect(db_path)
         other.execute("BEGIN IMMEDIATE")
         try:
@@ -34,7 +33,6 @@ def test_second_refresh_raises_busy_error(
             other.execute("ROLLBACK")
             other.close()
 
-    # Refresh contention is normal — must not surface as scan-failure warnings
     scan_warnings = [
         r
         for r in caplog.records
@@ -67,7 +65,6 @@ def test_reader_not_blocked_during_refresh(tmp_path: Path) -> None:
 def test_open_with_stale_schema_under_writer_lock_raises_refresh_in_progress(
     tmp_path: Path,
 ) -> None:
-    """ensure_schema must write to rebuild; a held write lock should normalize."""
     fixture = FixtureRoot(tmp_path)
     fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
 
@@ -89,7 +86,6 @@ def test_open_with_stale_schema_under_writer_lock_raises_refresh_in_progress(
 
 
 def test_open_with_clean_schema_under_writer_lock_succeeds(tmp_path: Path) -> None:
-    """A current-schema open must not need the write lock."""
     fixture = FixtureRoot(tmp_path)
     fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
 
@@ -110,7 +106,6 @@ def test_open_non_lock_operational_error_propagates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Non-lock OperationalError from ensure_schema must surface unchanged."""
     fixture = FixtureRoot(tmp_path)
     fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
 
@@ -129,7 +124,6 @@ def test_open_closes_connection_on_non_lock_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A failed open must not leak the SQLite connection."""
     fixture = FixtureRoot(tmp_path)
     fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
 

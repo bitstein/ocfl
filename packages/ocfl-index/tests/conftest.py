@@ -1,5 +1,3 @@
-"""Pytest fixtures for ocfl-index tests."""
-
 from pathlib import Path
 
 import pytest

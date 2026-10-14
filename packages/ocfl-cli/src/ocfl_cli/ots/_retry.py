@@ -1,11 +1,3 @@
-"""Minimal retry helper keyed on the `Transient` marker mixin.
-
-Non-`Transient` exceptions propagate on first raise (fail fast). For
-`Transient` exceptions, the helper sleeps between attempts using
-`min(60, 2 * 2**i)`; a per-instance `retry_after` overrides the sleep
-with that exact value.
-"""
-
 import logging
 from typing import TYPE_CHECKING
 

@@ -1,10 +1,3 @@
-"""Centralized output styling. Honors NO_COLOR, --no-color, and TTY detection.
-
-Holds no consoles: each command run makes its own pair with `make_console`
-(see `AppCtx.console` / `AppCtx.err_console`), so one run's `--no-color` or
-environment never leaks into the next.
-"""
-
 import os
 import sys
 from typing import IO, Any
@@ -30,7 +23,6 @@ _STYLES: dict[str, str] = {
 
 
 def should_color(stream: Any) -> bool:
-    """Honor NO_COLOR (disable), FORCE_COLOR (enable), else TTY detection."""
     if os.environ.get("NO_COLOR"):
         return False
     if os.environ.get("FORCE_COLOR"):
@@ -42,7 +34,6 @@ def should_color(stream: Any) -> bool:
 
 
 def make_console(*, stderr: bool = False, no_color: bool = False) -> Console:
-    """A console for stdout (or stderr), coloured per flag, env and TTY now."""
     stream: IO = sys.stderr if stderr else sys.stdout
     if not no_color and should_color(stream):
         return Console(
@@ -56,11 +47,9 @@ def make_console(*, stderr: bool = False, no_color: bool = False) -> Console:
 
 
 def style(category: str, text: str) -> Text:
-    """Return a rich Text with the named semantic style applied."""
     return Text(text, style=_STYLES.get(category, ""))
 
 
-# Convenience helpers for high-frequency call sites.
 def added(text: str) -> Text:
     return style("added", text)
 

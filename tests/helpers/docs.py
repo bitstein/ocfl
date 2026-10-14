@@ -1,5 +1,3 @@
-"""Introspection for the docs-guard tests: command help and public docstrings."""
-
 import inspect
 from collections.abc import Iterator
 from types import ModuleType
@@ -7,7 +5,6 @@ from typing import Any
 
 
 def iter_commands(cmd: Any, path: str) -> Iterator[tuple[str, Any]]:
-    """`(path, command)` for `cmd` and every subcommand below it."""
     yield path, cmd
     for name, sub in getattr(cmd, "commands", {}).items():
         yield from iter_commands(sub, f"{path} {name}")
@@ -29,7 +26,6 @@ def undocumented_exports(module: ModuleType) -> list[str]:
 
 
 def documented_members(module: ModuleType) -> set[str]:
-    """`Class.member` names of the documented public methods and properties."""
     found = set()
     for name in module.__all__:
         cls = getattr(module, name)

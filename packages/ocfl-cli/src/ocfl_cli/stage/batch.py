@@ -1,9 +1,3 @@
-"""stage batch: create, submit, upgrade, retry, commit, status, ls and rm.
-
-The batch engine is `ocfl_cli.workflow.batch`; this module parses options and
-renders the events it reports (JSON lines under `--json`, text otherwise).
-"""
-
 import json
 from pathlib import Path  # noqa: TC003 - Typer reads option annotations at runtime.
 from typing import TYPE_CHECKING, Annotated
@@ -72,8 +66,6 @@ def short_block_hash(block_hash: str) -> str:
 
 
 class _CliBatchEvents:
-    """Renders batch events: JSON lines under `--json`, text lines otherwise."""
-
     def __init__(self, ctx: typer.Context, *, resumed_by_id: bool) -> None:
         self._json = appctx.json_mode(ctx)
         self._staging_root = stage_store(ctx).root
@@ -225,7 +217,6 @@ def _selected(object_ids: list[str] | None, objects_file: Path | None) -> list[s
 
 
 def _require_staged(batch: BatchFile | None) -> None:
-    """A batch row for an object with no OTS staging needs the operator."""
     if batch is None:
         return
     if missing := not_staged(batch):
@@ -430,7 +421,7 @@ def batch_upgrade(
             f"upgraded={counts['upgraded']} failed={counts['failed']}"
         )
     if batch_counts(batch)["submitted"]:
-        raise typer.Exit(ExitCode.PENDING)  # rows still wait (ADR-0006)
+        raise typer.Exit(ExitCode.PENDING)
 
 
 def batch_retry(ctx: typer.Context, batch_id: BatchArg) -> None:

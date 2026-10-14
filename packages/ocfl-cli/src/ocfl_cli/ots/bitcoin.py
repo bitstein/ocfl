@@ -1,11 +1,3 @@
-"""Bitcoin for the CLI workflows: the lib's RPC client, ZMQ, ``verify_attestation``.
-
-The RPC client, its errors and the attestation check live in ``ocfl_lib``
-(ADR-0002). Here ``block_source`` adapts any ``BitcoinRPC`` to a
-``BlockHeaderSource``, and ``verify_attestation`` maps the lib's check onto
-the staging workflow's results. ZMQ stays in the CLI.
-"""
-
 import contextlib
 import os
 import socket
@@ -89,7 +81,6 @@ class _RpcBlocks:
 
 
 def block_source(rpc: BitcoinRPC) -> BlockHeaderSource:
-    """``rpc`` as a ``BlockHeaderSource``; a missing block is None."""
     return _RpcBlocks(rpc)
 
 
@@ -152,15 +143,6 @@ def verify_attestation(
     *,
     min_confirmations: int = 3,
 ) -> VerifyResult:
-    """Verify a ``.ots`` against the local chain with the lib's check.
-
-    Raises :class:`AttestationMismatchError` if the proof commits to another
-    digest, or if an attestation at a block with ``min_confirmations``
-    confirmations does not match its merkle root. A block that is not yet
-    that deep is untrusted, so a mismatch there is pending, not an error.
-    Raises :class:`ReorgDetectedError` if the local tip is more than
-    ``min_confirmations`` blocks behind the lowest attested height.
-    """
     parsed = parse_ots(ots_bytes)
 
     if parsed.commitment_digest != expected_digest:

@@ -1,11 +1,3 @@
-"""Batch file persistence and the batch lock.
-
-The model lives in `ocfl_cli.model.batch`. The batch lock (`<id>.lock`, an
-exclusive `flock`) is held for a whole batch run: it is the lease that keeps
-two drivers off one batch, and the kernel drops it when its holder exits
-(ADR-0005).
-"""
-
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -29,23 +21,19 @@ if TYPE_CHECKING:
 
 
 def new_batch_id() -> str:
-    """Return a locally generated UUIDv7 batch id."""
     return str(uuid.uuid7())
 
 
 def batches_dir(staging_root: Path) -> Path:
-    """Directory holding batch JSON and lock files."""
     return staging_root / "batches"
 
 
 def batch_file_path(staging_root: Path, batch_id: str) -> Path:
-    """Path to `<staging-root>/batches/<batch_id>.json`."""
     _validate_batch_id(batch_id)
     return batches_dir(staging_root) / f"{batch_id}.json"
 
 
 def batch_ids(staging_root: Path) -> list[str]:
-    """The ids of every batch file in the staging root, sorted."""
     directory = batches_dir(staging_root)
     if not directory.is_dir():
         return []
@@ -53,13 +41,11 @@ def batch_ids(staging_root: Path) -> list[str]:
 
 
 def batch_lock_path(staging_root: Path, batch_id: str) -> Path:
-    """Path to `<staging-root>/batches/<batch_id>.lock`."""
     _validate_batch_id(batch_id)
     return batches_dir(staging_root) / f"{batch_id}.lock"
 
 
 def load_batch(staging_root: Path, batch_id: str) -> BatchFile:
-    """Load a batch file, requiring current schema v1."""
     _validate_batch_id(batch_id)
     path = batch_file_path(staging_root, batch_id)
     try:
@@ -83,7 +69,6 @@ def load_batch(staging_root: Path, batch_id: str) -> BatchFile:
 
 
 def save_batch(staging_root: Path, batch: BatchFile) -> None:
-    """Atomically write `batch` to its batch file."""
     _validate_batch_id(batch.batch_id)
     if batch.schema_version != BATCH_FILE_SCHEMA_VERSION:
         raise StagingError(
@@ -99,12 +84,6 @@ def save_batch(staging_root: Path, batch: BatchFile) -> None:
 
 @contextmanager
 def batch_lock(staging_root: Path, batch_id: str, runtime: Runtime) -> Generator[None]:
-    """Hold the batch's lock for a whole run (`store.locks.flock`).
-
-    Every command that drives, commits or removes the batch holds it; a
-    second one waits `runtime.lock_timeout`, then exits 4. Readers (`status`,
-    `ls`) need no lock: the batch file is replaced atomically.
-    """
     with flock(
         batch_lock_path(staging_root, batch_id), runtime, what=f"batch {batch_id}"
     ):
@@ -112,7 +91,6 @@ def batch_lock(staging_root: Path, batch_id: str, runtime: Runtime) -> Generator
 
 
 def utc_iso_z(now: datetime) -> str:
-    """`now` for batch files: UTC at seconds precision with a Z suffix."""
     return now.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 

@@ -1,5 +1,3 @@
-"""Helpers the staging use cases share: verify jobs, proof bookkeeping, progress."""
-
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -70,18 +68,12 @@ def log_phase(prev: Phase, new: Phase) -> None:
 
 
 def ordinary_paths(state: StateMap) -> dict[str, str]:
-    """`{ordinary path: digest}` of a state; the rest are content proofs.
-
-    `X.ots` is a content proof only when `X` is in the same state
-    (`ocfl_lib.ots.split_state`); a standalone `x.ots` is ordinary.
-    """
     digest_of = {p: d for d, paths in state.items() for p in paths}
     ordinary, _proofs = ots.split_state(digest_of)
     return {p: digest_of[p] for p in sorted(ordinary)}
 
 
 def ordinary_digests(state: StateMap) -> set[str]:
-    """Digests with at least one ordinary logical path."""
     return set(ordinary_paths(state).values())
 
 
@@ -89,14 +81,6 @@ type CarriedProofs = dict[str, str]
 
 
 def carried_proofs(sr: StorageRoot, object_id: str) -> CarriedProofs:
-    """`{content digest: proof digest}` of the content proofs the object holds.
-
-    Read from every covered version, so a file that comes back in a later
-    version keeps its committed proof: those bytes are already in the
-    manifest, final and checked by the commit that added them. A plain object
-    proves nothing yet: its first covered version needs a proof for every
-    file (`timestampFrom`).
-    """
     obj = sr.get_object(object_id)
     if not obj.exists:
         return {}
@@ -114,7 +98,6 @@ def carried_proofs(sr: StorageRoot, object_id: str) -> CarriedProofs:
 
 
 def required_content(state: StateMap) -> dict[str, list[str]]:
-    """`{digest: ordinary paths}`: every ordinary path needs its companion `P.ots`."""
     need: dict[str, list[str]] = {}
     for p, d in ordinary_paths(state).items():
         need.setdefault(d, []).append(p)
@@ -122,14 +105,12 @@ def required_content(state: StateMap) -> dict[str, list[str]]:
 
 
 def proof_cache_ready(state: OtsState, staging_dir: Path, digest: str) -> bool:
-    """Whether `digest` has a verified proof with its bytes in `ots-cache/`."""
     return state.verified(digest) and ots_cache_path(staging_dir, digest).is_file()
 
 
 def proof_ready(
     state: OtsState, staging_dir: Path, carried: CarriedProofs, digest: str
 ) -> bool:
-    """Whether `digest` has a final proof: the object's or a verified, cached one."""
     return digest in carried or proof_cache_ready(state, staging_dir, digest)
 
 
@@ -204,7 +185,6 @@ def verify_job_from_ack(
 
 
 def unverified_digests(state: OtsState, digests: tuple[str, ...]) -> list[str]:
-    """Subset of *digests* that do not yet have a verified=True proof."""
     return [d for d in digests if not state.verified(d)]
 
 
@@ -219,7 +199,6 @@ def require_verified_content_before_inventory(state: OtsState) -> None:
 
 
 def update_head_state(inv: Inventory, state: StateMap) -> Inventory:
-    """Return new Inventory with updated head version state."""
     from ocfl_lib import Inventory
 
     head = inv.head
@@ -241,7 +220,6 @@ def update_head_state(inv: Inventory, state: StateMap) -> Inventory:
 
 
 def poll_outstanding_jobs(state: OtsState, sp: SimpleProofClient) -> OtsState:
-    """Refresh `status` for every non-terminal verify_job."""
     jobs: list[VerifyJob] = []
     for job in state.verify_jobs:
         if is_terminal_verify_job(job.status):
@@ -385,7 +363,6 @@ def record_proof(state: OtsState, digest: str, proof: Proof) -> OtsState:
 def request_proofs(
     state: OtsState, digests: tuple[str, ...], target: TimestampTarget
 ) -> OtsState:
-    """Record a requested (unverified) proof for each digest that has none."""
     missing = [d for d in digests if d not in state.proofs]
     if not missing:
         return state
@@ -396,7 +373,6 @@ def request_proofs(
 
 
 def unverify(proof: Proof) -> Proof:
-    """`proof` reset to requested: re-verified or re-downloaded on the next pass."""
     return Proof(target=proof.target, ots_path=proof.ots_path)
 
 

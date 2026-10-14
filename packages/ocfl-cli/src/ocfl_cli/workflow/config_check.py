@@ -1,11 +1,3 @@
-"""`ocfl config check`: does the configuration work, before a long watch?
-
-Each check reports `ok` and a detail line; a failed one also names its
-`ErrorClass` (CONFIG: the config or a credential is wrong; SERVICE: a
-service cannot be reached). Details never carry secrets: the clients'
-errors are scrubbed, and no check echoes a configured value but a URL.
-"""
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -113,7 +105,6 @@ def run_checks(
     sp_factory: SpClientFactory,
     btc_factory: BtcRpcFactory,
 ) -> tuple[Check, ...]:
-    """Every check, in order; the services only when the config loaded."""
     env = _env_file()
     if config_error is not None:
         return (_fail("config", str(config_error), ErrorClass.CONFIG), env)
@@ -128,7 +119,6 @@ def run_checks(
 
 
 def require_all_ok(checks: tuple[Check, ...]) -> None:
-    """Raise for the worst failure: CONFIG (exit 6) before SERVICE (exit 1)."""
     failed = [c for c in checks if not c.ok]
     if not failed:
         return

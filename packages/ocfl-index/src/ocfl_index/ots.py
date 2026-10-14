@@ -1,5 +1,3 @@
-"""Parse OpenTimestamps proofs and cache attestations."""
-
 import hashlib
 import sqlite3
 from dataclasses import dataclass
@@ -43,7 +41,6 @@ def proof_digest(proof_bytes: bytes) -> str:
 
 
 def parse(proof_bytes: bytes) -> ParsedOts | ParseFailure:
-    """Parse OTS bytes. Returns a ParsedOts (height may be None) or ParseFailure."""
     pdigest = proof_digest(proof_bytes)
     try:
         parsed = parse_ots(proof_bytes)

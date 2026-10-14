@@ -1,5 +1,3 @@
-"""SimpleProof API client protocol and HTTP implementation."""
-
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any

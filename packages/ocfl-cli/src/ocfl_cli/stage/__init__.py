@@ -1,5 +1,3 @@
-"""The `stage` command group: commands only; the work is in `ocfl_cli.workflow`."""
-
 from ocfl_cli.stage._app import OTS_HELP_PANEL, batch_app, stage_app
 from ocfl_cli.stage.batch import (
     batch_commit,
@@ -16,7 +14,6 @@ from ocfl_cli.stage.edit import add, discard, ls_cmd, metadata, mv, new, rm
 from ocfl_cli.stage.status import status
 from ocfl_cli.stage.timestamp import retry_cmd, timestamp_cmd, upgrade_cmd
 
-# Registration order is the order `--help` lists the commands in.
 stage_app.command()(new)
 stage_app.command()(metadata)
 stage_app.command()(add)

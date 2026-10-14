@@ -1,5 +1,3 @@
-"""Canonical process exit codes for the CLI."""
-
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import assert_never
@@ -10,14 +8,11 @@ from ocfl_lib import ErrorClass
 class ExitCode(IntEnum):
     SUCCESS = 0
     GENERIC = 1
-    # Click emits this automatically for parse errors. CLI code may also use it
-    # for post-parse invocation-shape validation, such as incompatible flags.
     USAGE = 2
     PHASE = 3
     LOCK_TIMEOUT = 4
     ATTESTATION = 5
     CONFIG = 6
-    # A result, not an error: the proofs are not final yet (ADR-0006).
     PENDING = 75
     INTERRUPTED = 130
 
@@ -50,18 +45,12 @@ EXIT_CODE_DOCS: tuple[ExitCodeDoc, ...] = (
 
 
 def format_exit_code_help() -> str:
-    """Return user-facing help text for the canonical process exits."""
     lines = ["Exit codes:"]
     lines.extend(f"  {int(doc.code)}  {doc.description}" for doc in EXIT_CODE_DOCS)
     return "\n".join(lines)
 
 
 def exit_code_for_class(error_class: ErrorClass) -> ExitCode:
-    """The exit code for an error class (ocfl-rs ADR 0004).
-
-    No wildcard result: a new `ErrorClass` fails the type check until it is
-    mapped here.
-    """
     match error_class:
         case ErrorClass.NOT_FOUND | ErrorClass.INVALID | ErrorClass.SERVICE:
             return ExitCode.GENERIC

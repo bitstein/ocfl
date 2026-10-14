@@ -1,5 +1,3 @@
-"""ocfl diff command."""
-
 from typing import Annotated
 
 import typer

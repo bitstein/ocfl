@@ -1,5 +1,3 @@
-"""Synthetic and regtest-anchored ``.ots`` byte builders for tests."""
-
 from typing import TYPE_CHECKING
 
 from bitcoin.core import CBlock
@@ -22,7 +20,6 @@ def build_attestation(
     block_height: int | None = None,
     pending_uri: str | None = None,
 ) -> bytes:
-    """Build serialized ``.ots`` bytes; require at least one attestation."""
     if block_height is None and pending_uri is None:
         raise ValueError("must provide block_height or pending_uri")
 
@@ -70,14 +67,6 @@ def build_regtest_attestation(
     *,
     wallet: str = "ocfltest",
 ) -> tuple[bytes, int, str]:
-    """Anchor *digest* to a regtest block via ``OP_RETURN``; return real OTS bytes.
-
-    Broadcasts a tx with ``OP_RETURN <digest>``, mines it, then walks the
-    block's merkle tree to build a real attestation chain via
-    ``opentimestamps.bitcoin.make_timestamp_from_block``.
-
-    Returns ``(ots_bytes, block_height, block_hash)``.
-    """
     if len(digest) != 32:
         raise ValueError("digest must be 32 bytes (SHA-256)")
 

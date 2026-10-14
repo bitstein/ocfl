@@ -1,5 +1,3 @@
-"""stage new, metadata, add, mv, rm, ls and discard: edit a Staging Area."""
-
 from pathlib import Path
 from typing import Annotated
 

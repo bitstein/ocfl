@@ -319,7 +319,6 @@ def _phase(run: timestamp.TimestampRun) -> Phase:
 
 
 def _verb[T](run: timestamp.TimestampRun, call: Callable[[], T]) -> T:
-    """Run a verb: a halt is exit 5; a phase error names the next command."""
     try:
         return call()
     except (ReorgDetectedError, AttestationMismatchError) as e:
@@ -336,7 +335,6 @@ def _watch(
     *,
     before: Phase,
 ) -> None:
-    """Upgrade `target` on each block until its proofs are final."""
     json_mode = appctx.json_mode(ctx)
     out = appctx.console(ctx)
     state = wf_staging.ots_state(run.staging_dir)
@@ -431,7 +429,7 @@ def upgrade_cmd(
     result = _verb(run, lambda: timestamp.upgrade(run, expect=expect))
     _render(ctx, run, "upgrade", result, before=before)
     if not result.done:
-        raise typer.Exit(ExitCode.PENDING)  # run again later (ADR-0006)
+        raise typer.Exit(ExitCode.PENDING)
 
 
 def retry_cmd(

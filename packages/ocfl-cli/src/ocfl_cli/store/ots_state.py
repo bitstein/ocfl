@@ -29,37 +29,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Persistence
-# ---------------------------------------------------------------------------
-
-
 def _ots_path(staging: Path) -> Path:
     return staging / "ots.json"
 
 
 def has_ots(staging: Path) -> bool:
-    """Whether `<staging>/ots.json` exists (the OTS extension is active)."""
     return _ots_path(staging).is_file()
 
 
 def remove_ots(staging: Path) -> None:
-    """Delete `<staging>/ots.json` if present. Idempotent."""
     _ots_path(staging).unlink(missing_ok=True)
 
 
 def ots_cache_path(staging: Path, digest: str) -> Path:
-    """Deterministic on-disk path for cached `.ots` bytes for *digest*."""
     return staging / "ots-cache" / f"{digest}.ots"
 
 
 def plan_path(staging: Path) -> Path:
-    """Path to the serialized `UpdatePlan` written at `timestamp inventory`."""
     return staging / "plan.json"
 
 
 def utc_iso(now: datetime) -> str:
-    """`now` for `ots.json`: RFC-3339 / ISO-8601 UTC at seconds precision."""
     return now.astimezone(UTC).isoformat(timespec="seconds")
 
 
@@ -93,18 +83,12 @@ def load_ots(staging: Path) -> OtsState:
 
 
 def save_ots(staging: Path, state: OtsState) -> None:
-    """Atomically write `state` to `<staging>/ots.json` (temp + fsync + replace)."""
     raw_bytes = msgspec.json.encode(_wire.encode_ots_state(state))
     store.atomic_write_bytes(_ots_path(staging), raw_bytes)
 
 
 @contextmanager
 def with_lock(staging: Path, runtime: Runtime) -> Generator[None]:
-    """Hold the Staging Area's lock, `<staging>/.lock` (`store.locks.flock`).
-
-    Held by every command that mutates `ots.json`; `stage status` runs
-    lock-free against the atomically-rewritten file.
-    """
     with flock(staging / ".lock", runtime, what=f"{staging}/.lock"):
         yield
 

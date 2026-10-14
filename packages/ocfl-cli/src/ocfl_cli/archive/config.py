@@ -1,10 +1,3 @@
-"""ocfl config path | show | check: where the config is, what it says, if it works.
-
-`path` and `check` run even when the config does not load (the root
-callback hands them the error instead of failing); `show` needs a loaded
-config. No subcommand ever prints a secret.
-"""
-
 import os
 from pathlib import Path
 from typing import Any

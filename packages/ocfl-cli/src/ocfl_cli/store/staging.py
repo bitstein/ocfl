@@ -1,5 +1,3 @@
-"""Persistent staging store for OCFL CLI."""
-
 import hashlib
 import json
 import os
@@ -17,24 +15,14 @@ if TYPE_CHECKING:
 
 
 class StagingStore:
-    """Manages staging directories for in-progress OCFL object versions.
-
-    Each (root_path, object_id) pair gets a staging directory containing:
-    - inventory.json: full staged inventory (all versions + new head)
-    - content.json: digest → {path, size, mtime} for new content files
-    - metadata.json: mutable version metadata for the staged head
-    """
-
     def __init__(self, root: Path) -> None:
         self._root = root
 
     @property
     def root(self) -> Path:
-        """The staging root holding every object's Staging Area and batches/."""
         return self._root
 
     def staging_path(self, root_path: str, object_id: str) -> Path:
-        """Deterministic staging directory for a (root, object) pair."""
         key = f"{root_path}\0{object_id}".encode()
         return self._root / hashlib.sha256(key).hexdigest()
 
@@ -42,12 +30,6 @@ class StagingStore:
         return self.staging_path(root_path, object_id).is_dir()
 
     def object_ids(self, root_path: str) -> list[str]:
-        """The objects staged for `root_path`, sorted.
-
-        Staging directories are named by a hash of root and object, so each
-        one's inventory names its object; a directory belongs to `root_path`
-        when that name hashes back to it.
-        """
         if not self._root.is_dir():
             return []
         ids: list[str] = []
@@ -67,7 +49,6 @@ class StagingStore:
         return sorted(ids)
 
     def create(self, root_path: str, object_id: str, inventory: Inventory) -> None:
-        """Create staging directory with inventory and empty content map."""
         d = self.staging_path(root_path, object_id)
         d.mkdir(parents=True, exist_ok=True)
         self._write_inventory(d, inventory)
@@ -150,11 +131,6 @@ def _validate_metadata_value(value: str | None, *, field: str, path: Path) -> No
 
 
 def atomic_write_bytes(path: Path, data: bytes) -> None:
-    """Write *data* to *path* via write-temp + fsync + os.replace.
-
-    Readers never observe a torn file. On any failure the temp is removed
-    and the original error propagates.
-    """
     tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
     try:
         with open(tmp, "wb") as f:
