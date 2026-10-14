@@ -977,10 +977,6 @@ class TestCommitRefusesUnproved:
         for code in ("E901", "E902", "E904"):
             assert code in text, code
 
-    def test_refusal_removes_the_work_dir_the_object_lock_made(self):
-        body = ast.unparse(_func(LIB_SRC / "_commit.py", "_commit_local"))
-        assert "tidy_work_dir" in body.split("write_bytes(fsys, t.plan_file")[0]
-
     def test_state_machines_cover_timestamped_objects(self):
         path = REPO / "packages/ocfl-lib/tests/test_commit_stateful.py"
         tree = _tree(path)

@@ -28,7 +28,6 @@ from ocfl_lib._commit import (
     remove_if_exists,
     require_base_unchanged,
     revert_claimed,
-    tidy_work_dir,
     unstart_extension,
     work_dir,
     write_proof,
@@ -186,7 +185,7 @@ def recover(
     up from what is on storage.
     """
     if isinstance(fsys, ClaimFS):
-        with object_lock(fsys, work_dir(root_path, object_id), timeout=0):
+        with object_lock(fsys, root_path, object_id, timeout=0):
             return _run(
                 _LOCAL, fsys, root_path, obj_path, object_id, action, version, content
             )
@@ -213,7 +212,7 @@ def _run(
 
 
 def _tidy(ctx: _Ctx) -> None:
-    """Drop work-dir leftovers that hold no plan (a probe, empty dirs)."""
+    """Drop work-dir leftovers that hold no plan (a build, a probe)."""
     wd = work_dir(ctx.root_path, ctx.object_id)
     if not ctx.fsys.exists(join_path(wd, "plan.json")):
         if not claims_by_conditional_write(ctx.fsys) and ctx.fsys.exists(
@@ -221,7 +220,6 @@ def _tidy(ctx: _Ctx) -> None:
         ):
             ctx.fsys.remove_all(join_path(wd, "build"))
         remove_if_exists(ctx.fsys, join_path(wd, "probe"))
-    tidy_work_dir(ctx.fsys, ctx.root_path, wd)
     prune_parents(ctx.fsys, ctx.root_path, ctx.obj_path)
 
 

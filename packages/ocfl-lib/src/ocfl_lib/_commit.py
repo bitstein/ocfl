@@ -128,15 +128,11 @@ def commit(
 
 
 def _commit_local(t: Target, fsys: ClaimFS, content: ContentSource) -> None:
-    with object_lock(fsys, t.wd, timeout=LOCK_TIMEOUT):
+    with object_lock(fsys, t.root_path, t.plan.object_id, timeout=LOCK_TIMEOUT):
         if fsys.exists(t.plan_file):
             raise RecoveryRequiredError(_unfinished(t))
-        try:
-            raw = read_or_none(fsys, t.obj(INVENTORY_FILENAME))
-            base = require_base_unchanged(fsys, t, raw, content)
-        except Exception:
-            tidy_work_dir(fsys, t.root_path, t.wd)  # the lock made it (W016)
-            raise
+        raw = read_or_none(fsys, t.obj(INVENTORY_FILENAME))
+        base = require_base_unchanged(fsys, t, raw, content)
         fs_utils.write_bytes(fsys, t.plan_file, t.plan.to_json())
         claimed = False
         try:
@@ -153,8 +149,15 @@ def _commit_local(t: Target, fsys: ClaimFS, content: ContentSource) -> None:
 
 
 @contextlib.contextmanager
-def object_lock(fsys: ClaimFS, wd: str, *, timeout: float) -> Generator[None]:
-    """Hold the object's commit lock. ObjectLockedError if it is busy."""
+def object_lock(
+    fsys: ClaimFS, root_path: str, object_id: str, *, timeout: float
+) -> Generator[None]:
+    """Hold the object's commit lock. ObjectLockedError if it is busy.
+
+    The lock lives on the object's work dir. On release, that dir and the
+    work-dir extension are removed while still locked, if empty.
+    """
+    wd = work_dir(root_path, object_id)
     with contextlib.ExitStack() as stack:
         try:
             stack.enter_context(fsys.lock(wd, timeout=timeout))
@@ -162,7 +165,10 @@ def object_lock(fsys: ClaimFS, wd: str, *, timeout: float) -> Generator[None]:
             raise ObjectLockedError(
                 f"another process is writing this object ({wd})"
             ) from e
-        yield
+        try:
+            yield
+        finally:
+            _tidy_work_dir(fsys, root_path, wd)
 
 
 def _build(t: Target, fsys: ClaimFS, content: ContentSource) -> None:
@@ -499,9 +505,8 @@ def _check_still_base(t: Target, base: StoredInventory | None) -> None:
 
 
 def finish(t: Target) -> None:
-    """The version is published: drop the plan and the work dir."""
+    """The version is published: drop the plan."""
     remove_if_exists(t.fsys, t.plan_file)
-    tidy_work_dir(t.fsys, t.root_path, t.wd)
 
 
 def discard(t: Target) -> None:
@@ -510,7 +515,6 @@ def discard(t: Target) -> None:
         t.fsys.remove_all(t.build)
     remove_if_exists(t.fsys, join_path(t.wd, "probe"))
     remove_if_exists(t.fsys, t.plan_file)
-    tidy_work_dir(t.fsys, t.root_path, t.wd)
     prune_parents(t.fsys, t.root_path, t.obj_path)
 
 
@@ -582,10 +586,7 @@ def _undo(
         exc.add_note(f"undo failed ({undo_exc}); run recover on the object")
 
 
-def tidy_work_dir(fsys: WriteFS, root_path: str, wd: str) -> None:
-    """Remove the object's work dir and the work-dir extension if empty."""
-    if not isinstance(fsys, ClaimFS):
-        return
+def _tidy_work_dir(fsys: ClaimFS, root_path: str, wd: str) -> None:
     ext = join_path(root_path, "extensions")
     for d in (wd, join_path(ext, WORK_DIR_EXTENSION), ext):
         if not fsys.remove_empty_dir(d):

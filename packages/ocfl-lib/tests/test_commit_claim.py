@@ -17,6 +17,7 @@ from ocfl_lib import (
     ObjectLockedError,
     RecoveryRequiredError,
     Spec,
+    StaleHeadError,
     StorageRoot,
     UnsupportedBackendError,
     get_layout,
@@ -181,6 +182,19 @@ class TestLocal:
         else:
             with pytest.raises(ClaimLostError, match="parent keeps disappearing"):
                 root.commit(fs, OID, root.plan(OID, vs), content=vs.content_source)
+
+    def test_refused_commit_leaves_no_work_dir(self, tmp_path):
+        d = tmp_path / "root"
+        d.mkdir()
+        fs = LocalFS(d)
+        root = _root(fs)
+        vs = _stage(tmp_path, "s", {"a.txt": b"a"})
+        stale = root.plan(OID, vs)
+        root.commit(fs, OID, root.plan(OID, vs), content=vs.content_source)
+        with pytest.raises(StaleHeadError):
+            root.commit(fs, OID, stale, content=vs.content_source)
+        assert not (d / "extensions" / "NNNN-work-dir").exists()
+        assert validate_root(fs, "").is_valid
 
     def test_empty_target_is_not_replaced(self, tmp_path):
         fs = LocalFS(tmp_path)
