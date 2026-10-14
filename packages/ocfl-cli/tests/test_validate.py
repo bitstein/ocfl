@@ -6,41 +6,42 @@ from typing import cast
 
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 
 
 class TestValidateRoot:
     def test_valid_root(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(app, ["--root", str(storage_root), "validate"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "Valid" in result.stdout
 
     def test_valid_root_json(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(app, ["--root", str(storage_root), "--json", "validate"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
         assert data["valid"] is True
 
     def test_invalid_root(self, runner: CliRunner, tmp_path: Path):
         result = runner.invoke(app, ["--root", str(tmp_path), "validate"])
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
 
     def test_nonexistent_root(self, runner: CliRunner, tmp_path: Path):
         bad = tmp_path / "nope"
         result = runner.invoke(app, ["--root", str(bad), "validate"])
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
 
     def test_no_check_digests(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
             app, ["--root", str(storage_root), "validate", "--no-check-digests"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
 
     def test_root_emits_phase_headers_by_default(
         self, runner: CliRunner, storage_root: Path
     ):
         result = runner.invoke(app, ["--root", str(storage_root), "validate"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "Valid" in result.stdout
         assert "Validating OCFL storage root" in result.stderr
         assert "Checking root structure" in result.stderr
@@ -50,7 +51,7 @@ class TestValidateRoot:
         self, runner: CliRunner, storage_root: Path
     ):
         result = runner.invoke(app, ["--root", str(storage_root), "validate"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "  obj:test: ok" in result.stderr
 
     def test_root_lists_invalid_object_with_error_count_by_default(
@@ -66,7 +67,7 @@ class TestValidateRoot:
         inv_path.write_text(json.dumps(inv, separators=(",", ":")))
 
         result = runner.invoke(app, ["--root", str(storage_root), "validate"])
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "  obj:test: 6 errors" in result.stderr
 
     def test_root_json_reports_invalid_contained_object(
@@ -82,7 +83,7 @@ class TestValidateRoot:
         inv_path.write_text(json.dumps(inv, separators=(",", ":")))
 
         result = runner.invoke(app, ["--root", str(storage_root), "--json", "validate"])
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         data = json.loads(result.stdout)
         assert data["valid"] is False
         assert any(e["code"] == "E025a" for e in data["errors"])
@@ -98,7 +99,7 @@ class TestValidateRoot:
 
         result = runner.invoke(app, ["--root", str(storage_root), "--json", "validate"])
 
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         data = json.loads(result.stdout)
         assert data["valid"] is False
         assert any(e["code"] == "E033" for e in data["errors"])
@@ -130,14 +131,14 @@ class TestValidateObject:
         result = runner.invoke(
             app, ["--root", str(storage_root), "validate", "obj:test"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "Valid" in result.stdout
 
     def test_valid_object_json(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
             app, ["--root", str(storage_root), "--json", "validate", "obj:test"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
         assert data["valid"] is True
         assert data["errors"] == []
@@ -146,7 +147,7 @@ class TestValidateObject:
         result = runner.invoke(
             app, ["--root", str(storage_root), "validate", "nonexistent"]
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
 
     def test_no_check_digests(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
@@ -159,7 +160,7 @@ class TestValidateObject:
                 "--no-check-digests",
             ],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
 
     def test_object_emits_phase_headers_by_default(
         self, runner: CliRunner, storage_root: Path
@@ -167,7 +168,7 @@ class TestValidateObject:
         result = runner.invoke(
             app, ["--root", str(storage_root), "validate", "obj:test"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "Validating object: obj:test" in result.stderr
         assert "Checking OCFL structure" in result.stderr
         assert "Verifying content digests" in result.stderr
@@ -186,12 +187,12 @@ class TestValidateObject:
                 "--no-check-digests",
             ],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "Verifying content digests" not in result.stderr
 
     def test_progress_silenced_by_json(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(app, ["--root", str(storage_root), "--json", "validate"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "Validating OCFL storage root" not in result.stderr
         data = json.loads(result.stdout)
         assert data["valid"] is True
@@ -200,7 +201,7 @@ class TestValidateObject:
         result = runner.invoke(
             app, ["--root", str(storage_root), "--quiet", "validate"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         lines = result.stderr.splitlines()
         assert all(line.startswith("Warning: [W") for line in lines), lines
 
@@ -227,7 +228,7 @@ class TestValidateLimitInfo:
         result = runner.invoke(
             app, ["--root", str(storage_root), "--json", "validate", "obj:test"]
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         data = json.loads(result.stdout)
         assert data["valid"] is True
         assert data["errors"] == []
@@ -236,7 +237,7 @@ class TestValidateLimitInfo:
     def test_root_json_merges_object_info(self, runner: CliRunner, storage_root: Path):
         _inflate_head_message(storage_root)
         result = runner.invoke(app, ["--root", str(storage_root), "--json", "validate"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         data = json.loads(result.stdout)
         assert data["valid"] is True
         assert {i["code"] for i in data["info"]} == {"L002"}
@@ -247,6 +248,6 @@ class TestValidateLimitInfo:
         result = runner.invoke(
             app, ["--root", str(storage_root), "validate", "obj:test"]
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "Info: [L002]" in result.stderr
         assert "Valid" in result.stdout

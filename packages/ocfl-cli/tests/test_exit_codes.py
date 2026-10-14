@@ -132,7 +132,7 @@ def test_root_config_error_exits_6(
 
     result = runner.invoke(app, ["validate"])
 
-    assert result.exit_code == 6, result.output
+    assert result.exit_code == ExitCode.CONFIG, result.output
     assert str(config) in result.output
 
 
@@ -145,7 +145,7 @@ def test_root_config_error_json(
 
     result = runner.invoke(app, ["--json", "validate"])
 
-    assert result.exit_code == 6, result.output
+    assert result.exit_code == ExitCode.CONFIG, result.output
     assert result.stdout == ""
     error = json.loads(result.stderr)["error"]
     assert error["code"] == "config_error" and error["exit"] == 6
@@ -162,7 +162,7 @@ def test_missing_object_json_error_on_stderr(runner: CliRunner, tmp_path: Path) 
 
     result = runner.invoke(app, ["--json", "--root", str(tmp_path), "info", "nope"])
 
-    assert result.exit_code == 1, result.output
+    assert result.exit_code == ExitCode.GENERIC, result.output
     assert result.stdout == ""
     assert json.loads(result.stderr) == {
         "error": {

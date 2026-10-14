@@ -4,6 +4,7 @@ from hashlib import sha512
 import pytest
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 
 
@@ -37,14 +38,14 @@ class TestStageLs:
     def test_ls_lists_files(self, runner, storage_root, tmp_path):
         staging = _setup_staged_new(runner, storage_root, tmp_path)
         result = _invoke(runner, storage_root, staging, "ls", "obj:new")
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "a.txt" in result.output
         assert "sub/b.txt" in result.output
 
     def test_ls_with_digests(self, runner, storage_root, tmp_path):
         staging = _setup_staged_new(runner, storage_root, tmp_path)
         result = _invoke(runner, storage_root, staging, "ls", "obj:new", "--digests")
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert result.output == (
             f"{sha512(b'aaa').hexdigest()}  a.txt\n"
             f"{sha512(b'bbb').hexdigest()}  sub/b.txt\n"
@@ -65,7 +66,7 @@ class TestStageLs:
                 "obj:new",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         data = json.loads(result.output)
         assert isinstance(data, list)
         assert {"path": "a.txt"} in data
@@ -76,7 +77,7 @@ class TestStageLs:
         staging = _setup_staged_new(runner, storage_root, tmp_path)
         args = ["--root", str(storage_root), "--json", "stage"]
         result = runner.invoke(app, [*args, "--staging-root", str(staging), "ls"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert json.loads(result.output) == [{"object_id": "obj:new", "phase": None}]
         other = tmp_path / "other-staging"
         result = runner.invoke(app, [*args, "--staging-root", str(other), "ls"])
@@ -85,14 +86,14 @@ class TestStageLs:
     def test_ls_no_staging_errors(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"
         result = _invoke(runner, storage_root, staging, "ls", "obj:nope")
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
 
 
 class TestStageStatus:
     def test_status_new_object(self, runner, storage_root, tmp_path):
         staging = _setup_staged_new(runner, storage_root, tmp_path)
         result = _invoke(runner, storage_root, staging, "status", "obj:new")
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "added" in result.output.lower() or "A " in result.output
         assert "a.txt" in result.output
         assert "sub/b.txt" in result.output
@@ -106,7 +107,7 @@ class TestStageStatus:
         _invoke(runner, storage_root, staging, "add", "obj:test", str(new_file))
 
         result = _invoke(runner, storage_root, staging, "status", "obj:test")
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "new.txt" in result.output
 
     def test_status_json(self, runner, storage_root, tmp_path):
@@ -124,7 +125,7 @@ class TestStageStatus:
                 "obj:new",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         data = json.loads(result.output)
         assert isinstance(data, dict)
         assert data["extension"] is None
@@ -151,11 +152,11 @@ class TestStageStatus:
             "--name",
             "Alice",
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         result = _invoke(runner, storage_root, staging, "status", "obj:metadata")
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "Metadata:" in result.output
         assert "message: Initial deposit" in result.output
         assert "user.name: Alice" in result.output
@@ -176,7 +177,7 @@ class TestStageStatus:
             "--name",
             "Alice",
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         result = runner.invoke(
             app,
@@ -192,7 +193,7 @@ class TestStageStatus:
             ],
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         data = json.loads(result.output)
         assert data["metadata"] == {
             "message": "Initial deposit",
@@ -203,4 +204,4 @@ class TestStageStatus:
     def test_status_no_staging_errors(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"
         result = _invoke(runner, storage_root, staging, "status", "obj:nope")
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC

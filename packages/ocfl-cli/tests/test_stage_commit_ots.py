@@ -29,6 +29,7 @@ from test_stage_timestamp_inventory_upgrade import (
 )
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.metadata import StagedMetadata, StagedUser
 from ocfl_cli.model.ots_state import Proof
@@ -80,7 +81,7 @@ def _setup_at_inventory_upgraded(
         app,
         _stage_args(root, staging, "upgrade", object_id, "--expect", "inventory"),
     )
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
     state = load_ots(sd)
     assert state.phase is Phase.INVENTORY_UPGRADED
     assert ots_cache_path(sd, inv_digest).read_bytes() == ots_bytes
@@ -119,7 +120,7 @@ def _setup_missing_metadata_inventory_upgraded(
         )
     )
     r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(ots_src)))
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
     state = load_ots(sd)
     state = replace(
@@ -151,7 +152,7 @@ def _setup_missing_metadata_inventory_upgraded(
             "inventory",
         ),
     )
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
     state = load_ots(sd)
     assert state.inventory is not None
@@ -165,7 +166,7 @@ def _setup_missing_metadata_inventory_upgraded(
         app,
         _stage_args(root, staging, "upgrade", object_id, "--expect", "inventory"),
     )
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
     assert load_ots(sd).phase is Phase.INVENTORY_UPGRADED
     return sd, ots_bytes
 
@@ -198,7 +199,7 @@ class TestStageCommitOtsHappyPath:
             app,
             _stage_args(empty_sha256_root, staging, "commit", "obj:commit-ok"),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         sr = StorageRoot.open(LocalFS(empty_sha256_root))
         obj = sr.get_object("obj:commit-ok")
@@ -266,7 +267,7 @@ class TestStageCommitOtsHappyPath:
             ),
         )
 
-        assert r.exit_code == 3, r.output
+        assert r.exit_code == ExitCode.PHASE, r.output
         assert "content proof" in r.output.lower()
         assert "unverified" in r.output.lower()
         assert StagingStore(staging).exists(
@@ -309,7 +310,7 @@ class TestStageCommitOtsAfterMetadataInvalidation:
                 "Updated metadata",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
         # ADR-0004: plan.json stays; the staged inventory is dropped.
         assert plan_path(sd).exists()
@@ -325,7 +326,7 @@ class TestStageCommitOtsAfterMetadataInvalidation:
             ),
         )
 
-        assert r.exit_code == 3, r.output
+        assert r.exit_code == ExitCode.PHASE, r.output
         out = (r.output or "").lower()
         assert "next: ocfl stage timestamp obj:commit-invalidated" in out, r.output
 
@@ -370,7 +371,7 @@ class TestStageCommitOtsMetadataGate:
             ),
         )
 
-        assert r.exit_code == 1, r.output
+        assert r.exit_code == ExitCode.GENERIC, r.output
         assert "timestamped inventory plan missing metadata: message" in (
             r.output.lower()
         )
@@ -409,7 +410,7 @@ class TestStageCommitOtsMetadataGate:
             ),
         )
 
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         sr = StorageRoot.open(LocalFS(empty_sha256_root))
         obj = sr.get_object("obj:commit-missing-metadata-allowed")
         assert obj.exists
@@ -476,7 +477,7 @@ class TestStageCommitOtsCorruptedCache:
             ),
         )
 
-        assert r.exit_code == 3, r.output  # stale plan: a state error
+        assert r.exit_code == ExitCode.PHASE, r.output
         out = (r.output or "").lower()
         assert "does not match verified inventory digest" in out, r.output
         assert "ocfl stage timestamp obj:commit-plan-mismatch" in out, r.output
@@ -520,7 +521,7 @@ class TestStageCommitOtsCorruptedCache:
                 "obj:commit-corrupt",
             ),
         )
-        assert r.exit_code == 5, r.output
+        assert r.exit_code == ExitCode.ATTESTATION, r.output
         out = (r.output or "").lower()
         assert "ocfl stage upgrade" in out, r.output
 
@@ -561,7 +562,7 @@ class TestStageCommitOtsMissingCache:
                 "obj:commit-missing",
             ),
         )
-        assert r.exit_code == 3, r.output  # no cached proof: a state error
+        assert r.exit_code == ExitCode.PHASE, r.output
         out = (r.output or "").lower()
         assert "ocfl stage upgrade" in out, r.output
 
@@ -610,7 +611,7 @@ class TestStageCommitOtsPreExecuteErrors:
             ),
         )
 
-        assert r.exit_code == 1, r.output
+        assert r.exit_code == ExitCode.GENERIC, r.output
         assert isinstance(r.exception, SystemExit)
         assert "changed" in r.output.lower()
         assert store.exists(root_path, "obj:commit-changed-source")
@@ -658,7 +659,7 @@ class TestStageCommitOtsPreExecuteErrors:
             ),
         )
 
-        assert r.exit_code == 1, r.output
+        assert r.exit_code == ExitCode.GENERIC, r.output
         assert isinstance(r.exception, SystemExit)
         assert "missing" in r.output.lower()
         assert store.exists(root_path, "obj:commit-missing-source")
@@ -706,7 +707,7 @@ class TestStageCommitOtsPreExecuteErrors:
                 ),
             )
 
-        assert r.exit_code == 4, r.output
+        assert r.exit_code == ExitCode.LOCK_TIMEOUT, r.output
         assert isinstance(r.exception, SystemExit)
         assert "lock" in r.output.lower()
         store = StagingStore(staging)
@@ -748,7 +749,7 @@ class TestStageCommitOtsKeyboardInterrupt:
                 ),
             )
 
-        assert r.exit_code == 130, r.output
+        assert r.exit_code == ExitCode.INTERRUPTED, r.output
         assert "interrupted" in (r.output or "").lower(), r.output
 
         store = StagingStore(staging)
@@ -795,7 +796,7 @@ class TestStageCommitOtsCrashRecovery:
                     "obj:commit-crash",
                 ),
             )
-        assert r1.exit_code == 1, r1.output
+        assert r1.exit_code == ExitCode.GENERIC, r1.output
 
         store = StagingStore(staging)
         root_path = str(empty_sha256_root.resolve())
@@ -808,7 +809,7 @@ class TestStageCommitOtsCrashRecovery:
             app,
             _stage_args(empty_sha256_root, staging, "commit", "obj:commit-crash"),
         )
-        assert r2.exit_code == 0, r2.output
+        assert r2.exit_code == ExitCode.SUCCESS, r2.output
 
         sr = StorageRoot.open(LocalFS(empty_sha256_root))
         obj = sr.get_object("obj:commit-crash")

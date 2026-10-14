@@ -3,18 +3,19 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 
 
 class TestInfoRoot:
     def test_info_root(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(app, ["--root", str(storage_root), "info"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "1.1" in result.stdout
 
     def test_info_root_json(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(app, ["--root", str(storage_root), "--json", "info"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
         assert data["spec"] == "1.1"
         assert "layout" in data
@@ -23,7 +24,7 @@ class TestInfoRoot:
 class TestInfoObject:
     def test_info_object(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(app, ["--root", str(storage_root), "info", "obj:test"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "obj:test" in result.stdout
         assert "v2" in result.stdout
 
@@ -31,7 +32,7 @@ class TestInfoObject:
         result = runner.invoke(
             app, ["--root", str(storage_root), "--json", "info", "obj:test"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
         assert data["id"] == "obj:test"
         assert data["head"] == "v2"
@@ -41,4 +42,4 @@ class TestInfoObject:
         result = runner.invoke(
             app, ["--root", str(storage_root), "info", "nonexistent"]
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC

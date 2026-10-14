@@ -9,6 +9,7 @@ from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import (
     Proof,
@@ -115,7 +116,7 @@ def _new_ots_staging_no_files(
     object_id: str,
 ) -> Path:
     r = runner.invoke(app, _stage_args(root, staging, "new", object_id, "--ots"))
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
     return _staging_dir(root, staging, object_id)
 
 
@@ -132,7 +133,7 @@ def _new_ots_staging(
         src = staging.parent / name
         src.write_bytes(data)
         r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(src)))
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         digests[name] = hashlib.sha256(data).hexdigest()
     return sd, digests
 
@@ -195,7 +196,7 @@ class TestStageStatusOts:
         r = runner.invoke(
             app, _stage_args_json(empty_sha256_root, staging, "status", "obj:s-empty")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert data["phase"] == Phase.DRAFTING.value
         assert data["next_action_kind"] == "add_content"
@@ -234,13 +235,13 @@ class TestStageStatusOts:
                 "mailto:alice@example.org",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         r = runner.invoke(
             app, _stage_args(empty_sha256_root, staging, "status", "obj:s-metadata")
         )
 
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "Metadata:" in r.output
         assert "message: missing" in r.output
         assert "user.name: Alice" in r.output
@@ -274,7 +275,7 @@ class TestStageStatusOts:
                 "mailto:alice@example.org",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         r = runner.invoke(
             app,
@@ -283,7 +284,7 @@ class TestStageStatusOts:
             ),
         )
 
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert data["metadata"] == {
             "message": None,
@@ -312,7 +313,7 @@ class TestStageStatusOts:
         r = runner.invoke(
             app, _stage_args_json(empty_sha256_root, staging, "status", "obj:s-draft")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert data["phase"] == Phase.DRAFTING.value
         assert data["next_action_kind"] == "timestamp_content"
@@ -361,7 +362,7 @@ class TestStageStatusOts:
         r = runner.invoke(
             app, _stage_args_json(empty_sha256_root, staging, "status", "obj:s-pend")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert data["phase"] == Phase.CONTENT_PENDING.value
         assert data["next_action_kind"] == "upgrade_content"
@@ -418,7 +419,7 @@ class TestStageStatusOts:
             app,
             _stage_args_json(empty_sha256_root, staging, "status", "obj:s-pend-fail"),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert data["next_action_kind"] == "retry_content"
         assert data["counts"]["failed"] >= 1
@@ -455,7 +456,7 @@ class TestStageStatusOts:
         r = runner.invoke(
             app, _stage_args_json(empty_sha256_root, staging, "status", "obj:s-cu")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert data["next_action_kind"] == "timestamp_inventory"
         assert data["counts"]["upgraded"] == 1
@@ -503,7 +504,7 @@ class TestStageStatusOts:
         r = runner.invoke(
             app, _stage_args_json(empty_sha256_root, staging, "status", "obj:s-ip")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert data["next_action_kind"] == "upgrade_inventory"
 
@@ -550,7 +551,7 @@ class TestStageStatusOts:
             app,
             _stage_args_json(empty_sha256_root, staging, "status", "obj:s-ip-fail"),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert data["next_action_kind"] == "retry_inventory"
 
@@ -588,7 +589,7 @@ class TestStageStatusOts:
         r = runner.invoke(
             app, _stage_args_json(empty_sha256_root, staging, "status", "obj:s-iu")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert data["next_action_kind"] == "commit"
 
@@ -626,7 +627,7 @@ class TestStageStatusOts:
         r = runner.invoke(
             app, _stage_args_json(empty_sha256_root, staging, "status", "obj:s-cm")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert data["next_action_kind"] == "none"
 
@@ -656,7 +657,7 @@ class TestStageStatusOts:
             app,
             _stage_args_json(empty_sha256_root, staging, "status", "obj:s-schema"),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert isinstance(data, dict)
         assert data["schema_version"] == 1
@@ -699,7 +700,7 @@ class TestStageStatusOts:
         r = runner.invoke(
             app, _stage_args_json(empty_sha256_root, staging, "status", "obj:s-cache")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert data["cache_bytes"] == sum(sizes)
 
@@ -731,7 +732,7 @@ class TestStageStatusOts:
             app,
             _stage_args_json(empty_sha256_root, staging, "status", "obj:s-nocache"),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert data["cache_bytes"] == 0
 
@@ -768,7 +769,7 @@ class TestStageStatusOts:
                 app,
                 _stage_args_json(empty_sha256_root, staging, "status", "obj:s-nolock"),
             )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
     def test_status_human_output_dense(
         self,
@@ -813,7 +814,7 @@ class TestStageStatusOts:
         r = runner.invoke(
             app, _stage_args(empty_sha256_root, staging, "status", "obj:s-human")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         out = r.output
         assert "Object:" in out
         assert "Metadata:" in out
@@ -882,7 +883,7 @@ class TestStageStatusOts:
         r = runner.invoke(
             app, _stage_args(empty_sha256_root, staging, "status", "obj:s-h-sec")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "30s ago" in r.output
 
     def test_status_humanize_age_hours(
@@ -903,13 +904,13 @@ class TestStageStatusOts:
             app,
             _stage_args(empty_sha256_root, staging, "new", "obj:s-h-hr", "--ots"),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         src = tmp_path / "a.txt"
         src.write_bytes(b"alpha")
         r = runner.invoke(
             app, _stage_args(empty_sha256_root, staging, "add", "obj:s-h-hr", str(src))
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         from datetime import UTC, datetime, timedelta
 
@@ -930,7 +931,7 @@ class TestStageStatusOts:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         sd = _staging_dir(empty_sha256_root, staging, "obj:s-h-hr")
 
         r = runner.invoke(
@@ -944,14 +945,14 @@ class TestStageStatusOts:
                 "content",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         assert load_ots(sd).verify_jobs[0].status == "IN_PROGRESS"
 
         clock.set(fake_now)
         r = runner.invoke(
             app, _stage_args(empty_sha256_root, staging, "status", "obj:s-h-hr")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "2h ago" in r.output
 
     def test_status_bitcoin_in_sync_field_true_when_node_synced(
@@ -979,7 +980,7 @@ class TestStageStatusOts:
         r = runner.invoke(
             app, _stage_args_json(empty_sha256_root, staging, "status", "obj:s-btc")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         bitcoin = data["bitcoin"]
         assert isinstance(bitcoin, dict)
@@ -1023,7 +1024,7 @@ class TestStageStatusOts:
             app,
             _stage_args_json(empty_sha256_root, staging, "status", "obj:s-btc-null"),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert data["bitcoin"] is None
 
@@ -1052,7 +1053,7 @@ class TestStageStatusOts:
         r = runner.invoke(
             app, _stage_args_json(empty_sha256_root, staging, "status", "obj:s-sp")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         sp_section = data["simpleproof"]
         assert isinstance(sp_section, dict)
@@ -1084,7 +1085,7 @@ class TestStageStatusOts:
         r = runner.invoke(
             app, _stage_args_json(empty_sha256_root, staging, "status", "obj:s-conf")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert data["bitcoin"]["confirmations_required"] == 3
 
@@ -1103,7 +1104,7 @@ class TestStageStatusNonOtsFallback:
         r = runner.invoke(
             app, _stage_args(empty_sha256_root, staging, "new", "obj:non-ots")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         src = tmp_path / "src.txt"
         src.write_text("hello")
@@ -1111,12 +1112,12 @@ class TestStageStatusNonOtsFallback:
             app,
             _stage_args(empty_sha256_root, staging, "add", "obj:non-ots", str(src)),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         r = runner.invoke(
             app, _stage_args(empty_sha256_root, staging, "status", "obj:non-ots")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "src.txt" in r.output
 
     def test_status_non_ots_json_wraps_changes_with_extension_null(
@@ -1132,7 +1133,7 @@ class TestStageStatusNonOtsFallback:
         r = runner.invoke(
             app, _stage_args(empty_sha256_root, staging, "new", "obj:non-ots-json")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         src = tmp_path / "src.txt"
         src.write_text("hello")
         r = runner.invoke(
@@ -1141,13 +1142,13 @@ class TestStageStatusNonOtsFallback:
                 empty_sha256_root, staging, "add", "obj:non-ots-json", str(src)
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         r = runner.invoke(
             app,
             _stage_args_json(empty_sha256_root, staging, "status", "obj:non-ots-json"),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
         assert isinstance(data, dict)
         assert data["extension"] is None

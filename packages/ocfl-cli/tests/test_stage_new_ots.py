@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.phase import Phase
 from ocfl_cli.store.ots_state import has_ots, load_ots
@@ -78,7 +79,7 @@ class TestDigestForcing:
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new", "--digest", "sha512"),
         )
-        assert result.exit_code != 0, result.output
+        assert result.exit_code != ExitCode.SUCCESS, result.output
         combined = _strip_paths((result.output + (result.stderr or "")).lower())
         # Rejection comes from our code, not Typer's unknown-option handler.
         assert "no such option" not in combined, result.output
@@ -101,7 +102,7 @@ class TestDigestForcing:
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new", "--digest", alg),
         )
-        assert result.exit_code != 0, result.output
+        assert result.exit_code != ExitCode.SUCCESS, result.output
         combined = _strip_paths((result.output + (result.stderr or "")).lower())
         assert "no such option" not in combined, result.output
         assert "sha-256" in combined or "sha256" in combined, result.output
@@ -121,7 +122,7 @@ class TestDigestForcing:
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new", "--digest", "sha256"),
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         store = StagingStore(staging)
         inv = store.load_inventory(str(storage_root.resolve()), "obj:new")
         assert inv.digest_algorithm == "sha256"
@@ -140,7 +141,7 @@ class TestDigestForcing:
             _stage_new_ots_args(storage_root, staging, "obj:test"),
         )
 
-        assert result.exit_code != 0, result.output
+        assert result.exit_code != ExitCode.SUCCESS, result.output
         combined = _strip_paths((result.output + (result.stderr or "")).lower())
         assert "sha-256" in combined or "sha256" in combined, result.output
         store = StagingStore(staging)
@@ -161,7 +162,7 @@ class TestConfigValidation:
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new"),
         )
-        assert result.exit_code == 6, result.output
+        assert result.exit_code == ExitCode.CONFIG, result.output
         combined = _strip_paths((result.output + (result.stderr or "")).lower())
         assert "no such option" not in combined, result.output
         assert "simpleproof" in combined, result.output
@@ -181,7 +182,7 @@ class TestConfigValidation:
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new"),
         )
-        assert result.exit_code == 6, result.output
+        assert result.exit_code == ExitCode.CONFIG, result.output
         combined = _strip_paths((result.output + (result.stderr or "")).lower())
         assert "no such option" not in combined, result.output
         assert "bitcoin" in combined, result.output
@@ -201,7 +202,7 @@ class TestConfigValidation:
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new"),
         )
-        assert result.exit_code == 6, result.output
+        assert result.exit_code == ExitCode.CONFIG, result.output
         combined = _strip_paths((result.output + (result.stderr or "")).lower())
         assert "no such option" not in combined, result.output
         assert "simpleproof" in combined or "bitcoin" in combined, result.output
@@ -223,7 +224,7 @@ class TestInitialOtsJson:
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new"),
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -256,7 +257,7 @@ class TestInitialOtsJson:
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new"),
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store = StagingStore(staging)
         inv = store.load_inventory(str(storage_root.resolve()), "obj:new")
@@ -276,7 +277,7 @@ class TestInitialOtsJson:
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new"),
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
@@ -296,7 +297,7 @@ class TestInitialOtsJson:
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new"),
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         ext_dir = storage_root / "extensions"
         assert not ext_dir.exists()
@@ -315,10 +316,10 @@ class TestDoubleOtsStaging:
         args = _stage_new_ots_args(storage_root, staging, "obj:new")
 
         first = runner.invoke(app, args)
-        assert first.exit_code == 0, first.output
+        assert first.exit_code == ExitCode.SUCCESS, first.output
 
         second = runner.invoke(app, args)
-        assert second.exit_code != 0, second.output
+        assert second.exit_code != ExitCode.SUCCESS, second.output
         combined = (second.output + (second.stderr or "")).lower()
         assert "already" in combined
 
@@ -345,7 +346,7 @@ class TestNonOtsRegression:
                 "obj:new",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -375,7 +376,7 @@ class TestNonOtsRegression:
                 "obj:new",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())

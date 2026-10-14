@@ -2,6 +2,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_lib import LocalFS, StorageRoot
 
@@ -12,7 +13,7 @@ class TestPurge:
             app,
             ["--root", str(storage_root), "purge", "obj:test", "--yes"],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         fs = LocalFS(storage_root)
         root = StorageRoot.open(fs)
         assert not root.get_object("obj:test").exists
@@ -23,7 +24,7 @@ class TestPurge:
             ["--root", str(storage_root), "purge", "obj:test"],
             input="y\n",
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         fs = LocalFS(storage_root)
         root = StorageRoot.open(fs)
         assert not root.get_object("obj:test").exists
@@ -34,7 +35,7 @@ class TestPurge:
             ["--root", str(storage_root), "purge", "obj:test"],
             input="n\n",
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "Aborted" in result.output
         fs = LocalFS(storage_root)
         root = StorageRoot.open(fs)
@@ -45,13 +46,13 @@ class TestPurge:
             app,
             ["--root", str(storage_root), "purge", "nonexistent", "--yes"],
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
 
     def test_purge_yes_skips_the_prompt(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
             app, ["--root", str(storage_root), "purge", "obj:test", "-y"]
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         fs = LocalFS(storage_root)
         assert not StorageRoot.open(fs).get_object("obj:test").exists
 

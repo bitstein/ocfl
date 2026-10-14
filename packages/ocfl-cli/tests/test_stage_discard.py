@@ -4,6 +4,7 @@ import pytest
 from msgspec.structs import replace
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import (
     OtsState,
@@ -39,13 +40,13 @@ class TestStageDiscard:
         assert store.exists(root_path, "obj:new")
 
         result = _invoke(runner, storage_root, staging, "discard", "obj:new")
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert not store.exists(root_path, "obj:new")
 
     def test_discard_no_staging_warns(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"
         result = _invoke(runner, storage_root, staging, "discard", "obj:nope")
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "no staging" in result.output.lower() or "warn" in result.output.lower()
 
 
@@ -66,7 +67,7 @@ def _mk_ots_staging(
     Sufficient because the discard command only inspects `ots.json` shape.
     """
     r = _invoke(runner, storage_root, staging, "new", object_id)
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
     sd = _staging_dir(storage_root, staging, object_id)
     save_ots(sd, OtsState(phase=Phase.DRAFTING, category_id=641))
     assert has_ots(sd)
@@ -190,7 +191,7 @@ class TestForceRequiredAtNonDraftingPhase:
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:gated")
 
-        assert r.exit_code != 0, (
+        assert r.exit_code != ExitCode.SUCCESS, (
             f"discard at phase {phase.value!r} with persisted progress "
             f"must require --force; got exit=0 output={r.output!r}"
         )
@@ -242,7 +243,7 @@ class TestForceRequiredAtNonDraftingPhase:
         r = _invoke(
             runner, storage_root, staging, "discard", "obj:gated-force", "--force"
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert not store.exists(root_path, "obj:gated-force"), (
             "discard --force must purge staging at any phase"
         )
@@ -270,7 +271,7 @@ class TestForceRequiredAtDraftingAfterRegression:
         root_path = str(storage_root.resolve())
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:regressed")
-        assert r.exit_code != 0, (
+        assert r.exit_code != ExitCode.SUCCESS, (
             "drafting + preserved proofs must still require --force; "
             f"got exit=0 output={r.output!r}"
         )
@@ -280,7 +281,7 @@ class TestForceRequiredAtDraftingAfterRegression:
         r2 = _invoke(
             runner, storage_root, staging, "discard", "obj:regressed", "--force"
         )
-        assert r2.exit_code == 0, r2.output
+        assert r2.exit_code == ExitCode.SUCCESS, r2.output
         assert not store.exists(root_path, "obj:regressed")
 
 
@@ -304,7 +305,7 @@ class TestForceNotRequiredAtFreshDrafting:
         root_path = str(storage_root.resolve())
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:fresh")
-        assert r.exit_code == 0, (
+        assert r.exit_code == ExitCode.SUCCESS, (
             f"fresh drafting must not require --force; got {r.output!r}"
         )
         assert not store.exists(root_path, "obj:fresh")
@@ -336,7 +337,7 @@ class TestDiscardPurgesOtsCache:
         assert cache_dir.is_dir() and cache.is_file()
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:cache", "--force")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -369,7 +370,7 @@ class TestDiscardWarnMessage:
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:batch")
 
-        assert r.exit_code != 0, r.output
+        assert r.exit_code != ExitCode.SUCCESS, r.output
         assert batch_id in r.output
         assert f"ocfl stage batch status {batch_id}" in r.output
 
@@ -397,7 +398,7 @@ class TestDiscardWarnMessage:
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:inventory-batch")
 
-        assert r.exit_code != 0, r.output
+        assert r.exit_code != ExitCode.SUCCESS, r.output
         assert batch_id in r.output
         assert f"ocfl stage batch status {batch_id}" in r.output
 
@@ -426,7 +427,7 @@ class TestDiscardWarnMessage:
         )
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:warn", "--force")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         out = r.output
         assert Phase.INVENTORY_PENDING.value in out, (
@@ -456,7 +457,7 @@ class TestNonOtsDiscardUnchanged:
     ) -> None:
         staging = tmp_path / "staging"
         r = _invoke(runner, storage_root, staging, "new", "obj:plain")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         sd = _staging_dir(storage_root, staging, "obj:plain")
         assert not has_ots(sd), "non-OTS staging must not have ots.json"
@@ -466,6 +467,6 @@ class TestNonOtsDiscardUnchanged:
         assert store.exists(root_path, "obj:plain")
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:plain")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert not store.exists(root_path, "obj:plain")
         assert "--force" not in r.output

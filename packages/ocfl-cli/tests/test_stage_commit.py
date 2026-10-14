@@ -8,6 +8,7 @@ from fakes.locks import held_flock, is_flocked, lock_runtime
 from runner_helpers import injected, runner_obj
 
 from ocfl_cli.errors import LockTimeoutError
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.store import locks as locks
 from ocfl_cli.store.staging import StagingStore
@@ -53,7 +54,7 @@ class TestStageCommit:
         _new_with_metadata(runner, storage_root, staging, "obj:committed")
         _invoke(runner, storage_root, staging, "add", "obj:committed", str(src))
         result = _invoke(runner, storage_root, staging, "commit", "obj:committed")
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         fs = LocalFS(storage_root)
         sr = StorageRoot.open(fs)
@@ -78,7 +79,7 @@ class TestStageCommit:
         _new_with_metadata(runner, storage_root, staging, "obj:test")
         _invoke(runner, storage_root, staging, "add", "obj:test", str(src))
         result = _invoke(runner, storage_root, staging, "commit", "obj:test")
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         fs = LocalFS(storage_root)
         sr = StorageRoot.open(fs)
@@ -97,7 +98,7 @@ class TestStageCommit:
         src.write_text("modified content")
 
         result = _invoke(runner, storage_root, staging, "commit", "obj:stale")
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "stale" in result.output.lower() or "changed" in result.output.lower()
 
         store = StagingStore(staging)
@@ -115,7 +116,7 @@ class TestStageCommit:
         src.unlink()
 
         result = _invoke(runner, storage_root, staging, "commit", "obj:missing")
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -129,7 +130,7 @@ class TestStageCommit:
         _new_with_metadata(runner, storage_root, staging, "obj:user")
         _invoke(runner, storage_root, staging, "add", "obj:user", str(src))
         result = _invoke(runner, storage_root, staging, "commit", "obj:user")
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         fs = LocalFS(storage_root)
         sr = StorageRoot.open(fs)
@@ -164,7 +165,7 @@ class TestStageCommit:
             runner, storage_root, staging, "commit", "obj:metadata-command"
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         obj = StorageRoot.open(LocalFS(storage_root)).get_object("obj:metadata-command")
         vi = obj.version_info(obj.head)
         assert vi.message == "reviewed metadata"
@@ -184,7 +185,7 @@ class TestStageCommit:
 
         result = _invoke(runner, storage_root, staging, "commit", "obj:missing-meta")
 
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "missing staged metadata" in result.output.lower()
         assert "message" in result.output
         assert "user.name" in result.output
@@ -209,7 +210,7 @@ class TestStageCommit:
             "--allow-missing-metadata",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
     @pytest.mark.parametrize(
         "args",
@@ -229,7 +230,7 @@ class TestStageCommit:
             _new_with_metadata(
                 runner, storage_root, staging, "obj:no-commit-metadata"
             ).exit_code
-            == 0
+            == ExitCode.SUCCESS
         )
 
         result = _invoke(
@@ -241,13 +242,13 @@ class TestStageCommit:
             *args,
         )
 
-        assert result.exit_code == 2
+        assert result.exit_code == ExitCode.USAGE
         assert "no such option" in result.output.lower()
 
     def test_no_staging_errors(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"
         result = _invoke(runner, storage_root, staging, "commit", "obj:nope")
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
 
 
 class TestSignalHandling:
@@ -262,7 +263,7 @@ class TestSignalHandling:
         with injected(runner, fs_factory=raise_on_content_write(KeyboardInterrupt())):
             result = _invoke(runner, storage_root, staging, "commit", "obj:interrupted")
 
-        assert result.exit_code == 130
+        assert result.exit_code == ExitCode.INTERRUPTED
         assert "interrupted" in result.output.lower()
 
     def test_keyboard_interrupt_preserves_staging(self, runner, storage_root, tmp_path):
@@ -309,7 +310,7 @@ class TestSignalHandling:
             _invoke(runner, storage_root, staging, "commit", "obj:retried")
 
         result = _invoke(runner, storage_root, staging, "commit", "obj:retried")
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         fs = LocalFS(storage_root)
         sr = StorageRoot.open(fs)
@@ -334,7 +335,7 @@ class TestCrashRecovery:
         ):
             result = _invoke(runner, storage_root, staging, "commit", oid)
 
-        assert result.exit_code == 1, result.output
+        assert result.exit_code == ExitCode.GENERIC, result.output
         assert "simulated crash" in result.output
 
         store = StagingStore(staging)
@@ -346,7 +347,7 @@ class TestCrashRecovery:
         assert not sr.get_object(oid).exists
 
         result = _invoke(runner, storage_root, staging, "commit", oid)
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         obj = sr.get_object(oid)
         assert obj.exists
@@ -369,7 +370,7 @@ class TestClaimLost:
         with injected(runner, fs_factory=before_claim(other_writer_claims_first)):
             result = _invoke(runner, storage_root, staging, "commit", oid)
 
-        assert result.exit_code == 3, result.output
+        assert result.exit_code == ExitCode.PHASE, result.output
         assert "claimed" in result.output
         assert not any((storage_root / oid).iterdir())
         store = StagingStore(staging)
@@ -478,7 +479,7 @@ class TestCommitLocking:
 
         result = _invoke(runner, storage_root, staging, "commit", oid)
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert observed_lock
         assert not staging_dir.exists()
 
@@ -501,7 +502,7 @@ class TestCommitLocking:
         with held_flock(staging_dir / ".lock"):
             result = _invoke(runner, storage_root, staging, "commit", oid)
 
-        assert result.exit_code == 4
+        assert result.exit_code == ExitCode.LOCK_TIMEOUT
         assert "lock" in result.output.lower()
         assert store.exists(root_path, oid)
 
@@ -524,7 +525,7 @@ class TestCommitLocking:
         with injected(runner, fs_factory=raise_on_content_write(stale)):
             result = _invoke(runner, storage_root, staging, "commit", oid)
 
-        assert result.exit_code == 1, result.output
+        assert result.exit_code == ExitCode.GENERIC, result.output
         assert "stale" in result.output.lower()
 
         store = StagingStore(staging)

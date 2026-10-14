@@ -7,6 +7,7 @@ from fakes import FakeBitcoinRPC
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_lib import (
     BitcoinRpcTransientError,
@@ -230,7 +231,7 @@ class TestDefaultOnVerifyOts:
         _register_attested(btc_fake.rpc, inv_digest_hex)
 
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.stdout)
         assert data["valid"] is True
         assert data["errors"] == []
@@ -264,7 +265,7 @@ class TestOtsLocalSkipsWalk:
                 "--ots=local",
             ],
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.stdout)
         assert data["valid"] is True
         codes = {e["code"] for e in data["errors"]}
@@ -292,7 +293,7 @@ class TestOtsLocalSkipsWalk:
                 "--ots=local",
             ],
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "Verifying OTS attestations" not in r.stderr
 
 
@@ -317,7 +318,7 @@ class TestVerifyOtsProgress:
 
         r = runner.invoke(app, ["--root", str(root), "validate", "obj-test"])
 
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "Verifying OTS attestations (min 3 confirmations)" in r.stderr
         assert "  v1 (inventory.json.v1.ots): confirmed" in r.stderr
         assert "block 800000" in r.stderr
@@ -337,7 +338,7 @@ class TestMissingBitcoinConfig:
 
         r = runner.invoke(app, ["--root", str(root), "validate", "obj-test"])
 
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "local checks only" in r.stderr
 
     def test_chain_without_bitcoin_config_raises_config_error(
@@ -353,7 +354,7 @@ class TestMissingBitcoinConfig:
             app, ["--root", str(root), "validate", "obj-test", "--ots=chain"]
         )
 
-        assert r.exit_code == 6, r.output
+        assert r.exit_code == ExitCode.CONFIG, r.output
         assert "[bitcoin]" in r.output
 
 
@@ -383,7 +384,7 @@ class TestStructuralAlwaysRuns:
                 "--ots=local",
             ],
         )
-        assert r.exit_code == 1, r.output
+        assert r.exit_code == ExitCode.GENERIC, r.output
         data = json.loads(r.stdout)
         codes = {e["code"] for e in data["errors"]}
         assert "E902" in codes, (
@@ -408,7 +409,7 @@ class TestVerifyTimeMismatchE906:
         btc_fake.rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, "00" * 32)
 
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
-        assert r.exit_code == 1, r.output
+        assert r.exit_code == ExitCode.GENERIC, r.output
         data = json.loads(r.stdout)
         codes = {e["code"] for e in data["errors"]}
         assert "E906" in codes, (
@@ -432,7 +433,7 @@ class TestVerifyTimeMismatchE906:
 
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
 
-        assert r.exit_code == 1, r.output
+        assert r.exit_code == ExitCode.GENERIC, r.output
         assert isinstance(r.exception, SystemExit)
         data = json.loads(r.stdout)
         codes = {e["code"] for e in data["errors"]}
@@ -457,7 +458,7 @@ class TestVerifyTimeMismatchE906:
 
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
 
-        assert r.exit_code == 1, r.output
+        assert r.exit_code == ExitCode.GENERIC, r.output
         assert isinstance(r.exception, SystemExit)
         assert "E906" not in r.stdout
         assert "Bitcoin RPC transport error" in r.stderr
@@ -480,7 +481,7 @@ class TestVerifyTimeMismatchE906:
 
         r = runner.invoke(app, ["--root", str(root), "validate", "obj-test"])
 
-        assert r.exit_code == 1, r.output
+        assert r.exit_code == ExitCode.GENERIC, r.output
         assert isinstance(r.exception, SystemExit)
         combined = r.output + (r.stderr or "")
         assert "cannot verify OTS attestations" in combined
@@ -510,7 +511,7 @@ class TestVerifyPendingW903:
 
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
 
-        assert r.exit_code == 1, r.output
+        assert r.exit_code == ExitCode.GENERIC, r.output
         data = json.loads(r.stdout)
         assert data["valid"] is False
         error_codes = {e["code"] for e in data["errors"]}
@@ -537,7 +538,7 @@ class TestVerifyPendingW903:
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
 
         # The extension requires vN/inventory.json (E909); OCFL only warns (W010).
-        assert r.exit_code == 1, r.output
+        assert r.exit_code == ExitCode.GENERIC, r.output
         data = json.loads(r.stdout)
         assert data["valid"] is False
         error_codes = {e["code"] for e in data["errors"]}
@@ -571,7 +572,7 @@ class TestVerifyPendingW903:
 
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
 
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.stdout)
         assert data["valid"] is True
         assert data.keys() == {"valid", "errors", "warnings", "info"}
@@ -600,7 +601,7 @@ class TestVerifyPendingW903:
 
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
 
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.stdout)
         assert data["valid"] is True
         w903 = [w for w in data["warnings"] if w["code"] == "W903"]
@@ -624,7 +625,7 @@ class TestVerifyPendingW903:
 
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
 
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.stdout)
         assert data["valid"] is True
         w903 = [w for w in data["warnings"] if w["code"] == "W903"]
@@ -724,7 +725,7 @@ class TestRegtestVerifyOtsEndToEnd:
         r = runner.invoke(
             app, ["--root", str(root), "--json", "validate", "obj-regtest"]
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.stdout)
         assert data["valid"] is True, data
         assert data["errors"] == []
@@ -752,7 +753,7 @@ class TestRootLevelChain:
 
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", *flag])
 
-        assert r.exit_code == 1, r.output
+        assert r.exit_code == ExitCode.GENERIC, r.output
         codes = {e["code"] for e in json.loads(r.stdout)["errors"]}
         assert "E906" in codes, codes
 
@@ -769,7 +770,7 @@ class TestRootLevelChain:
             app, ["--root", str(root), "--json", "validate", "--ots=local"]
         )
 
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert json.loads(r.stdout)["valid"] is True
 
     def test_lib_validate_root_takes_the_chain_check(

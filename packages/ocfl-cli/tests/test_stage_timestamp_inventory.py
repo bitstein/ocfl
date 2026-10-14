@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 from ocfl_cli.config import Config
 from ocfl_cli.config.ots import SimpleProofConfig
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.metadata import StagedMetadata, StagedUser
 from ocfl_cli.model.ots_state import Proof, VerifyJob
@@ -101,7 +102,7 @@ def _new_ots_staging(
             "mailto:alice@example.org",
         ),
     )
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
     paths: dict[str, str] = {}
     digests: dict[str, str] = {}
@@ -109,7 +110,7 @@ def _new_ots_staging(
         src = staging.parent / name
         src.write_bytes(data)
         r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(src)))
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         paths[name] = name
         digests[name] = hashlib.sha256(data).hexdigest()
 
@@ -141,7 +142,7 @@ def _setup_content_upgraded(
     ots_src = staging.parent / "a.txt.ots"
     ots_src.write_bytes(b"\x00fake-ots-bytes-opaque-to-this-command")
     r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(ots_src)))
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
     state = load_ots(sd)
     state = replace(
@@ -205,7 +206,7 @@ class TestInventoryBuild:
                 "inventory",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_PENDING
@@ -251,7 +252,7 @@ class TestInventoryBuild:
                 "inventory",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         plan2 = CommitPlan.from_json(plan_path(sd).read_bytes())
         vi = plan2.inventory.inventory.versions[plan2.version]
@@ -410,7 +411,7 @@ class TestUnverifiedContentGate:
             ),
         )
 
-        assert r.exit_code == 3, r.output
+        assert r.exit_code == ExitCode.PHASE, r.output
         assert "unverified" in r.output.lower()
         assert not plan_path(sd).exists()
         assert not sp_fake._submissions
@@ -473,7 +474,7 @@ class TestUnverifiedContentGate:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).proofs[d].verified is False
 
         r = runner.invoke(
@@ -488,7 +489,7 @@ class TestUnverifiedContentGate:
             ),
         )
 
-        assert r.exit_code == 3, r.output
+        assert r.exit_code == ExitCode.PHASE, r.output
         assert "unverified" in r.output.lower()
         assert not plan_path(sd).exists()
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
@@ -529,7 +530,7 @@ class TestMetadataGate:
             ),
         )
 
-        assert r.exit_code == 1
+        assert r.exit_code == ExitCode.GENERIC
         assert "missing staged metadata" in r.output.lower()
         assert "message" in r.output
         assert "user.address" in r.output
@@ -565,7 +566,7 @@ class TestMetadataGate:
             ),
         )
 
-        assert r.exit_code == 1
+        assert r.exit_code == ExitCode.GENERIC
         assert "missing staged metadata" in r.output.lower()
         assert "message" in r.output
         assert "user.name" in r.output
@@ -608,7 +609,7 @@ class TestMetadataGate:
             ),
         )
 
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).phase is Phase.INVENTORY_PENDING
         assert plan_path(sd).is_file()
 
@@ -650,7 +651,7 @@ class TestMetadataGate:
             ),
         )
 
-        assert r.exit_code == 2
+        assert r.exit_code == ExitCode.USAGE
         assert "--allow-missing-metadata" in r.output
 
 
@@ -682,7 +683,7 @@ class TestPlanRoundTrip:
                 "inventory",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         raw = plan_path(sd).read_bytes()
         plan2 = CommitPlan.from_json(raw)
@@ -721,7 +722,7 @@ class TestPhaseGate:
                 "inventory",
             ),
         )
-        assert r.exit_code == 3, r.output
+        assert r.exit_code == ExitCode.PHASE, r.output
         assert r.output == (
             "Error: command 'timestamp inventory' not legal in phase 'drafting'; "
             "next: ocfl stage timestamp obj:err-draft\n"
@@ -759,7 +760,7 @@ class TestPhaseGate:
                 "inventory",
             ),
         )
-        assert r.exit_code == 3, r.output
+        assert r.exit_code == ExitCode.PHASE, r.output
         assert r.output == (
             "Error: command 'timestamp inventory' not legal in phase "
             "'content-pending'; next: ocfl stage upgrade obj:err-pend --watch\n"
@@ -797,7 +798,7 @@ class TestResubmitAtInventoryPending:
                 "inventory",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         s1 = load_ots(sd)
         assert s1.phase is Phase.INVENTORY_PENDING
         assert s1.inventory is not None
@@ -816,7 +817,7 @@ class TestResubmitAtInventoryPending:
                 "inventory",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).phase is Phase.INVENTORY_PENDING
         assert len(sp_fake._submissions) == 1
         assert load_ots(sd).inventory == s1.inventory
@@ -850,7 +851,7 @@ class TestNoopAtInventoryUpgraded:
                 "inventory",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).phase is Phase.INVENTORY_PENDING
         save_ots(sd, replace(load_ots(sd), phase=Phase.INVENTORY_UPGRADED))
 
@@ -867,6 +868,6 @@ class TestNoopAtInventoryUpgraded:
                 "inventory",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).phase is Phase.INVENTORY_UPGRADED
         assert len(sp_fake._submissions) == pre_calls

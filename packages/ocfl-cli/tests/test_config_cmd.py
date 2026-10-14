@@ -6,6 +6,7 @@ import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_lib import BitcoinRpcAuthError, BitcoinRpcTransientError
 
@@ -72,7 +73,7 @@ class _Btc:
 class TestPath:
     def test_paths(self, cfg_dir: Path, tmp_path: Path) -> None:
         r = _run("--json", "config", "path")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert json.loads(r.stdout) == {
             "config": str(cfg_dir / "config.toml"),
             "config_exists": True,
@@ -86,23 +87,23 @@ class TestPath:
     def test_missing_config_is_marked(self, cfg_dir: Path) -> None:
         (cfg_dir / "config.toml").unlink()
         r = _run("config", "path")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "(missing)" in r.stdout
 
     def test_runs_with_a_broken_config(self, cfg_dir: Path) -> None:
         (cfg_dir / "config.toml").write_text("not = [toml")
-        assert _run("config", "path").exit_code == 0
+        assert _run("config", "path").exit_code == ExitCode.SUCCESS
 
     def test_other_commands_still_fail_on_a_broken_config(self, cfg_dir) -> None:
         (cfg_dir / "config.toml").write_text("not = [toml")
-        assert _run("ls").exit_code == 6
+        assert _run("ls").exit_code == ExitCode.CONFIG
 
 
 class TestShow:
     def test_redacts_every_secret(self, cfg_dir: Path) -> None:
         text = _run("config", "show")
         doc = _run("--json", "config", "show")
-        assert text.exit_code == doc.exit_code == 0, text.output
+        assert text.exit_code == doc.exit_code == ExitCode.SUCCESS, text.output
         data = json.loads(doc.stdout)
         assert data["simpleproof"]["access_token"] == "<redacted>"
         assert data["bitcoin"]["rpc_user"] == "<redacted>"
@@ -114,13 +115,13 @@ class TestShow:
 
     def test_a_broken_config_is_exit_6(self, cfg_dir: Path) -> None:
         (cfg_dir / "config.toml").write_text("not = [toml")
-        assert _run("config", "show").exit_code == 6
+        assert _run("config", "show").exit_code == ExitCode.CONFIG
 
 
 class TestCheck:
     def test_all_ok(self, cfg_dir: Path) -> None:
         r = _run("--json", "config", "check")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert json.loads(r.stdout)["ok"] is True
         assert list(_checks(r)) == [
             "config",
@@ -130,27 +131,27 @@ class TestCheck:
             "bitcoin_zmq",
         ]
         text = _run("config", "check")
-        assert text.exit_code == 0
+        assert text.exit_code == ExitCode.SUCCESS
         assert text.stdout.count("ok  ") == 5
         for secret in SECRETS.values():
             assert secret not in text.stdout + r.stdout
 
     def test_simpleproof_denied_is_exit_6(self, cfg_dir: Path) -> None:
         r = _run("--json", "config", "check", sp=FakeSimpleProof(access_denied=True))
-        assert r.exit_code == 6, r.output
+        assert r.exit_code == ExitCode.CONFIG, r.output
         assert _checks(r)["simpleproof"]["error_class"] == "config"
         assert json.loads(r.stderr)["error"]["code"] == "config_check_failed"
 
     def test_rpc_auth_is_exit_6(self, cfg_dir: Path) -> None:
         btc = _Btc(BitcoinRpcAuthError("Bitcoin RPC auth failed: HTTP 401"))
         r = _run("--json", "config", "check", btc=btc)
-        assert r.exit_code == 6, r.output
+        assert r.exit_code == ExitCode.CONFIG, r.output
         assert _checks(r)["bitcoin_rpc"]["ok"] is False
 
     def test_rpc_down_is_exit_1(self, cfg_dir: Path) -> None:
         btc = _Btc(BitcoinRpcTransientError("connection refused"))
         r = _run("--json", "config", "check", btc=btc)
-        assert r.exit_code == 1, r.output
+        assert r.exit_code == ExitCode.GENERIC, r.output
         assert _checks(r)["bitcoin_rpc"]["error_class"] == "service"
         assert json.loads(r.stderr)["error"]["code"] == "service_check_failed"
 
@@ -158,7 +159,7 @@ class TestCheck:
         missing = cfg_dir / "no.sock"
         (cfg_dir / "config.toml").write_text(_toml(f"ipc://{missing}"))
         r = _run("--json", "config", "check")
-        assert r.exit_code == 1, r.output
+        assert r.exit_code == ExitCode.GENERIC, r.output
         assert str(missing) in _checks(r)["bitcoin_zmq"]["detail"]
 
     def test_zmq_ipc_socket_present(self, cfg_dir: Path) -> None:
@@ -167,14 +168,14 @@ class TestCheck:
         s.bind(str(sock))
         try:
             (cfg_dir / "config.toml").write_text(_toml(f"ipc://{sock}"))
-            assert _run("config", "check").exit_code == 0
+            assert _run("config", "check").exit_code == ExitCode.SUCCESS
         finally:
             s.close()
 
     def test_open_env_file_is_exit_6(self, cfg_dir: Path) -> None:
         (cfg_dir / ".env").chmod(0o644)
         r = _run("--json", "config", "check")
-        assert r.exit_code == 6, r.output
+        assert r.exit_code == ExitCode.CONFIG, r.output
         checks = _checks(r)
         assert checks["env_file"]["ok"] is False and checks["config"]["ok"] is False
         assert set(checks) == {"config", "env_file"}
@@ -182,5 +183,5 @@ class TestCheck:
     def test_sections_not_configured_are_ok(self, cfg_dir: Path) -> None:
         (cfg_dir / "config.toml").write_text("")
         r = _run("--json", "config", "check")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert _checks(r)["simpleproof"]["detail"] == "not configured"

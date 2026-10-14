@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 
 from ocfl_cli._style import make_console
 from ocfl_cli.errors import AttestationMismatchError
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import (
     CalendarAttestation,
@@ -129,7 +130,7 @@ def _new_ots_staging(
     path is ``seed_name`` (e.g. ``"a.txt"``).
     """
     r = runner.invoke(app, _stage_args(root, staging, "new", object_id, "--ots"))
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
     paths: dict[str, str] = {}
     digests: dict[str, str] = {}
@@ -137,7 +138,7 @@ def _new_ots_staging(
         src = staging.parent / name
         src.write_bytes(data)
         r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(src)))
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         paths[name] = name
         digests[name] = hashlib.sha256(data).hexdigest()
 
@@ -696,7 +697,7 @@ class TestUpgradeHappyPath:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "Content:" in r.output
         assert "Object: obj:up" in r.output
         assert "Checked SimpleProof jobs" in r.output
@@ -770,7 +771,7 @@ class TestUpgradeHappyPath:
                 "content",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         assert "Content:" in r.output
         assert "Object: obj:multi" in r.output
         assert "Checked SimpleProof jobs" in r.output
@@ -841,7 +842,9 @@ class TestThreeConfGate:
                 "content",
             ),
         )
-        assert r.exit_code == (0 if expect_advance else 75), r.output
+        assert r.exit_code == (
+            ExitCode.SUCCESS if expect_advance else ExitCode.PENDING
+        ), r.output
 
         state = load_ots(sd)
         if expect_advance:
@@ -893,7 +896,7 @@ class TestPendingHeld:
                 "content",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         assert "Waiting on 1 pending digest" in r.output
         assert "Phase: content-pending" in r.output
         state = load_ots(sd)
@@ -916,7 +919,7 @@ class TestPendingHeld:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "Phase: content-pending -> content-upgraded" in r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
@@ -971,7 +974,7 @@ class TestReorgShallow:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).proofs[d].verified is True
 
         # Reorg the attested height: block_hash changes, height still in chain
@@ -991,7 +994,7 @@ class TestReorgShallow:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "Waiting on 1 pending digest" in r.output
         state = load_ots(sd)
         assert state.proofs[d].verified is False
@@ -1039,7 +1042,7 @@ class TestReorgDeep:
                 "content",
             ),
         )
-        assert r.exit_code == 5, r.output
+        assert r.exit_code == ExitCode.ATTESTATION, r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
 
@@ -1087,7 +1090,7 @@ class TestMerkleMismatch:
                 "content",
             ),
         )
-        assert r.exit_code == 5, r.output
+        assert r.exit_code == ExitCode.ATTESTATION, r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
         assert d not in state.proofs or not state.proofs[d].verified
@@ -1147,7 +1150,7 @@ class TestReorgMerkleMismatch:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).proofs[d].verified is True
 
         # Reorg the attested height to different content, then re-bury it to
@@ -1168,7 +1171,7 @@ class TestReorgMerkleMismatch:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         state = load_ots(sd)
         assert state.proofs[d].verified is False
         assert any(
@@ -1222,7 +1225,7 @@ class TestContentUpgradeExpired:
             ),
         )
 
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         assert len(sp_fake._jobs) == 2
         state = load_ots(sd)
         assert any(
@@ -1273,7 +1276,7 @@ class TestConfirmationsBeforeMerkleCli:
                 "content",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         assert "Waiting on 1 pending digest" in r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
@@ -1291,7 +1294,7 @@ class TestConfirmationsBeforeMerkleCli:
                 "content",
             ),
         )
-        assert r.exit_code == 5, r.output
+        assert r.exit_code == ExitCode.ATTESTATION, r.output
         assert "halt:" in r.output
 
 
@@ -1356,7 +1359,7 @@ class TestCrashRecovery:
                 "content",
             ),
         )
-        assert r.exit_code != 0, r.output
+        assert r.exit_code != ExitCode.SUCCESS, r.output
         load_ots(sd)
         # If verified=True is recorded for d, the cache write completed (the
         # implication direction of the invariant). The companion `a.txt.ots`
@@ -1379,7 +1382,7 @@ class TestCrashRecovery:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
         assert state.proofs[d].verified is True
@@ -1505,7 +1508,7 @@ class TestOrphanGuard:
             app,
             _stage_args(empty_sha256_root, staging, "add", "obj:orphan", str(new_src)),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         state = load_ots(sd)
         if state.phase is not Phase.CONTENT_PENDING:
@@ -1522,7 +1525,7 @@ class TestOrphanGuard:
                 "content",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         assert "Held by 1 orphan digest" in r.output
         assert "Phase: content-pending" in r.output
         state = load_ots(sd)
@@ -1575,7 +1578,7 @@ class TestPhaseAdvanceInvariant:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
 
     def test_no_advance_when_condition1_fails_pending_unverified(
@@ -1618,7 +1621,7 @@ class TestPhaseAdvanceInvariant:
                 "content",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
         assert state.proofs[d].verified is False
@@ -1666,7 +1669,7 @@ class TestPhaseAdvanceInvariant:
                 "content",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         state = load_ots(sd)
         assert state.proofs[da].verified is True
         assert state.phase is Phase.CONTENT_PENDING
@@ -1713,7 +1716,7 @@ class TestReverifyIdempotent:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
 
         r = runner.invoke(
@@ -1727,7 +1730,7 @@ class TestReverifyIdempotent:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
 
 
@@ -1776,7 +1779,7 @@ class TestRegtestEndToEnd:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
         assert state.proofs[d].verified is True

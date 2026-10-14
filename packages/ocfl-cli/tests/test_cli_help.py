@@ -19,7 +19,7 @@ def test_root_help_groups_commands_and_documents_exit_codes(
 ) -> None:
     result = runner.invoke(app, ["--help"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert "Archive" in result.output
     assert "Storage admin" in result.output
     assert "Staging" in result.output
@@ -39,7 +39,7 @@ def test_root_help_lists_one_exit_code_per_line(runner: CliRunner) -> None:
 def test_timestamp_help_uses_ots_panel(runner: CliRunner) -> None:
     result = runner.invoke(app, ["stage", "--help"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert "OTS" in result.output
     assert "timestamp" in result.output
 
@@ -47,7 +47,7 @@ def test_timestamp_help_uses_ots_panel(runner: CliRunner) -> None:
 def test_validate_help_names_the_bitcoin_section(runner: CliRunner) -> None:
     result = runner.invoke(app, ["validate", "--help"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     unboxed = re.sub(r"[\s│]+", " ", result.output)
     assert "auto (chain when [bitcoin] is configured" in unboxed
 
@@ -107,7 +107,7 @@ def test_verbose_logging_allows_httpx2_info() -> None:
 def test_version_prints_the_installed_version(runner: CliRunner) -> None:
     result = runner.invoke(app, ["--version"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert result.stdout == f"ocfl {installed_cli_version()}\n"
 
 

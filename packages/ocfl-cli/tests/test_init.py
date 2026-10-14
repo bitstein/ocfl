@@ -3,6 +3,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_lib import LocalFS, StorageRoot
 
@@ -10,7 +11,7 @@ from ocfl_lib import LocalFS, StorageRoot
 class TestInit:
     def test_init_creates_valid_root(self, runner: CliRunner, tmp_path: Path):
         result = runner.invoke(app, ["--root", str(tmp_path), "init"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert (tmp_path / "0=ocfl_1.1").exists()
 
     def test_init_default_layout(self, runner: CliRunner, tmp_path: Path):
@@ -36,7 +37,7 @@ class TestInit:
                 "0002-flat-direct-storage-layout",
             ],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads((tmp_path / "ocfl_layout.json").read_text())
         assert data["extension"] == "0002-flat-direct-storage-layout"
 
@@ -44,7 +45,7 @@ class TestInit:
         self, runner: CliRunner, tmp_path: Path
     ):
         first = runner.invoke(app, ["--root", str(tmp_path), "init"])
-        assert first.exit_code == 0
+        assert first.exit_code == ExitCode.SUCCESS
 
         result = runner.invoke(
             app,
@@ -56,8 +57,7 @@ class TestInit:
                 "0002-flat-direct-storage-layout",
             ],
         )
-        # RootExistsError is ErrorClass.STATE -> exit 3 (ocfl-rs ADR 0004).
-        assert result.exit_code == 3
+        assert result.exit_code == ExitCode.PHASE
         assert "already initialized" in result.output
 
         data = json.loads((tmp_path / "ocfl_layout.json").read_text())
@@ -76,7 +76,7 @@ class TestInit:
             app,
             ["--root", str(tmp_path), "init", "--layout-config", cfg],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         ext_config = json.loads(
             (
                 tmp_path
@@ -92,18 +92,18 @@ class TestInit:
             app,
             ["--root", str(tmp_path), "init", "--layout-description", "my layout"],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads((tmp_path / "ocfl_layout.json").read_text())
         assert data["description"] == "my layout"
 
     def test_init_spec_1_0(self, runner: CliRunner, tmp_path: Path):
         result = runner.invoke(app, ["--root", str(tmp_path), "init", "--spec", "1.0"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert (tmp_path / "0=ocfl_1.0").exists()
 
     def test_init_invalid_spec(self, runner: CliRunner, tmp_path: Path):
         result = runner.invoke(app, ["--root", str(tmp_path), "init", "--spec", "2.0"])
-        assert result.exit_code == 2
+        assert result.exit_code == ExitCode.USAGE
         assert "invalid value" in result.output.lower()
 
     def test_init_invalid_layout(self, runner: CliRunner, tmp_path: Path):
@@ -111,4 +111,4 @@ class TestInit:
             app,
             ["--root", str(tmp_path), "init", "--layout", "nonexistent-layout"],
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC

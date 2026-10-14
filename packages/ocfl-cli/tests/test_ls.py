@@ -4,18 +4,19 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 
 
 class TestLsRoot:
     def test_list_objects(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(app, ["--root", str(storage_root), "ls"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "obj:test" in result.stdout
 
     def test_list_objects_json(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(app, ["--root", str(storage_root), "--json", "ls"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
         assert "obj:test" in data
 
@@ -27,13 +28,13 @@ class TestLsRoot:
             fs, fs, spec=Spec.V1_1, layout=get_layout("0002-flat-direct-storage-layout")
         )
         result = runner.invoke(app, ["--root", str(tmp_path), "ls"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
 
 
 class TestLsObject:
     def test_list_files_head(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(app, ["--root", str(storage_root), "ls", "obj:test"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "file1.txt" in result.stdout
         assert "file2.txt" in result.stdout
 
@@ -42,7 +43,7 @@ class TestLsObject:
             app,
             ["--root", str(storage_root), "ls", "obj:test", "--object-version", "v1"],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "file1.txt" in result.stdout
         assert "file2.txt" not in result.stdout
 
@@ -51,7 +52,7 @@ class TestLsObject:
             app,
             ["--root", str(storage_root), "ls", "obj:test", "--object-version", "1"],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "file1.txt" in result.stdout
 
     def test_nonexistent_version_reports_clean_error(
@@ -61,7 +62,7 @@ class TestLsObject:
             app,
             ["--root", str(storage_root), "ls", "obj:test", "--object-version", "v9"],
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "not found" in result.stderr.lower()
         assert result.exception.__class__.__name__ == "SystemExit"
 
@@ -69,7 +70,7 @@ class TestLsObject:
         result = runner.invoke(
             app, ["--root", str(storage_root), "--json", "ls", "obj:test"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
         paths = [f["path"] for f in data]
         assert "file1.txt" in paths
@@ -79,7 +80,7 @@ class TestLsObject:
         result = runner.invoke(
             app, ["--root", str(storage_root), "ls", "obj:test", "--digests"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert result.stdout == (
             f"{sha512(b'hello').hexdigest()}  file1.txt\n"
             f"{sha512(b'world').hexdigest()}  file2.txt\n"
@@ -87,4 +88,4 @@ class TestLsObject:
 
     def test_nonexistent_object(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(app, ["--root", str(storage_root), "ls", "nonexistent"])
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC

@@ -7,6 +7,7 @@ from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Submission
 from ocfl_cli.model.phase import Phase, TimestampTarget
@@ -80,7 +81,7 @@ def _new_ots_staging(
     Returns ``(staging_dir, path_by_seed, digest_by_seed)``.
     """
     r = runner.invoke(app, _stage_args(root, staging, "new", object_id, "--ots"))
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
     paths: dict[str, str] = {}
     digests: dict[str, str] = {}
@@ -88,7 +89,7 @@ def _new_ots_staging(
         src = staging.parent / name
         src.write_bytes(data)
         r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(src)))
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         paths[name] = name
         digests[name] = hashlib.sha256(data).hexdigest()
 
@@ -181,7 +182,7 @@ class TestRetryResubmitsOnlyFailed:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         new_calls = sp_fake._submissions[len(pre_calls) :]
         assert len(new_calls) == 1, new_calls
@@ -252,7 +253,7 @@ class TestRetryEmptyFailedNoop:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         assert len(sp_fake._submissions) == before_calls
         assert ots_json.read_bytes() == before_bytes
@@ -317,7 +318,7 @@ class TestRetryMultipleFailedIndependent:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         new_calls = sp_fake._submissions[len(pre_calls) :]
         assert len(new_calls) == 2, new_calls
@@ -393,6 +394,6 @@ class TestRetryPhaseGate:
                 "content",
             ),
         )
-        assert r.exit_code != 0, r.output
+        assert r.exit_code != ExitCode.SUCCESS, r.output
         assert phase.value in r.output
         assert len(sp_fake._submissions) == pre_calls

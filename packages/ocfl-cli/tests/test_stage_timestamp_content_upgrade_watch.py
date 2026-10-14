@@ -18,6 +18,7 @@ from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Submission, VerifyJob
 from ocfl_cli.model.phase import Phase, TimestampTarget
@@ -149,7 +150,7 @@ def _new_ots_staging(
     *files: tuple[str, bytes],
 ) -> tuple[Path, dict[str, str], dict[str, str]]:
     r = runner.invoke(app, _stage_args(root, staging, "new", object_id, "--ots"))
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
     paths: dict[str, str] = {}
     digests: dict[str, str] = {}
@@ -157,7 +158,7 @@ def _new_ots_staging(
         src = staging.parent / name
         src.write_bytes(data)
         r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(src)))
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         paths[name] = name
         digests[name] = hashlib.sha256(data).hexdigest()
 
@@ -243,7 +244,7 @@ class TestWatchLoopAdvancesOnBlock:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
 
         r = runner.invoke(
@@ -259,7 +260,7 @@ class TestWatchLoopAdvancesOnBlock:
             ),
         )
 
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "Watch:" in r.output
         assert "Object: obj:watch-done" in r.output
         assert "Phase: content-upgraded" in r.output
@@ -312,7 +313,7 @@ class TestWatchLoopAdvancesOnBlock:
             ),
         )
 
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert calls == ["sleep"]
 
     def test_watch_loop_advances_on_block(
@@ -354,7 +355,7 @@ class TestWatchLoopAdvancesOnBlock:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "Watch:" in r.output
         assert "Object: obj:watch-ok" in r.output
         assert "Waiting for Bitcoin blocks" in r.output
@@ -442,7 +443,7 @@ class TestWatchHeightJumpTriggersReverify:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
         assert RECHECKED in r.output
 
@@ -511,7 +512,7 @@ class TestWatchTipChangeAtStableHeightTriggersReverify:
                 "content",
             ),
         )
-        assert r.exit_code == 130, r.output
+        assert r.exit_code == ExitCode.INTERRUPTED, r.output
         assert r.output.count(RECHECKED) == 1
 
 
@@ -565,7 +566,7 @@ class TestWatchSigintExits130WithoutTornCheckpoint:
                 "content",
             ),
         )
-        assert r.exit_code == 130, r.output
+        assert r.exit_code == ExitCode.INTERRUPTED, r.output
         load_ots(sd)
 
 
@@ -632,7 +633,7 @@ class TestWatchLockTimeoutWarningAndContinue:
         finally:
             sibling.close()
 
-        assert r.exit_code == 130, r.output
+        assert r.exit_code == ExitCode.INTERRUPTED, r.output
         load_ots(sd)
         warn_msgs = [
             r.getMessage().lower()
@@ -747,10 +748,10 @@ class TestTwoWatchersSerializeSafely:
         assert not t1.is_alive()
         assert not t2.is_alive()
         assert not errors, errors
-        # Winner exits 0 on phase advance; loser observes either
-        # phase-already-advanced (0) or KeyboardInterrupt (130).
         for tag, code in results.items():
-            assert code in (0, 130), f"{tag}: exit={code}"
+            assert code in (ExitCode.SUCCESS, ExitCode.INTERRUPTED), (
+                f"{tag}: exit={code}"
+            )
 
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
@@ -835,7 +836,7 @@ class TestRegtestRealZmqHashblockDelivery:
 
         thread.join(timeout=30.0)
         assert not thread.is_alive(), "watch loop did not exit after block notify"
-        assert result.get("exit") == 0, result
+        assert result.get("exit") == ExitCode.SUCCESS, result
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
 
 
@@ -880,7 +881,7 @@ class TestWatchFirstPass:
             ),
         )
 
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert stream.waits == 0
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
         assert "Phase: content-pending -> content-upgraded" in r.output

@@ -3,6 +3,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 
 
@@ -11,7 +12,7 @@ class TestDiff:
         result = runner.invoke(
             app, ["--root", str(storage_root), "diff", "obj:test", "v1", "v2"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "file2.txt" in result.stdout
         assert "A  file2.txt" in result.stdout
 
@@ -19,7 +20,7 @@ class TestDiff:
         result = runner.invoke(
             app, ["--root", str(storage_root), "diff", "obj:test", "1", "2"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "file2.txt" in result.stdout
 
     def test_nonexistent_version_reports_clean_error(
@@ -28,7 +29,7 @@ class TestDiff:
         result = runner.invoke(
             app, ["--root", str(storage_root), "diff", "obj:test", "v1", "v9"]
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "not found" in result.stderr.lower()
         assert result.exception.__class__.__name__ == "SystemExit"
 
@@ -36,7 +37,7 @@ class TestDiff:
         result = runner.invoke(
             app, ["--root", str(storage_root), "--json", "diff", "obj:test", "v1", "v2"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
         actions = {e["path"]: e["action"] for e in data}
         assert actions["file2.txt"] == "added"
@@ -45,4 +46,4 @@ class TestDiff:
         result = runner.invoke(
             app, ["--root", str(storage_root), "diff", "nonexistent", "v1", "v2"]
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC

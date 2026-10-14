@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_lib import DigestAlgorithm, bytes_digest
 
@@ -53,7 +54,7 @@ class TestExport:
             app,
             ["--root", str(storage_root), "export", "obj:test", "--to", str(out)],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert (out / "file1.txt").read_text() == "hello"
         assert (out / "file2.txt").read_text() == "world"
 
@@ -73,7 +74,7 @@ class TestExport:
                 str(out),
             ],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert (out / "file1.txt").read_text() == "hello"
         assert not (out / "file2.txt").exists()
 
@@ -93,7 +94,7 @@ class TestExport:
                 str(tmp_path / "out"),
             ],
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "not found" in result.stderr.lower()
         assert result.exception.__class__.__name__ == "SystemExit"
 
@@ -115,7 +116,7 @@ class TestExport:
                 str(out),
             ],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert (out / "file1.txt").read_text() == "hello"
         assert not (out / "file2.txt").exists()
 
@@ -137,7 +138,7 @@ class TestExport:
                 str(out),
             ],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert not (out / "file1.txt").exists()
         assert (out / "file2.txt").read_text() == "world"
 
@@ -155,7 +156,7 @@ class TestExport:
                 "-",
             ],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert result.stdout == "hello"
 
     def test_export_to_stdout_refuses_more_than_one_match(
@@ -165,7 +166,7 @@ class TestExport:
             app,
             ["--root", str(storage_root), "export", "obj:test", "--to", "-"],
         )
-        assert result.exit_code == 2, result.output
+        assert result.exit_code == ExitCode.USAGE, result.output
         assert "--to - writes one file" in result.output
         assert result.stdout == ""
 
@@ -179,7 +180,7 @@ class TestExport:
             app,
             ["--root", str(storage_root), "export", "obj:test", "--to", str(out)],
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
 
         result = runner.invoke(
             app,
@@ -193,7 +194,7 @@ class TestExport:
                 "--replace",
             ],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert (out / "file1.txt").read_text() == "hello"
 
     def test_export_rejects_parent_escape_without_writing_outside(
@@ -208,7 +209,7 @@ class TestExport:
             ["--root", str(storage_root), "export", "obj:test", "--to", str(out)],
         )
 
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "invalid logical path" in result.stderr
         assert not outside.exists()
 
@@ -229,7 +230,7 @@ class TestExport:
             ],
         )
 
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "invalid logical path" in result.stderr
 
     @pytest.mark.parametrize(
@@ -261,7 +262,7 @@ class TestExport:
             ],
         )
 
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "invalid logical path" in result.stderr
 
     def test_export_allows_ordinary_nested_logical_path(
@@ -275,7 +276,7 @@ class TestExport:
             ["--root", str(storage_root), "export", "obj:test", "--to", str(out)],
         )
 
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert (out / "nested" / "file.txt").read_text() == "world"
 
     def test_export_replace_does_not_bypass_logical_path_containment(
@@ -298,7 +299,7 @@ class TestExport:
             ],
         )
 
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "invalid logical path" in result.stderr
         assert not outside.exists()
 
@@ -316,4 +317,4 @@ class TestExport:
                 str(tmp_path),
             ],
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC

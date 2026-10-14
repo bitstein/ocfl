@@ -6,6 +6,7 @@ from fakes import FakeSimpleProof
 from typer.testing import CliRunner
 
 from ocfl_cli._appctx import app_ctx
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.phase import Phase
 from ocfl_cli.store.ots_state import load_ots
@@ -74,7 +75,7 @@ def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
         _stage_args(empty_sha256_root, staging, "new", "obj:fac", "--ots"),
         obj=obj,
     )
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
     src = tmp_path / "a.txt"
     src.write_text("alpha")
@@ -83,7 +84,7 @@ def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
         _stage_args(empty_sha256_root, staging, "add", "obj:fac", str(src)),
         obj=obj,
     )
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
     r = runner.invoke(
         app,
@@ -92,7 +93,7 @@ def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
         ),
         obj=obj,
     )
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
     assert calls, "injected sp_client_factory was never called"
     assert len(sp_fake._submissions) == 1
@@ -121,7 +122,7 @@ def test_default_factories_registered_when_obj_omits_them(
 
     try:
         r = runner.invoke(app, ["_factory_probe"])
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert callable(seen["sp"]), "main must install default sp_client_factory"
         assert callable(seen["btc"]), "main must install default btc_rpc_factory"
     finally:

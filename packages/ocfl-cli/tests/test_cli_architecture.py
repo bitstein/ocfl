@@ -6,6 +6,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+from ocfl_cli.exit_codes import ExitCode
+
 REPO = Path(__file__).resolve().parents[3]
 CLI_SRC = REPO / "packages/ocfl-cli/src/ocfl_cli"
 CLI_TESTS = REPO / "packages/ocfl-cli/tests"
@@ -425,7 +427,7 @@ class TestConsolesPerRun:
         args = ["-r", str(tmp_path), "info"]
         plain = runner.invoke(app, ["--no-color", *args], env=env)
         coloured = runner.invoke(app, args, env=env)
-        assert plain.exit_code == coloured.exit_code == 0
+        assert plain.exit_code == coloured.exit_code == ExitCode.SUCCESS
         assert "\x1b[" not in plain.stdout
         assert "\x1b[" in coloured.stdout
 

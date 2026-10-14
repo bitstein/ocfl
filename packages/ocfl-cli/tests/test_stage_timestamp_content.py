@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 
 from ocfl_cli.config import Config
 from ocfl_cli.config.ots import SimpleProofConfig
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Submission
 from ocfl_cli.model.phase import Phase, TimestampTarget
@@ -111,7 +112,7 @@ class TestFullSubmitFlow:
             app,
             _stage_args(empty_sha256_root, staging, "new", "obj:new", "--ots"),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         f1 = tmp_path / "a.txt"
         f1.write_text("alpha")
@@ -122,7 +123,7 @@ class TestFullSubmitFlow:
                 app,
                 _stage_args(empty_sha256_root, staging, "add", "obj:new", str(src)),
             )
-            assert r.exit_code == 0, r.output
+            assert r.exit_code == ExitCode.SUCCESS, r.output
 
         r = runner.invoke(
             app,
@@ -135,7 +136,7 @@ class TestFullSubmitFlow:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "Content:" in r.output
         assert "Object: obj:new" in r.output
         assert "Submitted 2 digests to SimpleProof" in r.output
@@ -180,7 +181,7 @@ class TestFullSubmitFlow:
             app,
             _stage_args(sha256_root_with_v1, staging, "new", "obj:test", "--ots"),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         carry = tmp_path / "carry.txt"
         carry.write_text("carry-over")
@@ -206,7 +207,7 @@ class TestFullSubmitFlow:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         sd = _staging_dir(sha256_root_with_v1, staging, "obj:test")
         state = load_ots(sd)
@@ -239,7 +240,7 @@ class TestDeleteRenameOnlyNoop:
             app,
             _stage_args(sha256_root_with_v1, staging, "new", "obj:test", "--ots"),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         carry = tmp_path / "carry.txt"
         carry.write_text("carry-over")
@@ -255,7 +256,7 @@ class TestDeleteRenameOnlyNoop:
                 "renamed.txt",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         r = runner.invoke(
             app,
@@ -268,7 +269,7 @@ class TestDeleteRenameOnlyNoop:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         combined = (r.output + (r.stderr or "")).lower()
         assert "object: obj:test" in combined
         assert "submitted 1 digest" in combined
@@ -331,7 +332,7 @@ class TestChunkingBoundary:
             app,
             _stage_args(empty_sha256_root, staging, "new", "obj:big", "--ots"),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         sd = _staging_dir(empty_sha256_root, staging, "obj:big")
         digests = _seed_many(n)
@@ -348,7 +349,7 @@ class TestChunkingBoundary:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         # FakeSimpleProof.submit_hashes records ONE _Submission per chunked
         # call. The real client chunks at 1000 internally; the fake records
@@ -382,14 +383,14 @@ class TestContentSubmissionPrimitives:
             app,
             _stage_args(empty_sha256_root, staging, "new", "obj:primitive", "--ots"),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         f = tmp_path / "primitive.txt"
         f.write_text("primitive")
         r = runner.invoke(
             app,
             _stage_args(empty_sha256_root, staging, "add", "obj:primitive", str(f)),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         cfg = Config(
             simpleproof=SimpleProofConfig(
@@ -471,7 +472,7 @@ class TestCrashSafeResubmit:
             app,
             _stage_args(empty_sha256_root, staging, "new", "obj:crash", "--ots"),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         sd = _staging_dir(empty_sha256_root, staging, "obj:crash")
         digests = tuple(_seed_many(3))
@@ -489,7 +490,7 @@ class TestCrashSafeResubmit:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         assert len(sp_fake._submissions) >= 1
         recorded_digests = {d for s in sp_fake._submissions for d in s.digests}
@@ -520,7 +521,7 @@ class TestDoubleSubmitBenign:
             app,
             _stage_args(empty_sha256_root, staging, "new", "obj:dup", "--ots"),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         sd = _staging_dir(empty_sha256_root, staging, "obj:dup")
         digests = tuple(_seed_many(2))
@@ -538,7 +539,7 @@ class TestDoubleSubmitBenign:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         round_1_count = len(sp_fake._submissions)
         assert round_1_count >= 1
 
@@ -554,7 +555,7 @@ class TestDoubleSubmitBenign:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         assert len(sp_fake._submissions) > round_1_count
         for s in sp_fake._submissions:
@@ -598,7 +599,7 @@ class TestCarriedProofReuse:
             runner, empty_sha256_root, staging, oid, sp_fake, btc_fake
         )
         r = runner.invoke(app, _stage_args(empty_sha256_root, staging, "commit", oid))
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         sr = StorageRoot.open(LocalFS(empty_sha256_root))
         v1_state = sr.get_object(oid).inventory.inventory.versions["v1"].state
@@ -609,14 +610,14 @@ class TestCarriedProofReuse:
         r = runner.invoke(
             app, _stage_args(empty_sha256_root, staging, "new", oid, "--ots")
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         src = tmp_path / "again" / "a.txt"
         src.parent.mkdir()
         src.write_bytes(b"alpha")
         r = runner.invoke(
             app, _stage_args(empty_sha256_root, staging, "add", oid, str(src))
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         r = runner.invoke(
             app,
@@ -624,7 +625,7 @@ class TestCarriedProofReuse:
                 empty_sha256_root, staging, "timestamp", oid, "--expect", "content"
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         sd = _staging_dir(empty_sha256_root, staging, oid)
         assert len(sp_fake._submissions) == sent

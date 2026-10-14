@@ -1,6 +1,7 @@
 import pytest
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.store.staging import StagingStore
 from ocfl_lib import LocalFS, StorageRoot
@@ -56,7 +57,7 @@ class TestStageAdd:
 
         _invoke_new(runner, storage_root, staging)
         result = _invoke_add(runner, storage_root, staging, "obj:new", src)
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
@@ -78,7 +79,7 @@ class TestStageAdd:
         _invoke_new(runner, storage_root, staging)
         result = _invoke_add(runner, storage_root, staging, "obj:new", missing)
 
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "source not found" in result.output.lower()
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
@@ -97,7 +98,7 @@ class TestStageAdd:
 
         result = _invoke_add(runner, storage_root, staging, "obj:new", source)
 
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "unsupported source" in result.output.lower()
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
@@ -114,7 +115,7 @@ class TestStageAdd:
 
         _invoke_new(runner, storage_root, staging)
         result = _invoke_add(runner, storage_root, staging, "obj:new", src_dir)
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
@@ -136,7 +137,7 @@ class TestStageAdd:
             src,
             extra_args=["--as", "docs/readme.txt"],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
@@ -163,7 +164,7 @@ class TestStageAdd:
             src,
             extra_args=["--as", logical_path],
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "invalid logical path" in result.output.lower()
 
         store, root_path = _store_and_root(storage_root, staging)
@@ -185,7 +186,7 @@ class TestStageAdd:
             src_dir,
             extra_args=["--as", "prefix"],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
@@ -216,7 +217,7 @@ class TestStageAdd:
             src2,
             extra_args=["--as", "file.txt"],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
@@ -245,7 +246,7 @@ class TestStageAdd:
             dup_file,
             extra_args=["--as", "dup.txt"],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert target_digest not in store.load_content_map(root_path, "obj:test")
 
     def test_skip_symlinks(self, runner, storage_root, tmp_path):
@@ -259,7 +260,7 @@ class TestStageAdd:
 
         _invoke_new(runner, storage_root, staging)
         result = _invoke_add(runner, storage_root, staging, "obj:new", src_dir)
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
@@ -276,7 +277,7 @@ class TestStageAdd:
 
         _invoke_new(runner, storage_root, staging)
         result = _invoke_add(runner, storage_root, staging, "obj:new", src_dir)
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")

@@ -12,6 +12,7 @@ from msgspec.structs import replace
 from typer.testing import CliRunner
 
 from ocfl_cli.errors import AttestationMismatchError, LockTimeoutError, PhaseError
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.batch import BatchFile, BatchObject
 from ocfl_cli.model.phase import TimestampTarget
@@ -164,7 +165,7 @@ def test_all_upgraded_batch_commits_every_object(
         storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    assert exit_code == 0, events
+    assert exit_code == ExitCode.SUCCESS, events
     assert committed == [("obj:one", False), ("obj:two", False)]
     assert events == [
         {
@@ -227,7 +228,7 @@ def test_mixed_batch_commits_upgraded_and_skips_other_rows(
         storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    assert exit_code == 0, events
+    assert exit_code == ExitCode.SUCCESS, events
     assert events == [
         {
             "event": "object_committed",
@@ -296,7 +297,7 @@ def test_batch_commit_continues_after_failure_and_exits_one(
         storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    assert exit_code == 1, events
+    assert exit_code == ExitCode.GENERIC, events
     assert calls == ["obj:stale", "obj:next"]
     assert events == [
         {
@@ -349,7 +350,7 @@ def test_resume_after_partial_commit_skips_missing_staging(
         storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    assert exit_code == 0, events
+    assert exit_code == ExitCode.SUCCESS, events
     assert events == [
         {
             "event": "object_skipped",
@@ -394,7 +395,7 @@ def test_content_target_batch_is_rejected_before_commit_attempt(
     )
     result = _invoke(runner, storage_root, staging, "batch", "commit", batch.batch_id)
 
-    assert result.exit_code == 3  # batch_mismatch: a state error
+    assert result.exit_code == ExitCode.PHASE
     assert "commit batches must target inventory; got content" in result.output
 
 
@@ -414,7 +415,7 @@ def test_batch_commit_rejects_wrong_archive_root_before_commit_attempt(
     )
     result = _invoke(runner, other_root, staging, "batch", "commit", batch.batch_id)
 
-    assert result.exit_code == 3  # batch_mismatch: a state error
+    assert result.exit_code == ExitCode.PHASE
     assert f"batch {batch.batch_id} belongs to root" in result.output
     assert str(storage_root.resolve()) in result.output
     assert str(other_root.resolve()) in result.output
@@ -444,7 +445,7 @@ def test_batch_commit_holds_the_batch_lock(
         storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    assert exit_code == 0, events
+    assert exit_code == ExitCode.SUCCESS, events
     assert held_during_commit == [True]
 
 
@@ -489,7 +490,7 @@ def test_commit_takes_one_object_and_no_batch(
     """Batches commit with `stage batch commit BATCH`."""
     result = _invoke(runner, storage_root, tmp_path / "staging", "commit", *args)
 
-    assert result.exit_code == 2
+    assert result.exit_code == ExitCode.USAGE
 
 
 def test_snapshot_row_invalidated_mid_run_is_reported_as_failed(
@@ -535,7 +536,7 @@ def test_snapshot_row_invalidated_mid_run_is_reported_as_failed(
         storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    assert exit_code == 1, events
+    assert exit_code == ExitCode.GENERIC, events
     assert calls == ["obj:invalidated", "obj:after"]
     assert events[0] == {
         "event": "object_failed",

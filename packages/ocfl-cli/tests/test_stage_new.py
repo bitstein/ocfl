@@ -1,6 +1,7 @@
 import pytest
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 
 
@@ -24,7 +25,7 @@ class TestStageNew:
                 "obj:new",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         from ocfl_cli.store.staging import StagingStore
 
@@ -51,7 +52,7 @@ class TestStageNew:
                 "obj:test",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         from ocfl_cli.store.staging import StagingStore
 
@@ -75,9 +76,9 @@ class TestStageNew:
             "obj:new",
         ]
         result = runner.invoke(app, args)
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         result = runner.invoke(app, args)
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert (
             "already" in result.output.lower()
             or "already" in (result.stderr or "").lower()
@@ -99,7 +100,7 @@ class TestStageNew:
                 "sha256",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         from ocfl_cli.store.staging import StagingStore
 
@@ -124,7 +125,7 @@ class TestStageNew:
                 "bogus",
             ],
         )
-        assert result.exit_code == 2
+        assert result.exit_code == ExitCode.USAGE
         assert "invalid value" in result.output.lower()
 
         from ocfl_cli.store.staging import StagingStore
@@ -151,7 +152,7 @@ class TestStageNew:
                 digest,
             ],
         )
-        assert result.exit_code == 2
+        assert result.exit_code == ExitCode.USAGE
         assert "sha512" in result.output
         assert "sha256" in result.output
 
@@ -174,7 +175,7 @@ class TestStageNew:
                 "obj:test",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         from ocfl_cli.store.staging import StagingStore
 
@@ -200,7 +201,7 @@ class TestStageNew:
                 "sha256",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         from ocfl_cli.store.staging import StagingStore
 

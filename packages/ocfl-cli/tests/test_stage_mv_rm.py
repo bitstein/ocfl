@@ -5,6 +5,7 @@ import pytest
 from msgspec.structs import replace
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Proof, StagedInventory
 from ocfl_cli.model.phase import Phase, TimestampTarget
@@ -54,7 +55,7 @@ class TestStageMv:
         result = _invoke(
             runner, storage_root, staging, "mv", "obj:new", "a.txt", "renamed.txt"
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         inv = store.load_inventory(root_path, "obj:new")
         paths = [p for ps in inv.versions["v1"].state.values() for p in ps]
@@ -66,7 +67,7 @@ class TestStageMv:
         result = _invoke(
             runner, storage_root, staging, "mv", "obj:new", "nope.txt", "dst.txt"
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
 
     def test_mv_to_existing_path_errors_without_duplicate_state(
         self, runner, storage_root, tmp_path
@@ -75,7 +76,7 @@ class TestStageMv:
         result = _invoke(
             runner, storage_root, staging, "mv", "obj:new", "a.txt", "dir/b.txt"
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "already exists" in result.output
 
         inv = store.load_inventory(root_path, "obj:new")
@@ -97,7 +98,7 @@ class TestStageMv:
         src = tmp_path / "b.txt.ots"
         src.write_bytes(b"existing companion")
         r = _invoke(runner, storage_root, staging, "add", "obj:mv-ots", str(src))
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -105,7 +106,7 @@ class TestStageMv:
         assert {"a.txt", "a.txt.ots", "b.txt.ots"} <= before
 
         r = _invoke(runner, storage_root, staging, "mv", "obj:mv-ots", "a.txt", "b.txt")
-        assert r.exit_code == 1
+        assert r.exit_code == ExitCode.GENERIC
         assert "already exists" in r.output
 
         after = _state_paths(store, root_path, "obj:mv-ots")
@@ -116,7 +117,7 @@ class TestStageRm:
     def test_rm_exact_path(self, runner, storage_root, tmp_path):
         staging, store, root_path = _setup_staged(runner, storage_root, tmp_path)
         result = _invoke(runner, storage_root, staging, "rm", "obj:new", "a.txt")
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         inv = store.load_inventory(root_path, "obj:new")
         paths = [p for ps in inv.versions["v1"].state.values() for p in ps]
@@ -128,7 +129,7 @@ class TestStageRm:
         result = _invoke(
             runner, storage_root, staging, "rm", "obj:new", "dir", "--recursive"
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         inv = store.load_inventory(root_path, "obj:new")
         paths = [p for ps in inv.versions["v1"].state.values() for p in ps]
@@ -149,7 +150,7 @@ class TestStageRm:
     def test_rm_nonexistent_path_errors(self, runner, storage_root, tmp_path):
         staging, _store, _root_path = _setup_staged(runner, storage_root, tmp_path)
         result = _invoke(runner, storage_root, staging, "rm", "obj:new", "nope.txt")
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
 
 
 _SP_OK = """\
@@ -200,7 +201,7 @@ def _add_file(
     src = src_dir / name
     src.write_bytes(data)
     r = _invoke(runner, storage_root, staging, "add", object_id, str(src))
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
     return _digest(data)
 
 
@@ -221,7 +222,7 @@ def _setup_ots_pair(
     src_dir.mkdir(parents=True, exist_ok=True)
 
     r = _invoke(runner, storage_root, staging, "new", object_id, "--ots")
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
     digests = {
         "a.txt": _add_file(
@@ -299,7 +300,7 @@ class TestRmCompanionPairing:
         assert load_ots(sd).phase is Phase.DRAFTING
 
         r = _invoke(runner, storage_root, staging, "rm", "obj:rm-pair", "a.txt")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         after = _state_paths(store, root_path, "obj:rm-pair")
         assert "a.txt" not in after
@@ -327,7 +328,7 @@ class TestMvCompanionPairing:
         r = _invoke(
             runner, storage_root, staging, "mv", "obj:mv-pair", "a.txt", "b.txt"
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         after = _state_paths(store, root_path, "obj:mv-pair")
         assert "a.txt" not in after
@@ -382,7 +383,7 @@ class TestRegressionFromContentUpgraded:
         _pin_content_upgraded(sd, da, db)
 
         r = _invoke(runner, storage_root, staging, "rm", "obj:rm-cu", "a.txt")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING, (
@@ -411,7 +412,7 @@ class TestRegressionFromContentUpgraded:
         _pin_content_upgraded(sd, da, db)
 
         r = _invoke(runner, storage_root, staging, "mv", "obj:mv-cu", "a.txt", "c.txt")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
@@ -439,7 +440,7 @@ class TestRegressionFromContentUpgraded:
         src = tmp_path / "new-content.txt"
         src.write_text("new content")
         r = _invoke(runner, storage_root, staging, "add", "obj:add-cu", str(src))
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
@@ -487,7 +488,7 @@ class TestRegressionFromInventoryPending:
         assert plan_path(sd).is_file()
 
         r = _invoke(runner, storage_root, staging, "rm", "obj:rm-ip", "a.txt")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
@@ -522,7 +523,7 @@ class TestRegressionFromInventoryPending:
         src = tmp_path / "new-content.txt"
         src.write_text("new content")
         r = _invoke(runner, storage_root, staging, "add", "obj:add-ip", str(src))
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
@@ -553,7 +554,7 @@ class TestRegressionFromInventoryUpgraded:
         assert plan_path(sd).is_file()
 
         r = _invoke(runner, storage_root, staging, "mv", "obj:mv-iu", "a.txt", "c.txt")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
@@ -584,7 +585,7 @@ class TestRegressionFromInventoryUpgraded:
         src = tmp_path / "new-content.txt"
         src.write_text("new content")
         r = _invoke(runner, storage_root, staging, "add", "obj:add-iu", str(src))
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
@@ -617,7 +618,7 @@ class TestOtsCacheNotPurgedOnRegression:
         assert cache.is_file()
 
         r = _invoke(runner, storage_root, staging, "rm", "obj:rm-cache", "a.txt")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         assert load_ots(sd).phase is Phase.DRAFTING
         assert cache.is_file(), (
@@ -638,7 +639,7 @@ class TestNonOtsRegression:
         assert not has_ots(sd), "non-OTS staging must not have ots.json"
 
         r = _invoke(runner, storage_root, staging, "rm", "obj:new", "a.txt")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         paths = _state_paths(store, root_path, "obj:new")
         assert "a.txt" not in paths
@@ -658,7 +659,7 @@ class TestNonOtsRegression:
         r = _invoke(
             runner, storage_root, staging, "mv", "obj:new", "a.txt", "renamed.txt"
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         paths = _state_paths(store, root_path, "obj:new")
         assert "a.txt" not in paths

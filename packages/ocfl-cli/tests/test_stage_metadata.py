@@ -7,6 +7,7 @@ from msgspec.structs import replace
 from runner_helpers import runner_obj
 from typer.testing import CliRunner, Result
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.metadata import StagedMetadata, StagedUser
 from ocfl_cli.model.ots_state import Proof, StagedInventory, VerifyJob
@@ -64,7 +65,7 @@ class TestStageNewMetadata:
             "mailto:alice@example.org",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert _metadata(storage_root, staging, "obj:new") == StagedMetadata(
             message="Initial deposit",
             user=StagedUser(name="Alice", address="mailto:alice@example.org"),
@@ -95,7 +96,7 @@ class TestStageNewMetadata:
             "mailto:alice@example.org",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert _metadata(storage_root, staging, "obj:ots") == StagedMetadata(
             message="Timestamped deposit",
             user=StagedUser(name="Alice", address="mailto:alice@example.org"),
@@ -128,7 +129,7 @@ class TestStageNewMetadata:
             *args,
         )
 
-        assert result.exit_code == 2
+        assert result.exit_code == ExitCode.USAGE
         assert expected in result.output.lower()
         store = StagingStore(staging)
         assert not store.exists(str(storage_root.resolve()), "obj:new")
@@ -153,7 +154,7 @@ class TestStageMetadata:
                 "--address",
                 "mailto:alice@example.org",
             ).exit_code
-            == 0
+            == ExitCode.SUCCESS
         )
 
         result = _invoke(
@@ -166,7 +167,7 @@ class TestStageMetadata:
             "Bob",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert _metadata(storage_root, staging, "obj:new") == StagedMetadata(
             message="Initial",
             user=StagedUser(name="Bob", address="mailto:alice@example.org"),
@@ -190,7 +191,7 @@ class TestStageMetadata:
                 "--address",
                 "mailto:alice@example.org",
             ).exit_code
-            == 0
+            == ExitCode.SUCCESS
         )
 
         result = _invoke(
@@ -203,7 +204,7 @@ class TestStageMetadata:
             "--clear-address",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert _metadata(storage_root, staging, "obj:new") == StagedMetadata(
             user=StagedUser(name="Alice")
         )
@@ -224,7 +225,7 @@ class TestStageMetadata:
                 "--address",
                 "mailto:alice@example.org",
             ).exit_code
-            == 0
+            == ExitCode.SUCCESS
         )
 
         result = _invoke(
@@ -238,7 +239,7 @@ class TestStageMetadata:
             "mailto:bob@example.org",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert _metadata(storage_root, staging, "obj:new") == StagedMetadata(
             user=StagedUser(address="mailto:bob@example.org")
         )
@@ -252,7 +253,7 @@ class TestStageMetadata:
             "--clear-name",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert _metadata(storage_root, staging, "obj:new") == StagedMetadata()
 
     @pytest.mark.parametrize(
@@ -271,18 +272,24 @@ class TestStageMetadata:
         args: tuple[str, ...],
     ) -> None:
         staging = tmp_path / "staging"
-        assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
+        assert (
+            _invoke(runner, storage_root, staging, "new", "obj:new").exit_code
+            == ExitCode.SUCCESS
+        )
 
         result = _invoke(runner, storage_root, staging, "metadata", "obj:new", *args)
 
-        assert result.exit_code == 2
+        assert result.exit_code == ExitCode.USAGE
         assert "incompatible" in result.output.lower()
 
     def test_metadata_rejects_empty_value(
         self, runner: CliRunner, storage_root: Path, tmp_path: Path
     ) -> None:
         staging = tmp_path / "staging"
-        assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
+        assert (
+            _invoke(runner, storage_root, staging, "new", "obj:new").exit_code
+            == ExitCode.SUCCESS
+        )
 
         result = _invoke(
             runner,
@@ -294,14 +301,17 @@ class TestStageMetadata:
             "\t",
         )
 
-        assert result.exit_code == 2
+        assert result.exit_code == ExitCode.USAGE
         assert "name" in result.output.lower()
 
     def test_metadata_updates_staging_without_metadata_file(
         self, runner: CliRunner, storage_root: Path, tmp_path: Path
     ) -> None:
         staging = tmp_path / "staging"
-        assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
+        assert (
+            _invoke(runner, storage_root, staging, "new", "obj:new").exit_code
+            == ExitCode.SUCCESS
+        )
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
         (store.staging_path(root_path, "obj:new") / "metadata.json").unlink()
@@ -316,7 +326,7 @@ class TestStageMetadata:
             "Recovered metadata",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert _metadata(storage_root, staging, "obj:new") == StagedMetadata(
             message="Recovered metadata"
         )
@@ -329,7 +339,10 @@ class TestStageMetadata:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         staging = tmp_path / "staging"
-        assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
+        assert (
+            _invoke(runner, storage_root, staging, "new", "obj:new").exit_code
+            == ExitCode.SUCCESS
+        )
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
         original_save_metadata = StagingStore.save_metadata
@@ -353,7 +366,7 @@ class TestStageMetadata:
             "Locked update",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert observed_lock
 
     def test_metadata_command_reports_lock_timeout(
@@ -364,7 +377,10 @@ class TestStageMetadata:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         staging = tmp_path / "staging"
-        assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
+        assert (
+            _invoke(runner, storage_root, staging, "new", "obj:new").exit_code
+            == ExitCode.SUCCESS
+        )
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
         runner_obj(runner)["lock_timeout"] = 0.01
@@ -380,7 +396,7 @@ class TestStageMetadata:
                 "Blocked update",
             )
 
-        assert result.exit_code == 4
+        assert result.exit_code == ExitCode.LOCK_TIMEOUT
         assert "lock" in result.output.lower()
 
     def test_metadata_usage_error_precedes_lock_timeout(
@@ -391,7 +407,10 @@ class TestStageMetadata:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         staging = tmp_path / "staging"
-        assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
+        assert (
+            _invoke(runner, storage_root, staging, "new", "obj:new").exit_code
+            == ExitCode.SUCCESS
+        )
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
         runner_obj(runner)["lock_timeout"] = 0.01
@@ -408,7 +427,7 @@ class TestStageMetadata:
                 "--clear-name",
             )
 
-        assert result.exit_code == 2
+        assert result.exit_code == ExitCode.USAGE
         assert "incompatible" in result.output.lower()
 
     @pytest.mark.parametrize(
@@ -439,7 +458,7 @@ class TestStageMetadata:
                 "--address",
                 "mailto:alice@example.org",
             ).exit_code
-            == 0
+            == ExitCode.SUCCESS
         )
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:ots")
@@ -495,7 +514,7 @@ class TestStageMetadata:
             "Updated",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         updated_state = load_ots(staging_dir)
         assert updated_state.phase is Phase.CONTENT_UPGRADED
         assert updated_state.inventory is None
@@ -533,7 +552,7 @@ class TestStageMetadata:
                 "--address",
                 "mailto:alice@example.org",
             ).exit_code
-            == 0
+            == ExitCode.SUCCESS
         )
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -594,7 +613,7 @@ class TestStageMetadata:
             "Updated",
         )
 
-        assert result.exit_code != 0
+        assert result.exit_code != ExitCode.SUCCESS
         assert observed_safe_order
         assert _metadata(storage_root, staging, "obj:ots").message == "Initial"
         updated_state = load_ots(staging_dir)

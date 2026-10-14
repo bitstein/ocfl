@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_lib import (
     CommitState,
@@ -85,7 +86,7 @@ def _clean(fs: LocalFS, root: StorageRoot) -> None:
 class TestRecover:
     def test_help_lists_actions(self, tmp_path):
         r = CliRunner().invoke(app, ["recover", "--help"])
-        assert r.exit_code == 0
+        assert r.exit_code == ExitCode.SUCCESS
         for flag in ("--resume", "--revert", "--remove-stray"):
             assert flag in r.output
 
@@ -94,12 +95,12 @@ class TestRecover:
     )
     def test_exactly_one_action(self, tmp_path, args):
         d, _fs, _r = _root(tmp_path)
-        assert _run(d, "recover", OID, *args).exit_code == 2
+        assert _run(d, "recover", OID, *args).exit_code == ExitCode.USAGE
 
     def test_revert(self, tmp_path):
         d, fs, root = _claimed(tmp_path)
         r = _run(d, "recover", OID, "--revert")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "claimed v2" in r.output
         assert _head(root) == "v1"
         _clean(fs, root)
@@ -107,37 +108,37 @@ class TestRecover:
     def test_resume(self, tmp_path):
         d, fs, root = _claimed(tmp_path)
         r = _run(d, "recover", OID, "--resume")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert _head(root) == "v2"
         _clean(fs, root)
 
     def test_remove_stray(self, tmp_path):
         d, fs, root = _stray(tmp_path)
         r = _run(d, "recover", OID, "--remove-stray", "v1")
-        assert r.exit_code != 0
+        assert r.exit_code != ExitCode.SUCCESS
         assert (d / OID / "v2").is_dir()
         r = _run(d, "recover", OID, "--remove-stray", "v2")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert _head(root) == "v1"
         _clean(fs, root)
 
     def test_stray_cannot_be_resumed(self, tmp_path):
         d, _fs, _r = _stray(tmp_path)
         r = _run(d, "recover", OID, "--resume")
-        assert r.exit_code != 0
+        assert r.exit_code != ExitCode.SUCCESS
         assert "remove-stray" in r.output
 
     def test_clean_object(self, tmp_path):
         d, fs, root = _root(tmp_path)
         root.commit(fs, OID, _stage(tmp_path, "s1", {"a.txt": b"a"}))
         r = _run(d, "recover", OID, "--revert")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "no unfinished commit" in r.output
 
     def test_json(self, tmp_path):
         d, _fs, _r = _claimed(tmp_path)
         r = _run(d, "--json", "recover", OID, "--revert")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert json.loads(r.stdout) == {
             "object_id": OID,
             "state": "claimed",
@@ -150,6 +151,6 @@ class TestRecover:
         d, fs, root = _claimed(tmp_path)
         with pytest.raises(Exception, match="recover"):
             root.commit(fs, OID, _stage(tmp_path, "s3", {"c": b"c"}))
-        assert _run(d, "recover", OID, "--revert").exit_code == 0
+        assert _run(d, "recover", OID, "--revert").exit_code == ExitCode.SUCCESS
         root.commit(fs, OID, _stage(tmp_path, "s4", {"c": b"c"}))
         assert _head(root) == "v2"

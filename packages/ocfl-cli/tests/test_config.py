@@ -12,6 +12,7 @@ from ocfl_cli.config import (
     config_path,
     load_config,
 )
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_lib import (
     DigestAlgorithm,
@@ -229,7 +230,7 @@ class TestAliasResolution:
         )
         monkeypatch.setenv("OCFL_CONFIG", str(cfg))
         result = runner.invoke(app, ["-r", "mine", "validate"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "Valid" in result.stdout
 
     def test_implicit_single_archive(
@@ -245,7 +246,7 @@ class TestAliasResolution:
         monkeypatch.setenv("OCFL_CONFIG", str(cfg))
         monkeypatch.delenv("OCFL_ROOT", raising=False)
         result = runner.invoke(app, ["validate"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
     def test_env_var_beats_implicit_default(
         self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
@@ -260,7 +261,7 @@ class TestAliasResolution:
         monkeypatch.setenv("OCFL_CONFIG", str(cfg))
         monkeypatch.setenv("OCFL_ROOT", str(storage_root))
         result = runner.invoke(app, ["validate"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
     def test_flag_path_still_works_when_not_an_alias(
         self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
@@ -274,7 +275,7 @@ class TestAliasResolution:
         )
         monkeypatch.setenv("OCFL_CONFIG", str(cfg))
         result = runner.invoke(app, ["-r", str(storage_root), "validate"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
 
 class TestConfigDigestDefault:
@@ -303,7 +304,7 @@ class TestConfigDigestDefault:
                 "obj:bad-cfg",
             ],
         )
-        assert result.exit_code == 6
+        assert result.exit_code == ExitCode.CONFIG
         assert "defaults.digest" in result.output
         assert "bogus" in result.output
         assert "traceback" not in result.output.lower()
@@ -338,7 +339,7 @@ class TestConfigDigestDefault:
                 "obj:cfg",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         from ocfl_cli.store.staging import StagingStore
 
@@ -376,7 +377,7 @@ class TestConfigDigestDefault:
                 "obj:cfg2",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         from ocfl_cli.store.staging import StagingStore
 
@@ -407,7 +408,7 @@ class TestSuppressWarnings:
         result = runner.invoke(
             app, ["--root", str(sha256_root), "--json", "validate", "obj:x"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
         codes = [w["code"] for w in data["warnings"]]
         assert "W004" in codes
@@ -426,7 +427,7 @@ class TestSuppressWarnings:
         result = runner.invoke(
             app, ["--root", str(sha256_root), "--json", "validate", "obj:x"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
         codes = [w["code"] for w in data["warnings"]]
         assert "W004" not in codes
@@ -444,7 +445,7 @@ class TestSuppressWarnings:
         )
         monkeypatch.setenv("OCFL_CONFIG", str(cfg))
         result = runner.invoke(app, ["-r", "mine", "--json", "validate", "obj:x"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
         codes = [w["code"] for w in data["warnings"]]
         assert "W004" not in codes

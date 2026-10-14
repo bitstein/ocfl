@@ -25,6 +25,7 @@ from ocfl_cli.errors import (
     SimpleProofTransient,
     UsageError,
 )
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model import batch as batch_model
 from ocfl_cli.model.batch import (
@@ -374,14 +375,14 @@ def _new_ots_with_files(
     *files: tuple[str, bytes],
 ) -> None:
     result = runner.invoke(app, _stage_args(root, staging, "new", object_id, "--ots"))
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     for name, content in files:
         src = staging.parent / f"{object_id.replace(':', '_')}-{name}"
         src.write_bytes(content)
         result = runner.invoke(
             app, _stage_args(root, staging, "add", object_id, str(src))
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
 
 def _ots_staging(
@@ -436,7 +437,7 @@ def test_batch_content_new_batch_submits_one_union_call(
         ),
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert "batch created:" in result.output
     assert len(sp_fake._submissions) == 1
     assert len(sp_fake._submissions[0].digests) == 3
@@ -493,7 +494,7 @@ def test_batch_content_new_batch_json_emits_batch_id_before_submit(
         ],
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     events = [json.loads(line) for line in result.output.splitlines()]
     data = events[0]
     assert data["event"] == "batch_created"
@@ -529,7 +530,7 @@ def test_batch_content_new_batch_json_is_ndjson_driving_output(
         "obj:json",
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     events = [json.loads(line) for line in result.output.splitlines()]
     assert [event["event"] for event in events] == [
         "batch_created",
@@ -567,7 +568,7 @@ def test_batch_content_bare_batch_mirrors_persisted_chunk_without_repost(
             "obj:resume",
         ),
     )
-    assert create.exit_code == 0, create.output
+    assert create.exit_code == ExitCode.SUCCESS, create.output
     assert len(sp_fake._submissions) == 1
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
 
@@ -596,7 +597,7 @@ def test_batch_content_bare_batch_mirrors_persisted_chunk_without_repost(
         ),
     )
 
-    assert resume.exit_code == 0, resume.output
+    assert resume.exit_code == ExitCode.SUCCESS, resume.output
     assert len(sp_fake._submissions) == 1
     resumed_state = load_ots(staging_dir)
     assert resumed_state.submissions[0].status == "submitted"
@@ -641,7 +642,7 @@ def test_batch_inventory_new_batch_submits_and_mirrors_record_id(
         ),
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert len(sp_fake._submissions) == 1
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)
@@ -686,7 +687,7 @@ def test_batch_inventory_same_object_skips_until_content_upgraded(
             "obj:overlap",
         ),
     )
-    assert content.exit_code == 0, content.output
+    assert content.exit_code == ExitCode.SUCCESS, content.output
 
     inventory = runner.invoke(
         app,
@@ -701,7 +702,7 @@ def test_batch_inventory_same_object_skips_until_content_upgraded(
         ),
     )
 
-    assert inventory.exit_code == 0, inventory.output
+    assert inventory.exit_code == ExitCode.SUCCESS, inventory.output
     batches = [
         batch_state.load_batch(staging, p.stem)
         for p in (staging / "batches").glob("*.json")
@@ -735,7 +736,7 @@ def test_batch_inventory_after_content_upgraded_ignores_content_batch_owner(
             "obj:after-content",
         ),
     )
-    assert content.exit_code == 0, content.output
+    assert content.exit_code == ExitCode.SUCCESS, content.output
     store = StagingStore(staging)
     staging_dir = store.staging_path(
         str(empty_sha256_root.resolve()), "obj:after-content"
@@ -764,7 +765,7 @@ def test_batch_inventory_after_content_upgraded_ignores_content_batch_owner(
         ),
     )
 
-    assert inventory.exit_code == 0, inventory.output
+    assert inventory.exit_code == ExitCode.SUCCESS, inventory.output
     batches = [
         batch_state.load_batch(staging, p.stem)
         for p in (staging / "batches").glob("*.json")
@@ -809,7 +810,7 @@ def test_batch_content_shape_mismatch_fails_chunk_closed(
         ),
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.submissions[0].status == "failed"
@@ -849,7 +850,7 @@ def test_batch_content_bare_batch_does_not_repost_failed_chunk(
             "obj:failed",
         ),
     )
-    assert create.exit_code == 0, create.output
+    assert create.exit_code == ExitCode.SUCCESS, create.output
     assert len(fake._submissions) == 1
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
 
@@ -864,7 +865,7 @@ def test_batch_content_bare_batch_does_not_repost_failed_chunk(
         ),
     )
 
-    assert resume.exit_code == 0, resume.output
+    assert resume.exit_code == ExitCode.SUCCESS, resume.output
     assert len(fake._submissions) == 1
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.submissions[0].status == "failed"
@@ -908,7 +909,7 @@ def test_batch_content_new_batch_acquires_lease_before_file_is_visible(
         ),
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert observed_clean == [True]
 
 
@@ -944,8 +945,8 @@ def test_batch_content_competing_batch_driver_refuses_live_lease(
     release.write_text("go")
     first_code, first_output = _process_result(first, first_out)
 
-    assert first_code == 0, first_output
-    assert second_code == 4  # LockTimeoutError: ErrorClass.BUSY
+    assert first_code == ExitCode.SUCCESS, first_output
+    assert second_code == ExitCode.LOCK_TIMEOUT
     assert f"could not acquire batch {batch_id}" in second_output
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.submissions[0].status == "submitted"
@@ -980,8 +981,8 @@ def test_batch_content_competing_same_object_batch_skips_in_batch(
     release.write_text("go")
     first_code, first_output = _process_result(first, first_out)
 
-    assert first_code == 0, first_output
-    assert second_code == 0, second_output
+    assert first_code == ExitCode.SUCCESS, first_output
+    assert second_code == ExitCode.SUCCESS, second_output
     batches = [
         batch_state.load_batch(staging, p.stem)
         for p in (staging / "batches").glob("*.json")
@@ -1035,8 +1036,8 @@ def test_batch_content_competing_cross_object_batches_both_submit(
     left_code, left_output = _process_result(left, left_out)
     right_code, right_output = _process_result(right, right_out)
 
-    assert left_code == 0, left_output
-    assert right_code == 0, right_output
+    assert left_code == ExitCode.SUCCESS, left_output
+    assert right_code == ExitCode.SUCCESS, right_output
     batches = [
         batch_state.load_batch(staging, p.stem)
         for p in (staging / "batches").glob("*.json")
@@ -1120,7 +1121,7 @@ def test_batch_content_recovers_object_intent_without_batch_row(
         ),
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert events[0] == "batch" and events.count("batch") == 1, events
     assert "object" in events
     batch = batch_state.load_batch(staging, batch_id)
@@ -1155,7 +1156,7 @@ def test_batch_content_resume_empty_after_revalidation_skips_post(
             "obj:empty",
         ),
     )
-    assert create.exit_code == 0, create.output
+    assert create.exit_code == ExitCode.SUCCESS, create.output
     assert len(sp_fake._submissions) == 1
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)
@@ -1181,7 +1182,7 @@ def test_batch_content_resume_empty_after_revalidation_skips_post(
         ),
     )
 
-    assert resume.exit_code == 0, resume.output
+    assert resume.exit_code == ExitCode.SUCCESS, resume.output
     assert len(sp_fake._submissions) == 1
     resumed = batch_state.load_batch(staging, batch_id)
     assert resumed.submissions[0].status == "submitted"
@@ -1224,7 +1225,7 @@ def test_batch_content_chunked_multi_chunk_object_completes(
         ),
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert [len(call.digests) for call in sp_fake._submissions] == [2, 2, 1]
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)
@@ -1271,7 +1272,7 @@ def test_batch_content_transient_submit_failure_is_persisted(
         ),
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert fake.calls == 1
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)
@@ -1303,7 +1304,7 @@ def test_batch_retry_no_resubmit_if_id_present(
         "content",
         "obj:no-retry",
     )
-    assert create.exit_code == 0, create.output
+    assert create.exit_code == ExitCode.SUCCESS, create.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     assert len(sp_fake._submissions) == 1
 
@@ -1316,7 +1317,7 @@ def test_batch_retry_no_resubmit_if_id_present(
         batch_id,
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert len(sp_fake._submissions) == 1
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.submissions[0].status == "submitted"
@@ -1350,7 +1351,7 @@ def test_batch_retry_bidirectional_record_id_propagation(
         "content",
         "obj:bidirectional",
     )
-    assert create.exit_code == 0, create.output
+    assert create.exit_code == ExitCode.SUCCESS, create.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)
     digest_a, digest_b = batch.objects[0].digests
@@ -1406,7 +1407,7 @@ def test_batch_retry_bidirectional_record_id_propagation(
         batch_id,
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert len(sp_fake._submissions) == 1
     updated = batch_state.load_batch(staging, batch_id)
     assert updated.objects[0].status == "submitted"
@@ -1447,7 +1448,7 @@ def test_batch_retry_failed_chunk_partial_repair(
         "content",
         "obj:partial-repair",
     )
-    assert create.exit_code == 0, create.output
+    assert create.exit_code == ExitCode.SUCCESS, create.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)
     digest_a, digest_b, digest_c = batch.objects[0].digests
@@ -1503,7 +1504,7 @@ def test_batch_retry_failed_chunk_partial_repair(
         batch_id,
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert len(sp_fake._submissions) == 1
     assert sp_fake._submissions[0].digests == (digest_b, digest_c)
     updated = batch_state.load_batch(staging, batch_id)
@@ -1589,7 +1590,7 @@ def test_batch_retry_inventory_propagates_batch_record_id(
         batch_id,
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert sp_fake._submissions == []
     updated = batch_state.load_batch(staging, batch_id)
     assert updated.objects[0].status == "submitted"
@@ -1623,7 +1624,7 @@ def test_batch_retry_pending_chunk_posts_after_crash_before_post(
         "content",
         "obj:pending-retry",
     )
-    assert create.exit_code == 0, create.output
+    assert create.exit_code == ExitCode.SUCCESS, create.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)
     digest = batch.objects[0].digests[0]
@@ -1666,7 +1667,7 @@ def test_batch_retry_pending_chunk_posts_after_crash_before_post(
         batch_id,
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert len(sp_fake._submissions) == 1
     assert sp_fake._submissions[0].digests == (digest,)
     updated = batch_state.load_batch(staging, batch_id)
@@ -1698,7 +1699,7 @@ def test_batch_retry_revalidates_before_post_and_marks_regressed(
         "content",
         "obj:retry-regressed",
     )
-    assert create.exit_code == 0, create.output
+    assert create.exit_code == ExitCode.SUCCESS, create.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)
     digest = batch.objects[0].digests[0]
@@ -1734,7 +1735,7 @@ def test_batch_retry_revalidates_before_post_and_marks_regressed(
         batch_id,
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert sp_fake._submissions == []
     updated = batch_state.load_batch(staging, batch_id)
     assert updated.objects[0].status == "failed"
@@ -1812,7 +1813,7 @@ def test_batch_retry_object_record_id_wins_for_non_failed_chunk(
         batch_id,
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert sp_fake._submissions == []
     updated = batch_state.load_batch(staging, batch_id)
     assert updated.objects[0].status == "submitted"
@@ -1829,8 +1830,8 @@ def _status_json_and_human(
         runner, storage_root, staging, "batch", "status", batch_id
     )
     human_result = _invoke(runner, storage_root, staging, "batch", "status", batch_id)
-    assert json_result.exit_code == 0, json_result.output
-    assert human_result.exit_code == 0, human_result.output
+    assert json_result.exit_code == ExitCode.SUCCESS, json_result.output
+    assert human_result.exit_code == ExitCode.SUCCESS, human_result.output
     return json.loads(json_result.output), human_result.output
 
 
@@ -1879,7 +1880,7 @@ def test_batch_ls_json_orders_by_updated_at(
 
     result = _invoke_json(runner, storage_root, staging, "batch", "ls")
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     data = json.loads(result.output)
     assert [row["batch_id"] for row in data] == [second_id, first_id]
     assert data[0]["counts"] == {
@@ -1914,7 +1915,7 @@ def test_batch_ls_human_includes_created_at(
 
     result = _invoke(runner, storage_root, staging, "batch", "ls")
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert batch_id.split("-", 1)[0] in result.output
     assert "2026-05-12T10:00:00Z" in result.output
 
@@ -1994,7 +1995,7 @@ def test_batch_status_json_contract_uses_canonical_next(
 
     result = _invoke_json(runner, storage_root, staging, "batch", "status", batch_id)
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     data = json.loads(result.output)
     assert "event" not in data
     assert {"batch_id", "objects", "counts"}.issubset(data)
@@ -2342,7 +2343,7 @@ def test_batch_status_verbose_json_adds_per_digest_state(
         "--detail",
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     data = json.loads(result.output)
     assert data["objects"][0]["digests"] == [
         {
@@ -2372,11 +2373,11 @@ def test_batch_status_missing_file_exits_1(
 
     result = _invoke_json(runner, storage_root, staging, "batch", "status", batch_id)
 
-    assert result.exit_code == 1
+    assert result.exit_code == ExitCode.GENERIC
     assert result.stdout == ""
     error = json.loads(result.stderr)["error"]
     assert error["code"] == "batch_file_missing"
-    assert error["exit"] == 1
+    assert error["exit"] == ExitCode.GENERIC
     assert "ocfl stage status OBJECT" in error["message"]
 
 
@@ -2391,7 +2392,7 @@ def test_batch_status_corrupt_existing_file_is_not_missing(
 
     result = _invoke(runner, storage_root, staging, "batch", "status", batch_id)
 
-    assert result.exit_code == 1
+    assert result.exit_code == ExitCode.GENERIC
     assert "batch_file_missing" not in result.output
     assert "invalid" in result.output or "JSON" in result.output
 
@@ -2427,7 +2428,7 @@ def test_batch_status_next_distinguishes_transient_sp_context(
 
     result = _invoke_json(runner, storage_root, staging, "batch", "status", batch_id)
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     rows = {row["object_id"]: row for row in json.loads(result.output)["objects"]}
     assert rows["obj:1"]["next"] == f"ocfl stage batch retry {batch_id}"
     assert rows["obj:2"]["next"] == f"ocfl stage batch upgrade {batch_id}"
@@ -2461,7 +2462,7 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
         "content",
         "obj:batch-upgrade",
     )
-    assert submitted.exit_code == 0, submitted.output
+    assert submitted.exit_code == ExitCode.SUCCESS, submitted.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)
     digest = batch.objects[0].digests[0]
@@ -2474,7 +2475,7 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
         "upgrade",
         batch_id,
     )
-    assert first.exit_code == 75, first.output  # still pending
+    assert first.exit_code == ExitCode.PENDING, first.output
     events = [json.loads(line) for line in first.output.splitlines()]
     assert [event["event"] for event in events] == [
         "batch_resumed",
@@ -2501,7 +2502,7 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
         "upgrade",
         batch_id,
     )
-    assert second.exit_code == 0, second.output
+    assert second.exit_code == ExitCode.SUCCESS, second.output
     events = [json.loads(line) for line in second.output.splitlines()]
     assert [event["event"] for event in events] == [
         "batch_resumed",
@@ -2561,7 +2562,7 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
         "content",
         "obj:batch-partial-results",
     )
-    assert submitted.exit_code == 0, submitted.output
+    assert submitted.exit_code == ExitCode.SUCCESS, submitted.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
 
     first = _invoke(
@@ -2572,7 +2573,7 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
         "upgrade",
         batch_id,
     )
-    assert first.exit_code == 75, first.output  # still pending
+    assert first.exit_code == ExitCode.PENDING, first.output
     batch = batch_state.load_batch(staging, batch_id)
     assert len(batch.verify_jobs) == 1
     assert len(batch.verify_jobs[0].digests) == 2
@@ -2592,7 +2593,7 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
         "upgrade",
         batch_id,
     )
-    assert partial.exit_code == 75, partial.output  # still pending
+    assert partial.exit_code == ExitCode.PENDING, partial.output
     events = [json.loads(line) for line in partial.output.splitlines()]
     assert events[1]["event"] == "object_submitted"
     assert events[1]["last_error"] == "sp_partial_results"
@@ -2617,7 +2618,7 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
         "upgrade",
         batch_id,
     )
-    assert retry.exit_code == 75, retry.output  # still pending
+    assert retry.exit_code == ExitCode.PENDING, retry.output
     batch = batch_state.load_batch(staging, batch_id)
     assert [job.digests for job in batch.verify_jobs] == [
         (returned_digest, missing_digest),
@@ -2636,7 +2637,7 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
         "upgrade",
         batch_id,
     )
-    assert completed.exit_code == 0, completed.output
+    assert completed.exit_code == ExitCode.SUCCESS, completed.output
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.objects[0].status == "upgraded"
     assert batch.objects[0].last_error is None
@@ -2686,7 +2687,7 @@ def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
         "--watch",
     )
 
-    assert result.exit_code == 130, result.output
+    assert result.exit_code == ExitCode.INTERRUPTED, result.output
     assert "batch submitted:" in result.output
     assert "waiting for Bitcoin blocks" in result.output
     assert subscribers == 1
@@ -2741,7 +2742,7 @@ def test_batch_watch_human_output_reports_observed_blocks(
         "--watch",
     )
 
-    assert result.exit_code == 130, result.output
+    assert result.exit_code == ExitCode.INTERRUPTED, result.output
     assert f"block 1 {stage_batch.short_block_hash(btc.getblockhash(1))}" in (
         result.output
     )
@@ -2808,7 +2809,7 @@ def test_batch_watch_polls_during_quiet_periods(
         "--watch",
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert subscribers == 1
     events = [json.loads(line) for line in result.output.splitlines()]
     assert events[-1]["event"] == "summary"
@@ -2851,7 +2852,7 @@ def test_batch_watch_empty_submitted_subset_exits_without_subscriber(
         "--watch",
     )
 
-    assert result.exit_code == 1, result.output
+    assert result.exit_code == ExitCode.GENERIC, result.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.objects[0].status == "prepared"
@@ -2886,7 +2887,7 @@ def test_batch_watch_all_skipped_exits_without_subscriber(
         "--watch",
     )
 
-    assert result.exit_code == 1, result.output
+    assert result.exit_code == ExitCode.GENERIC, result.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.objects[0].status == "skipped"
@@ -2939,7 +2940,7 @@ def test_batch_watch_enters_upgrade_for_submitted_subset_after_submit_failure(
         "--watch",
     )
 
-    assert result.exit_code == 130, result.output
+    assert result.exit_code == ExitCode.INTERRUPTED, result.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)
     assert sorted(row.status for row in batch.objects) == ["prepared", "submitted"]
@@ -3040,7 +3041,7 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
         "--watch",
     )
 
-    assert result.exit_code == 130, result.output
+    assert result.exit_code == ExitCode.INTERRUPTED, result.output
     batch = batch_state.load_batch(staging, batch_id)
     assert len(sp_fake._jobs) == 2
     assert any(job.digests == (verified_digest,) for job in batch.verify_jobs)
@@ -3164,7 +3165,7 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
         "--watch",
     )
 
-    assert result.exit_code == 130, result.output
+    assert result.exit_code == ExitCode.INTERRUPTED, result.output
     batch = batch_state.load_batch(staging, batch_id)
     rows = {row.object_id: row for row in batch.objects}
     assert rows["obj:watch-upgraded"].status == "submitted"
@@ -3280,7 +3281,7 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
         "--watch",
     )
 
-    assert result.exit_code == 130, result.output
+    assert result.exit_code == ExitCode.INTERRUPTED, result.output
     batch = batch_state.load_batch(staging, batch_id)
     rows = {row.object_id: row for row in batch.objects}
     assert rows["obj:inventory-upgraded"].status == "submitted"
@@ -3411,7 +3412,7 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
         "--watch",
     )
 
-    assert result.exit_code == 130, result.output
+    assert result.exit_code == ExitCode.INTERRUPTED, result.output
     assert "halt:" not in result.output
     batch = batch_state.load_batch(staging, batch_id)
     rows = {row.object_id: row for row in batch.objects}
@@ -3529,7 +3530,7 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
         "--watch",
     )
 
-    assert result.exit_code == 130, result.output
+    assert result.exit_code == ExitCode.INTERRUPTED, result.output
     assert "halt:" not in result.output
     batch = batch_state.load_batch(staging, batch_id)
     rows = {row.object_id: row for row in batch.objects}
@@ -3579,7 +3580,7 @@ def test_batch_watch_node_halt_exits_operational_error(
         "--watch",
     )
 
-    assert result.exit_code == 1, result.output
+    assert result.exit_code == ExitCode.GENERIC, result.output
     assert "halt: Bitcoin RPC timeout" in result.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)
@@ -3614,7 +3615,7 @@ def test_batch_upgrade_failed_verify_job_is_retryable(
         "content",
         "obj:batch-failed-job",
     )
-    assert submitted.exit_code == 0, submitted.output
+    assert submitted.exit_code == ExitCode.SUCCESS, submitted.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
 
     first = _invoke(
@@ -3625,7 +3626,7 @@ def test_batch_upgrade_failed_verify_job_is_retryable(
         "upgrade",
         batch_id,
     )
-    assert first.exit_code == 75, first.output  # still pending
+    assert first.exit_code == ExitCode.PENDING, first.output
     failed_job_id = batch_state.load_batch(staging, batch_id).verify_jobs[0].job_id
     sp_fake.fail_job(failed_job_id)
 
@@ -3637,7 +3638,7 @@ def test_batch_upgrade_failed_verify_job_is_retryable(
         "upgrade",
         batch_id,
     )
-    assert failed.exit_code == 75, failed.output  # still pending
+    assert failed.exit_code == ExitCode.PENDING, failed.output
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.verify_jobs[0].status == "FAILED"
     assert batch.objects[0].status == "submitted"
@@ -3651,7 +3652,7 @@ def test_batch_upgrade_failed_verify_job_is_retryable(
         "upgrade",
         batch_id,
     )
-    assert retried.exit_code == 75, retried.output  # still pending
+    assert retried.exit_code == ExitCode.PENDING, retried.output
     batch = batch_state.load_batch(staging, batch_id)
     assert [job.status for job in batch.verify_jobs] == ["FAILED", "IN_PROGRESS"]
     assert len(sp_fake._jobs) == 2
@@ -3684,7 +3685,7 @@ def test_batch_upgrade_poll_transient_marks_retryable(
         "content",
         "obj:batch-poll-fails",
     )
-    assert submitted.exit_code == 0, submitted.output
+    assert submitted.exit_code == ExitCode.SUCCESS, submitted.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
 
     upgraded = _invoke(
@@ -3696,7 +3697,7 @@ def test_batch_upgrade_poll_transient_marks_retryable(
         batch_id,
     )
 
-    assert upgraded.exit_code == 75, upgraded.output  # still pending
+    assert upgraded.exit_code == ExitCode.PENDING, upgraded.output
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.verify_jobs[0].status == "FAILED"
     assert batch.verify_jobs[0].last_error == "SimpleProof HTTP 503"
@@ -3732,7 +3733,7 @@ def test_batch_upgrade_download_mismatch_marks_terminal(
         "content",
         "obj:batch-mismatch",
     )
-    assert submitted.exit_code == 0, submitted.output
+    assert submitted.exit_code == ExitCode.SUCCESS, submitted.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
 
     first = _invoke(
@@ -3743,7 +3744,7 @@ def test_batch_upgrade_download_mismatch_marks_terminal(
         "upgrade",
         batch_id,
     )
-    assert first.exit_code == 75, first.output  # still pending
+    assert first.exit_code == ExitCode.PENDING, first.output
     batch = batch_state.load_batch(staging, batch_id)
     sp.advance_to_completed(batch.verify_jobs[0].job_id, {})
 
@@ -3756,7 +3757,7 @@ def test_batch_upgrade_download_mismatch_marks_terminal(
         batch_id,
     )
 
-    assert mismatched.exit_code == 0, mismatched.output
+    assert mismatched.exit_code == ExitCode.SUCCESS, mismatched.output
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.verify_jobs[0].status == "COMPLETED"
     assert batch.verify_jobs[0].last_error == "attestation_mismatch"
@@ -3791,7 +3792,7 @@ def test_batch_upgrade_bitcoin_transient_marks_retryable(
         "content",
         "obj:batch-rpc-fails",
     )
-    assert submitted.exit_code == 0, submitted.output
+    assert submitted.exit_code == ExitCode.SUCCESS, submitted.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
 
     first = _invoke(
@@ -3802,7 +3803,7 @@ def test_batch_upgrade_bitcoin_transient_marks_retryable(
         "upgrade",
         batch_id,
     )
-    assert first.exit_code == 75, first.output  # still pending
+    assert first.exit_code == ExitCode.PENDING, first.output
     batch = batch_state.load_batch(staging, batch_id)
     digest = batch.objects[0].digests[0]
     sp_fake.advance_to_completed(
@@ -3818,7 +3819,7 @@ def test_batch_upgrade_bitcoin_transient_marks_retryable(
         batch_id,
     )
 
-    assert failed.exit_code == 75, failed.output  # still pending
+    assert failed.exit_code == ExitCode.PENDING, failed.output
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.verify_jobs[0].status == "COMPLETED"
     assert batch.objects[0].status == "submitted"
@@ -3852,7 +3853,7 @@ def test_batch_upgrade_expired_poll_gets_fresh_job(
         "content",
         "obj:batch-expired",
     )
-    assert submitted.exit_code == 0, submitted.output
+    assert submitted.exit_code == ExitCode.SUCCESS, submitted.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
 
     first = _invoke(
@@ -3863,7 +3864,7 @@ def test_batch_upgrade_expired_poll_gets_fresh_job(
         "upgrade",
         batch_id,
     )
-    assert first.exit_code == 75, first.output  # still pending
+    assert first.exit_code == ExitCode.PENDING, first.output
     assert batch_state.load_batch(staging, batch_id).verify_jobs[0].status == "EXPIRED"
 
     second = _invoke(
@@ -3875,7 +3876,7 @@ def test_batch_upgrade_expired_poll_gets_fresh_job(
         batch_id,
     )
 
-    assert second.exit_code == 75, second.output  # still pending
+    assert second.exit_code == ExitCode.PENDING, second.output
     batch = batch_state.load_batch(staging, batch_id)
     assert [job.status for job in batch.verify_jobs] == ["EXPIRED", "EXPIRED"]
     assert len(sp._jobs) == 2
@@ -3924,7 +3925,7 @@ def test_batch_inventory_upgrade_rejects_stale_plan_digest(
         "obj:inv-stale",
         "--allow-missing-metadata",
     )
-    assert submitted.exit_code == 0, submitted.output
+    assert submitted.exit_code == ExitCode.SUCCESS, submitted.output
     batch_id = next(p.stem for p in (staging / "batches").glob("*.json"))
     batch = batch_state.load_batch(staging, batch_id)
     inv_digest = batch.objects[0].digests[0]
@@ -3945,7 +3946,7 @@ def test_batch_inventory_upgrade_rejects_stale_plan_digest(
         "upgrade",
         batch_id,
     )
-    assert first.exit_code == 75, first.output  # still pending
+    assert first.exit_code == ExitCode.PENDING, first.output
     batch = batch_state.load_batch(staging, batch_id)
     ots_bytes = _ots_for(inv_digest)
     sp_fake.advance_to_completed(batch.verify_jobs[0].job_id, {inv_digest: ots_bytes})
@@ -3961,7 +3962,7 @@ def test_batch_inventory_upgrade_rejects_stale_plan_digest(
         batch_id,
     )
 
-    assert upgraded.exit_code == 0, upgraded.output
+    assert upgraded.exit_code == ExitCode.SUCCESS, upgraded.output
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.objects[0].status == "failed"
     assert batch.objects[0].last_error == "regressed"
@@ -3990,12 +3991,12 @@ def test_batch_rm_refuses_non_terminal_without_force(
 
     result = _invoke(runner, storage_root, staging, "batch", "rm", batch_id)
 
-    assert result.exit_code == 1
+    assert result.exit_code == ExitCode.GENERIC
     assert batch_file_path(staging, batch_id).is_file()
 
     forced = _invoke(runner, storage_root, staging, "batch", "rm", batch_id, "--force")
 
-    assert forced.exit_code == 0, forced.output
+    assert forced.exit_code == ExitCode.SUCCESS, forced.output
     assert not batch_file_path(staging, batch_id).exists()
     # The lock file goes too (ADR-0005): nothing of the batch is left.
     assert not list((staging / "batches").glob(f"{batch_id}*"))
@@ -4022,7 +4023,7 @@ def test_batch_rm_waits_for_a_running_driver(
     with held_flock(batch_state.batch_lock_path(staging, batch_id)):
         result = _invoke(runner, storage_root, staging, "batch", "rm", batch_id)
 
-    assert result.exit_code == 4, result.output
+    assert result.exit_code == ExitCode.LOCK_TIMEOUT, result.output
     assert batch_file_path(staging, batch_id).is_file()
 
 
@@ -4052,18 +4053,18 @@ def test_batch_ids_resolve_from_a_unique_prefix(
         _empty_batch(staging, storage_root, batch_id)
 
     result = _invoke_json(runner, storage_root, staging, "batch", "status", "0190b")
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert json.loads(result.output)["batch_id"] == other
 
     ambiguous = _invoke(runner, storage_root, staging, "batch", "status", "0190a0a0")
-    assert ambiguous.exit_code == 2, ambiguous.output
+    assert ambiguous.exit_code == ExitCode.USAGE, ambiguous.output
     assert first in ambiguous.output and second in ambiguous.output
 
     missing = _invoke(runner, storage_root, staging, "batch", "status", "ffff")
-    assert missing.exit_code == 1, missing.output
+    assert missing.exit_code == ExitCode.GENERIC, missing.output
 
     removed = _invoke(runner, storage_root, staging, "batch", "rm", "0190b")
-    assert removed.exit_code == 0, removed.output
+    assert removed.exit_code == ExitCode.SUCCESS, removed.output
     assert f"removed batch {other}" in removed.output
 
 
@@ -4079,7 +4080,7 @@ def test_unstaged_objects_are_named_and_fail_the_run(
     staging = tmp_path / "staging"
     _new_ots_with_files(runner, empty_sha256_root, staging, "obj:ots", ("a.txt", b"a"))
     plain = _invoke(runner, empty_sha256_root, staging, "new", "obj:plain")
-    assert plain.exit_code == 0, plain.output
+    assert plain.exit_code == ExitCode.SUCCESS, plain.output
 
     result = _invoke(
         runner,
@@ -4093,7 +4094,7 @@ def test_unstaged_objects_are_named_and_fail_the_run(
         "obj:typo",
     )
 
-    assert result.exit_code == 1, result.output
+    assert result.exit_code == ExitCode.GENERIC, result.output
     assert "obj:plain, obj:typo" in result.output
     (batch_id,) = (p.stem for p in (staging / "batches").glob("*.json"))
     rows = {
@@ -4141,4 +4142,4 @@ def test_inventory_batch_from_a_content_batch_takes_its_upgraded_rows(
         "--from",
         content_id,
     )
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == ExitCode.USAGE, result.output

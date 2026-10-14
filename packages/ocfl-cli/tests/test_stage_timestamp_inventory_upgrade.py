@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 
 from ocfl_cli.config import BitcoinConfig, Config
 from ocfl_cli.config.ots import SimpleProofConfig
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Proof, VerifyJob
 from ocfl_cli.model.phase import Phase, TimestampTarget
@@ -169,7 +170,7 @@ def _new_ots_staging(
             "mailto:alice@example.org",
         ),
     )
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
     paths: dict[str, str] = {}
     digests: dict[str, str] = {}
@@ -177,7 +178,7 @@ def _new_ots_staging(
         src = staging.parent / name
         src.write_bytes(data)
         r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(src)))
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         paths[name] = name
         digests[name] = hashlib.sha256(data).hexdigest()
 
@@ -211,7 +212,7 @@ def _setup_at_inventory_pending(
         )
     )
     r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(ots_src)))
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
     state = load_ots(sd)
     state = replace(
@@ -234,7 +235,7 @@ def _setup_at_inventory_pending(
     r = runner.invoke(
         app, _stage_args(root, staging, "timestamp", object_id, "--expect", "inventory")
     )
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
     state = load_ots(sd)
     assert state.phase is Phase.INVENTORY_PENDING
@@ -431,7 +432,7 @@ class TestInventoryUpgradeHappyPath:
                 "inventory",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_UPGRADED
@@ -502,7 +503,7 @@ class TestInventoryUpgradeExpired:
                 "inventory",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         assert len(sp_fake._jobs) == 2
         state = load_ots(sd)
         assert any(
@@ -562,7 +563,7 @@ class TestInventoryCrashRecovery:
                 "inventory",
             ),
         )
-        assert r.exit_code != 0, r.output
+        assert r.exit_code != ExitCode.SUCCESS, r.output
         post_crash = load_ots(sd)
         # If verified=True is recorded, cache bytes must already exist
         # (the implication direction of the three-step invariant).
@@ -585,7 +586,7 @@ class TestInventoryCrashRecovery:
                 "inventory",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_UPGRADED
         assert state.inventory is not None
@@ -696,7 +697,7 @@ class TestInventoryPhaseAdvance:
                 "inventory",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_UPGRADED
         assert state.inventory is not None
@@ -736,7 +737,7 @@ class TestInventoryPhaseAdvance:
                 "inventory",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_PENDING
         assert state.inventory is not None
@@ -779,7 +780,7 @@ class TestInventoryPhaseAdvance:
                 "inventory",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_PENDING
         assert state.inventory is not None
@@ -847,7 +848,7 @@ class TestInventoryWatchLoop:
             ),
         )
 
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert calls == ["sleep"]
 
     def test_watch_advances_on_block(
@@ -902,7 +903,7 @@ class TestInventoryWatchLoop:
                 "inventory",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "Watch:" in r.output
         assert "Object: obj:inv-watch-ok" in r.output
         assert "Waiting for Bitcoin blocks" in r.output
@@ -958,7 +959,7 @@ class TestInventoryWatchLoop:
                 "inventory",
             ),
         )
-        assert r.exit_code == 130, r.output
+        assert r.exit_code == ExitCode.INTERRUPTED, r.output
         load_ots(sd)
 
     def test_watch_lock_timeout_warning_and_continue(
@@ -1021,7 +1022,7 @@ class TestInventoryWatchLoop:
         finally:
             sibling.close()
 
-        assert r.exit_code == 130, r.output
+        assert r.exit_code == ExitCode.INTERRUPTED, r.output
         load_ots(sd)
         warn_msgs = [
             rec.getMessage().lower()
@@ -1072,7 +1073,7 @@ class TestInventoryRetryPhaseGate:
                 "inventory",
             ),
         )
-        assert r.exit_code == 3, r.output
+        assert r.exit_code == ExitCode.PHASE, r.output
         assert phase.value in r.output, r.output
         assert len(sp_fake._submissions) == pre_calls
 
@@ -1108,7 +1109,7 @@ class TestInventoryRetryHappyPath:
         pre_calls = len(sp_fake._submissions)
 
         r = self._retry(runner, empty_sha256_root, staging, "obj:inv-retry-ok")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         new_calls = sp_fake._submissions[pre_calls:]
         assert [tuple(c.digests) for c in new_calls] == [(inv_digest,)]
@@ -1137,7 +1138,7 @@ class TestInventoryRetryHappyPath:
         pre_calls = len(sp_fake._submissions)
 
         r = self._retry(runner, empty_sha256_root, staging, "obj:inv-retry-none")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "no failed submissions to retry" in r.output
         assert len(sp_fake._submissions) == pre_calls
         assert (sd / "ots.json").read_bytes() == before
@@ -1185,7 +1186,7 @@ class TestRegtestEndToEndInventoryUpgrade:
                 "inventory",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         state = load_ots(sd)
         assert state.phase is Phase.INVENTORY_UPGRADED
