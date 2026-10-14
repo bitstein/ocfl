@@ -7,7 +7,7 @@ until a helper narrows it. Each helper returns None on a type mismatch.
 import json
 
 type JsonValue = (
-    None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
+    bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
 )
 type JsonObject = dict[str, JsonValue]
 
