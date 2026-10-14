@@ -30,7 +30,6 @@ from ocfl_cli.model.ots_state import (
 from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.model.simpleproof import JobStatus
 from ocfl_cli.ports import SimpleProofClient
-from ocfl_cli.store import ots_state as st_mod
 from ocfl_cli.store.ots_state import (
     apply_category_id,
     has_ots,
@@ -458,11 +457,7 @@ class TestAtomicWrites:
         assert loaded == populated_state
 
 
-class TestSchemaMigration:
-    def test_constants(self):
-        assert st_mod.OTS_STATE_VERSION == 2
-        assert st_mod.MIGRATIONS == {}
-
+class TestSchemaVersion:
     def test_v2_loads_cleanly(self, tmp_path: Path):
         (tmp_path / "ots.json").write_text(
             json.dumps(
@@ -482,7 +477,7 @@ class TestSchemaMigration:
         assert state.schema_version == 2
         assert state.phase is Phase.DRAFTING
 
-    def test_v1_is_refused_without_migration(self, tmp_path: Path):
+    def test_older_version_rejected(self, tmp_path: Path):
         (tmp_path / "ots.json").write_text(
             json.dumps(
                 {
@@ -497,7 +492,7 @@ class TestSchemaMigration:
                 }
             )
         )
-        with pytest.raises(StagingError, match="no migration registered"):
+        with pytest.raises(StagingError, match="predates CLI schema 2"):
             load_ots(tmp_path)
 
     def test_submission_batch_fields_default_absent(self, tmp_path: Path):
@@ -561,37 +556,6 @@ class TestSchemaMigration:
         )
         with pytest.raises(StagingError):
             load_ots(tmp_path)
-
-    def test_migration_chain_walks_old_forward(self, tmp_path: Path, monkeypatch):
-        """Future-bump pattern: register a fake MIGRATIONS[1] to walk v1 → v2."""
-
-        def v1_to_v2(raw: dict) -> dict:
-            new = dict(raw)
-            new.pop("content_proofs", None)
-            new.pop("inventory_proof", None)
-            new.setdefault("verify_jobs", [])
-            return new
-
-        monkeypatch.setitem(st_mod.MIGRATIONS, 1, v1_to_v2)
-
-        (tmp_path / "ots.json").write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "phase": "drafting",
-                    "category_id": 641,
-                    "pending_digests": [],
-                    "submissions": [],
-                    # verify_jobs missing — migration adds it
-                    "content_proofs": {},
-                    "inventory_proof": None,
-                }
-            )
-        )
-
-        state = load_ots(tmp_path)
-        assert state.schema_version == 2
-        assert state.verify_jobs == ()
 
 
 class TestSubmitIntentDurability:

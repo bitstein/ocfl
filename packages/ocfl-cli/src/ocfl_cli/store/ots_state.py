@@ -1,4 +1,4 @@
-"""`<staging>/ots.json` persistence: load/save, schema migrations, the lock.
+"""`<staging>/ots.json` persistence: load/save and the lock.
 
 The model lives in `ocfl_cli.model.ots_state`.
 """
@@ -20,25 +20,13 @@ from ocfl_cli.store import staging as store
 from ocfl_cli.store.locks import flock
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Iterator
     from pathlib import Path
 
     from ocfl_cli.ports import Runtime
 
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Schema migrations
-# ---------------------------------------------------------------------------
-
-# `MIGRATIONS[i]` upgrades schema v=i to v=i+1. `load_ots` composes them
-# to walk any supported prior version forward to `OTS_STATE_VERSION`.
-# Each migration is a single forward step; pure dict-to-dict.
-# Schema 2 (proofs keyed by digest, ADR-0004) has no migration from 1: there
-# is no production archive yet, so a v1 staging is discarded and restaged.
-MIGRATIONS: dict[int, Callable[[dict], dict]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -76,10 +64,10 @@ def utc_iso(now: datetime) -> str:
 
 
 def load_ots(staging: Path) -> OtsState:
-    """Load `<staging>/ots.json`, running migrations to current schema.
+    """Load `<staging>/ots.json`.
 
-    Raises `StagingError` when the file's `schema_version` is newer than
-    `OTS_STATE_VERSION` (newer CLI required) or its shape can't be parsed.
+    Raises `StagingError` when the file's `schema_version` is not
+    `OTS_STATE_VERSION` or its shape can't be parsed.
     """
     path = _ots_path(staging)
     try:
@@ -96,16 +84,11 @@ def load_ots(staging: Path) -> OtsState:
             f"{path}: schema_version={v} is newer than CLI "
             f"(supports up to {OTS_STATE_VERSION}); upgrade the CLI"
         )
-    for i in range(v, OTS_STATE_VERSION):
-        try:
-            migrate = MIGRATIONS[i]
-        except KeyError:
-            raise StagingError(
-                f"{path}: no migration registered for schema v{i} → v{i + 1}; "
-                "discard the staging (`stage discard --force`) and stage again"
-            ) from None
-        raw = migrate(raw)
-        raw["schema_version"] = i + 1
+    if v < OTS_STATE_VERSION:
+        raise StagingError(
+            f"{path}: schema_version={v} predates CLI schema {OTS_STATE_VERSION}; "
+            "discard the staging (`stage discard --force`) and stage again"
+        )
     return _wire.decode_ots_state(raw)
 
 
