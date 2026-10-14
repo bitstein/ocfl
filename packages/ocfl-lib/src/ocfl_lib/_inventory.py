@@ -1,5 +1,3 @@
-"""OCFL inventory model using msgspec structs."""
-
 import json
 from dataclasses import dataclass
 
@@ -48,7 +46,6 @@ class Inventory(msgspec.Struct, frozen=True, rename="camel", omit_defaults=True)
 
 
 def _sort_path_lists(obj: dict) -> None:
-    """Sort all path lists in manifest, version states, and fixity in place."""
     if "manifest" in obj:
         for digest in obj["manifest"]:
             obj["manifest"][digest].sort()

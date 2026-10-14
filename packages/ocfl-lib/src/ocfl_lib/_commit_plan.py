@@ -163,9 +163,6 @@ class _Wire(msgspec.Struct, rename="camel", forbid_unknown_fields=True):
     inventory_proof: bytes | None
 
 
-# --- planning
-
-
 def build_plan(
     obj: Object,
     version_state: VersionState,

@@ -1,5 +1,3 @@
-"""0002-flat-direct-storage-layout extension."""
-
 import msgspec
 
 from ocfl_lib._layout.types import Layout

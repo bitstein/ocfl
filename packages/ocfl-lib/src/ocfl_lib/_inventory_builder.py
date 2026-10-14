@@ -1,5 +1,3 @@
-"""Builder for constructing OCFL Inventory instances."""
-
 from datetime import UTC
 from typing import TYPE_CHECKING, Self
 
@@ -95,7 +93,6 @@ class InventoryBuilder:
             content_dir = self._content_dir
         prev = self._prev
 
-        # Start from previous inventory data or empty
         if prev:
             manifest: dict[str, list[str]] = {
                 d: list(ps) for d, ps in prev.manifest.items()
@@ -107,10 +104,8 @@ class InventoryBuilder:
             versions = {}
             next_vnum = VNum.first()
 
-        # Build existing manifest digest set for dedup (case-insensitive)
         existing_digests = {d.lower() for d in manifest}
 
-        # Collect fixity for new digests
         fixity: dict[str, dict[str, list[str]]] = {}
         if prev and prev.fixity:
             for alg_name, dm in prev.fixity.items():
@@ -132,10 +127,8 @@ class InventoryBuilder:
             head_vnum = vnum
             vnum_str = str(vnum)
 
-            # Add new content to manifest
             for digest, logical_paths in sorted(state.items()):
                 if digest.lower() not in existing_digests:
-                    # Use first logical path for content path
                     logical = logical_paths[0]
                     if self._content_path_func:
                         logical = self._content_path_func(logical)
@@ -143,7 +136,6 @@ class InventoryBuilder:
                     manifest[digest] = [content_path]
                     existing_digests.add(digest.lower())
 
-                    # Query fixity for new digest
                     if self._fixity_source is not None:
                         fixity_digests = self._fixity_source.get_fixity(digest)
                         for fix_alg, fix_digest in fixity_digests.items():
@@ -174,7 +166,6 @@ class InventoryBuilder:
 
 
 def _validate_relative_path(path: str, *, kind: str) -> None:
-    """Validate OCFL relative paths used in inventory state/manifest derivation."""
     if not path or path.startswith("/") or path.endswith("/"):
         raise InvalidPath(f"invalid {kind}: {path!r}")
     segments = path.split("/")

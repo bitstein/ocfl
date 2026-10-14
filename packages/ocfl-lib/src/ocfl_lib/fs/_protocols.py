@@ -1,5 +1,3 @@
-"""FS protocols, FileRef, and FsEntry for backend-agnostic filesystem access."""
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, BinaryIO, Protocol, runtime_checkable
 

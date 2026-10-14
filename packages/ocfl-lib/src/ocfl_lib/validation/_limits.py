@@ -1,9 +1,8 @@
 """Implementation-imposed sanity limits for archival-grade validation.
 
 These are not spec-mandated. They refuse absurd input to prevent DoS and
-ambiguous-intent hazards. Reuse from both non-fatal validation
-(validation info codes L001/L002) and fail-fast write paths
-(raising ValueError in StorageRoot.commit, stage, etc.).
+ambiguous-intent hazards. Reuse from non-fatal validation
+(validation info codes L001/L002).
 
 Also declares filesystem-safety bounds beyond spec: ``validate_path_component``
 defensively rejects object-id components that would be unsafe on disk.

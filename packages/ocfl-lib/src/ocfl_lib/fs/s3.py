@@ -59,8 +59,6 @@ class S3FileReader(io.RawIOBase):
 
 
 class _CountingReader:
-    """Wrapper around a BinaryIO that counts bytes read."""
-
     def __init__(self, data: BinaryIO) -> None:
         self._data = data
         self.bytes_read = 0
@@ -87,7 +85,6 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
         self._client = client or boto3.client("s3", **boto_kwargs)
 
     def _key(self, name: str) -> str:
-        """Join prefix and name into an S3 key."""
         if not name or name == ".":
             return self._prefix
         if self._prefix:
@@ -105,8 +102,6 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
             return self._prefix
         return self._key(normed)
 
-    # -- FS --
-
     def exists(self, name: str) -> bool:
         """Return True if an object or prefix exists at name."""
         key = self._resolve(name)
@@ -116,7 +111,6 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
         except ClientError as e:
             if not _not_found(e):
                 raise
-        # Fall back: check for prefix listing
         prefix = f"{key}/" if key else ""
         resp = self._client.list_objects_v2(
             Bucket=self._bucket, Prefix=prefix, MaxKeys=1
@@ -124,7 +118,6 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
         return resp.get("KeyCount", 0) > 0
 
     def open_file(self, name: str) -> BinaryIO:
-        """Open a file for reading."""
         key = self._resolve(name)
         try:
             resp = self._client.get_object(Bucket=self._bucket, Key=key)
@@ -135,7 +128,6 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
         return cast("BinaryIO", S3FileReader(resp["Body"], resp["ContentLength"]))
 
     def read_dir(self, name: str) -> Iterator[FsEntry]:
-        """List directory entries."""
         key = self._resolve(name)
         prefix = f"{key}/" if key else ""
 
@@ -176,17 +168,13 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
         if not found_any:
             raise FileNotFoundError(f"s3://{self._bucket}/{key}")
 
-    # -- WriteFS --
-
     def write(self, name: str, data: BinaryIO) -> int:
-        """Write data to a file."""
         key = self._resolve(name)
         counter = _CountingReader(data)
         self._client.upload_fileobj(counter, self._bucket, key)
         return counter.bytes_read
 
     def remove(self, name: str) -> None:
-        """Remove a file."""
         key = self._resolve(name)
         try:
             self._client.head_object(Bucket=self._bucket, Key=key)
@@ -233,8 +221,6 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
     def mkdir(self, name: str) -> None:
         """Create directory (no-op for S3)."""
         self._resolve(name)
-
-    # -- ConditionalFS --
 
     def read_tagged(self, name: str) -> tuple[bytes, str]:
         """Read a file with its ETag. FileNotFoundError if missing."""
@@ -297,10 +283,7 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
         finally:
             self._client.delete_object(Bucket=self._bucket, Key=self._resolve(probe))
 
-    # -- CopyFS --
-
     def copy(self, src: str, dst: str) -> int:
-        """Copy a file within this filesystem."""
         src_key = self._resolve(src)
         dst_key = self._resolve(dst)
         try:
@@ -315,8 +298,6 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
             raise
         resp = self._client.head_object(Bucket=self._bucket, Key=dst_key)
         return resp["ContentLength"]
-
-    # -- FileWalker --
 
     def __repr__(self) -> str:
         if self._prefix:

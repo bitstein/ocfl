@@ -1,5 +1,3 @@
-"""Layout registry: maps extension names to factory functions."""
-
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType

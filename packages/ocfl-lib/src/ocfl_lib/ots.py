@@ -39,9 +39,6 @@ def inventory_proof_path(version: str) -> str:
     return f"{EXTENSION_DIR}/inventory.json.{version}{PROOF_SUFFIX}"
 
 
-# --- proofs
-
-
 @dataclass(frozen=True, slots=True, order=True)
 class BitcoinAttestation:
     """A proof's claim that `commitment` is the merkle root of block `height`.
@@ -123,9 +120,6 @@ def verify_proof(raw: bytes, expected_hex: str) -> ParsedOts:
     return parsed
 
 
-# --- Bitcoin checks (spec "Bitcoin Checks")
-
-
 @dataclass(frozen=True, slots=True)
 class ChainBlock:
     """The block at a height on a node's best chain.
@@ -200,8 +194,6 @@ class ChainCheck:
     source: BlockHeaderSource
     confirmations: int
 
-
-# --- config
 
 _PARAMS: dict[str, type] = {
     "proofDigestAlgorithm": str,
@@ -283,9 +275,6 @@ def read_config(fsys: FS, obj_path: str) -> OtsConfig | None:
     return OtsConfig.from_json(raw)
 
 
-# --- content proofs
-
-
 def split_state(paths: Iterable[str]) -> tuple[frozenset[str], dict[str, str]]:
     """(ordinary paths, {content proof: companion}) of one version's state.
 
@@ -314,9 +303,6 @@ def covered_versions(cfg: OtsConfig, versions: Iterable[str]) -> list[str]:
             f"timestampFrom {cfg.timestamp_from!r} names no version of the object"
         )
     return ordered[ordered.index(cfg.timestamp_from) :]
-
-
-# --- the proofs of an object
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,9 +371,6 @@ def object_proofs(fsys: FS, obj_path: str) -> tuple[ProofRef, ...]:
             continue  # E909
         refs.append(ProofRef("inventory", v, path, hashlib.sha256(raw).hexdigest()))
     return tuple(refs)
-
-
-# --- Bitcoin checks of an object
 
 
 @dataclass(frozen=True, slots=True)

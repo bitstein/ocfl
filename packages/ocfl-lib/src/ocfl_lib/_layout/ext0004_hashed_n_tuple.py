@@ -1,5 +1,3 @@
-"""0004-hashed-n-tuple-storage-layout extension."""
-
 import msgspec
 
 from ocfl_lib._digest import DigestAlgorithm

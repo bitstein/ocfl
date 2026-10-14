@@ -1,5 +1,3 @@
-"""Local filesystem backend for OCFL."""
-
 import ctypes
 import ctypes.util
 import errno
@@ -159,8 +157,6 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
             raise ValueError(f"path escapes outside root: {name!r}")
         return resolved
 
-    # -- FS --
-
     def open_file(self, name: str) -> BinaryIO:
         """Open a file for reading."""
         return open(self._resolve(name), "rb")
@@ -181,8 +177,6 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
                     is_file=is_file,
                     size=entry.stat(follow_symlinks=False).st_size if is_file else None,
                 )
-
-    # -- WriteFS --
 
     def write(self, name: str, data: BinaryIO) -> int:
         """Write data to a file atomically and durably.
@@ -239,8 +233,6 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
         """
         _makedirs(self._resolve(name))
 
-    # -- CopyFS --
-
     def copy(self, src: str, dst: str) -> int:
         """Copy a file within this filesystem."""
         src_path = self._resolve(src)
@@ -249,8 +241,6 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
         _fsync_file(dst_path)
         _fsync_dir(dst_path.parent)
         return dst_path.stat().st_size
-
-    # -- ClaimFS --
 
     def rename_noreplace(self, src: str, dst: str) -> None:
         """Rename atomically, failing with FileExistsError if `dst` exists.
@@ -279,7 +269,7 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
                 path.mkdir(parents=True, exist_ok=True)
                 fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
             except FileNotFoundError:
-                continue  # a parent was removed under us
+                continue
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
@@ -305,8 +295,6 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
             return False
         _fsync_dir(path.parent)
         return True
-
-    # -- FileWalker --
 
     def __repr__(self) -> str:
         return f"LocalFS({self._root})"

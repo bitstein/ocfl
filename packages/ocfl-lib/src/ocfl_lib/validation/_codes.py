@@ -1,5 +1,3 @@
-"""OCFL validation error/warning codes."""
-
 import json
 from dataclasses import dataclass
 from importlib.resources import files

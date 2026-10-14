@@ -94,7 +94,7 @@ def _delete_in_order(fsys: WriteFS, obj_path: str, entries: list[FsEntry]) -> No
         if n is not None and n.kind == "object":
             namastes.append(name)
         else:
-            fsys.remove_all(path(name))  # not OCFL; still before the NAMASTE
+            fsys.remove_all(path(name))
     for name in namastes:
         remove_if_exists(fsys, path(name))
 

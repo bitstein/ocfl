@@ -1,5 +1,3 @@
-"""OCFL storage root validation."""
-
 import json
 import re
 from dataclasses import dataclass
@@ -17,7 +15,6 @@ if TYPE_CHECKING:
     from ocfl_lib.fs._protocols import FileWalker
     from ocfl_lib.validation._report import ValidationReport
 
-# Known OCFL community extensions (for storage root)
 _KNOWN_ROOT_EXTENSIONS = frozenset(
     {
         "0001-digest-algorithms",
@@ -102,7 +99,6 @@ def _validate_root(
         if n is not None and n.kind == "root":
             root_decls.append(n)
 
-    # Fire E069d for each unparseable 0= file
     parsed_names = {d.filename for d in root_decls}
     for zf in raw_zero_files:
         if zf.name not in parsed_names:
@@ -120,7 +116,6 @@ def _validate_root(
             using_version=str(root_decls[0].spec),
         )
     else:
-        # Validate contents
         decl = root_decls[0]
         root_spec = decl.spec
         decl_path = join_path(path, decl.filename)
@@ -187,7 +182,6 @@ def _walk_and_validate(
     root_spec: Spec | None,
     chain: ots.ChainCheck | None,
 ) -> None:
-    """Walk storage root hierarchy, find objects, validate them."""
     obj_paths = _walk_hierarchy(fsys, root_path, result, root_spec)
 
     for obj_path in obj_paths:
@@ -213,8 +207,6 @@ def _walk_hierarchy(
 ) -> list[str]:
     """Walk root hierarchy via read_dir. Emit E073 (empty dirs) and E072
     (non-object dirs with files). Return discovered object root paths.
-
-    Matches ocfl-py's storage_root.py traversal approach.
     """
     obj_paths: list[str] = []
     root_skip_dirs = {"extensions"}
@@ -230,7 +222,6 @@ def _walk_hierarchy(
         is_root = dir_path == root_path
 
         if not is_root:
-            # Check for object declarations (files starting with "0=")
             zero_eqs = [e for e in entries if e.name.startswith("0=")]
             if len(zero_eqs) > 1:
                 result.error("E003d", path=dir_path)
@@ -266,12 +257,10 @@ def _walk_hierarchy(
         if is_root:
             sub_dirs = [e for e in sub_dirs if e.name not in root_skip_dirs]
         else:
-            # E073: empty directories must not appear under a storage root
             if not entries:
                 result.error("E073", path=dir_path)
                 continue
 
-            # E072: hierarchy must not contain files not part of an object
             if files:
                 result.error("E072", path=dir_path)
 

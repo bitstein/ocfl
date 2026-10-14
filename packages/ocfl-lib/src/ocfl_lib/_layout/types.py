@@ -1,5 +1,3 @@
-"""Layout protocol definition."""
-
 from typing import Protocol
 
 

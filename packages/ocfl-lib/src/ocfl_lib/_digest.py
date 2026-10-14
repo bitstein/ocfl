@@ -1,5 +1,3 @@
-"""OCFL digest algorithms and computation."""
-
 import enum
 import hashlib
 import re
@@ -79,7 +77,7 @@ def file_digest(path: Path, alg: DigestAlgorithm) -> str:
 
 
 def stream_digest(stream: BinaryIO, alg: DigestAlgorithm) -> str:
-    """Compute hex digest of a binary stream using 32KB chunks."""
+    """Compute hex digest of a binary stream."""
     h = alg.new_hasher()
     while chunk := stream.read(_CHUNK_SIZE):
         h.update(chunk)

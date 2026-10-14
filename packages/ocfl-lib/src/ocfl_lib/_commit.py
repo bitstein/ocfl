@@ -59,7 +59,6 @@ _NO_RENAMEAT2 = {errno.EINVAL, errno.ENOSYS, errno.EXDEV, errno.EOPNOTSUPP}
 
 
 def work_dir(root_path: str, object_id: str) -> str:
-    """The object's directory in the storage root's work-dir extension."""
     key = hashlib.sha256(object_id.encode()).hexdigest()
     return join_path(root_path, "extensions", WORK_DIR_EXTENSION, key)
 
@@ -71,8 +70,6 @@ def is_s3(fsys: WriteFS) -> bool:
 
 @dataclass(frozen=True)
 class Target:
-    """Where one commit writes."""
-
     fsys: WriteFS
     root_path: str
     obj_path: str
@@ -128,9 +125,6 @@ def commit(
             f"{type(fsys).__name__} can neither rename create-only nor write "
             "conditionally, so it cannot claim a version"
         )
-
-
-# --- local
 
 
 def _commit_local(t: Target, fsys: ClaimFS, content: ContentSource) -> None:
@@ -219,9 +213,6 @@ def _claim_local(t: Target, fsys: ClaimFS) -> None:
     raise ClaimLostError(f"cannot claim {t.claim}: its parent keeps disappearing")
 
 
-# --- S3
-
-
 def _commit_s3(t: Target, fsys: ConditionalFS, content: ContentSource) -> None:
     if fsys.exists(t.plan_file):
         raise RecoveryRequiredError(_unfinished(t))
@@ -273,9 +264,6 @@ def _write_missing(t: Target, files: dict[str, bytes]) -> None:
         path = t.obj(rel)
         if read_or_none(t.fsys, path) != data:
             fs_utils.write_bytes(t.fsys, path, data)
-
-
-# --- shared steps
 
 
 def check_base(
@@ -616,9 +604,6 @@ def prune_parents(fsys: WriteFS, root_path: str, obj_path: str) -> None:
         path = path.rpartition("/")[0]
 
 
-# --- version payload
-
-
 def content_items(plan: CommitPlan) -> list[tuple[str, str]]:
     """(digest, content path) of every content file new in this version."""
     prefix = f"{plan.version}/"
@@ -688,7 +673,7 @@ def copy_content(
             fsys.mkdir(parent)
         src_fs, src_path = content.get_content(digest)
         if src_fs is fsys and isinstance(fsys, CopyFS):
-            fsys.copy(src_path, dst)  # server-side; check what landed
+            fsys.copy(src_path, dst)
             with fsys.open_file(dst) as f:
                 actual = stream_digest(f, alg)
         else:
@@ -707,8 +692,6 @@ def copy_content(
 
 
 class _HashingReader:
-    """Digests a stream as it is read."""
-
     def __init__(self, f: BinaryIO, alg: DigestAlgorithm) -> None:
         self._f = f
         self._h = alg.new_hasher()
@@ -720,9 +703,6 @@ class _HashingReader:
 
     def hexdigest(self) -> str:
         return self._h.hexdigest()
-
-
-# --- small helpers
 
 
 def read_or_none(fsys: FS, path: str) -> bytes | None:

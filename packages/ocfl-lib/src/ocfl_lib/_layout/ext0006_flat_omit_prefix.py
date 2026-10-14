@@ -1,5 +1,3 @@
-"""0006-flat-omit-prefix-storage-layout extension."""
-
 import msgspec
 
 from ocfl_lib._errors import InvalidLayoutConfig

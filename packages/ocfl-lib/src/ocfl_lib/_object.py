@@ -1,5 +1,3 @@
-"""OCFL object reads."""
-
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, BinaryIO, Literal
@@ -136,7 +134,7 @@ class Object:
         Raises FileNotFoundError if content file missing on disk.
         """
         state = self.version_info(v).state
-        path_map = to_path_map(state)  # logical_path → digest
+        path_map = to_path_map(state)
         if logical_path not in path_map:
             raise LogicalPathNotFound(
                 f"logical path {logical_path!r} not in version {v} state"
@@ -154,7 +152,7 @@ class Object:
         Detects added, deleted, modified, and renamed files.
         Rename detection: pairs added/removed files sharing a digest.
         """
-        pm1 = to_path_map(self.version_info(v1).state)  # path → digest
+        pm1 = to_path_map(self.version_info(v1).state)
         pm2 = to_path_map(self.version_info(v2).state)
 
         all_paths = set(pm1) | set(pm2)
@@ -241,12 +239,10 @@ class Object:
         inv_path = join_path(dir_path, INVENTORY_FILENAME)
         inv_bytes = fs_utils.read_all(self._fsys, inv_path)
 
-        # Determine algorithm from inventory JSON
         inv_data = json.loads(inv_bytes)
         alg_name = inv_data.get("digestAlgorithm", "sha512")
         alg = DigestAlgorithm.from_ocfl_name(alg_name)
 
-        # Validate sidecar digest
         sidecar_name = f"{INVENTORY_FILENAME}.{alg.ocfl_name}"
         sidecar_path = join_path(dir_path, sidecar_name)
         sidecar_text = fs_utils.read_text(self._fsys, sidecar_path)

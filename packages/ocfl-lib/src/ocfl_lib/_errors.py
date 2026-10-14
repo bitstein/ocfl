@@ -11,7 +11,7 @@ from typing import ClassVar
 
 
 class ErrorClass(enum.StrEnum):
-    """How a caller should react to an error. Mirrors ocfl-rs ADR 0004."""
+    """How a caller should react to an error."""
 
     USAGE = "usage"
     NOT_FOUND = "not_found"
@@ -220,14 +220,14 @@ class InventorySidecarMismatch(OcflError):
 
 
 class PlanMismatchError(OcflError, ValueError):
-    """Serialized update plan cannot be read or does not match its rebuild."""
+    """Serialized CommitPlan cannot be read or does not match its rebuild."""
 
     code = "plan_mismatch"
     error_class = ErrorClass.STATE
 
 
 class StaleHeadError(OcflError):
-    """Object root inventory changed after an update plan was built.
+    """Object root inventory changed after a CommitPlan was built.
 
     This signals optimistic stale-head detection, not a multi-file atomic
     publish guarantee. Backends without conditional writes can still expose a
@@ -273,7 +273,6 @@ class RevertCompletedError(OcflError):
     """Refused to revert a version whose root inventory is already published.
 
     Readers may already see the version. Finish it with a resume instead.
-    Mirrors ocfl-go's ``ErrRevertUpdate``.
     """
 
     code = "revert_completed"

@@ -1,5 +1,3 @@
-"""Where a version's content and fixity digests come from."""
-
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:

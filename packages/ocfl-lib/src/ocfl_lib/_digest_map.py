@@ -49,7 +49,6 @@ def merge(base: DigestMap, overlay: DigestMap, *, replace: bool = False) -> Dige
             result[d] = existing
         return result
 
-    # Replace mode: overlay's path→digest wins over base
     base_pm = to_path_map(base)
     overlay_pm = to_path_map(overlay)
     base_pm.update(overlay_pm)

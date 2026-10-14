@@ -1,5 +1,3 @@
-"""OCFL storage root operations."""
-
 import posixpath
 from typing import TYPE_CHECKING
 

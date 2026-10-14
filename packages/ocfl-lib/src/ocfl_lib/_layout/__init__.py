@@ -1,5 +1,3 @@
-"""OCFL storage layout extensions."""
-
 from ocfl_lib._layout.config import (
     read_layout_config,
     read_ocfl_layout,
@@ -29,7 +27,6 @@ __all__ = [
     "write_ocfl_layout",
 ]
 
-# Built-in layouts. Frozen; pass a custom registry explicitly to extend it.
 DEFAULT_LAYOUTS = LayoutRegistry(
     {
         "0002-flat-direct-storage-layout": FlatDirectLayout.from_config,

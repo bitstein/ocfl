@@ -1,5 +1,3 @@
-"""Bounded concurrent map with fail-fast cancellation."""
-
 import os
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import TYPE_CHECKING, cast
@@ -34,7 +32,6 @@ def bounded_map[T, R](
     it = iter(iterable)
 
     try:
-        # Fill initial window
         for item in it:
             pending.append(pool.submit(fn, item))
             if len(pending) >= cap:
@@ -43,7 +40,6 @@ def bounded_map[T, R](
         while pending:
             result = pending.pop(0).result()
 
-            # Refill one slot
             nxt = next(it, _SENTINEL)
             if nxt is not _SENTINEL:
                 pending.append(pool.submit(fn, cast("T", nxt)))

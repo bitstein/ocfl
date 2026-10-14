@@ -101,8 +101,6 @@ class BitcoinRpcClient:
     def close(self) -> None:
         self._client.close()
 
-    # --- BlockHeaderSource
-
     def block_at(self, height: int) -> ChainBlock | None:
         """The block at `height` on the node's best chain, or None."""
         try:
@@ -116,8 +114,6 @@ class BitcoinRpcClient:
             merkleroot=header.merkle_root,
             confirmations=header.confirmations,
         )
-
-    # --- RPC methods
 
     def getblockchaininfo(self) -> BlockchainInfo:
         result = self._call("getblockchaininfo", [])
@@ -140,8 +136,6 @@ class BitcoinRpcClient:
 
     def getblockhash(self, height: int) -> str:
         return str(self._call("getblockhash", [height]))
-
-    # --- transport
 
     def _call(self, method: str, params: list[Any]) -> Any:
         for i in range(self._attempts):

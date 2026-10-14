@@ -111,9 +111,6 @@ class _Ctx:
         return join_path(self.obj_path, *parts)
 
 
-# --- detection
-
-
 def detect(
     fsys: FS, root_path: str, obj_path: str, object_id: str
 ) -> tuple[CommitStatus, CommitPlan | None]:
@@ -173,9 +170,6 @@ def _sidecar_ok(fsys: FS, obj_path: str, inv: StoredInventory) -> bool:
     return bool(parts) and parts[0] == inv.digest
 
 
-# --- recovery
-
-
 def recover(
     fsys: WriteFS,
     root_path: str,
@@ -216,9 +210,6 @@ def _run(
     table[status.state][action](ctx)
     _tidy(ctx)
     return status
-
-
-# --- steps
 
 
 def _tidy(ctx: _Ctx) -> None:
@@ -380,8 +371,6 @@ class _NoContent:
             f"claimed version lacks content {digest}; pass its content source"
         )
 
-
-# --- tables
 
 type _Table = dict[CommitState, dict[RecoveryAction, Callable[[_Ctx], None]]]
 

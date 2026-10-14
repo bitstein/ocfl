@@ -1,5 +1,3 @@
-"""OCFL object validation."""
-
 import contextlib
 import json
 import re
@@ -25,7 +23,6 @@ if TYPE_CHECKING:
 
 _SIDECAR_RE = re.compile(r"^inventory\.json\.(\S+)$")
 
-# Known OCFL community extensions
 _KNOWN_EXTENSIONS = frozenset(
     {
         "0001-digest-algorithms",
@@ -90,7 +87,6 @@ def _validate_object(
         if n is not None and n.kind == "object":
             decl_files.append(n)
 
-    # Fire E006 for each unparseable 0= file
     parsed_names = {d.filename for d in decl_files}
     for zf in raw_zero_files:
         if zf.name not in parsed_names:
@@ -111,7 +107,6 @@ def _validate_object(
     else:
         namaste = decl_files[0]
 
-    # Validate declaration contents
     if namaste is not None:
         decl_path = join_path(path, namaste.filename)
         try:
@@ -160,7 +155,6 @@ def _validate_object(
         inv.content_directory if inv.content_directory is not None else "content"
     )
 
-    # Parse version numbers from inventory
     inv_versions: dict[str, int] = {}
     for vkey in inv.versions:
         m = VERSION_DIR_RE.match(vkey)
@@ -242,7 +236,6 @@ def _validate_object(
         content_path = join_path(path, vkey, content_dir)
         try:
             for ref in fsys.walk_files(content_path):
-                # Strip object path prefix to get manifest-relative path
                 rel = ref.path[prefix_len:] if prefix_len else ref.path
                 actual_files.add(rel)
         except OSError:
@@ -277,14 +270,12 @@ def _validate_version_dir(
     check_digests: bool,
     lax_digests: bool,
 ) -> str | None:
-    """Validate a single version directory."""
     try:
         entries = list(fsys.read_dir(vdir))
     except OSError:
         result.error("E046a", version_dir=vkey)
         return None
 
-    # Detect version inventory sidecar algorithm from actual files
     version_sidecar_alg = None
     for entry in entries:
         m = _SIDECAR_RE.match(entry.name)
@@ -292,12 +283,10 @@ def _validate_version_dir(
             with contextlib.suppress(ValueError):
                 version_sidecar_alg = DigestAlgorithm.from_ocfl_name(m.group(1))
 
-    # Allowed entries: inventory.json, its sidecar, content dir
     allowed = {"inventory.json", content_dir}
     if version_sidecar_alg:
         allowed.add(f"inventory.json.{version_sidecar_alg.ocfl_name}")
     else:
-        # Accept any sidecar
         for entry in entries:
             if _SIDECAR_RE.match(entry.name):
                 allowed.add(entry.name)
@@ -310,7 +299,6 @@ def _validate_version_dir(
         elif entry.is_file:
             result.error("E015", where=vkey, entry=entry.name)
 
-    # W003: empty content directory
     content_path = join_path(vdir, content_dir)
     try:
         content_entries = list(fsys.read_dir(content_path))
@@ -319,7 +307,6 @@ def _validate_version_dir(
     except OSError:
         pass
 
-    # Check version inventory
     vinv_path = join_path(vdir, "inventory.json")
     try:
         vinv_bytes = fs_utils.read_all(fsys, vinv_path)
@@ -327,12 +314,10 @@ def _validate_version_dir(
         result.warning("W010", where=vkey)
         return None
 
-    # Validate version inventory sidecar (use detected alg or root alg)
     sidecar_alg = version_sidecar_alg or root_alg
     vsidecar_path = join_path(vdir, f"inventory.json.{sidecar_alg.ocfl_name}")
     _validate_sidecar(fsys, vsidecar_path, vinv_bytes, sidecar_alg, result, where=vkey)
 
-    # For head version: must be byte-identical to root
     head = root_inv_data.get("head", "")
     if vkey == head and vinv_bytes != root_inv_bytes:
         result.error(
@@ -341,7 +326,6 @@ def _validate_version_dir(
             inv_file=f"{vkey}/inventory.json",
         )
 
-    # Parse version inventory
     try:
         vinv_data = parse_json(vinv_bytes)
     except (json.JSONDecodeError, ValueError) as e:
@@ -356,7 +340,6 @@ def _validate_version_dir(
     if vinv is None:
         return None
 
-    # E019/E020: contentDirectory consistency between version and root
     root_cd = root_inv_data.get("contentDirectory")
     ver_cd = vinv_data.get("contentDirectory")
     if ver_cd is not None and "contentDirectory" not in root_inv_data:
@@ -369,7 +352,6 @@ def _validate_version_dir(
             root_content_directory=root_cd,
         )
 
-    # E040: version inventory head must match version directory
     vinv_head = vinv_data.get("head", "")
     if vinv_head != vkey:
         result.error("E040", where=vkey, got=vinv_head, expected=vkey)
@@ -393,11 +375,9 @@ def _validate_version_dir(
                     fsys, obj_path, vinv_manifest, vinv_alg, result, where=vkey
                 )
 
-    # Cross-validate: version inventory is prior, root inventory is current
     if vkey != head:
         validate_inventory_against_prior(root_inv_data, vinv_data, result, where=vkey)
 
-    # W011: check version metadata consistency
     _check_version_metadata(vinv_data, root_inv_data, result, vkey=vkey)
 
     return _inventory_spec(vinv_data)
@@ -532,7 +512,6 @@ def _validate_sidecar(
     *,
     where: str,
 ) -> None:
-    """Validate inventory sidecar digest file."""
     try:
         sidecar_text = fs_utils.read_text(fsys, sidecar_path)
     except OSError:
@@ -570,7 +549,6 @@ def _verify_digests(
     *,
     where: str,
 ) -> None:
-    """Verify content file digests match manifest."""
     for digest, paths in manifest.items():
         if not isinstance(paths, list):
             continue
@@ -602,7 +580,6 @@ def _verify_fixity_digests(
     *,
     where: str,
 ) -> None:
-    """Verify fixity block digests."""
     for alg_name, digest_map in fixity.items():
         if not isinstance(digest_map, dict):
             continue

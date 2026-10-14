@@ -1,5 +1,3 @@
-"""OCFL inventory validation — two-phase: raw dict then struct semantics."""
-
 import re
 from typing import TYPE_CHECKING
 
@@ -56,11 +54,9 @@ def validate_inventory(
 
     Returns parsed Inventory on success, None on fatal structural error.
     """
-    # Phase 1: structural checks
     if not _validate_structure(data, result, where=where, lax_digests=lax_digests):
         return None
 
-    # Phase 2: decode to struct
     try:
         inv = msgspec.convert(data, Inventory)
     except Exception:
@@ -200,7 +196,6 @@ def _validate_manifest(
     content_dir: JsonValue,
     lax_digests: bool,
 ) -> None:
-    """Validate manifest block: digest format, paths, duplicates."""
     try:
         alg = DigestAlgorithm.from_ocfl_name(alg_name)
     except ValueError:
@@ -211,17 +206,14 @@ def _validate_manifest(
     all_content_paths: list[str] = []
 
     for digest, paths in manifest.items():
-        # Digest format check
         if not lax_digests and not digest_re.match(digest):
             result.error("E025b", where=where, digest=digest, algorithm=alg_name)
 
-        # Case-insensitive duplicate check
         lower = digest.lower()
         if lower in seen_digests and seen_digests[lower] != digest:
             result.error("E096", where=where, digest=digest)
         seen_digests[lower] = digest
 
-        # Values must be arrays of strings
         if not isinstance(paths, list):
             result.error("E091", where=where, digest=digest)
             continue
@@ -253,7 +245,6 @@ def _validate_manifest(
                 result.error("E099", where=where, path=path)
                 continue
 
-            # Content path must be v{N}/{contentDir}/...
             if len(segments) < 3:
                 result.error("E042a", where=where, path=path)
                 continue
@@ -270,7 +261,6 @@ def _validate_manifest(
 
             all_content_paths.append(path)
 
-    # Duplicate content path check
     path_set: set[str] = set()
     for path in all_content_paths:
         if path in path_set:
@@ -287,12 +277,10 @@ def _validate_versions(
     *,
     where: str,
 ) -> None:
-    """Validate versions block: keys, sequencing, head, version blocks."""
     versions = object_field(data, "versions")
     manifest = object_field(data, "manifest")
     head = data["head"]
 
-    # Parse and validate version keys
     vnums: list[tuple[int, str]] = []  # (number, key)
     pad_lengths: set[int] = set()  # 0 = unpadded, >0 = padded width
     for vkey in versions:
@@ -309,47 +297,38 @@ def _validate_versions(
         result.error("E008", where=where)
         return
 
-    # E011/E012/E013: padding consistency
     has_padded = any(p > 0 for p in pad_lengths)
     has_unpadded = 0 in pad_lengths
     if has_padded and has_unpadded:
-        # Mixed padded and unpadded — E011 + E012 + E013
         result.error("E011", where=where)
         result.error("E012", where=where)
         result.error("E013", where=where)
     elif has_padded and len(pad_lengths) > 1:
-        # All padded but inconsistent widths — E012
         result.error("E012", where=where)
     elif has_padded:
         result.warning("W001", where=where)
 
     vnums.sort()
 
-    # Must start at 1
     if vnums[0][0] != 1:
         result.error("E009", where=where)
 
-    # Must be contiguous
     for i in range(1, len(vnums)):
         if vnums[i][0] != vnums[i - 1][0] + 1:
             result.error("E010", where=where)
             break
 
-    # head must equal highest version
     highest_key = vnums[-1][1]
     if head != highest_key:
         result.error("E040", where=where, got=head, expected=highest_key)
 
-    # Collect all state digests to check manifest usage later
     all_state_digests: set[str] = set()
 
-    # Validate each version block
     for _, vkey in vnums:
         vblock = versions[vkey]
         if not isinstance(vblock, dict):
             continue
 
-        # created
         if "created" not in vblock:
             result.error("E048", where=where, version=vkey)
         else:
@@ -359,7 +338,6 @@ def _validate_versions(
             else:
                 _validate_created(created, result, where=where, version=vkey)
 
-        # state
         if "state" not in vblock:
             result.error("E048c", where=where, version=vkey)
         else:
@@ -378,7 +356,6 @@ def _validate_versions(
                     if isinstance(digest, str):
                         all_state_digests.add(digest.lower())
 
-        # message
         if "message" not in vblock:
             result.warning("W007a", where=where, version=vkey)
         elif not isinstance(vblock["message"], str):
@@ -392,13 +369,11 @@ def _validate_versions(
                 actual=len(vblock["message"]),
             )
 
-        # user
         if "user" not in vblock:
             result.warning("W007b", where=where, version=vkey)
         else:
             _validate_user(vblock["user"], result, where=where, version=vkey)
 
-    # E107: all manifest digests must be referenced by at least one version state
     for digest in manifest:
         if digest.lower() not in all_state_digests:
             result.error("E107", where=where, digests=digest)
@@ -454,12 +429,10 @@ def _validate_version_state(
     where: str,
     version: str,
 ) -> None:
-    """Validate a single version's state block."""
     all_logical_paths: list[str] = []
     manifest_lower = {d.lower(): d for d in manifest}
 
     for digest, paths in state.items():
-        # Check digest is in manifest (case-insensitive), then exact case
         if isinstance(digest, str):
             lower = digest.lower()
             if lower not in manifest_lower:
@@ -467,7 +440,6 @@ def _validate_version_state(
             elif digest != manifest_lower[lower]:
                 result.error("E050d", where=where, version=version, digest=digest)
 
-        # Values must be list
         if not isinstance(paths, list):
             result.error("E050e", where=where, version=version, digest=str(digest))
             continue
@@ -501,7 +473,6 @@ def _validate_version_state(
 
             all_logical_paths.append(path)
 
-    # Duplicate logical paths
     seen: set[str] = set()
     for path in all_logical_paths:
         if path in seen:
@@ -531,7 +502,6 @@ def _validate_user(
     where: str,
     version: str,
 ) -> None:
-    """Validate user block in a version."""
     if not isinstance(user, dict):
         result.error("E054a", where=where, version=version)
         return
@@ -565,19 +535,16 @@ def _validate_fixity(
     where: str,
     lax_digests: bool,
 ) -> None:
-    """Validate fixity block."""
     if not isinstance(fixity, dict):
         result.error("E056a", where=where)
         return
 
-    # Collect all manifest content paths for cross-reference
     manifest_paths: set[str] = set()
     for paths in manifest.values():
         if isinstance(paths, list):
             manifest_paths.update(p for p in paths if isinstance(p, str))
 
     for alg_name, digest_map in fixity.items():
-        # Check algorithm is known
         try:
             alg = DigestAlgorithm.from_ocfl_name(alg_name)
         except ValueError:
@@ -593,22 +560,18 @@ def _validate_fixity(
         seen_digests: dict[str, str] = {}
 
         for digest, paths in digest_map.items():
-            # Digest format check
             if not digest_re.match(digest):
                 result.error("E057b", where=where, algorithm=alg_name, digest=digest)
 
-            # Case-insensitive duplicate check
             lower = digest.lower()
             if lower in seen_digests and seen_digests[lower] != digest:
                 result.error("E097", where=where, algorithm=alg_name, digest=digest)
             seen_digests[lower] = digest
 
-            # Values must be list
             if not isinstance(paths, list):
                 result.error("E057c", where=where, algorithm=alg_name, digest=digest)
                 continue
 
-            # Each path must be in manifest
             for path in paths:
                 if not isinstance(path, str):
                     continue
