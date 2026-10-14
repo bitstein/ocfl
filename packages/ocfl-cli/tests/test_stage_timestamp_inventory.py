@@ -1,30 +1,3 @@
-"""Tests for `stage timestamp` on the inventory target.
-
-Pins the build-submit-serialize contract from `OTS workflow contract`:
-
-- Precondition: phase ``content-upgraded`` (else ``PhaseError`` ⇒ exit 3
-  with a next-step hint).
-- Build the staged inventory via ``StorageRoot.plan`` (same path as
-  ``stage commit``); the inventory's manifest now contains the ``<file>.ots``
-  companion content files ingested by the prior ``--upgrade`` pass.
-- Compute ``plan.inventory.digest`` and write an ``StagedInventory`` intent
-  (``version=<head>``, ``digest=<inv_digest>``, ``job_id=None``) into
-  ``ots.json``.
-- POST a single-digest payload (the inventory digest) to SimpleProof via
-  ``sp.submit_hashes([inv_digest], category_id)``.
-- Save the ``CommitPlan`` to ``<staging>/plan.json`` (``CommitPlan.to_json``);
-  round-trip via ``CommitPlan.from_json``. The inventory proof is attached
-  at ``stage commit``, so the saved plan has none.
-- Phase advances to ``inventory-pending``.
-
-FSM (already encoded in ``_TRANSITIONS``):
-
-- ``content-upgraded`` ⇒ advance to ``inventory-pending``
-- ``inventory-pending`` ⇒ stay (resubmit; re-POSTs and re-serializes)
-- ``inventory-upgraded`` ⇒ stay (noop; no SP call)
-- All other phases ⇒ ``PhaseError``
-"""
-
 import hashlib
 from pathlib import Path
 
@@ -88,17 +61,11 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
 
 
 def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
-    """Inject *fake* via ``runner.obj["sp_client_factory"]``."""
     runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
 
 
 def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
     runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
-
-
-# --------------------------------------------------------------------------- #
-# Storage-root + staging fixtures
-# --------------------------------------------------------------------------- #
 
 
 @pytest.fixture
@@ -109,12 +76,6 @@ def empty_sha256_root(tmp_path: Path) -> Path:
     layout = get_layout("0002-flat-direct-storage-layout")
     StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
     return location
-
-
-# --------------------------------------------------------------------------- #
-# Setup: bring an OTS staging to phase=content-upgraded with a real
-# inventory containing both `a.txt` and its `a.txt.ots` companion.
-# --------------------------------------------------------------------------- #
 
 
 def _new_ots_staging(
@@ -182,8 +143,6 @@ def _setup_content_upgraded(
     r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(ots_src)))
     assert r.exit_code == 0, r.output
 
-    # Pin phase + populate pending_digests + proofs to mimic the
-    # state the prior ``--upgrade`` pass would have left behind.
     state = load_ots(sd)
     state = replace(
         state,
@@ -218,11 +177,6 @@ def _ots_for(digest_hex: str) -> bytes:
     return build_attestation(bytes.fromhex(digest_hex), block_height=800_000)
 
 
-# =========================================================================== #
-# Layer-2: inventory build includes .ots content files
-# =========================================================================== #
-
-
 class TestInventoryBuild:
     def test_inventory_build_includes_ots_content_files(
         self,
@@ -232,8 +186,6 @@ class TestInventoryBuild:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Manifest must contain both the data digest and the .ots companion
-        digest after `stage timestamp inventory`."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -260,7 +212,6 @@ class TestInventoryBuild:
         assert state.inventory is not None
         assert state.inventory_proof is not None
 
-        # Re-load the on-disk plan and inspect its inventory's manifest.
         plan_bytes = plan_path(sd).read_bytes()
         plan2 = CommitPlan.from_json(plan_bytes)
         manifest = plan2.inventory.inventory.manifest
@@ -269,10 +220,8 @@ class TestInventoryBuild:
             f".ots companion digest {ots_digest!r} missing from manifest"
         )
 
-        # inventory_proof.digest matches the plan digest; version matches head.
         assert state.inventory.digest == plan2.inventory.digest
         assert state.inventory.version == plan2.version
-        # job_id stays None here; verify-batches is the upgrade pass's job.
         assert state.inventory.job_id is None
 
     def test_inventory_build_uses_staged_metadata(
@@ -310,11 +259,6 @@ class TestInventoryBuild:
         assert vi.user is not None
         assert vi.user.name == "Alice"
         assert vi.user.address == "mailto:alice@example.org"
-
-
-# --------------------------------------------------------------------------- #
-# Service primitives for batch-size-1 inventory submission
-# --------------------------------------------------------------------------- #
 
 
 class TestInventorySubmissionPrimitives:
@@ -440,11 +384,6 @@ class TestUnverifiedContentGate:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A reorg can reset a content proof to verified=False while the phase
-        stays content-upgraded. ``timestamp inventory`` must then refuse rather
-        than anchor the inventory over an unverified content proof (exit 3) —
-        the proof must be re-anchored via ``timestamp content --upgrade`` first.
-        """
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -452,7 +391,6 @@ class TestUnverifiedContentGate:
         sd, da, _ots_digest = _setup_content_upgraded(
             runner, empty_sha256_root, staging, "obj:reorg-gate"
         )
-        # Simulate a reorg resetting the content proof; phase stays upgraded.
         state = load_ots(sd)
         state = replace(
             state,
@@ -474,7 +412,6 @@ class TestUnverifiedContentGate:
 
         assert r.exit_code == 3, r.output
         assert "unverified" in r.output.lower()
-        # No inventory work happened; phase held at content-upgraded.
         assert not plan_path(sd).exists()
         assert not sp_fake._submissions
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
@@ -717,11 +654,6 @@ class TestMetadataGate:
         assert "--allow-missing-metadata" in r.output
 
 
-# =========================================================================== #
-# Layer-2: plan.json round-trip; no inventory proof yet
-# =========================================================================== #
-
-
 class TestPlanRoundTrip:
     def test_plan_json_round_trip_has_no_inventory_proof_yet(
         self,
@@ -757,15 +689,8 @@ class TestPlanRoundTrip:
 
         state = load_ots(sd)
         assert state.inventory is not None
-        # Round-trips the inventory digest exactly.
         assert plan2.inventory.digest == state.inventory.digest
-        # The inventory proof is attached at `stage commit`, not at this step.
         assert plan2.inventory_proof is None
-
-
-# =========================================================================== #
-# Layer-2: PhaseError from wrong phase carries a next-step hint
-# =========================================================================== #
 
 
 class TestPhaseGate:
@@ -777,7 +702,6 @@ class TestPhaseGate:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Fresh OTS staging (phase=drafting) ⇒ exit 3 with a hint."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -811,7 +735,6 @@ class TestPhaseGate:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Phase=content-pending ⇒ exit 3 with a hint."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -843,11 +766,6 @@ class TestPhaseGate:
         )
 
 
-# =========================================================================== #
-# Layer-2: idempotent resubmit at inventory-pending (stay # resubmit)
-# =========================================================================== #
-
-
 class TestResubmitAtInventoryPending:
     def test_rerun_at_inventory_pending_sends_nothing(
         self,
@@ -868,7 +786,6 @@ class TestResubmitAtInventoryPending:
             runner, empty_sha256_root, staging, "obj:resubmit"
         )
 
-        # First call: advances to inventory-pending; one SP submission.
         r = runner.invoke(
             app,
             _stage_args(
@@ -888,7 +805,6 @@ class TestResubmitAtInventoryPending:
         first_inv_digest = s1.inventory.digest
         assert sp_fake._submissions[0].digests == (first_inv_digest,)
 
-        # Second call: stays at inventory-pending; nothing is sent.
         r = runner.invoke(
             app,
             _stage_args(
@@ -906,11 +822,6 @@ class TestResubmitAtInventoryPending:
         assert load_ots(sd).inventory == s1.inventory
 
 
-# =========================================================================== #
-# Layer-2: noop at inventory-upgraded (matrix `_STAY` # noop)
-# =========================================================================== #
-
-
 class TestNoopAtInventoryUpgraded:
     def test_noop_at_inventory_upgraded(
         self,
@@ -920,9 +831,6 @@ class TestNoopAtInventoryUpgraded:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """At `inventory-upgraded` (after the upgrade pass verified the
-        inventory proof): re-running is a noop — no SP submission, phase
-        unchanged."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -931,8 +839,6 @@ class TestNoopAtInventoryUpgraded:
             runner, empty_sha256_root, staging, "obj:noop"
         )
 
-        # Run once to land at inventory-pending, then mutate to
-        # inventory-upgraded (simulates the upgrade pass having verified).
         r = runner.invoke(
             app,
             _stage_args(

@@ -1,12 +1,3 @@
-"""The staging lock: with_lock blocks writers; load_ots is lockless.
-
-Pinned behavior:
-- with_lock(staging, runtime) is an exclusive flock on "<staging>/.lock".
-- Two concurrent acquires: second blocks; timeout=0.1 raises LockTimeoutError.
-- load_ots does NOT acquire the lock — `stage status` reads the
-  atomically-rewritten ots.json directly. Bounded staleness is correct.
-"""
-
 import json
 import threading
 import time
@@ -78,13 +69,11 @@ def test_with_lock_serializes_concurrent_writers(staging: Path):
 def test_with_lock_releases_on_exception(staging: Path):
     with pytest.raises(RuntimeError, match="boom"), with_lock(staging, lock_runtime()):
         raise RuntimeError("boom")
-    # Re-acquire immediately — would block/timeout if not released.
     with with_lock(staging, lock_runtime(0.5)):
         pass
 
 
 def test_load_ots_does_not_acquire_lock(staging: Path):
-    """`stage status` is read-only and must never block on the writer lock."""
     (staging / "ots.json").write_text(
         json.dumps(
             {
@@ -112,7 +101,6 @@ def test_load_ots_does_not_acquire_lock(staging: Path):
     t.start()
     try:
         assert holder_acquired.wait(timeout=2)
-        # Lock is held by the other thread. load_ots must still succeed quickly.
         t0 = time.monotonic()
         state = load_ots(staging)
         elapsed = time.monotonic() - t0

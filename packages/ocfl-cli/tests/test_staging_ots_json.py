@@ -1,15 +1,3 @@
-"""ots.json checkpoint: load_ots / save_ots / migrations / helpers / drift.
-
-Pins:
-- atomic write-temp + fsync + os.replace
-- schema_version=2 round-trip; v1 refused (no migration); >current =>
-  StagingError; migrations chain
-- bare-hex digest convention (no `sha256:` prefix on disk)
-- crash-safe submit intent durability ("submitting" entry persisted before POST)
-- helpers: ots_cache_path, plan_path, has_ots, remove_ots
-- category_id drift: WARN log + return persisted value
-"""
-
 import json
 import logging
 import os
@@ -44,7 +32,6 @@ from ocfl_cli.workflow.common import poll_outstanding_jobs
 
 
 def _bare_hex(prefix: str) -> str:
-    """Return a 64-char lowercase hex digest derived from a prefix."""
     return (prefix * 64)[:64].lower()
 
 
@@ -441,7 +428,6 @@ class TestAtomicWrites:
         with pytest.raises(OSError, match="simulated crash"):
             save_ots(tmp_path, populated_state)
 
-        # Reader still sees the old, intact state.
         assert load_ots(tmp_path) == empty_state
         leftover = [p for p in tmp_path.iterdir() if ".tmp" in p.name]
         assert leftover == []
@@ -449,8 +435,6 @@ class TestAtomicWrites:
     def test_load_never_torn(
         self, tmp_path: Path, empty_state: OtsState, populated_state: OtsState
     ):
-        """Whatever load_ots returns must be a fully-formed OtsState (or raise)
-        — never a half-empty / mixed shape."""
         save_ots(tmp_path, empty_state)
         save_ots(tmp_path, populated_state)
         loaded = load_ots(tmp_path)
@@ -559,8 +543,6 @@ class TestSchemaVersion:
 
 
 class TestSubmitIntentDurability:
-    """Crash-safe submit protocol: 'submitting' status durable on disk before POST."""
-
     def test_submitting_entry_persists(self, tmp_path: Path):
         d1 = _bare_hex("a")
         intent = OtsState(
@@ -586,8 +568,6 @@ class TestSubmitIntentDurability:
         assert loaded.submissions[0].status == "submitting"
 
     def test_intent_to_finalize_two_step(self, tmp_path: Path):
-        """Step 1: write intent. Step 2: finalize. Reader at any moment sees one
-        valid OtsState — never a torn file."""
         d1 = _bare_hex("a")
         intent = OtsState(
             schema_version=2,
@@ -632,7 +612,6 @@ class TestSubmitIntentDurability:
         save_ots(tmp_path, finalized)
         loaded_b = load_ots(tmp_path)
         assert loaded_b == finalized
-        # Disk shape post-finalize is consistent — never half-old / half-new.
         raw = json.loads((tmp_path / "ots.json").read_bytes())
         assert raw["submissions"][0]["status"] == "submitted"
 
@@ -652,7 +631,6 @@ class TestHelpers:
         assert not has_ots(tmp_path)
 
     def test_remove_ots_idempotent(self, tmp_path: Path):
-        # Should not raise on missing file.
         remove_ots(tmp_path)
         assert not has_ots(tmp_path)
 
@@ -665,7 +643,6 @@ class TestHelpers:
 
     def test_utc_iso_format(self):
         s = utc_iso(datetime(2030, 1, 2, 3, 4, 5, 678, tzinfo=UTC))
-        # No microseconds (timespec="seconds"): "YYYY-MM-DDTHH:MM:SS+00:00"
         assert s == "2030-01-02T03:04:05+00:00"
 
 
@@ -691,10 +668,6 @@ class TestCategoryIdDrift:
 
 
 class TestSubmissionShape:
-    """Submissions / VerifyJobs / Proof / StagedInventory are frozen
-    sub-records. Their `digests` field is always a tuple — submission rounds
-    are immutable once recorded."""
-
     def test_submission_frozen(self):
         s = Submission(
             submitted_at="2026-04-23T16:30:00+00:00",

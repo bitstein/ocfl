@@ -1,41 +1,3 @@
-"""Phase StrEnum + check_transition matrix.
-
-Mirrors workflow yaml `architecture.transitions.matrix`. Every (phase, command)
-cell is pinned here; check_transition is a pure function of (phase, command)
-and returns the resulting phase or raises PhaseError.
-
-Outcomes per spec:
-- stay:        returns same phase
-- advance-X:   returns new phase X
-- regress-...: returns Phase.DRAFTING (state-mutation upstream)
-- noop:        returns same phase (idempotent)
-- err:         raises PhaseError
-- discard/status: always succeed (return same phase)
-
-Matrix (rows = command; cols = D/CP/CU/IP/IU; cells = stay|advance-X|regress|noop|err):
-
-| command                          |  D  | CP  | CU  | IP  | IU  |
-| -------------------------------- | --- | --- | --- | --- | --- |
-| add                              |stay |stay | reg | reg | reg |
-| rm                               |stay |stay | reg | reg | reg |
-| mv                               |stay |stay | reg | reg | reg |
-| timestamp content                | CP  |stay |noop | err | err |
-| upgrade content                  | err |stay |noop | err | err |
-| retry content                    | err |stay | err | err | err |
-| timestamp inventory              | err | err | IP  |stay |noop |
-| upgrade inventory                | err | err | err | IU  |noop |
-| retry inventory                  | err | err | err |stay | err |
-| commit (ots path)                | err | err | err | err |COMM |
-| discard                          |stay |stay |stay |stay |stay |
-| status                           |stay |stay |stay |stay |stay |
-
-The "stay-or-advance" cells (upgrade content at content-pending)
-collapse to "stay": the actual advance is upstream, after verify completes.
-The "advance-content-pending-or-straight-to-upgraded-if-vacuous" cell
-(timestamp content at drafting) collapses to advance-content-pending: the
-vacuous fast-path is also an upstream concern.
-"""
-
 import pytest
 
 from ocfl_cli.errors import PhaseError
@@ -50,75 +12,62 @@ COMM = Phase.COMMITTED
 
 ERR = "err"  # sentinel for parametrize: command raises PhaseError
 
-# (phase, command) -> Phase | "err"
 MATRIX: dict[tuple[Phase, str], Phase | str] = {
-    # add
     (D, "add"): D,
     (CP, "add"): CP,
     (CU, "add"): D,
     (IP, "add"): D,
     (IU, "add"): D,
-    # rm
     (D, "rm"): D,
     (CP, "rm"): CP,
     (CU, "rm"): D,
     (IP, "rm"): D,
     (IU, "rm"): D,
-    # mv
     (D, "mv"): D,
     (CP, "mv"): CP,
     (CU, "mv"): D,
     (IP, "mv"): D,
     (IU, "mv"): D,
-    # timestamp content
     (D, "timestamp content"): CP,
     (CP, "timestamp content"): CP,
     (CU, "timestamp content"): CU,
     (IP, "timestamp content"): ERR,
     (IU, "timestamp content"): ERR,
-    # upgrade content
     (D, "upgrade content"): ERR,
     (CP, "upgrade content"): CP,
     (CU, "upgrade content"): CU,
     (IP, "upgrade content"): ERR,
     (IU, "upgrade content"): ERR,
-    # retry content
     (D, "retry content"): ERR,
     (CP, "retry content"): CP,
     (CU, "retry content"): ERR,
     (IP, "retry content"): ERR,
     (IU, "retry content"): ERR,
-    # timestamp inventory
     (D, "timestamp inventory"): ERR,
     (CP, "timestamp inventory"): ERR,
     (CU, "timestamp inventory"): IP,
     (IP, "timestamp inventory"): IP,
     (IU, "timestamp inventory"): IU,
-    # upgrade inventory
     (D, "upgrade inventory"): ERR,
     (CP, "upgrade inventory"): ERR,
     (CU, "upgrade inventory"): ERR,
     (IP, "upgrade inventory"): IU,
     (IU, "upgrade inventory"): IU,
-    # retry inventory
     (D, "retry inventory"): ERR,
     (CP, "retry inventory"): ERR,
     (CU, "retry inventory"): ERR,
     (IP, "retry inventory"): IP,
     (IU, "retry inventory"): ERR,
-    # commit (ots path)
     (D, "commit (ots path)"): ERR,
     (CP, "commit (ots path)"): ERR,
     (CU, "commit (ots path)"): ERR,
     (IP, "commit (ots path)"): ERR,
     (IU, "commit (ots path)"): COMM,
-    # discard — always legal in any phase
     (D, "discard"): D,
     (CP, "discard"): CP,
     (CU, "discard"): CU,
     (IP, "discard"): IP,
     (IU, "discard"): IU,
-    # status — always legal, read-only
     (D, "status"): D,
     (CP, "status"): CP,
     (CU, "status"): CU,
@@ -175,7 +124,6 @@ def test_check_transition_unknown_command_raises():
 
 
 def test_matrix_covers_every_pre_committed_phase():
-    """Every (non-committed phase, command) pair has a pinned outcome."""
     commands = {c for _, c in MATRIX}
     pre_committed = [D, CP, CU, IP, IU]
     for phase in pre_committed:

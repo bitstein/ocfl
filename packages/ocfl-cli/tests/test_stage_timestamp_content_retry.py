@@ -1,21 +1,3 @@
-"""Tests for `stage retry` on the content target.
-
-Pins the FAILED-only resubmit contract from `OTS workflow contract`:
-
-- `stage retry OBJ --expect content`.
-- Legal only at phase ``content-pending`` (per FSM matrix). Any other phase
-  ⇒ ``PhaseError`` ⇒ exit 3.
-- For each ``Submission`` with ``status == "failed"``: re-POST those digests
-  to SP via ``sp.submit_hashes(digests, category_id)``, increment
-  ``attempts``, flip ``status`` back to ``"submitted"`` (crash-safe write
-  protocol: ``submitting`` intent → POST → ``submitted``).
-- Submissions with ``status`` of ``"submitted"`` or ``"submitting"`` are
-  NOT touched (no second POST, ``attempts`` unchanged, ``submitted_at``
-  unchanged).
-- Empty failed-set ⇒ noop (exit 0, no SP calls, ots.json byte-equal).
-- Phase remains ``content-pending`` (FSM ``stay``).
-"""
-
 import hashlib
 from pathlib import Path
 
@@ -73,13 +55,7 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
 
 
 def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
-    """Inject *fake* via ``runner.obj["sp_client_factory"]``."""
     runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
-
-
-# --------------------------------------------------------------------------- #
-# Storage-root fixture
-# --------------------------------------------------------------------------- #
 
 
 @pytest.fixture
@@ -90,11 +66,6 @@ def empty_sha256_root(tmp_path: Path) -> Path:
     layout = get_layout("0002-flat-direct-storage-layout")
     StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
     return location
-
-
-# --------------------------------------------------------------------------- #
-# OTS staging setup helpers
-# --------------------------------------------------------------------------- #
 
 
 def _new_ots_staging(
@@ -141,11 +112,6 @@ def _set_state(
     save_ots(sd, state)
 
 
-# =========================================================================== #
-# Layer-2: --retry resubmits ONLY failed; touches nothing else.
-# =========================================================================== #
-
-
 class TestRetryResubmitsOnlyFailed:
     def test_retry_resubmits_only_failed(
         self,
@@ -155,9 +121,6 @@ class TestRetryResubmitsOnlyFailed:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Three submissions: failed, submitted, submitting. --retry POSTs
-        only the failed entry's digests; the other two are byte-identical
-        afterwards. Phase stays content-pending."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -205,7 +168,6 @@ class TestRetryResubmitsOnlyFailed:
             submissions=(failed, submitted, submitting),
         )
 
-        # Snapshot the pre-retry SP submission count (should be 0 from fixtures).
         pre_calls = list(sp_fake._submissions)
 
         r = runner.invoke(
@@ -221,7 +183,6 @@ class TestRetryResubmitsOnlyFailed:
         )
         assert r.exit_code == 0, r.output
 
-        # Exactly one new SP call, carrying ONLY the failed entry's digests.
         new_calls = sp_fake._submissions[len(pre_calls) :]
         assert len(new_calls) == 1, new_calls
         assert tuple(new_calls[0].digests) == (d1, d2)
@@ -231,21 +192,13 @@ class TestRetryResubmitsOnlyFailed:
 
         by_first = {s.digests[0]: s for s in state.submissions}
 
-        # Failed entry: status flipped to submitted, attempts incremented.
         retried = by_first[d1]
         assert retried.status == "submitted"
         assert retried.attempts > failed.attempts
         assert retried.digests == (d1, d2)
 
-        # Submitted entry: completely untouched.
         assert by_first[d3] == submitted
-        # Submitting entry: completely untouched.
         assert by_first[d4] == submitting
-
-
-# =========================================================================== #
-# Layer-2: empty failed-set is a noop.
-# =========================================================================== #
 
 
 class TestRetryEmptyFailedNoop:
@@ -257,8 +210,6 @@ class TestRetryEmptyFailedNoop:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """No failed submissions: --retry exits 0, posts nothing, leaves
-        ots.json byte-equal, and prints a user-friendly notice."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -303,17 +254,9 @@ class TestRetryEmptyFailedNoop:
         )
         assert r.exit_code == 0, r.output
 
-        # No SP POSTs.
         assert len(sp_fake._submissions) == before_calls
-        # ots.json byte-equal.
         assert ots_json.read_bytes() == before_bytes
-        # User-friendly mention of "failed" in stdout/stderr.
         assert "failed" in r.output.lower()
-
-
-# =========================================================================== #
-# Layer-2: multiple failed entries each get their own POST.
-# =========================================================================== #
 
 
 class TestRetryMultipleFailedIndependent:
@@ -325,8 +268,6 @@ class TestRetryMultipleFailedIndependent:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Two disjoint failed submissions ⇒ two SP POSTs; both flip to
-        submitted; both attempts incremented."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -393,11 +334,6 @@ class TestRetryMultipleFailedIndependent:
         assert by_first[db].attempts > failed_b.attempts
 
 
-# =========================================================================== #
-# Layer-2: retry at any phase other than content-pending raises PhaseError.
-# =========================================================================== #
-
-
 class TestRetryPhaseGate:
     @pytest.mark.parametrize(
         "phase",
@@ -417,8 +353,6 @@ class TestRetryPhaseGate:
         monkeypatch: pytest.MonkeyPatch,
         phase: Phase,
     ) -> None:
-        """All phases ∉ {content-pending} ⇒ non-zero exit with the wrong
-        phase mentioned in stderr/stdout."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -460,7 +394,5 @@ class TestRetryPhaseGate:
             ),
         )
         assert r.exit_code != 0, r.output
-        # Wrong-phase value should surface in the diagnostic.
         assert phase.value in r.output
-        # No SP POSTs on rejection.
         assert len(sp_fake._submissions) == pre_calls

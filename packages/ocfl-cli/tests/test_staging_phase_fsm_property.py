@@ -1,17 +1,3 @@
-"""Property-based phase FSM model.
-
-Hypothesis RuleBasedStateMachine generates sequences of commands, runs
-check_transition over them, and asserts:
-
-- result phase is always a member of Phase
-- PhaseError leaves phase unchanged (legality is a query, not a side effect)
-- idempotent commands (status, discard, noop cells) are stable
-- regression-causing commands always land in DRAFTING
-- COMMITTED is never entered through the FSM (commit purges staging upstream;
-  check_transition returns COMMITTED only as the result phase from
-  inventory-upgraded → COMMITTED transition, which here we just observe)
-"""
-
 from hypothesis import settings
 from hypothesis.stateful import RuleBasedStateMachine, invariant, rule
 from hypothesis.strategies import sampled_from
@@ -60,10 +46,8 @@ class PhaseFSM(RuleBasedStateMachine):
             assert self.phase is before, "phase changed despite PhaseError"
             return
         assert isinstance(after, Phase)
-        # Regression rule: add/rm/mv from intermediate phases land in DRAFTING.
         if cmd in MUTATING and before in REGRESS_FROM:
             assert after is Phase.DRAFTING
-        # status / discard / noop cells: phase is stable.
         if cmd == "status":
             assert after is before
         if cmd == "discard":

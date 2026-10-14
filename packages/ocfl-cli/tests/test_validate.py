@@ -1,5 +1,3 @@
-"""Tests for ocfl validate command."""
-
 import hashlib
 import io
 import json
@@ -74,7 +72,6 @@ class TestValidateRoot:
     def test_root_json_reports_invalid_contained_object(
         self, runner: CliRunner, storage_root: Path
     ):
-        """Root validation must fail when a discovered object is invalid."""
         from ocfl_lib import LocalFS, StorageRoot
 
         root = StorageRoot.open(LocalFS(storage_root))
@@ -109,7 +106,6 @@ class TestValidateRoot:
     def test_root_marks_unvalidated_objects_when_truncated_by_default(
         self, storage_root: Path
     ):
-        """A truncated report (max errors reached) leaves the rest unvalidated."""
         from rich.console import Console
 
         from ocfl_cli.archive import validate as validate_module
@@ -205,7 +201,6 @@ class TestValidateObject:
             app, ["--root", str(storage_root), "--quiet", "validate"]
         )
         assert result.exit_code == 0
-        # Only findings remain; valid objects' warnings are kept at root level.
         lines = result.stderr.splitlines()
         assert all(line.startswith("Warning: [W") for line in lines), lines
 

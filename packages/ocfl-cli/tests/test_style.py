@@ -1,5 +1,3 @@
-"""Tests for ocfl_cli._style."""
-
 import io
 
 from rich.console import Console

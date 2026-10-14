@@ -17,10 +17,6 @@ from ocfl_lib import (
 )
 from tests.helpers.ots import build_attestation
 
-# --------------------------------------------------------------------------- #
-# Constants
-# --------------------------------------------------------------------------- #
-
 _EXT_NAME = "NNNN-ots-timestamps"
 DIGEST_BLOCK_HEIGHT = 800_000
 # Content proofs sit in an earlier block than the inventory proof: one block
@@ -42,11 +38,6 @@ confirmations = 3
 """
 
 
-# --------------------------------------------------------------------------- #
-# Config helper
-# --------------------------------------------------------------------------- #
-
-
 def _write_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -59,13 +50,7 @@ def _write_config(
     return cfg
 
 
-# --------------------------------------------------------------------------- #
-# Bitcoin RPC seam injection
-# --------------------------------------------------------------------------- #
-
-
 def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
-    """Inject *fake* via ``runner.obj["btc_rpc_factory"]``."""
     runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
 
 
@@ -89,7 +74,6 @@ def _register_attested(
 
 
 def _anchor_content(rpc: FakeBitcoinRPC) -> None:
-    """Bury the content proof's block and register its merkle root."""
     _grow_chain_to(rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
     digest_hex = hashlib.sha256(b"hello world").hexdigest()
     _register_attested(rpc, digest_hex, CONTENT_BLOCK_HEIGHT)
@@ -217,11 +201,6 @@ def _make_root_with_ots_object(
     return root
 
 
-# =========================================================================== #
-# Test 1: default-on walks the chain (passes when correct merkle registered)
-# =========================================================================== #
-
-
 class TestDefaultOnVerifyOts:
     def test_default_on_walks_chain_with_valid_attestation(
         self,
@@ -230,11 +209,8 @@ class TestDefaultOnVerifyOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Extension present + default-on + correct merkle registered → exit 0."""
         _write_config(tmp_path, monkeypatch)
 
-        # Track whether the cmd actually consults the RPC — the walk must
-        # happen by default when the OTS extension is present.
         calls: list[str] = []
 
         class _SpyRPC:
@@ -246,11 +222,9 @@ class TestDefaultOnVerifyOts:
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
 
-        # Bury the attested height past MIN_CONFS, register matching merkle.
         digest_hex = hashlib.sha256(b"hello world").hexdigest()
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
         _register_attested(btc_fake.rpc, digest_hex, CONTENT_BLOCK_HEIGHT)
-        # Inventory v1 attestation also needs its merkle in chain.
         inv_path = root / "obj-test" / "inventory.json"
         inv_digest_hex = hashlib.sha256(inv_path.read_bytes()).hexdigest()
         _register_attested(btc_fake.rpc, inv_digest_hex)
@@ -260,16 +234,10 @@ class TestDefaultOnVerifyOts:
         data = json.loads(r.stdout)
         assert data["valid"] is True
         assert data["errors"] == []
-        # Walk actually happened: RPC was consulted at least once.
         assert calls, (
             "default-on must walk the chain via the injected btc factory; "
             "no RPC methods were invoked"
         )
-
-
-# =========================================================================== #
-# Test 2: --ots=local skips network walk (offline CI)
-# =========================================================================== #
 
 
 class TestOtsLocalSkipsWalk:
@@ -280,15 +248,7 @@ class TestOtsLocalSkipsWalk:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``--ots=local`` skips the chain walk entirely.
-
-        No merkle roots registered, chain at default height (genesis-only).
-        Default-on would fail; ``--ots=local`` must succeed.
-        """
         _write_config(tmp_path, monkeypatch)
-        # Inject the fake but DO NOT register any merkle / extend chain;
-        # if the cmd touches the RPC despite --ots=local, verification
-        # will fail and surface the bug.
         _inject_fake_btc(runner, btc_fake.rpc)
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
@@ -307,7 +267,6 @@ class TestOtsLocalSkipsWalk:
         assert r.exit_code == 0, r.output
         data = json.loads(r.stdout)
         assert data["valid"] is True
-        # No verify-time codes (E906) when the walk is skipped.
         codes = {e["code"] for e in data["errors"]}
         assert "E906" not in codes
 
@@ -366,11 +325,6 @@ class TestVerifyOtsProgress:
         assert f"block {CONTENT_BLOCK_HEIGHT}" in r.stderr
 
 
-# =========================================================================== #
-# Test 3: missing [bitcoin] config + default-on → ConfigError, exit 6
-# =========================================================================== #
-
-
 class TestMissingBitcoinConfig:
     def test_auto_without_bitcoin_config_checks_locally(
         self,
@@ -378,8 +332,6 @@ class TestMissingBitcoinConfig:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """No ``[bitcoin]`` section: the default ``--ots=auto`` runs the local
-        checks, says so, and the object is still judged by them (exit 0)."""
         _write_config(tmp_path, monkeypatch, body=_SP_OK)
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
 
@@ -394,8 +346,6 @@ class TestMissingBitcoinConfig:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``--ots=chain`` needs ``[bitcoin]``:
-        exit 6, and the message names the section."""
         _write_config(tmp_path, monkeypatch, body=_SP_OK)
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
 
@@ -407,11 +357,6 @@ class TestMissingBitcoinConfig:
         assert "[bitcoin]" in r.output
 
 
-# =========================================================================== #
-# Test 4: structural validation always runs (E902 with --ots=local)
-# =========================================================================== #
-
-
 class TestStructuralAlwaysRuns:
     def test_structural_validation_always_runs_with_ots_local(
         self,
@@ -419,13 +364,8 @@ class TestStructuralAlwaysRuns:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``--ots=local`` skips the chain walk but NOT the structural
-        checks: a missing companion file still surfaces E902 and exits 1.
-        """
         _write_config(tmp_path, monkeypatch)
 
-        # Object has the OTS extension config but NO `.ots` companions —
-        # structural step 4 must report E902 (companion-missing).
         root = _make_root_with_ots_object(
             tmp_path,
             obj_id="obj-test",
@@ -451,11 +391,6 @@ class TestStructuralAlwaysRuns:
         )
 
 
-# =========================================================================== #
-# Test 5: default-on with WRONG merkle root → E906 (verify-time mismatch)
-# =========================================================================== #
-
-
 class TestVerifyTimeMismatchE906:
     def test_default_on_wrong_merkle_root_reports_e906(
         self,
@@ -464,16 +399,11 @@ class TestVerifyTimeMismatchE906:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Default-on walks the chain and finds a bogus merkle at the
-        attested height → reports new error code ``E906`` and exits 1.
-        """
         _write_config(tmp_path, monkeypatch)
         _inject_fake_btc(runner, btc_fake.rpc)
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
 
-        # Chain buried past MIN_CONFS, but register a WRONG merkle root
-        # (zeros) at the attested height — verify_attestation must fail.
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
         btc_fake.rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, "00" * 32)
 
@@ -492,7 +422,6 @@ class TestVerifyTimeMismatchE906:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A corrupt inventory proof is E905 (local), not a chain mismatch."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_btc(runner, btc_fake.rpc)
 
@@ -516,7 +445,6 @@ class TestVerifyTimeMismatchE906:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """An unreachable node is a failure to check, not a finding (no E906)."""
 
         class DownRPC(FakeBitcoinRPC):
             def getblockhash(self, height: int) -> str:
@@ -540,7 +468,6 @@ class TestVerifyTimeMismatchE906:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Human output should include RPC context without a traceback."""
 
         class DownRPC(FakeBitcoinRPC):
             def getblockhash(self, height: int) -> str:
@@ -560,11 +487,6 @@ class TestVerifyTimeMismatchE906:
         assert "Bitcoin RPC transport error" in combined
         assert "[E906]" not in combined
         assert "Traceback" not in combined
-
-
-# =========================================================================== #
-# Test 6: default-on with shallow confirmation depth → W903 warning
-# =========================================================================== #
 
 
 class TestVerifyPendingW903:
@@ -632,7 +554,6 @@ class TestVerifyPendingW903:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A pending proof gets no Bitcoin finding; the local W902 reports it."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_btc(runner, btc_fake.rpc)
 
@@ -711,11 +632,6 @@ class TestVerifyPendingW903:
         assert "inventory.json.v1.ots" in w903[0]["message"]
 
 
-# =========================================================================== #
-# Layer-3: regtest end-to-end (skipped without --run-bitcoin)
-# =========================================================================== #
-
-
 @pytest.mark.bitcoin
 class TestRegtestVerifyOtsEndToEnd:
     def test_real_rpc_walks_real_attestation_chain(
@@ -725,14 +641,6 @@ class TestRegtestVerifyOtsEndToEnd:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """End-to-end: real bitcoind regtest walks a real attestation chain.
-
-        Builds an OCFL object with content + inventory ``.ots`` companions
-        anchored to real regtest blocks (``OP_RETURN`` commit, real merkle
-        path, real block header). Runs ``ocfl validate`` (auto, so chain) —
-        production ``btc_rpc_factory`` path drives a real
-        ``BitcoinRPCClient`` against the regtest node.
-        """
         from tests.helpers.ots import build_regtest_attestation
         from tests.helpers.regtest import bitcoin_config_toml, bury_to_confs
 
@@ -741,14 +649,12 @@ class TestRegtestVerifyOtsEndToEnd:
         monkeypatch.setenv("BITCOIN_RPC_PASSWORD", bitcoind_regtest.rpc_password)
         _write_config(tmp_path, monkeypatch, body=cfg_body)
 
-        # Real attestation for the content file.
         file_bytes = b"hello world"
         file_sha256 = hashlib.sha256(file_bytes).digest()
         content_ots, content_height, _ = build_regtest_attestation(
             bitcoind_regtest, file_sha256
         )
 
-        # Build OCFL inventory referencing the content + its .ots companion.
         digest_alg = "sha256"
         manifest: dict[str, list[str]] = {}
         state: dict[str, list[str]] = {}
@@ -779,10 +685,8 @@ class TestRegtestVerifyOtsEndToEnd:
         inv_bytes = json.dumps(inv, sort_keys=True, separators=(",", ":")).encode()
         inv_digest = hashlib.sha256(inv_bytes).digest()
 
-        # Real attestation for the inventory digest (separate block).
         inv_ots, inv_height, _ = build_regtest_attestation(bitcoind_regtest, inv_digest)
 
-        # Bury both attestations past MIN_CONFS.
         bury_to_confs(
             bitcoind_regtest,
             max(content_height, inv_height),
@@ -790,7 +694,6 @@ class TestRegtestVerifyOtsEndToEnd:
             wallet="ocfltest",
         )
 
-        # Materialize the OCFL object on disk.
         root = tmp_path / "root"
         root.mkdir()
         fs = LocalFS(root)
@@ -818,7 +721,6 @@ class TestRegtestVerifyOtsEndToEnd:
         (ext_dir / "config.json").write_text(json.dumps({"extensionName": _EXT_NAME}))
         (ext_dir / "inventory.json.v1.ots").write_bytes(inv_ots)
 
-        # Run validate; production btc_rpc_factory builds a real client from cfg.
         r = runner.invoke(
             app, ["--root", str(root), "--json", "validate", "obj-regtest"]
         )
@@ -826,11 +728,6 @@ class TestRegtestVerifyOtsEndToEnd:
         data = json.loads(r.stdout)
         assert data["valid"] is True, data
         assert data["errors"] == []
-
-
-# =========================================================================== #
-# --ots at root level (roadmap §7 follow-up, issues 16 and 34)
-# =========================================================================== #
 
 
 class TestRootLevelChain:

@@ -1,24 +1,3 @@
-"""Tests for `ocfl stage upgrade [--watch]` and `stage retry` on the inventory.
-
-Pins step 15 of `OTS workflow contract` — the inventory-side mirror of
-the content upgrade / watch / retry shape:
-
-- ``upgrade``: single-digest (the inventory digest) verify pass with
-  the same crash-recovery invariant as the content upgrade. Step (1)
-  atomic cache write at ``ots-cache/<inv_digest>.ots``; step (2) ingest
-  is VACUOUS for inventory (the extension-file entry is queued at
-  commit time, not now); step (3) atomic ``ots.json`` update sets
-  ``proofs[<inventory digest>] = Proof(target=INVENTORY, verified=True,
-  block_height, confirmations_at_verify, verified_at,
-  ots_path=ots-cache/<d>.ots)``
-  and advances phase to ``inventory-upgraded``.
-- ``upgrade --watch``: ZMQ-driven loop that runs an upgrade pass per Bitcoin
-  block; exits 0 when phase advances to ``inventory-upgraded`` or 130
-  on SIGINT/SIGTERM.
-- ``retry``: re-POST the inventory digest at phase
-  ``INVENTORY_PENDING``; ``PhaseError`` (exit 3) at any other phase.
-"""
-
 import hashlib
 import json
 import logging
@@ -95,12 +74,10 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
 
 
 def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
-    """Inject *fake* via ``runner.obj["sp_client_factory"]``."""
     runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
 
 
 def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
-    """Inject *fake* via ``runner.obj["btc_rpc_factory"]``."""
     runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
 
 
@@ -302,11 +279,6 @@ def _seed_inv_completed_verify_job(
     return job_id
 
 
-# =========================================================================== #
-# Service primitives for batch-size-1 inventory upgrade
-# =========================================================================== #
-
-
 class TestInventoryUpgradePrimitives:
     def test_snapshot_inventory_progress_ignores_unconfirmed_result(
         self,
@@ -396,7 +368,6 @@ class TestInventoryUpgradePrimitives:
             runtime=runtime,
         )
 
-        # Pass 1 (target from the phase): queue the verify job.
         first = wf_timestamp.upgrade_locked(run)
         assert first.target is TimestampTarget.INVENTORY
         assert first.phase is Phase.INVENTORY_PENDING
@@ -404,7 +375,6 @@ class TestInventoryUpgradePrimitives:
         assert len(state.verify_jobs) == 1
         job_id = state.verify_jobs[0].job_id
 
-        # Pass 2: the completed job is downloaded, verified and advances.
         sp_fake.advance_to_completed(job_id, {inv_digest: _ots_for(inv_digest)})
         second = wf_timestamp.upgrade_locked(run)
         assert second.phase is Phase.INVENTORY_UPGRADED
@@ -416,11 +386,6 @@ class TestInventoryUpgradePrimitives:
         assert state.inventory_proof is not None
         assert state.inventory_proof.verified
         assert ots_cache_path(sd, inv_digest).is_file()
-
-
-# =========================================================================== #
-# Layer-2: --upgrade single-digest happy path  (verifies + advances phase)
-# =========================================================================== #
 
 
 class TestInventoryUpgradeHappyPath:
@@ -447,9 +412,6 @@ class TestInventoryUpgradeHappyPath:
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
         _register_attested(btc_fake.rpc, inv_digest)
 
-        # Snapshot stage-state paths/manifest before --upgrade — step (2)
-        # is vacuous for inventory; nothing about staged content should
-        # change as a result of the upgrade pass.
         store = StagingStore(staging)
         root_path = str(empty_sha256_root.resolve())
         pre_inv = store.load_inventory(root_path, "obj:inv-up")
@@ -484,11 +446,8 @@ class TestInventoryUpgradeHappyPath:
         assert proof.verified_at is not None
         assert proof.ots_path == f"ots-cache/{inv_digest}.ots"
 
-        # Cache bytes match what SP returned.
         assert ots_cache_path(sd, inv_digest).read_bytes() == ots_bytes
 
-        # Step (2) vacuous: stage state's path-set + manifest unchanged
-        # (extension-file entry is queued only at `stage commit`).
         post_inv = store.load_inventory(root_path, "obj:inv-up")
         post_paths = {
             p for ps in post_inv.versions[post_inv.head].state.values() for p in ps
@@ -507,11 +466,6 @@ class TestInventoryUpgradeExpired:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """An EXPIRED verify job must not count as covering the inventory
-        digest. The per-object --upgrade pass should submit a FRESH
-        verify_batch (like the batch driver does) instead of stalling forever
-        on the dead job. Guards the EXPIRED-as-active stall.
-        """
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
@@ -521,7 +475,6 @@ class TestInventoryUpgradeExpired:
             runner, empty_sha256_root, staging, "obj:inv-exp"
         )
 
-        # Seed an EXPIRED job covering the inventory digest.
         dead_id = sp_fake.verify_batch([inv_digest]).job_id
         sp_fake.expire_job(dead_id)
         state = load_ots(sd)
@@ -550,20 +503,13 @@ class TestInventoryUpgradeExpired:
             ),
         )
         assert r.exit_code == 75, r.output  # still pending
-        # A fresh verify_batch was POSTed despite the EXPIRED job.
         assert len(sp_fake._jobs) == 2
-        # State carries an active (non-terminal) job for the digest.
         state = load_ots(sd)
         assert any(
             inv_digest in j.digests
             and j.status not in {"FAILED", "EXPIRED", "COMPLETED"}
             for j in state.verify_jobs
         )
-
-
-# =========================================================================== #
-# Layer-2: inventory crash-recovery  (parametrize on step boundaries)
-# =========================================================================== #
 
 
 class TestInventoryCrashRecovery:
@@ -605,7 +551,6 @@ class TestInventoryCrashRecovery:
 
         _install_inv_crash_fault(monkeypatch, fault_at, sd, inv_digest)
 
-        # Round 1: expect non-zero exit (crash).
         r = runner.invoke(
             app,
             _stage_args(
@@ -618,7 +563,6 @@ class TestInventoryCrashRecovery:
             ),
         )
         assert r.exit_code != 0, r.output
-        # Crash-recovery invariant: ots.json is never torn (always parses).
         post_crash = load_ots(sd)
         # If verified=True is recorded, cache bytes must already exist
         # (the implication direction of the three-step invariant).
@@ -630,7 +574,6 @@ class TestInventoryCrashRecovery:
 
         _uninstall_crash_fault(monkeypatch)
 
-        # Round 2: converges to inventory-upgraded.
         r = runner.invoke(
             app,
             _stage_args(
@@ -718,11 +661,6 @@ def _uninstall_crash_fault(monkeypatch: pytest.MonkeyPatch) -> None:
         _CRASH_FAULT_RESTORERS.pop()()
 
 
-# =========================================================================== #
-# Layer-2: phase advance to inventory-upgraded (verified / pending / shallow)
-# =========================================================================== #
-
-
 class TestInventoryPhaseAdvance:
     def test_advance_when_verified(
         self,
@@ -733,7 +671,6 @@ class TestInventoryPhaseAdvance:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Verify success at min_confs ⇒ advance to inventory-upgraded."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
@@ -775,9 +712,6 @@ class TestInventoryPhaseAdvance:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """SP returns a PendingAttestation-only ``.ots`` ⇒ stays at
-        inventory-pending with ``inventory_proof.proof.verified=False``;
-        cache bytes still written (step 1)."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
@@ -808,7 +742,6 @@ class TestInventoryPhaseAdvance:
         assert state.inventory is not None
         assert state.inventory_proof is not None
         assert state.inventory_proof.verified is False
-        # Cache bytes still written even on pending attestation.
         assert ots_cache_path(sd, inv_digest).is_file()
 
     def test_no_advance_below_min_confirmations(
@@ -820,8 +753,6 @@ class TestInventoryPhaseAdvance:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Chain shallower than ``confirmations`` past attested height ⇒
-        stays at inventory-pending; ``verified=False`` persisted."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
@@ -854,11 +785,6 @@ class TestInventoryPhaseAdvance:
         assert state.inventory is not None
         assert state.inventory_proof is not None
         assert state.inventory_proof.verified is False
-
-
-# =========================================================================== #
-# Layer-2: --watch loop for inventory
-# =========================================================================== #
 
 
 class TestInventoryWatchLoop:
@@ -933,8 +859,6 @@ class TestInventoryWatchLoop:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """One pre-pushed block ⇒ one upgrade pass that verifies + advances
-        phase to inventory-upgraded; exits 0."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
@@ -952,9 +876,6 @@ class TestInventoryWatchLoop:
         _register_attested(btc_fake.rpc, inv_digest)
 
         class _OneBlockStream:
-            """Deliver one block then KeyboardInterrupt as defensive
-            terminator (the loop should exit on phase advance first)."""
-
             def __init__(self) -> None:
                 self._n = 0
 
@@ -1003,8 +924,6 @@ class TestInventoryWatchLoop:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Stream raises ``KeyboardInterrupt`` before delivering a block;
-        CLI must exit 130 and ``ots.json`` must parse cleanly afterwards."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
@@ -1040,7 +959,6 @@ class TestInventoryWatchLoop:
             ),
         )
         assert r.exit_code == 130, r.output
-        # No torn checkpoint: ots.json parses cleanly after SIGINT.
         load_ots(sd)
 
     def test_watch_lock_timeout_warning_and_continue(
@@ -1053,17 +971,10 @@ class TestInventoryWatchLoop:
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Pre-acquire the staging ``.lock``; first wake delivers a block
-        (which hits ``LockTimeoutError`` ⇒ WARNING + continue); second
-        wake raises KeyboardInterrupt to terminate (exit 130). Assert the
-        loop did NOT crash with ``LockTimeoutError`` and that a WARNING
-        was logged with a message mentioning ``lock``."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
 
-        # Speed knob: shrink the watch loop's lock timeout if the constant
-        # exists (it does — see test_stage_timestamp_content_upgrade_watch).
         runner_obj(runner)["lock_timeout"] = 1
 
         staging = tmp_path / "staging"
@@ -1076,7 +987,6 @@ class TestInventoryWatchLoop:
         _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
         _register_attested(btc_fake.rpc, inv_digest)
 
-        # Hold the staging .lock as another process would.
         sibling = ExitStack()
         sibling.enter_context(held_flock(sd / ".lock"))
 
@@ -1112,7 +1022,6 @@ class TestInventoryWatchLoop:
             sibling.close()
 
         assert r.exit_code == 130, r.output
-        # No torn checkpoint after lock contention + cancel.
         load_ots(sd)
         warn_msgs = [
             rec.getMessage().lower()
@@ -1141,8 +1050,6 @@ class TestInventoryRetryPhaseGate:
         monkeypatch: pytest.MonkeyPatch,
         phase: Phase,
     ) -> None:
-        """All phases ∉ {inventory-pending} ⇒ exit 3 with the wrong-phase
-        value surfaced in the diagnostic."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -1150,8 +1057,6 @@ class TestInventoryRetryPhaseGate:
         sd, _da, _inv_digest = _setup_at_inventory_pending(
             runner, empty_sha256_root, staging, "obj:inv-retry-phase"
         )
-        # Mutate phase to the target (inventory_proof remains populated;
-        # the phase gate is what the test exercises).
         save_ots(sd, replace(load_ots(sd), phase=phase))
 
         pre_calls = len(sp_fake._submissions)
@@ -1169,13 +1074,7 @@ class TestInventoryRetryPhaseGate:
         )
         assert r.exit_code == 3, r.output
         assert phase.value in r.output, r.output
-        # No SP POSTs on rejection.
         assert len(sp_fake._submissions) == pre_calls
-
-
-# =========================================================================== #
-# Layer-2: --retry happy path  (re-POST inv_digest at INVENTORY_PENDING)
-# =========================================================================== #
 
 
 class TestInventoryRetryHappyPath:
@@ -1193,8 +1092,6 @@ class TestInventoryRetryHappyPath:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``--retry`` re-POSTs the target's ``failed`` submissions, the same
-        rule as content: the inventory submission is a ``Submission`` too."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -1229,8 +1126,6 @@ class TestInventoryRetryHappyPath:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """No ``failed`` inventory submission: nothing is re-POSTed (it used
-        to always re-POST the digest); the command says so and exits 0."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -1248,11 +1143,6 @@ class TestInventoryRetryHappyPath:
         assert (sd / "ots.json").read_bytes() == before
 
 
-# =========================================================================== #
-# Layer-3: regtest end-to-end inventory upgrade (skipped without --run-bitcoin)
-# =========================================================================== #
-
-
 @pytest.mark.bitcoin
 class TestRegtestEndToEndInventoryUpgrade:
     def test_real_rpc_real_attestation_inventory(
@@ -1264,8 +1154,6 @@ class TestRegtestEndToEndInventoryUpgrade:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Real RPC, real OTS bytes for the inventory digest; ``--upgrade``
-        verifies + advances phase to ``inventory-upgraded``."""
         from tests.helpers.ots import build_regtest_attestation
         from tests.helpers.regtest import bitcoin_config_toml, bury_to_confs
 
@@ -1274,7 +1162,6 @@ class TestRegtestEndToEndInventoryUpgrade:
         monkeypatch.setenv("BITCOIN_RPC_PASSWORD", bitcoind_regtest.rpc_password)
         _write_config(tmp_path, monkeypatch, body=cfg_body)
         _inject_fake_sp(runner, sp_fake)
-        # Production btc_rpc_factory path used.
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest = _setup_at_inventory_pending(

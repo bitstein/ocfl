@@ -1,30 +1,3 @@
-"""Layer-2 tests for ``ocfl stage status`` OTS extension (step 17).
-
-Pins the contract from ``OTS workflow contract::stage_status``:
-
-- Dense human output (``Object:``, ``Workflow:``, ``Network:`` sections,
-  staged diff lines, ``Phase:``, ``Bitcoin:``, ``Next:`` lines + per-job
-  outstanding lines with humanized "ago" text).
-- ``--json`` emits ``schema_version=1`` per the pinned schema with keys:
-  ``schema_version``, ``extension``, ``phase``, ``changes``, ``counts``
-  (5 keys), ``outstanding_jobs``, ``bitcoin``, ``simpleproof``,
-  ``cache_bytes``, ``next_action_kind``, ``next_action``.
-- ``next_action_kind`` is the stable enum
-  ``{timestamp_content, upgrade_content, retry_content,
-     timestamp_inventory, upgrade_inventory, retry_inventory,
-     commit, add_content, none}``; scripts MUST tolerate unknown values.
-- No lock acquired (reads ``ots.json`` directly).
-- Non-OTS fallback: ``ots.json`` absent ⇒ existing pre-OTS diff output
-  unchanged; ``--json`` wraps as ``{"extension": null, "changes": [...]}``;
-  OTS fields are omitted entirely.
-- ``bitcoin.in_sync`` derivation:
-  ``(not initial_block_download) and verification_progress >= 0.9999``.
-- ``cache_bytes`` is the byte sum of files in ``<staging>/ots-cache/``;
-  ``0`` when the dir is absent.
-
-RED until ``stage status`` learns the OTS shape.
-"""
-
 import hashlib
 import json
 from pathlib import Path
@@ -87,7 +60,6 @@ def _stage_args(root: Path, staging: Path, *args: str) -> list[str]:
 
 
 def _stage_args_json(root: Path, staging: Path, *args: str) -> list[str]:
-    """``--json`` is a top-level (app-level) flag, before the ``stage`` group."""
     return [
         "--root",
         str(root),
@@ -142,7 +114,6 @@ def _new_ots_staging_no_files(
     staging: Path,
     object_id: str,
 ) -> Path:
-    """Create a fresh OTS staging at phase=drafting with no files added."""
     r = runner.invoke(app, _stage_args(root, staging, "new", object_id, "--ots"))
     assert r.exit_code == 0, r.output
     return _staging_dir(root, staging, object_id)
@@ -155,7 +126,6 @@ def _new_ots_staging(
     object_id: str,
     *files: tuple[str, bytes],
 ) -> tuple[Path, dict[str, str]]:
-    """Create a fresh OTS staging at phase=drafting with *files* added."""
     sd = _new_ots_staging_no_files(runner, root, staging, object_id)
     digests: dict[str, str] = {}
     for name, data in files:
@@ -205,13 +175,7 @@ def _verified_inv_proof(version: str, inv_digest: str) -> StagedInventory:
     return StagedInventory(version=version, digest=inv_digest, job_id=None)
 
 
-# =========================================================================== #
-# Layer-2: OTS phase x next_action_kind matrix
-# =========================================================================== #
-
-
 class TestStageStatusOts:
-    # ---- 1. drafting, no files → add_content ----
     def test_status_drafting_no_files_next_action_add_content(
         self,
         runner: CliRunner,
@@ -327,7 +291,6 @@ class TestStageStatusOts:
             "user.address": "mailto:alice@example.org",
         }
 
-    # ---- 2. drafting, with files → timestamp_content ----
     def test_status_drafting_with_files_next_action_timestamp_content(
         self,
         runner: CliRunner,
@@ -355,7 +318,6 @@ class TestStageStatusOts:
         assert data["next_action_kind"] == "timestamp_content"
         assert data["counts"]["total"] == 1
 
-    # ---- 3. content-pending, in-flight VerifyJob → upgrade_content ----
     def test_status_content_pending_outstanding_jobs_listed(
         self,
         runner: CliRunner,
@@ -410,12 +372,10 @@ class TestStageStatusOts:
         assert entry["job_id"] == "job-1"
         assert entry["digests"] == [da]
         assert entry["status"] == "IN_PROGRESS"
-        # Joined to the submission by digest overlap → real submitted_at, not "".
         assert entry["submitted_at"] == "2026-04-25T14:00:00+00:00"
         assert isinstance(entry["age_seconds"], int)
         assert entry["age_seconds"] > 0
 
-    # ---- 4. content-pending + FAILED job covering remaining digest -> retry_content
     def test_status_content_pending_with_failed_job_next_retry(
         self,
         runner: CliRunner,
@@ -463,7 +423,6 @@ class TestStageStatusOts:
         assert data["next_action_kind"] == "retry_content"
         assert data["counts"]["failed"] >= 1
 
-    # ---- 5. content-upgraded → timestamp_inventory ----
     def test_status_content_upgraded_next_timestamp_inventory(
         self,
         runner: CliRunner,
@@ -502,7 +461,6 @@ class TestStageStatusOts:
         assert data["counts"]["upgraded"] == 1
         assert data["counts"]["pending"] == 0
 
-    # ---- 6. inventory-pending → upgrade_inventory ----
     def test_status_inventory_pending_next_upgrade_inventory(
         self,
         runner: CliRunner,
@@ -549,7 +507,6 @@ class TestStageStatusOts:
         data = json.loads(r.output)
         assert data["next_action_kind"] == "upgrade_inventory"
 
-    # ---- 7. inventory-pending with FAILED inv job → retry_inventory ----
     def test_status_inventory_pending_with_failed_inv_job_next_retry(
         self,
         runner: CliRunner,
@@ -597,7 +554,6 @@ class TestStageStatusOts:
         data = json.loads(r.output)
         assert data["next_action_kind"] == "retry_inventory"
 
-    # ---- 8. inventory-upgraded → commit ----
     def test_status_inventory_upgraded_next_commit(
         self,
         runner: CliRunner,
@@ -636,7 +592,6 @@ class TestStageStatusOts:
         data = json.loads(r.output)
         assert data["next_action_kind"] == "commit"
 
-    # ---- 9. committed → none ----
     def test_status_committed_next_none(
         self,
         runner: CliRunner,
@@ -675,7 +630,6 @@ class TestStageStatusOts:
         data = json.loads(r.output)
         assert data["next_action_kind"] == "none"
 
-    # ---- 10. JSON schema v1 invariants ----
     def test_status_json_schema_v1_invariants(
         self,
         runner: CliRunner,
@@ -715,7 +669,6 @@ class TestStageStatusOts:
             assert key in counts, key
             assert isinstance(counts[key], int)
 
-    # ---- 11. cache_bytes sums ots-cache files ----
     def test_status_cache_bytes_sums_ots_cache_files(
         self,
         runner: CliRunner,
@@ -750,7 +703,6 @@ class TestStageStatusOts:
         data = json.loads(r.output)
         assert data["cache_bytes"] == sum(sizes)
 
-    # ---- 12. cache_bytes==0 when no ots-cache dir ----
     def test_status_cache_bytes_zero_when_no_cache_dir(
         self,
         runner: CliRunner,
@@ -783,7 +735,6 @@ class TestStageStatusOts:
         data = json.loads(r.output)
         assert data["cache_bytes"] == 0
 
-    # ---- 13. no lock acquired (with_lock guarded against being called) ----
     def test_status_no_lock_acquired(
         self,
         runner: CliRunner,
@@ -819,7 +770,6 @@ class TestStageStatusOts:
             )
         assert r.exit_code == 0, r.output
 
-    # ---- 14. Human output is dense (Phase / Bitcoin / Next + per-job line) ----
     def test_status_human_output_dense(
         self,
         runner: CliRunner,
@@ -877,11 +827,9 @@ class TestStageStatusOts:
         assert "Phase:" in out
         assert "Bitcoin:" in out
         assert "Next:" in out
-        # Per-job line names the in-flight job and uses humanized "ago" text.
         assert "job-h" in out
         assert "ago" in out
 
-    # ---- 15. humanize age: recent seconds ----
     def test_status_humanize_age_recent_seconds(
         self,
         runner: CliRunner,
@@ -891,7 +839,6 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Ages under a minute render as ``Ns ago`` (or close-equivalent)."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
@@ -906,7 +853,6 @@ class TestStageStatusOts:
         )
         da = digests["a.txt"]
 
-        # Pin "now" inside the status command so age math is deterministic.
         from datetime import UTC, datetime, timedelta
 
         fake_now = datetime(2026, 4, 25, 14, 0, 30, tzinfo=UTC)
@@ -939,7 +885,6 @@ class TestStageStatusOts:
         assert r.exit_code == 0, r.output
         assert "30s ago" in r.output
 
-    # ---- 16. humanize age: hours ----
     def test_status_humanize_age_hours(
         self,
         runner: CliRunner,
@@ -1009,7 +954,6 @@ class TestStageStatusOts:
         assert r.exit_code == 0, r.output
         assert "2h ago" in r.output
 
-    # ---- 17. bitcoin.in_sync == True when node synced ----
     def test_status_bitcoin_in_sync_field_true_when_node_synced(
         self,
         runner: CliRunner,
@@ -1019,7 +963,6 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """FakeBitcoinRPC reports ibd=False, vp=1.0 ⇒ ``bitcoin.in_sync == True``."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)
@@ -1044,7 +987,6 @@ class TestStageStatusOts:
         assert isinstance(bitcoin["height"], int)
         assert isinstance(bitcoin["tip_hash"], str)
 
-    # ---- 18. bitcoin section null when no [bitcoin] config ----
     def test_status_bitcoin_section_null_when_no_bitcoin_config(
         self,
         runner: CliRunner,
@@ -1085,7 +1027,6 @@ class TestStageStatusOts:
         data = json.loads(r.output)
         assert data["bitcoin"] is None
 
-    # ---- 19. simpleproof.configured reflects config presence ----
     def test_status_simpleproof_configured_reflects_config(
         self,
         runner: CliRunner,
@@ -1118,7 +1059,6 @@ class TestStageStatusOts:
         assert sp_section["configured"] is True
         assert sp_section["category_id"] == 641
 
-    # ---- 20. confirmations_required surfaces from config ----
     def test_status_confirmations_required_from_config(
         self,
         runner: CliRunner,
@@ -1149,11 +1089,6 @@ class TestStageStatusOts:
         assert data["bitcoin"]["confirmations_required"] == 3
 
 
-# =========================================================================== #
-# Layer-2: Non-OTS fallback (ots.json absent)
-# =========================================================================== #
-
-
 class TestStageStatusNonOtsFallback:
     def test_status_non_ots_text_unchanged(
         self,
@@ -1162,7 +1097,6 @@ class TestStageStatusNonOtsFallback:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """No ``ots.json`` ⇒ existing pre-OTS diff output preserved."""
         _write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
@@ -1183,7 +1117,6 @@ class TestStageStatusNonOtsFallback:
             app, _stage_args(empty_sha256_root, staging, "status", "obj:non-ots")
         )
         assert r.exit_code == 0, r.output
-        # Pre-OTS diff output: each line is "<sym> <path>" with the file present.
         assert "src.txt" in r.output
 
     def test_status_non_ots_json_wraps_changes_with_extension_null(
@@ -1193,12 +1126,6 @@ class TestStageStatusNonOtsFallback:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """No ``ots.json`` ⇒ ``--json`` is ``{"extension": null, "changes": [...]}``.
-
-        OTS-only fields (``schema_version``, ``phase``, ``counts``, etc.)
-        MUST be omitted entirely so consumers can branch on
-        ``extension`` presence.
-        """
         _write_config(tmp_path, monkeypatch)
 
         staging = tmp_path / "staging"
@@ -1238,7 +1165,6 @@ class TestStageStatusNonOtsFallback:
             "next_action",
         ):
             assert key not in data, f"non-OTS JSON must omit {key!r}"
-        # Each change carries the same path/action shape as the prior impl.
         for entry in data["changes"]:
             assert "path" in entry
             assert "action" in entry

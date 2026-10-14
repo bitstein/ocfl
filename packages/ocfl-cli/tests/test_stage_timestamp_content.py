@@ -1,30 +1,3 @@
-"""Tests for `ocfl stage timestamp` on the content target (OTS workflow step 10).
-
-Pins step 10 of `OTS workflow contract`:
-
-- Compute candidate digests:
-  ``non_ots_digests(stage.state) - set(obj.inventory.manifest)``.
-- Subtract already-submitted/already-upgraded
-  (``ots.json.pending_digests`` + ``proofs`` keys). Remainder is
-  this round's submission set.
-- Extend ``ots.json.pending_digests`` with the submission set.
-- Delete/rename-only no-op: empty submission set AND empty
-  ``pending_digests`` → print "Nothing to timestamp" and advance phase
-  to ``content-upgraded``.
-- Crash-safe submit protocol: persist ``Submission(status="submitting")``
-  intent → POST → update entry to ``submitted``.
-- POST in chunks of 1000 (``SimpleProofClient.submit_hashes`` chunks).
-- Phase → ``content-pending`` on success (via ``check_transition``).
-- Crash-safe resubmit: any ``submitting`` intent persisted across
-  process restart is resubmitted on next run; SP records duplicates
-  without failure (`crash_safe_submit_protocol.on_startup`).
-
-The CLI command is ``stage timestamp <object_id> [--expect content]``
-subcommand under ``stage_app``. Tests inject a ``FakeSimpleProof``
-via ``runner.obj["sp_client_factory"]`` (see ``conftest.py::runner``
-for the auto-attach mechanism).
-"""
-
 import hashlib
 import json
 import shutil
@@ -54,11 +27,6 @@ from ocfl_lib import (
     get_layout,
     scan_dir,
 )
-
-# --------------------------------------------------------------------------- #
-# Config + path helpers
-# --------------------------------------------------------------------------- #
-
 
 _SP_OK = """\
 [simpleproof]
@@ -95,23 +63,11 @@ def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
 
 
 def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
-    """Inject *fake* via ``runner.obj["sp_client_factory"]``.
-
-    The runner fixture (conftest) auto-passes ``runner.obj`` as the
-    typer-context obj on every ``runner.invoke``; service consumes the
-    factory on its kwargs.
-    """
     runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
-
-
-# --------------------------------------------------------------------------- #
-# Storage-root fixtures (SHA-256 — `--ots` requires it)
-# --------------------------------------------------------------------------- #
 
 
 @pytest.fixture
 def empty_sha256_root(tmp_path: Path) -> Path:
-    """Initialized storage root with no objects."""
     location = tmp_path / "root"
     location.mkdir()
     fs = LocalFS(location)
@@ -122,11 +78,6 @@ def empty_sha256_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def sha256_root_with_v1(tmp_path: Path) -> Path:
-    """Storage root with `obj:test` committed at v1 using sha256.
-
-    Used for the carry-forward subtraction case: a digest already in the
-    committed object's manifest must NOT be resubmitted by `timestamp content`.
-    """
     location = tmp_path / "root"
     location.mkdir()
     fs = LocalFS(location)
@@ -142,11 +93,6 @@ def sha256_root_with_v1(tmp_path: Path) -> Path:
     return location
 
 
-# --------------------------------------------------------------------------- #
-# Layer-2: full submit flow
-# --------------------------------------------------------------------------- #
-
-
 class TestFullSubmitFlow:
     def test_basic_submit_advances_to_content_pending(
         self,
@@ -156,7 +102,6 @@ class TestFullSubmitFlow:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Fresh OTS staging + stage add → timestamp content submits, phase=CP."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -205,15 +150,12 @@ class TestFullSubmitFlow:
         assert state.phase is Phase.CONTENT_PENDING
         d1 = hashlib.sha256(b"alpha").hexdigest()
         d2 = hashlib.sha256(b"bravo").hexdigest()
-        # pending_digests is a durable target snapshot; extended with submission set.
         assert set(state.pending_digests) == {d1, d2}
-        # Exactly one Submission entry, finalized as `submitted`.
         assert len(state.submissions) == 1
         sub = state.submissions[0]
         assert sub.status == "submitted"
         assert set(sub.digests) == {d1, d2}
         assert sub.attempts >= 1
-        # Fake SP recorded one chunked POST with both digests + correct category.
         assert len(sp_fake._submissions) == 1
         recorded = sp_fake._submissions[0]
         assert set(recorded.digests) == {d1, d2}
@@ -240,7 +182,6 @@ class TestFullSubmitFlow:
         )
         assert r.exit_code == 0, r.output
 
-        # Re-add carry-forward content + one new file.
         carry = tmp_path / "carry.txt"
         carry.write_text("carry-over")
         new = tmp_path / "new.txt"
@@ -281,11 +222,6 @@ class TestFullSubmitFlow:
         assert sp_fake._submissions[0].digests == both
 
 
-# --------------------------------------------------------------------------- #
-# Layer-2: delete/rename-only no-op
-# --------------------------------------------------------------------------- #
-
-
 class TestDeleteRenameOnlyNoop:
     def test_renamed_plain_object_file_still_needs_a_proof(
         self,
@@ -295,9 +231,6 @@ class TestDeleteRenameOnlyNoop:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Stage state ⊆ manifest of a *plain* object: the object proves
-        nothing, so the digest is submitted (the no-op advance applies only
-        when every digest already has a proof)."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -308,8 +241,6 @@ class TestDeleteRenameOnlyNoop:
         )
         assert r.exit_code == 0, r.output
 
-        # Re-add the same carry-forward content under a NEW logical path:
-        # the stage state's only digest is already in the committed manifest.
         carry = tmp_path / "carry.txt"
         carry.write_text("carry-over")
         r = runner.invoke(
@@ -353,11 +284,6 @@ class TestDeleteRenameOnlyNoop:
         assert [s.digests for s in sp_fake._submissions] == [(carry_d,)]
 
 
-# --------------------------------------------------------------------------- #
-# Layer-2: chunking boundary (999 / 1000 / 1001)
-# --------------------------------------------------------------------------- #
-
-
 def _seed_sha256(seed: str) -> str:
     return hashlib.sha256(seed.encode()).hexdigest()
 
@@ -367,13 +293,6 @@ def _seed_many(n: int) -> list[str]:
 
 
 def _seed_inventory_with_digests(staging_dir: Path, digests: list[str]) -> None:
-    """Rewrite the staged inventory's head state to reference exactly *digests*.
-
-    Builds N synthetic logical paths (`f"path/{i}.bin"`) keyed off the digest
-    list, in stage state and manifest. Bypasses real ingest (no actual file
-    bytes) — the candidate-digest computation in `timestamp content` reads
-    only the inventory state and the prior committed manifest.
-    """
     inv_path = staging_dir / "inventory.json"
     inv = json.loads(inv_path.read_bytes())
     head = inv["head"]
@@ -446,11 +365,6 @@ class TestChunkingBoundary:
         assert set(state.pending_digests) == set(digests)
 
 
-# --------------------------------------------------------------------------- #
-# Service primitives for batch-size-1 content submission
-# --------------------------------------------------------------------------- #
-
-
 class TestContentSubmissionPrimitives:
     def test_prepare_persists_intent_before_submit_posts(
         self,
@@ -521,19 +435,7 @@ class TestContentSubmissionPrimitives:
         assert state.submissions[0].status == "submitted"
 
 
-# --------------------------------------------------------------------------- #
-# Layer-2: crash-safe resubmit + double-submit benign
-# --------------------------------------------------------------------------- #
-
-
 def _seed_submitting_intent(staging_dir: Path, digests: tuple[str, ...]) -> None:
-    """Persist ots.json with phase=content-pending and a `submitting` entry.
-
-    Simulates a process that crashed after writing the intent but before
-    the SP POST returned (or before persisting `submitted`). On the next
-    `stage timestamp content`, the resubmit-on-startup contract requires
-    the entry to be POSTed again.
-    """
     state = load_ots(staging_dir)
     state = replace(
         state,
@@ -561,7 +463,6 @@ class TestCrashSafeResubmit:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """`submitting` entry persisted across crash → next run resubmits."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -590,8 +491,6 @@ class TestCrashSafeResubmit:
         )
         assert r.exit_code == 0, r.output
 
-        # SP got a fresh submission for the resubmit (double-submit benign per
-        # `crash_safe_submit_protocol.on_startup`).
         assert len(sp_fake._submissions) >= 1
         recorded_digests = {d for s in sp_fake._submissions for d in s.digests}
         assert recorded_digests == set(digests)
@@ -613,8 +512,6 @@ class TestDoubleSubmitBenign:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Two `submitting` intents (e.g., crashed twice) → both resubmit;
-        FakeSimpleProof records duplicates without failure."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
 
@@ -629,7 +526,6 @@ class TestDoubleSubmitBenign:
         digests = tuple(_seed_many(2))
         _seed_inventory_with_digests(sd, list(digests))
 
-        # Round 1: seed + run.
         _seed_submitting_intent(sd, digests)
         r = runner.invoke(
             app,
@@ -646,7 +542,6 @@ class TestDoubleSubmitBenign:
         round_1_count = len(sp_fake._submissions)
         assert round_1_count >= 1
 
-        # Round 2: simulate a SECOND crash → re-seed `submitting` → run again.
         _seed_submitting_intent(sd, digests)
         r = runner.invoke(
             app,
@@ -661,20 +556,13 @@ class TestDoubleSubmitBenign:
         )
         assert r.exit_code == 0, r.output
 
-        # SP recorded a strictly larger number of submissions — duplicates ok.
         assert len(sp_fake._submissions) > round_1_count
-        # Every recorded SP submission carries exactly the same digests.
         for s in sp_fake._submissions:
             assert set(s.digests) == set(digests)
 
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
         assert all(s.status != "submitting" for s in state.submissions)
-
-
-# --------------------------------------------------------------------------- #
-# Layer-2: a file the OTS object already proves keeps its committed proof
-# --------------------------------------------------------------------------- #
 
 
 class TestCarriedProofReuse:

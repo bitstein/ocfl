@@ -1,5 +1,3 @@
-"""CLI tests for local-only batch timestamping commands."""
-
 import fcntl
 import hashlib
 import json
@@ -81,7 +79,6 @@ zmq_endpoint = "tcp://127.0.0.1:28332"
 
 
 def _inv_submission(digest: str, batch_id: str, record_id: str | None) -> Submission:
-    """The inventory's batch submission: batch fields live on the Submission."""
     return Submission(
         submitted_at="2026-05-12T10:00:00+00:00",
         digests=(digest,),
@@ -4027,11 +4024,6 @@ def test_batch_rm_waits_for_a_running_driver(
 
     assert result.exit_code == 4, result.output
     assert batch_file_path(staging, batch_id).is_file()
-
-
-# --------------------------------------------------------------------------- #
-# Batch ids, unstaged rows and --from (roadmap §7.4, issues 8, 10, 11)
-# --------------------------------------------------------------------------- #
 
 
 def _empty_batch(staging: Path, storage_root: Path, batch_id: str, **kw) -> None:
