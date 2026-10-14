@@ -960,7 +960,7 @@ def _names(node: ast.AST) -> set[str]:
 
 class TestCommitRefusesUnproved:
     def test_extension_checked_before_plan_is_written(self):
-        names = _names(_func(LIB_SRC / "_commit.py", "check_base"))
+        names = _names(_func(LIB_SRC / "_commit.py", "require_base_unchanged"))
         assert {"read_config", "check_extension"} <= names
 
     def test_refusals_name_the_spec_codes(self):
@@ -1026,11 +1026,11 @@ class TestStartTimestamping:
 class TestCommitChecksContentProofs:
     def test_content_proofs_checked_before_plan_on_both_backends(self):
         assert "_check_content_proofs" in _names(
-            _func(LIB_SRC / "_commit.py", "check_base")
+            _func(LIB_SRC / "_commit.py", "require_base_unchanged")
         )
         for fn in ("_commit_local", "_commit_s3"):
             body = ast.unparse(_func(LIB_SRC / "_commit.py", fn))
-            assert "check_base(fsys, t, raw, content)" in body, fn
+            assert "require_base_unchanged(fsys, t, raw, content)" in body, fn
 
     def test_refusals_name_the_spec_codes(self):
         body = ast.unparse(_func(LIB_SRC / "_commit.py", "_check_content_proofs"))

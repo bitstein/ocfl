@@ -17,7 +17,6 @@ import msgspec
 from ocfl_lib import ots
 from ocfl_lib._commit import (
     Target,
-    check_base,
     discard,
     fill_claim,
     finish,
@@ -27,6 +26,7 @@ from ocfl_lib._commit import (
     prune_parents,
     read_or_none,
     remove_if_exists,
+    require_base_unchanged,
     revert_claimed,
     tidy_work_dir,
     unstart_extension,
@@ -239,7 +239,7 @@ def _base(ctx: _Ctx, raw: bytes | None) -> StoredInventory | None:
     alg = DigestAlgorithm.from_ocfl_name(plan.base_digest_algorithm)
     base = StoredInventory.from_bytes(raw, alg) if raw is not None else None
     if base is None or base.digest != plan.base_digest:
-        check_base(ctx.fsys, ctx.target, raw)  # raises StaleHeadError
+        require_base_unchanged(ctx.fsys, ctx.target, raw)
     return base
 
 

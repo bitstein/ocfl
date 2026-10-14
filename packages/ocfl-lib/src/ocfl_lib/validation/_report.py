@@ -14,6 +14,8 @@ from ocfl_lib.validation._codes import get_code
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
+    from ocfl_lib.validation._codes import ValidationCode
+
 
 class Severity(enum.StrEnum):
     """Spec errors decide validity. Warnings and infos never do."""
@@ -122,12 +124,13 @@ class FindingCollector:
     def __init__(self, path: str = "", object_id: str | None = None) -> None:
         self.path = path
         self.object_id = object_id
-        self._own: list[tuple[str, Severity, dict[str, str]]] = []
+        self._own: list[tuple[ValidationCode, Severity, dict[str, str]]] = []
         self._other: list[Finding] = []
 
     def _add(self, code: str, severity: Severity, params: dict[str, object]) -> None:
-        get_code(code)  # unknown codes fail fast
-        self._own.append((code, severity, {k: str(v) for k, v in params.items()}))
+        registered = get_code(code)
+        detail = {k: str(v) for k, v in params.items()}
+        self._own.append((registered, severity, detail))
 
     def error(self, code: str, **params: object) -> None:
         self._add(code, Severity.ERROR, params)
@@ -146,7 +149,7 @@ class FindingCollector:
     def findings(self) -> tuple[Finding, ...]:
         own = (
             Finding(
-                code=code,
+                code=code.code,
                 severity=severity,
                 object_id=self.object_id,
                 path=self.path,

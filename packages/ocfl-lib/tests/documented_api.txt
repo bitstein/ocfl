@@ -32,6 +32,7 @@ Object.diff_versions
 Object.exists
 Object.fs
 Object.inventory
+Object.load
 Object.open_logical_path
 Object.path
 Object.version_info

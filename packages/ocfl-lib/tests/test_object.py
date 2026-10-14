@@ -70,6 +70,16 @@ class TestObjectReadExisting:
         inv2 = obj.inventory
         assert inv1 is inv2
 
+    def test_load_reads_inventory_up_front(self, good_objects_1_1: Path):
+        fsys = LocalFS(good_objects_1_1 / "minimal_one_version_one_file")
+        assert Object.load(fsys, "").id == "ark:123/abc"
+
+    def test_load_fails_where_constructor_defers(self, tmp_path: Path):
+        fsys = LocalFS(tmp_path)
+        Object(fsys, "missing")
+        with pytest.raises(FileNotFoundError):
+            Object.load(fsys, "missing")
+
     def test_versions_single(self, good_objects_1_1: Path):
         obj_path = good_objects_1_1 / "minimal_one_version_one_file"
         fsys = LocalFS(obj_path)

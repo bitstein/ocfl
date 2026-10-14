@@ -133,7 +133,7 @@ def _commit_local(t: Target, fsys: ClaimFS, content: ContentSource) -> None:
             raise RecoveryRequiredError(_unfinished(t))
         try:
             raw = read_or_none(fsys, t.obj(INVENTORY_FILENAME))
-            base = check_base(fsys, t, raw, content)
+            base = require_base_unchanged(fsys, t, raw, content)
         except Exception:
             tidy_work_dir(fsys, t.root_path, t.wd)  # the lock made it (W016)
             raise
@@ -220,7 +220,7 @@ def _commit_s3(t: Target, fsys: ConditionalFS, content: ContentSource) -> None:
         raw, tag = fsys.read_tagged(t.obj(INVENTORY_FILENAME))
     except FileNotFoundError:
         raw, tag = None, None
-    base = check_base(fsys, t, raw, content)
+    base = require_base_unchanged(fsys, t, raw, content)
     fsys.check_conditional_writes(join_path(t.wd, "probe"))
     try:
         fsys.write_new(t.plan_file, t.plan.to_json())
@@ -266,7 +266,7 @@ def _write_missing(t: Target, files: dict[str, bytes]) -> None:
             fs_utils.write_bytes(t.fsys, path, data)
 
 
-def check_base(
+def require_base_unchanged(
     fsys: FS, t: Target, raw: bytes | None, content: ContentSource | None = None
 ) -> StoredInventory | None:
     """Check the object is still at the plan's base. Return the base inventory.

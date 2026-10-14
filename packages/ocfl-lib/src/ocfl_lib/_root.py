@@ -298,13 +298,11 @@ class StorageRoot:
         if not obj_paths:
             return
 
-        def _load(path: str) -> Object:
-            obj = Object(self._fsys, path)
-            # Force inventory load to parallelize I/O
-            _ = obj.inventory
-            return obj
-
-        yield from bounded_map(_load, obj_paths, max_workers=max_workers)
+        yield from bounded_map(
+            lambda path: Object.load(self._fsys, path),
+            obj_paths,
+            max_workers=max_workers,
+        )
 
 
 class _NoContent:

@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, BinaryIO, Literal
+from typing import TYPE_CHECKING, BinaryIO, Literal, Self
 
 from ocfl_lib._digest import DigestAlgorithm
 from ocfl_lib._digest_map import PathMap, to_path_map
@@ -45,6 +45,13 @@ class Object:
         self._fsys = fsys
         self._path = path
         self._stored_inv: StoredInventory | None = None
+
+    @classmethod
+    def load(cls, fsys: FS, path: str) -> Self:
+        """Object at `path` with its root inventory already read."""
+        obj = cls(fsys, path)
+        obj._stored_inv = obj._load_inventory(path)
+        return obj
 
     @property
     def fs(self) -> FS:
