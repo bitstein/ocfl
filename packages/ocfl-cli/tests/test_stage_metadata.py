@@ -4,11 +4,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from click.testing import Result
 from fakes.locks import is_flocked, lock_runtime
 from msgspec.structs import replace
 from runner_helpers import runner_obj
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from ocfl_cli.main import app
 from ocfl_cli.model.metadata import StagedMetadata, StagedUser

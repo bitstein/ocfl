@@ -5,7 +5,6 @@ import inspect
 import logging
 import re
 
-import click
 import pytest
 import typer
 from rich.text import Text
@@ -54,14 +53,13 @@ def test_validate_help_names_the_bitcoin_section(runner: CliRunner) -> None:
     assert "auto (chain when [bitcoin] is configured" in unboxed
 
 
-def _help_strings(cmd: click.Command, path: str):
+def _help_strings(cmd, path: str):
     yield path, cmd.help
     yield path, cmd.epilog
     for param in cmd.params:
         yield f"{path} {param.name}", getattr(param, "help", None)
-    if isinstance(cmd, click.Group):
-        for name, sub in cmd.commands.items():
-            yield from _help_strings(sub, f"{path} {name}")
+    for name, sub in getattr(cmd, "commands", {}).items():
+        yield from _help_strings(sub, f"{path} {name}")
 
 
 @pytest.mark.parametrize(

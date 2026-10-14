@@ -2,15 +2,15 @@
 
 from pathlib import Path
 
-import click
 import pytest
 import typer
+from typer.core import TyperCommand
 
 from ocfl_cli.stage._app import resolve_root_path
 
 
 def _ctx(root: str | None) -> typer.Context:
-    return typer.Context(click.Command("t"), obj={"root": root})
+    return typer.Context(TyperCommand("t"), obj={"root": root})
 
 
 class TestResolveRootPath:

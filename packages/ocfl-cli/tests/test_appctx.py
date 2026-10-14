@@ -2,10 +2,10 @@
 
 from typing import cast
 
-import click
 import pytest
 import typer
 from fakes import InMemoryHashBlockStream
+from typer.core import TyperCommand
 
 from ocfl_cli._appctx import (
     AppCtxError,
@@ -34,7 +34,7 @@ def test_app_ctx_builds_typed_view_from_ctx_obj() -> None:
     cfg = Config(archives={"main": archive})
     out, err = make_console(), make_console(stderr=True)
     ctx = typer.Context(
-        click.Command("probe"),
+        TyperCommand("probe"),
         obj={
             "root": "/archive",
             "config": cfg,
@@ -76,7 +76,7 @@ def test_app_ctx_builds_typed_view_from_ctx_obj() -> None:
 
 
 def test_app_ctx_reports_missing_required_keys() -> None:
-    ctx = typer.Context(click.Command("probe"), obj={})
+    ctx = typer.Context(TyperCommand("probe"), obj={})
 
     with pytest.raises(AppCtxError) as exc_info:
         app_ctx(ctx)
@@ -85,7 +85,7 @@ def test_app_ctx_reports_missing_required_keys() -> None:
 
 
 def test_app_ctx_reports_malformed_ctx_obj() -> None:
-    ctx = typer.Context(click.Command("probe"), obj=object())
+    ctx = typer.Context(TyperCommand("probe"), obj=object())
 
     with pytest.raises(AppCtxError) as exc_info:
         app_ctx(ctx)
@@ -95,7 +95,7 @@ def test_app_ctx_reports_malformed_ctx_obj() -> None:
 
 def test_single_value_accessors_only_require_their_key() -> None:
     ctx = typer.Context(
-        click.Command("probe"),
+        TyperCommand("probe"),
         obj={"root": "/archive", "json": True, "verbose": True},
     )
 
@@ -105,12 +105,10 @@ def test_single_value_accessors_only_require_their_key() -> None:
 
 
 def test_command_path_strips_click_root_program_name() -> None:
-    root_ctx = typer.Context(click.Command("ocfl"), info_name="ocfl")
-    stage_ctx = typer.Context(
-        click.Command("stage"), info_name="stage", parent=root_ctx
-    )
+    root_ctx = typer.Context(TyperCommand("ocfl"), info_name="ocfl")
+    stage_ctx = typer.Context(TyperCommand("stage"), info_name="stage", parent=root_ctx)
     content_ctx = typer.Context(
-        click.Command("content"), info_name="content", parent=stage_ctx
+        TyperCommand("content"), info_name="content", parent=stage_ctx
     )
 
     assert content_ctx.command_path == "ocfl stage content"
@@ -136,7 +134,7 @@ def test_install_app_ctx_caches_and_closes_clients_per_invocation() -> None:
         created.append(client)
         return client
 
-    ctx = typer.Context(click.Command("probe"), obj={})
+    ctx = typer.Context(TyperCommand("probe"), obj={})
     install_app_ctx(
         ctx,
         root="/archive",
@@ -173,7 +171,7 @@ def test_install_app_ctx_accepts_fakes_without_close_method() -> None:
     def factory(_cfg: Config) -> object:
         return client
 
-    ctx = typer.Context(click.Command("probe"), obj={})
+    ctx = typer.Context(TyperCommand("probe"), obj={})
     install_app_ctx(
         ctx,
         root=None,
@@ -207,7 +205,7 @@ def test_install_app_ctx_reuses_injected_factory_source_across_invocations() -> 
         return client
 
     for _ in range(2):
-        ctx = typer.Context(click.Command("probe"), obj=shared_obj)
+        ctx = typer.Context(TyperCommand("probe"), obj=shared_obj)
         install_app_ctx(
             ctx,
             root=None,

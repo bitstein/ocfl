@@ -1,9 +1,9 @@
 """Typed preflight helpers for stage commands."""
 
-import click
 import pytest
 import typer
 from pydantic import SecretStr
+from typer.core import TyperCommand
 
 from ocfl_cli._exit import error_class_of
 from ocfl_cli.config import BitcoinConfig, Config, SimpleProofConfig
@@ -29,10 +29,10 @@ def _ctx(
     obj: dict[str, object], *, command_parts: tuple[str, ...] = ("probe",)
 ) -> typer.Context:
     ctx: typer.Context | None = typer.Context(
-        click.Command("ocfl"), info_name="ocfl", obj=obj
+        TyperCommand("ocfl"), info_name="ocfl", obj=obj
     )
     for part in command_parts:
-        ctx = typer.Context(click.Command(part), info_name=part, parent=ctx, obj=obj)
+        ctx = typer.Context(TyperCommand(part), info_name=part, parent=ctx, obj=obj)
     return ctx
 
 

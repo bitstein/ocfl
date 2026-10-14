@@ -18,9 +18,10 @@ from ocfl_cli.exit_codes import exit_code_for_class
 from ocfl_lib import ErrorClass, OcflError
 
 if TYPE_CHECKING:
-    import click
+    # Typer vendors Click and exports no public alias for its base Context.
     from rich.console import Console
     from rich.text import Text
+    from typer._click import Context
 
 HANDLED = (OcflError, CLIError, OSError, KeyboardInterrupt)
 
@@ -83,7 +84,7 @@ def handle_error(
 class OcflGroup(TyperGroup):
     """Root command group that routes every error through `handle_error`."""
 
-    def invoke(self, ctx: click.Context) -> Any:
+    def invoke(self, ctx: Context) -> Any:
         try:
             return super().invoke(ctx)
         except HANDLED as exc:
