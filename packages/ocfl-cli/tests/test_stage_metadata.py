@@ -4,8 +4,8 @@ from typing import Any
 import pytest
 from fakes.locks import is_flocked, lock_runtime
 from msgspec.structs import replace
-from runner_helpers import runner_obj
-from typer.testing import CliRunner, Result
+from runner_helpers import ObjRunner
+from typer.testing import Result
 
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
@@ -16,7 +16,7 @@ from ocfl_cli.store.ots_state import load_ots, plan_path, save_ots, with_lock
 from ocfl_cli.store.staging import StagingStore
 
 
-def _invoke(runner: CliRunner, storage_root: Path, staging: Path, *args: str) -> Result:
+def _invoke(runner: ObjRunner, storage_root: Path, staging: Path, *args: str) -> Result:
     return runner.invoke(
         app,
         ["--root", str(storage_root), "stage", "--staging-root", str(staging), *args],
@@ -47,7 +47,7 @@ zmq_endpoint = "tcp://127.0.0.1:28332"
 
 class TestStageNewMetadata:
     def test_new_accepts_initial_metadata(
-        self, runner: CliRunner, storage_root: Path, tmp_path: Path
+        self, runner: ObjRunner, storage_root: Path, tmp_path: Path
     ) -> None:
         staging = tmp_path / "staging"
 
@@ -73,7 +73,7 @@ class TestStageNewMetadata:
 
     def test_new_ots_accepts_initial_metadata(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -112,7 +112,7 @@ class TestStageNewMetadata:
     )
     def test_new_rejects_empty_metadata_value_without_creating_staging(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         args: tuple[str, ...],
@@ -137,7 +137,7 @@ class TestStageNewMetadata:
 
 class TestStageMetadata:
     def test_metadata_updates_only_supplied_fields(
-        self, runner: CliRunner, storage_root: Path, tmp_path: Path
+        self, runner: ObjRunner, storage_root: Path, tmp_path: Path
     ) -> None:
         staging = tmp_path / "staging"
         assert (
@@ -174,7 +174,7 @@ class TestStageMetadata:
         )
 
     def test_metadata_clears_fields(
-        self, runner: CliRunner, storage_root: Path, tmp_path: Path
+        self, runner: ObjRunner, storage_root: Path, tmp_path: Path
     ) -> None:
         staging = tmp_path / "staging"
         assert (
@@ -210,7 +210,7 @@ class TestStageMetadata:
         )
 
     def test_clear_name_also_clears_address_unless_address_is_set(
-        self, runner: CliRunner, storage_root: Path, tmp_path: Path
+        self, runner: ObjRunner, storage_root: Path, tmp_path: Path
     ) -> None:
         staging = tmp_path / "staging"
         assert (
@@ -266,7 +266,7 @@ class TestStageMetadata:
     )
     def test_metadata_rejects_set_and_clear_conflict(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         args: tuple[str, ...],
@@ -283,7 +283,7 @@ class TestStageMetadata:
         assert "incompatible" in result.output.lower()
 
     def test_metadata_rejects_empty_value(
-        self, runner: CliRunner, storage_root: Path, tmp_path: Path
+        self, runner: ObjRunner, storage_root: Path, tmp_path: Path
     ) -> None:
         staging = tmp_path / "staging"
         assert (
@@ -305,7 +305,7 @@ class TestStageMetadata:
         assert "name" in result.output.lower()
 
     def test_metadata_updates_staging_without_metadata_file(
-        self, runner: CliRunner, storage_root: Path, tmp_path: Path
+        self, runner: ObjRunner, storage_root: Path, tmp_path: Path
     ) -> None:
         staging = tmp_path / "staging"
         assert (
@@ -333,7 +333,7 @@ class TestStageMetadata:
 
     def test_metadata_command_holds_staging_lock_during_update(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -371,7 +371,7 @@ class TestStageMetadata:
 
     def test_metadata_command_reports_lock_timeout(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -383,7 +383,7 @@ class TestStageMetadata:
         )
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
-        runner_obj(runner)["lock_timeout"] = 0.01
+        runner.obj["lock_timeout"] = 0.01
 
         with with_lock(staging_dir, lock_runtime(1)):
             result = _invoke(
@@ -401,7 +401,7 @@ class TestStageMetadata:
 
     def test_metadata_usage_error_precedes_lock_timeout(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -413,7 +413,7 @@ class TestStageMetadata:
         )
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
-        runner_obj(runner)["lock_timeout"] = 0.01
+        runner.obj["lock_timeout"] = 0.01
 
         with with_lock(staging_dir, lock_runtime(1)):
             result = _invoke(
@@ -435,7 +435,7 @@ class TestStageMetadata:
     )
     def test_metadata_edit_invalidates_inventory_timestamp_state(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -531,7 +531,7 @@ class TestStageMetadata:
 
     def test_metadata_edit_invalidates_ots_state_before_metadata_write(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,

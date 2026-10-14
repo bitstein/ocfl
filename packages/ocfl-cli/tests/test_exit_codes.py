@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 import typer
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner
 
 from ocfl_cli import _exit
 from ocfl_cli._exit import error_class_of, error_code_of, handle_error
@@ -124,7 +124,7 @@ def test_exit_module_documents_the_json_error_shape(capsys) -> None:
 
 
 def test_root_config_error_exits_6(
-    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runner: ObjRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = tmp_path / "config.toml"
     config.write_text("not [valid")
@@ -137,7 +137,7 @@ def test_root_config_error_exits_6(
 
 
 def test_root_config_error_json(
-    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runner: ObjRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = tmp_path / "config.toml"
     config.write_text("not [valid")
@@ -152,7 +152,7 @@ def test_root_config_error_json(
     assert str(config) in error["message"]
 
 
-def test_missing_object_json_error_on_stderr(runner: CliRunner, tmp_path: Path) -> None:
+def test_missing_object_json_error_on_stderr(runner: ObjRunner, tmp_path: Path) -> None:
     from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 
     fs = LocalFS(tmp_path)

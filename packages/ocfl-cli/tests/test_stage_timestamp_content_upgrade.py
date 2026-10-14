@@ -22,8 +22,7 @@ from ots_helpers import (
     replace_attested_block,
     write_config,
 )
-from runner_helpers import stage_args
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner, stage_args
 
 from ocfl_cli._style import make_console
 from ocfl_cli.errors import AttestationMismatchError
@@ -255,7 +254,7 @@ class TestProgressRendering:
 class TestMidflightProgressSnapshots:
     def test_snapshot_persists_attestations_on_verify_job_only(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -300,7 +299,7 @@ class TestMidflightProgressSnapshots:
 
     def test_snapshot_rejects_foreign_digest(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -327,7 +326,7 @@ class TestMidflightProgressSnapshots:
 
     def test_unconfirmed_result_does_not_count_as_anchored(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -353,7 +352,7 @@ class TestMidflightProgressSnapshots:
 
     def test_updated_at_none_refetches_snapshot_each_pass(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -400,7 +399,7 @@ class TestMidflightProgressSnapshots:
 
     def test_snapshot_rebuilds_attestation_dict_identity(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -439,7 +438,7 @@ class TestMidflightProgressSnapshots:
 
     def test_resubmitted_job_starts_with_empty_snapshots(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -504,7 +503,7 @@ class TestMidflightProgressSnapshots:
 
     def test_verified_ingest_preserves_attestation_snapshots(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -568,7 +567,7 @@ class TestMidflightProgressSnapshots:
 class TestUpgradeHappyPath:
     def test_single_digest_at_3_confs_advances_to_content_upgraded(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -636,7 +635,7 @@ class TestUpgradeHappyPath:
 
     def test_multi_digest_partial_pending_does_not_advance(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -706,7 +705,7 @@ class TestThreeConfGate:
     )
     def test_advance_only_at_or_above_min_confirmations(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -764,7 +763,7 @@ class TestThreeConfGate:
 class TestPendingHeld:
     def test_pending_attestation_held_then_resolves_on_next_pass(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -834,7 +833,7 @@ class TestPendingHeld:
 class TestReorgShallow:
     def test_reorg_of_attested_block_within_n_marks_unverified(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -904,7 +903,7 @@ class TestReorgShallow:
 class TestReorgDeep:
     def test_reorg_deeper_than_n_halts_with_exit_5(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -950,7 +949,7 @@ class TestReorgDeep:
 class TestMerkleMismatch:
     def test_wrong_merkle_root_halts_with_exit_5(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -998,7 +997,7 @@ class TestMerkleMismatch:
 class TestReorgMerkleMismatch:
     def test_reorg_replaces_block_at_sufficient_confs_resets_and_resubmits(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -1076,7 +1075,7 @@ class TestReorgMerkleMismatch:
 class TestContentUpgradeExpired:
     def test_expired_content_verify_job_triggers_fresh_batch(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -1131,7 +1130,7 @@ class TestContentUpgradeExpired:
 class TestConfirmationsBeforeMerkleCli:
     def test_shallow_wrong_merkle_waits_but_trusted_depth_halts(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -1212,7 +1211,7 @@ class TestCrashRecovery:
     )
     def test_fault_at_boundary_converges_on_restart(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -1361,7 +1360,7 @@ def _uninstall_crash_fault(monkeypatch: pytest.MonkeyPatch) -> None:
 class TestOrphanGuard:
     def test_mid_flight_stage_add_blocks_phase_advance(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -1428,7 +1427,7 @@ class TestOrphanGuard:
 class TestPhaseAdvanceInvariant:
     def test_advance_when_all_pending_verified_and_no_unpending_content(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -1471,7 +1470,7 @@ class TestPhaseAdvanceInvariant:
 
     def test_no_advance_while_a_pending_digest_is_unverified(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -1515,7 +1514,7 @@ class TestPhaseAdvanceInvariant:
 
     def test_no_advance_while_staged_content_digest_is_not_pending(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -1563,7 +1562,7 @@ class TestPhaseAdvanceInvariant:
 class TestReverifyIdempotent:
     def test_second_upgrade_pass_with_no_changes_is_noop(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -1623,7 +1622,7 @@ class TestReverifyIdempotent:
 class TestRegtestEndToEnd:
     def test_real_rpc_real_attestation_with_invalidateblock_reorg(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         bitcoind_regtest,

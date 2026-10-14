@@ -4,8 +4,7 @@ import pytest
 import typer
 from fakes import FakeSimpleProof
 from ots_helpers import write_config
-from runner_helpers import stage_args
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner, stage_args
 
 from ocfl_cli._appctx import app_ctx
 from ocfl_cli.exit_codes import ExitCode
@@ -16,7 +15,7 @@ from ocfl_cli.store.staging import StagingStore
 
 
 def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -68,7 +67,7 @@ def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
 
 
 def test_default_factories_registered_when_obj_omits_them(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

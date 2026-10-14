@@ -12,8 +12,7 @@ from ots_helpers import (
     write_config,
 )
 from pydantic import SecretStr
-from runner_helpers import stage_args, staging_dir
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner, stage_args, staging_dir
 
 from ocfl_cli.config import Config
 from ocfl_cli.config.ots import SimpleProofConfig
@@ -55,7 +54,7 @@ def sha256_root_with_v1(tmp_path: Path) -> Path:
 class TestFullSubmitFlow:
     def test_basic_submit_advances_to_content_pending(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -122,7 +121,7 @@ class TestFullSubmitFlow:
 
     def test_plain_object_digests_are_submitted_for_first_covered_version(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         sha256_root_with_v1: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -184,7 +183,7 @@ class TestFullSubmitFlow:
 class TestDeleteRenameOnlyNoop:
     def test_renamed_plain_object_file_still_needs_a_proof(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         sha256_root_with_v1: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -274,7 +273,7 @@ class TestChunkingBoundary:
     )
     def test_command_splits_submit_hashes_calls_at_1000(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -320,7 +319,7 @@ class TestChunkingBoundary:
 class TestContentSubmissionPrimitives:
     def test_prepare_persists_intent_before_submit_posts(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -409,7 +408,7 @@ def _seed_submitting_intent(staging_dir: Path, digests: tuple[str, ...]) -> None
 class TestCrashSafeResubmit:
     def test_submitting_intent_is_resubmitted_on_next_run(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -457,7 +456,7 @@ class TestCrashSafeResubmit:
 class TestDoubleSubmitBenign:
     def test_double_submit_does_not_fail_and_records_duplicate(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -519,7 +518,7 @@ class TestDoubleSubmitBenign:
 class TestCarriedProofReuse:
     def test_re_added_file_reuses_the_objects_committed_proof(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,

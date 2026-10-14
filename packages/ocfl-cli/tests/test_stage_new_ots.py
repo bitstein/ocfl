@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 from ots_helpers import BTC_OK, CATEGORY_ID, SP_OK, write_config
+from runner_helpers import ObjRunner
 from seed_root import SEED_ID
-from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
@@ -46,7 +46,7 @@ def _strip_paths(text: str) -> str:
 class TestDigestForcing:
     def test_ots_with_sha512_rejected(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -69,7 +69,7 @@ class TestDigestForcing:
     @pytest.mark.parametrize("alg", ["sha512", "blake2b-512"])
     def test_ots_with_non_sha256_rejected(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -90,7 +90,7 @@ class TestDigestForcing:
 
     def test_ots_with_sha256_explicit_ok(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -108,7 +108,7 @@ class TestDigestForcing:
 
     def test_ots_existing_sha512_object_rejected(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -130,7 +130,7 @@ class TestDigestForcing:
 class TestConfigValidation:
     def test_missing_simpleproof_rejected(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -150,7 +150,7 @@ class TestConfigValidation:
 
     def test_missing_bitcoin_rejected(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -170,7 +170,7 @@ class TestConfigValidation:
 
     def test_both_sections_missing_rejected(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -192,7 +192,7 @@ class TestConfigValidation:
 class TestInitialOtsJson:
     def test_ots_json_initialized(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -224,7 +224,7 @@ class TestInitialOtsJson:
 
     def test_staging_inventory_uses_sha256(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -243,7 +243,7 @@ class TestInitialOtsJson:
 
     def test_category_id_picked_up_from_config(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -264,7 +264,7 @@ class TestInitialOtsJson:
 
     def test_extension_config_not_written_at_stage_new(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -284,7 +284,7 @@ class TestInitialOtsJson:
 class TestDoubleOtsStaging:
     def test_second_ots_invocation_rejected(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -305,7 +305,7 @@ class TestDoubleOtsStaging:
 class TestNonOtsRegression:
     def test_no_ots_json_without_flag(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -335,7 +335,7 @@ class TestNonOtsRegression:
     @pytest.mark.usefixtures("_isolate_user_config")
     def test_no_ots_succeeds_with_no_config_file(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
     ) -> None:

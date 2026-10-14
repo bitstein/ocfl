@@ -5,8 +5,7 @@ from pathlib import Path
 import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof
 from msgspec.structs import replace
-from runner_helpers import runner_obj, stage_args, staging_dir
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner, stage_args, staging_dir
 
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
@@ -55,12 +54,12 @@ def write_config(
     return cfg
 
 
-def inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
-    runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
+def inject_fake_sp(runner: ObjRunner, fake: FakeSimpleProof) -> None:
+    runner.obj["sp_client_factory"] = lambda cfg: fake
 
 
-def inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
-    runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
+def inject_fake_btc(runner: ObjRunner, fake: FakeBitcoinRPC) -> None:
+    runner.obj["btc_rpc_factory"] = lambda cfg: fake
 
 
 def _grow_chain_to(rpc: FakeBitcoinRPC, height: int) -> None:
@@ -118,7 +117,7 @@ def ots_for(digest_hex: str, *, block_height: int = DIGEST_BLOCK_HEIGHT) -> byte
 
 
 def new_ots_staging(
-    runner: CliRunner,
+    runner: ObjRunner,
     root: Path,
     staging: Path,
     object_id: str,
@@ -142,7 +141,7 @@ def new_ots_staging(
 
 
 def setup_at_inventory_pending(
-    runner: CliRunner,
+    runner: ObjRunner,
     root: Path,
     staging: Path,
     object_id: str,
@@ -226,7 +225,7 @@ def seed_inv_completed_verify_job(
 
 
 def setup_at_inventory_upgraded(
-    runner: CliRunner,
+    runner: ObjRunner,
     root: Path,
     staging: Path,
     object_id: str,

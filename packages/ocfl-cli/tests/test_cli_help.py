@@ -6,7 +6,7 @@ import re
 import pytest
 import typer
 from rich.text import Text
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner
 
 from ocfl_cli._common import installed_cli_version
 from ocfl_cli.exit_codes import EXIT_CODE_DOCS, ExitCode, format_exit_code_help
@@ -15,7 +15,7 @@ from tests.helpers.docs import iter_commands
 
 
 def test_root_help_groups_commands_and_documents_exit_codes(
-    runner: CliRunner,
+    runner: ObjRunner,
 ) -> None:
     result = runner.invoke(app, ["--help"])
 
@@ -28,7 +28,7 @@ def test_root_help_groups_commands_and_documents_exit_codes(
         assert re.sub(r"\s+", " ", line).strip() in normalized_output
 
 
-def test_root_help_lists_one_exit_code_per_line(runner: CliRunner) -> None:
+def test_root_help_lists_one_exit_code_per_line(runner: ObjRunner) -> None:
     result = runner.invoke(app, ["--help"], terminal_width=120)
 
     lines = [line.strip() for line in result.output.splitlines()]
@@ -36,7 +36,7 @@ def test_root_help_lists_one_exit_code_per_line(runner: CliRunner) -> None:
         assert f"{int(doc.code)}  {doc.description}" in lines, result.output
 
 
-def test_timestamp_help_uses_ots_panel(runner: CliRunner) -> None:
+def test_timestamp_help_uses_ots_panel(runner: ObjRunner) -> None:
     result = runner.invoke(app, ["stage", "--help"])
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
@@ -44,7 +44,7 @@ def test_timestamp_help_uses_ots_panel(runner: CliRunner) -> None:
     assert "timestamp" in result.output
 
 
-def test_validate_help_names_the_bitcoin_section(runner: CliRunner) -> None:
+def test_validate_help_names_the_bitcoin_section(runner: ObjRunner) -> None:
     result = runner.invoke(app, ["validate", "--help"])
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
@@ -104,14 +104,14 @@ def test_verbose_logging_allows_httpx2_info() -> None:
     assert logging.getLogger("httpx2").getEffectiveLevel() == logging.INFO
 
 
-def test_version_prints_the_installed_version(runner: CliRunner) -> None:
+def test_version_prints_the_installed_version(runner: ObjRunner) -> None:
     result = runner.invoke(app, ["--version"])
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert result.stdout == f"ocfl {installed_cli_version()}\n"
 
 
-def test_object_version_options_are_not_called_version(runner: CliRunner) -> None:
+def test_object_version_options_are_not_called_version(runner: ObjRunner) -> None:
     for command in ("ls", "export"):
         result = runner.invoke(app, [command, "--help"])
         assert "--object-version" in result.output, command

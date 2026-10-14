@@ -1,20 +1,36 @@
-from collections.abc import Generator
+from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-from typer.testing import CliRunner
+from typer import Typer
+from typer.testing import CliRunner, Result
 
 from ocfl_cli.store.staging import StagingStore
 
 
-def runner_obj(runner: CliRunner) -> dict[str, Any]:
-    return cast("dict[str, Any]", runner.obj)  # ty: ignore[unresolved-attribute]
+class ObjRunner(CliRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.obj: dict[str, Any] = {}
+
+    def invoke(
+        self,
+        app: Typer,
+        args: str | Sequence[str] | None = None,
+        input: bytes | str | None = None,
+        env: Mapping[str, str | None] | None = None,
+        catch_exceptions: bool = True,
+        color: bool = False,
+        **extra: Any,
+    ) -> Result:
+        extra.setdefault("obj", self.obj)
+        return super().invoke(app, args, input, env, catch_exceptions, color, **extra)
 
 
 @contextmanager
-def injected(runner: CliRunner, **ports: Any) -> Generator[None]:
-    obj = runner_obj(runner)
+def injected(runner: ObjRunner, **ports: Any) -> Generator[None]:
+    obj = runner.obj
     missing = object()
     saved = {key: obj.get(key, missing) for key in ports}
     obj.update(ports)

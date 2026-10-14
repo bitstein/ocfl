@@ -15,7 +15,7 @@ from ots_helpers import (
     register_mismatched_merkle_root,
     write_config,
 )
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner
 
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
@@ -66,7 +66,7 @@ def _flat_direct_root_with_ots_object(
 class TestDefaultOnVerifyOts:
     def test_default_on_walks_chain_with_valid_attestation(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -105,7 +105,7 @@ class TestDefaultOnVerifyOts:
 class TestOtsLocalSkipsWalk:
     def test_ots_local_skips_network_walk(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -134,7 +134,7 @@ class TestOtsLocalSkipsWalk:
 
     def test_omits_ots_section_when_ots_local(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -161,7 +161,7 @@ class TestOtsLocalSkipsWalk:
 class TestVerifyOtsProgress:
     def test_emits_per_version_ots_results_by_default(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -190,7 +190,7 @@ class TestVerifyOtsProgress:
 class TestMissingBitcoinConfig:
     def test_auto_without_bitcoin_config_checks_locally(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -204,7 +204,7 @@ class TestMissingBitcoinConfig:
 
     def test_chain_without_bitcoin_config_raises_config_error(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -222,7 +222,7 @@ class TestMissingBitcoinConfig:
 class TestStructuralAlwaysRuns:
     def test_structural_validation_always_runs_with_ots_local(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -256,7 +256,7 @@ class TestStructuralAlwaysRuns:
 class TestVerifyTimeMismatchE906:
     def test_default_on_wrong_merkle_root_reports_e906(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -279,7 +279,7 @@ class TestVerifyTimeMismatchE906:
 
     def test_default_on_corrupt_inventory_ots_reports_e905_json(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -303,7 +303,7 @@ class TestVerifyTimeMismatchE906:
 
     def test_default_on_bitcoin_rpc_failure_fails_without_e906_json(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -326,7 +326,7 @@ class TestVerifyTimeMismatchE906:
 
     def test_default_on_bitcoin_rpc_failure_reports_human_error(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -354,7 +354,7 @@ class TestVerifyTimeMismatchE906:
 class TestVerifyPendingW903:
     def test_default_on_missing_inventory_ots_skips_verify_time_warning(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -383,7 +383,7 @@ class TestVerifyPendingW903:
 
     def test_default_on_missing_version_inventory_skips_verify_time_warning(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -411,7 +411,7 @@ class TestVerifyPendingW903:
 
     def test_default_on_pending_inventory_proof_is_w902_not_w903(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -444,7 +444,7 @@ class TestVerifyPendingW903:
 
     def test_default_on_insufficient_confirmations_reports_w903(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -471,7 +471,7 @@ class TestVerifyPendingW903:
 
     def test_default_on_missing_block_reports_w903(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -498,7 +498,7 @@ class TestVerifyPendingW903:
 class TestRegtestVerifyOtsEndToEnd:
     def test_real_rpc_walks_real_attestation_chain(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         bitcoind_regtest,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -606,7 +606,7 @@ class TestRootLevelChain:
     @pytest.mark.parametrize("flag", [[], ["--ots=auto"], ["--ots=chain"]])
     def test_root_validate_walks_each_objects_chain(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -622,7 +622,7 @@ class TestRootLevelChain:
 
     def test_root_validate_local_skips_the_chain(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,

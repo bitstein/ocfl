@@ -19,8 +19,7 @@ from ots_helpers import (
     write_config,
 )
 from pydantic import SecretStr
-from runner_helpers import stage_args
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner, stage_args
 
 from ocfl_cli.config import Config
 from ocfl_cli.config.ots import SimpleProofConfig
@@ -42,7 +41,7 @@ class ContentUpgradedStaging(NamedTuple):
 
 
 def _setup_content_upgraded(
-    runner: CliRunner,
+    runner: ObjRunner,
     root: Path,
     staging: Path,
     object_id: str,
@@ -73,7 +72,7 @@ def _setup_content_upgraded(
 class TestInventoryBuild:
     def test_inventory_build_includes_ots_content_files(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -119,7 +118,7 @@ class TestInventoryBuild:
 
     def test_inventory_build_uses_staged_metadata(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -157,7 +156,7 @@ class TestInventoryBuild:
 class TestInventorySubmissionPrimitives:
     def test_prepare_persists_intent_before_submit_posts(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -206,7 +205,7 @@ class TestInventorySubmissionPrimitives:
 
     def test_prepare_inventory_upgraded_is_noop(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -269,7 +268,7 @@ def _run(cfg, store, sr, root, object_id, sd, sp_fake) -> wf_timestamp.Timestamp
 class TestUnverifiedContentGate:
     def test_inventory_timestamp_blocked_when_content_proof_unverified(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -309,7 +308,7 @@ class TestUnverifiedContentGate:
 
     def test_inventory_timestamp_blocked_after_reorg_reverify_resets_content(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -383,7 +382,7 @@ class TestUnverifiedContentGate:
 class TestMetadataGate:
     def test_missing_staged_metadata_blocks_inventory_timestamp(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -424,7 +423,7 @@ class TestMetadataGate:
 
     def test_missing_metadata_file_blocks_inventory_timestamp(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -461,7 +460,7 @@ class TestMetadataGate:
 
     def test_allow_missing_metadata_bypasses_inventory_timestamp_gate(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -508,7 +507,7 @@ class TestMetadataGate:
     )
     def test_allow_missing_metadata_is_only_a_timestamp_option(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -543,7 +542,7 @@ class TestMetadataGate:
 class TestPlanRoundTrip:
     def test_plan_json_round_trip_has_no_inventory_proof_yet(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -582,7 +581,7 @@ class TestPlanRoundTrip:
 class TestPhaseGate:
     def test_phase_error_at_drafting_with_hint(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -620,7 +619,7 @@ class TestPhaseGate:
 
     def test_phase_error_at_content_pending_with_hint(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -661,7 +660,7 @@ class TestPhaseGate:
 class TestResubmitAtInventoryPending:
     def test_rerun_at_inventory_pending_sends_nothing(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -717,7 +716,7 @@ class TestResubmitAtInventoryPending:
 class TestNoopAtInventoryUpgraded:
     def test_noop_at_inventory_upgraded(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,

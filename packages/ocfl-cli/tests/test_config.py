@@ -3,7 +3,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner
 
 from ocfl_cli.config import (
     ArchiveConfig,
@@ -219,7 +219,7 @@ class TestEffective:
 
 class TestAliasResolution:
     def test_alias_resolves_to_root(
-        self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, storage_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -234,7 +234,7 @@ class TestAliasResolution:
         assert "Valid" in result.stdout
 
     def test_implicit_single_archive(
-        self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, storage_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -249,7 +249,7 @@ class TestAliasResolution:
         assert result.exit_code == ExitCode.SUCCESS, result.output
 
     def test_env_var_beats_implicit_default(
-        self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, storage_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -264,7 +264,7 @@ class TestAliasResolution:
         assert result.exit_code == ExitCode.SUCCESS, result.output
 
     def test_flag_path_still_works_when_not_an_alias(
-        self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, storage_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -280,7 +280,7 @@ class TestAliasResolution:
 
 class TestConfigDigestDefault:
     def test_stage_new_rejects_invalid_config_digest(
-        self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, storage_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -315,7 +315,7 @@ class TestConfigDigestDefault:
         assert not store.exists(str(storage_root.resolve()), "obj:bad-cfg")
 
     def test_stage_new_uses_config_digest(
-        self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, storage_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -349,7 +349,7 @@ class TestConfigDigestDefault:
         assert inv.digest_algorithm == "sha256"
 
     def test_archive_digest_beats_defaults(
-        self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, storage_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -404,7 +404,7 @@ def sha256_root(tmp_path: Path) -> Path:
 
 
 class TestSuppressWarnings:
-    def test_w004_emitted_without_suppress(self, runner: CliRunner, sha256_root: Path):
+    def test_w004_emitted_without_suppress(self, runner: ObjRunner, sha256_root: Path):
         result = runner.invoke(
             app, ["--root", str(sha256_root), "--json", "validate", "obj:x"]
         )
@@ -414,7 +414,7 @@ class TestSuppressWarnings:
         assert "W004" in codes
 
     def test_w004_suppressed_via_defaults(
-        self, runner: CliRunner, sha256_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, sha256_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -433,7 +433,7 @@ class TestSuppressWarnings:
         assert "W004" not in codes
 
     def test_suppress_via_archive_alias(
-        self, runner: CliRunner, sha256_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, sha256_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",

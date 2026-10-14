@@ -14,8 +14,7 @@ from ots_helpers import (
     verified_content_proof,
     write_config,
 )
-from runner_helpers import runner_obj, stage_args, staging_dir
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner, stage_args, staging_dir
 
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
@@ -71,7 +70,7 @@ def _verified_inv_proof(version: str, inv_digest: str) -> StagedInventory:
 class TestStageStatusOts:
     def test_status_drafting_no_files_next_action_add_content(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -101,7 +100,7 @@ class TestStageStatusOts:
 
     def test_status_ots_shows_staged_metadata_state(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -141,7 +140,7 @@ class TestStageStatusOts:
 
     def test_status_ots_json_shows_partial_staged_metadata_state(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -186,7 +185,7 @@ class TestStageStatusOts:
 
     def test_status_drafting_with_files_next_action_timestamp_content(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -213,7 +212,7 @@ class TestStageStatusOts:
 
     def test_status_content_pending_outstanding_jobs_listed(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -271,7 +270,7 @@ class TestStageStatusOts:
 
     def test_status_content_pending_with_failed_job_next_retry(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -318,7 +317,7 @@ class TestStageStatusOts:
 
     def test_status_content_upgraded_next_timestamp_inventory(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -356,7 +355,7 @@ class TestStageStatusOts:
 
     def test_status_inventory_pending_next_upgrade_inventory(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -402,7 +401,7 @@ class TestStageStatusOts:
 
     def test_status_inventory_pending_with_failed_inv_job_next_retry(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -449,7 +448,7 @@ class TestStageStatusOts:
 
     def test_status_inventory_upgraded_next_commit(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -487,7 +486,7 @@ class TestStageStatusOts:
 
     def test_status_committed_next_none(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -525,7 +524,7 @@ class TestStageStatusOts:
 
     def test_status_json_schema_v1_invariants(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -564,7 +563,7 @@ class TestStageStatusOts:
 
     def test_status_cache_bytes_sums_ots_cache_files(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -598,7 +597,7 @@ class TestStageStatusOts:
 
     def test_status_cache_bytes_zero_when_no_cache_dir(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -629,7 +628,7 @@ class TestStageStatusOts:
 
     def test_status_answers_while_another_process_holds_lock(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -649,7 +648,7 @@ class TestStageStatusOts:
             ("a.txt", b"alpha"),
         )
 
-        runner_obj(runner)["lock_timeout"] = 0.01
+        runner.obj["lock_timeout"] = 0.01
         with held_flock(sd / ".lock"):
             r = runner.invoke(
                 app,
@@ -659,7 +658,7 @@ class TestStageStatusOts:
 
     def test_status_human_output_dense(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -719,7 +718,7 @@ class TestStageStatusOts:
 
     def test_status_humanize_age_recent_seconds(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -746,7 +745,7 @@ class TestStageStatusOts:
         submitted = fake_now - timedelta(seconds=30)
         submitted_iso = submitted.isoformat(timespec="seconds")
 
-        runner_obj(runner)["clock"] = FakeClock(fake_now)
+        runner.obj["clock"] = FakeClock(fake_now)
 
         _write_phase_bypassing_fsm(
             sd,
@@ -774,7 +773,7 @@ class TestStageStatusOts:
 
     def test_status_humanize_age_hours(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -803,7 +802,7 @@ class TestStageStatusOts:
         fake_now = datetime(2026, 4, 25, 14, 0, 0, tzinfo=UTC)
         submitted = fake_now - timedelta(hours=2)
         clock = FakeClock(submitted)
-        runner_obj(runner)["clock"] = clock
+        runner.obj["clock"] = clock
 
         r = runner.invoke(
             app,
@@ -842,7 +841,7 @@ class TestStageStatusOts:
 
     def test_status_bitcoin_in_sync_field_true_when_node_synced(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -875,7 +874,7 @@ class TestStageStatusOts:
 
     def test_status_bitcoin_section_null_when_no_bitcoin_config(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -905,7 +904,7 @@ class TestStageStatusOts:
 
     def test_status_simpleproof_configured_reflects_config(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -937,7 +936,7 @@ class TestStageStatusOts:
 
     def test_status_confirmations_required_from_config(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -968,7 +967,7 @@ class TestStageStatusOts:
 class TestStageStatusNonOtsFallback:
     def test_status_non_ots_text_unchanged(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -997,7 +996,7 @@ class TestStageStatusNonOtsFallback:
 
     def test_status_non_ots_json_wraps_changes_with_extension_null(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,

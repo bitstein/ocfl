@@ -9,7 +9,7 @@ from fakes import RecordingSleeper
 from fakes.batch_events import RecordingBatchEvents
 from fakes.locks import held_flock, is_flocked
 from msgspec.structs import replace
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner
 
 from ocfl_cli.errors import AttestationMismatchError, LockTimeoutError, PhaseError
 from ocfl_cli.exit_codes import ExitCode
@@ -25,7 +25,7 @@ from ocfl_cli.workflow.batch import report as batch_report
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 
 
-def _invoke_json(runner: CliRunner, storage_root: Path, staging: Path, *args: str):
+def _invoke_json(runner: ObjRunner, storage_root: Path, staging: Path, *args: str):
     return runner.invoke(
         app,
         [
@@ -40,7 +40,7 @@ def _invoke_json(runner: CliRunner, storage_root: Path, staging: Path, *args: st
     )
 
 
-def _invoke(runner: CliRunner, storage_root: Path, staging: Path, *args: str):
+def _invoke(runner: ObjRunner, storage_root: Path, staging: Path, *args: str):
     return runner.invoke(
         app,
         ["--root", str(storage_root), "stage", "--staging-root", str(staging), *args],
@@ -136,7 +136,7 @@ def test_commit_batch_output_helpers_have_typed_contracts() -> None:
 
 
 def test_all_upgraded_batch_commits_every_object(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     runtime: Runtime,
@@ -196,7 +196,7 @@ def test_all_upgraded_batch_commits_every_object(
 
 
 def test_mixed_batch_commits_upgraded_and_skips_other_rows(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     runtime: Runtime,
@@ -266,7 +266,7 @@ def test_mixed_batch_commits_upgraded_and_skips_other_rows(
 
 
 def test_batch_commit_continues_after_failure_and_exits_one(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     runtime: Runtime,
@@ -328,7 +328,7 @@ def test_batch_commit_continues_after_failure_and_exits_one(
 
 
 def test_resume_after_partial_commit_skips_missing_staging(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     runtime: Runtime,
@@ -380,7 +380,7 @@ def test_resume_after_partial_commit_skips_missing_staging(
 
 
 def test_content_target_batch_is_rejected_before_commit_attempt(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -400,7 +400,7 @@ def test_content_target_batch_is_rejected_before_commit_attempt(
 
 
 def test_batch_commit_rejects_wrong_archive_root_before_commit_attempt(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -488,7 +488,7 @@ def test_batch_commit_waits_for_a_running_driver(
     ],
 )
 def test_commit_rejects_batch_args_which_belong_to_stage_batch_commit(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     args: tuple[str, ...],
@@ -499,7 +499,7 @@ def test_commit_rejects_batch_args_which_belong_to_stage_batch_commit(
 
 
 def test_snapshot_row_invalidated_mid_run_is_reported_as_failed(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     runtime: Runtime,

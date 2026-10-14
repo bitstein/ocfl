@@ -23,8 +23,7 @@ from ots_helpers import (
     write_config,
 )
 from pydantic import SecretStr
-from runner_helpers import runner_obj, stage_args
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner, stage_args
 
 from ocfl_cli.config import BitcoinConfig, Config
 from ocfl_cli.config.ots import SimpleProofConfig
@@ -45,15 +44,15 @@ from ocfl_lib import LocalFS, StorageRoot
 from tests.helpers.ots import build_attestation
 
 
-def _inject_fake_zmq(runner: CliRunner, stream: BlockStream) -> None:
+def _inject_fake_zmq(runner: ObjRunner, stream: BlockStream) -> None:
 
-    runner_obj(runner)["block_stream_factory"] = lambda *a, **kw: stream
+    runner.obj["block_stream_factory"] = lambda *a, **kw: stream
 
 
 @pytest.fixture(autouse=True)
-def no_block_processing_delay(runner: CliRunner) -> None:
+def no_block_processing_delay(runner: ObjRunner) -> None:
 
-    runner_obj(runner)["sleeper"] = RecordingSleeper()
+    runner.obj["sleeper"] = RecordingSleeper()
 
 
 def _ots_pending(digest_hex: str) -> bytes:
@@ -66,7 +65,7 @@ def _ots_pending(digest_hex: str) -> bytes:
 class TestInventoryUpgradePrimitives:
     def test_snapshot_inventory_progress_ignores_unconfirmed_result(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -103,7 +102,7 @@ class TestInventoryUpgradePrimitives:
 
     def test_prepare_poll_ingest_inventory_verification(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -173,7 +172,7 @@ class TestInventoryUpgradePrimitives:
 class TestInventoryUpgradeHappyPath:
     def test_inv_pending_advances_to_inventory_upgraded(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -240,7 +239,7 @@ class TestInventoryUpgradeHappyPath:
 class TestInventoryUpgradeExpired:
     def test_expired_verify_job_triggers_fresh_batch(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -307,7 +306,7 @@ class TestInventoryCrashRecovery:
     )
     def test_fault_at_boundary_converges_on_restart(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -441,7 +440,7 @@ def _uninstall_crash_fault(monkeypatch: pytest.MonkeyPatch) -> None:
 class TestInventoryPhaseAdvance:
     def test_advance_when_verified(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -481,7 +480,7 @@ class TestInventoryPhaseAdvance:
 
     def test_no_advance_when_pending_attestation_held(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -521,7 +520,7 @@ class TestInventoryPhaseAdvance:
 
     def test_no_advance_below_min_confirmations(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -563,7 +562,7 @@ class TestInventoryPhaseAdvance:
 class TestInventoryWatchLoop:
     def test_watch_sleeps_after_block_before_upgrade(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -600,7 +599,7 @@ class TestInventoryWatchLoop:
 
         calls: list[str] = []
 
-        runner_obj(runner)["sleeper"] = SimpleNamespace(
+        runner.obj["sleeper"] = SimpleNamespace(
             sleep=lambda _seconds: calls.append("sleep")
         )
 
@@ -622,7 +621,7 @@ class TestInventoryWatchLoop:
 
     def test_watch_advances_on_block(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -684,7 +683,7 @@ class TestInventoryWatchLoop:
 
     def test_watch_sigint_exits_130_without_torn_checkpoint(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -727,7 +726,7 @@ class TestInventoryWatchLoop:
 
     def test_watch_lock_timeout_warning_and_continue(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -738,7 +737,7 @@ class TestInventoryWatchLoop:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        runner_obj(runner)["lock_timeout"] = 1
+        runner.obj["lock_timeout"] = 1
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest = setup_at_inventory_pending(
@@ -806,7 +805,7 @@ class TestInventoryRetryPhaseGate:
     )
     def test_retry_at_wrong_phase_raises_phase_error(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -840,7 +839,7 @@ class TestInventoryRetryPhaseGate:
 
 
 class TestInventoryRetryHappyPath:
-    def _retry(self, runner: CliRunner, root: Path, staging: Path, oid: str):
+    def _retry(self, runner: ObjRunner, root: Path, staging: Path, oid: str):
         return runner.invoke(
             app,
             stage_args(root, staging, "retry", oid, "--expect", "inventory"),
@@ -848,7 +847,7 @@ class TestInventoryRetryHappyPath:
 
     def test_retry_resends_a_failed_inventory_submission(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -881,7 +880,7 @@ class TestInventoryRetryHappyPath:
 
     def test_retry_without_a_failed_submission_sends_nothing(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -907,7 +906,7 @@ class TestInventoryRetryHappyPath:
 class TestRegtestEndToEndInventoryUpgrade:
     def test_real_rpc_real_attestation_inventory(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         bitcoind_regtest,

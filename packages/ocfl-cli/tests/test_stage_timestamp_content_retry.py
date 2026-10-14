@@ -4,8 +4,7 @@ import pytest
 from fakes import FakeSimpleProof
 from msgspec.structs import replace
 from ots_helpers import inject_fake_sp, new_ots_staging, write_config
-from runner_helpers import stage_args
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner, stage_args
 
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
@@ -34,7 +33,7 @@ def _set_state(
 class TestRetryResubmitsOnlyFailed:
     def test_retry_resubmits_only_failed(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -123,7 +122,7 @@ class TestRetryResubmitsOnlyFailed:
 class TestRetryEmptyFailedNoop:
     def test_retry_empty_failed_set_is_noop(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -181,7 +180,7 @@ class TestRetryEmptyFailedNoop:
 class TestRetryMultipleFailedIndependent:
     def test_retry_multiple_failed_resubmits_each_independently(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
@@ -265,7 +264,7 @@ class TestRetryPhaseGate:
     )
     def test_retry_at_wrong_phase_raises_phase_error(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,

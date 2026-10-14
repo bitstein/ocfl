@@ -26,7 +26,7 @@ from ots_helpers import (
     register_attested,
     write_config,
 )
-from runner_helpers import runner_obj, stage_args
+from runner_helpers import ObjRunner, stage_args
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -39,15 +39,15 @@ from ocfl_cli.store.staging import StagingStore
 from ocfl_lib import LocalFS, StorageRoot
 
 
-def _inject_fake_zmq(runner: CliRunner, stream: BlockStream) -> None:
+def _inject_fake_zmq(runner: ObjRunner, stream: BlockStream) -> None:
 
-    runner_obj(runner)["block_stream_factory"] = lambda *a, **kw: stream
+    runner.obj["block_stream_factory"] = lambda *a, **kw: stream
 
 
 @pytest.fixture(autouse=True)
-def no_block_processing_delay(runner: CliRunner) -> None:
+def no_block_processing_delay(runner: ObjRunner) -> None:
 
-    runner_obj(runner)["sleeper"] = RecordingSleeper()
+    runner.obj["sleeper"] = RecordingSleeper()
 
 
 RECHECKED = "Rechecking cached proofs after chain movement"
@@ -114,7 +114,7 @@ def _seed_completed_verify_job(
 class TestWatchLoopAdvancesOnBlock:
     def test_watch_exits_immediately_when_already_upgraded(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -125,7 +125,7 @@ class TestWatchLoopAdvancesOnBlock:
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        runner_obj(runner)["block_stream_factory"] = lambda *a, **kw: pytest.fail(
+        runner.obj["block_stream_factory"] = lambda *a, **kw: pytest.fail(
             "already-upgraded watch subscribed to ZMQ",
         )
 
@@ -176,7 +176,7 @@ class TestWatchLoopAdvancesOnBlock:
 
     def test_watch_sleeps_after_block_before_upgrade(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -191,7 +191,7 @@ class TestWatchLoopAdvancesOnBlock:
 
         calls: list[str] = []
 
-        runner_obj(runner)["sleeper"] = SimpleNamespace(
+        runner.obj["sleeper"] = SimpleNamespace(
             sleep=lambda _seconds: calls.append("sleep")
         )
 
@@ -225,7 +225,7 @@ class TestWatchLoopAdvancesOnBlock:
 
     def test_watch_loop_advances_on_block(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -279,7 +279,7 @@ class TestWatchLoopAdvancesOnBlock:
 class TestWatchHeightJumpTriggersReverify:
     def test_watch_reverifies_when_dropped_notifications_jump_height(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -351,7 +351,7 @@ class TestWatchHeightJumpTriggersReverify:
 class TestWatchTipChangeAtStableHeightTriggersReverify:
     def test_watch_tip_change_at_stable_height_triggers_reverify(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -417,7 +417,7 @@ class TestWatchTipChangeAtStableHeightTriggersReverify:
 class TestWatchSigintExits130WithoutTornCheckpoint:
     def test_watch_sigint_exits_130_without_torn_checkpoint(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -465,7 +465,7 @@ class TestWatchSigintExits130WithoutTornCheckpoint:
 class TestWatchLockTimeoutWarningAndContinue:
     def test_watch_lock_timeout_warning_and_continue(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -477,7 +477,7 @@ class TestWatchLockTimeoutWarningAndContinue:
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        runner_obj(runner)["lock_timeout"] = 1
+        runner.obj["lock_timeout"] = 1
 
         staging = tmp_path / "staging"
         sd, digests = new_ots_staging(
@@ -538,7 +538,7 @@ class TestWatchLockTimeoutWarningAndContinue:
 class TestTwoWatchersSerializeSafely:
     def test_two_watchers_serialize_safely(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -653,7 +653,7 @@ class TestTwoWatchersSerializeSafely:
 class TestRegtestRealZmqHashblockDelivery:
     def test_real_zmq_hashblock_delivery_drives_watch_loop(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         bitcoind_regtest,
@@ -688,7 +688,7 @@ class TestRegtestRealZmqHashblockDelivery:
         # Fresh CliRunner per thread (process-global stdout/stderr issues
         # with the fixture runner under threads); pass `runner.obj` so the
         # injected sp_client_factory still flows through.
-        thread_obj = dict(runner_obj(runner))
+        thread_obj = dict(runner.obj)
 
         def _run() -> None:
             r = CliRunner().invoke(
@@ -727,7 +727,7 @@ class TestRegtestRealZmqHashblockDelivery:
 class TestWatchFirstPass:
     def test_final_proofs_do_not_wait_for_a_block(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,

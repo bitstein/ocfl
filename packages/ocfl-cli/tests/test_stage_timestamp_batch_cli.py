@@ -28,7 +28,7 @@ from ots_helpers import (
     register_attested,
     write_config,
 )
-from runner_helpers import runner_obj, stage_args
+from runner_helpers import ObjRunner, stage_args
 from typer.testing import CliRunner
 
 from ocfl_cli.errors import (
@@ -216,14 +216,14 @@ class BlockingSubmitFake(FakeSimpleProof):
         return super().submit_hashes(digests, category_id)
 
 
-def _invoke(runner: CliRunner, storage_root: Path, staging: Path, *args: str):
+def _invoke(runner: ObjRunner, storage_root: Path, staging: Path, *args: str):
     return runner.invoke(
         app,
         ["--root", str(storage_root), "stage", "--staging-root", str(staging), *args],
     )
 
 
-def _invoke_json(runner: CliRunner, storage_root: Path, staging: Path, *args: str):
+def _invoke_json(runner: ObjRunner, storage_root: Path, staging: Path, *args: str):
     return runner.invoke(
         app,
         [
@@ -238,9 +238,9 @@ def _invoke_json(runner: CliRunner, storage_root: Path, staging: Path, *args: st
     )
 
 
-def _inject_fake_zmq(runner: CliRunner, stream) -> None:
+def _inject_fake_zmq(runner: ObjRunner, stream) -> None:
 
-    runner_obj(runner)["block_stream_factory"] = lambda *a, **kw: stream
+    runner.obj["block_stream_factory"] = lambda *a, **kw: stream
 
 
 def _run_batch_command_process(
@@ -314,7 +314,7 @@ def _process_result(
 
 
 def _new_ots_with_files(
-    runner: CliRunner,
+    runner: ObjRunner,
     root: Path,
     staging: Path,
     object_id: str,
@@ -345,7 +345,7 @@ def _ots_staging(
 
 
 def test_batch_content_new_batch_submits_one_union_call(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -413,7 +413,7 @@ def test_batch_content_new_batch_submits_one_union_call(
 
 
 def test_batch_content_new_batch_json_emits_batch_id_before_submit(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -455,7 +455,7 @@ def test_batch_content_new_batch_json_emits_batch_id_before_submit(
 
 
 def test_batch_content_new_batch_json_is_ndjson_driving_output(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -490,7 +490,7 @@ def test_batch_content_new_batch_json_is_ndjson_driving_output(
 
 
 def test_batch_content_bare_batch_mirrors_persisted_chunk_without_repost(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -551,7 +551,7 @@ def test_batch_content_bare_batch_mirrors_persisted_chunk_without_repost(
 
 
 def test_batch_inventory_new_batch_submits_and_mirrors_record_id(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -610,7 +610,7 @@ def test_batch_inventory_new_batch_submits_and_mirrors_record_id(
 
 
 def test_batch_inventory_same_object_skips_until_content_upgraded(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -659,7 +659,7 @@ def test_batch_inventory_same_object_skips_until_content_upgraded(
 
 
 def test_batch_inventory_after_content_upgraded_ignores_content_batch_owner(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -726,7 +726,7 @@ def test_batch_inventory_after_content_upgraded_ignores_content_batch_owner(
 
 
 def test_batch_content_shape_mismatch_fails_chunk_closed(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -773,7 +773,7 @@ def test_batch_content_shape_mismatch_fails_chunk_closed(
 
 
 def test_batch_content_bare_batch_does_not_repost_failed_chunk(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -819,7 +819,7 @@ def test_batch_content_bare_batch_does_not_repost_failed_chunk(
 
 
 def test_batch_content_new_batch_acquires_lease_before_file_is_visible(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -859,7 +859,7 @@ def test_batch_content_new_batch_acquires_lease_before_file_is_visible(
 
 
 def test_batch_content_competing_batch_driver_refuses_live_lease(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -898,7 +898,7 @@ def test_batch_content_competing_batch_driver_refuses_live_lease(
 
 
 def test_batch_content_competing_same_object_batch_skips_in_batch(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -943,7 +943,7 @@ def test_batch_content_competing_same_object_batch_skips_in_batch(
 
 
 def test_batch_content_competing_cross_object_batches_both_submit(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -995,7 +995,7 @@ def test_batch_content_competing_cross_object_batches_both_submit(
 
 
 def test_batch_content_recovers_object_intent_without_batch_row(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -1077,7 +1077,7 @@ def test_batch_content_recovers_object_intent_without_batch_row(
 
 
 def test_batch_content_resume_empty_after_revalidation_skips_post(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -1135,7 +1135,7 @@ def test_batch_content_resume_empty_after_revalidation_skips_post(
 
 
 def test_batch_content_chunked_multi_chunk_object_completes(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -1187,7 +1187,7 @@ def test_batch_content_chunked_multi_chunk_object_completes(
 
 
 def test_batch_content_transient_submit_failure_is_persisted(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1227,7 +1227,7 @@ def test_batch_content_transient_submit_failure_is_persisted(
 
 
 def test_batch_retry_no_resubmit_if_id_present(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -1269,7 +1269,7 @@ def test_batch_retry_no_resubmit_if_id_present(
 
 
 def test_batch_retry_bidirectional_record_id_propagation(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -1365,7 +1365,7 @@ def test_batch_retry_bidirectional_record_id_propagation(
 
 
 def test_batch_retry_failed_chunk_partial_repair(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -1473,7 +1473,7 @@ def test_batch_retry_failed_chunk_partial_repair(
 
 
 def test_batch_retry_inventory_propagates_batch_record_id(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -1547,7 +1547,7 @@ def test_batch_retry_inventory_propagates_batch_record_id(
 
 
 def test_batch_retry_pending_chunk_posts_after_crash_before_post(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -1622,7 +1622,7 @@ def test_batch_retry_pending_chunk_posts_after_crash_before_post(
 
 
 def test_batch_retry_revalidates_before_post_and_marks_regressed(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -1688,7 +1688,7 @@ def test_batch_retry_revalidates_before_post_and_marks_regressed(
 
 
 def test_batch_retry_object_record_id_wins_for_non_failed_chunk(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -1768,7 +1768,7 @@ def test_batch_retry_object_record_id_wins_for_non_failed_chunk(
 
 
 def _status_json_and_human(
-    runner: CliRunner, storage_root: Path, staging: Path, batch_id: str
+    runner: ObjRunner, storage_root: Path, staging: Path, batch_id: str
 ) -> tuple[dict, str]:
     json_result = _invoke_json(
         runner, storage_root, staging, "batch", "status", batch_id
@@ -1789,7 +1789,7 @@ def _assert_next_consistent(
 
 
 def test_batch_ls_json_orders_by_updated_at(
-    runner: CliRunner, storage_root: Path, tmp_path: Path
+    runner: ObjRunner, storage_root: Path, tmp_path: Path
 ) -> None:
     staging = tmp_path / "staging"
     first_id = new_batch_id()
@@ -1840,7 +1840,7 @@ def test_batch_ls_json_orders_by_updated_at(
 
 
 def test_batch_ls_human_includes_created_at(
-    runner: CliRunner, storage_root: Path, tmp_path: Path
+    runner: ObjRunner, storage_root: Path, tmp_path: Path
 ) -> None:
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -1865,7 +1865,7 @@ def test_batch_ls_human_includes_created_at(
 
 
 def test_batch_status_json_contract_uses_canonical_next(
-    runner: CliRunner, storage_root: Path, tmp_path: Path
+    runner: ObjRunner, storage_root: Path, tmp_path: Path
 ) -> None:
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -1964,7 +1964,7 @@ def test_batch_status_json_contract_uses_canonical_next(
 
 
 def test_batch_status_healthy_next_strings_are_canonical(
-    runner: CliRunner, storage_root: Path, tmp_path: Path
+    runner: ObjRunner, storage_root: Path, tmp_path: Path
 ) -> None:
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -2177,7 +2177,7 @@ def test_batch_status_healthy_next_strings_are_canonical(
     ],
 )
 def test_batch_status_reason_next_strings_are_consistent(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     reason: str,
@@ -2223,7 +2223,7 @@ def test_batch_status_reason_next_strings_are_consistent(
 
 
 def test_batch_status_verbose_json_adds_per_digest_state(
-    runner: CliRunner, storage_root: Path, tmp_path: Path
+    runner: ObjRunner, storage_root: Path, tmp_path: Path
 ) -> None:
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -2310,7 +2310,7 @@ def test_batch_status_verbose_json_adds_per_digest_state(
 
 
 def test_batch_status_missing_file_exits_1(
-    runner: CliRunner, storage_root: Path, tmp_path: Path
+    runner: ObjRunner, storage_root: Path, tmp_path: Path
 ) -> None:
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -2326,7 +2326,7 @@ def test_batch_status_missing_file_exits_1(
 
 
 def test_batch_status_corrupt_existing_file_is_not_missing(
-    runner: CliRunner, storage_root: Path, tmp_path: Path
+    runner: ObjRunner, storage_root: Path, tmp_path: Path
 ) -> None:
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -2342,7 +2342,7 @@ def test_batch_status_corrupt_existing_file_is_not_missing(
 
 
 def test_batch_status_next_distinguishes_transient_sp_context(
-    runner: CliRunner, storage_root: Path, tmp_path: Path
+    runner: ObjRunner, storage_root: Path, tmp_path: Path
 ) -> None:
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -2379,7 +2379,7 @@ def test_batch_status_next_distinguishes_transient_sp_context(
 
 
 def test_batch_content_upgrade_posts_then_ingests_per_digest(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -2478,7 +2478,7 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
 
 
 def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -2588,7 +2588,7 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
 
 
 def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -2598,7 +2598,7 @@ def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, FakeBitcoinRPC())
 
-    runner_obj(runner)["sleeper"] = RecordingSleeper()
+    runner.obj["sleeper"] = RecordingSleeper()
     subscribers = 0
 
     class _InterruptingStream:
@@ -2610,7 +2610,7 @@ def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
         subscribers += 1
         return _InterruptingStream()
 
-    runner_obj(runner)["block_stream_factory"] = subscriber_factory
+    runner.obj["block_stream_factory"] = subscriber_factory
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -2642,7 +2642,7 @@ def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
 
 
 def test_batch_watch_human_output_reports_observed_blocks(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -2653,7 +2653,7 @@ def test_batch_watch_human_output_reports_observed_blocks(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, btc)
 
-    runner_obj(runner)["sleeper"] = RecordingSleeper()
+    runner.obj["sleeper"] = RecordingSleeper()
 
     class _OneBlockStream:
         seen = False
@@ -2665,7 +2665,7 @@ def test_batch_watch_human_output_reports_observed_blocks(
                 return bytes.fromhex(btc.getblockhash(btc.tip_height))
             raise KeyboardInterrupt
 
-    runner_obj(runner)["block_stream_factory"] = lambda *a, **kw: _OneBlockStream()
+    runner.obj["block_stream_factory"] = lambda *a, **kw: _OneBlockStream()
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -2695,7 +2695,7 @@ def test_batch_watch_human_output_reports_observed_blocks(
 
 
 def test_batch_watch_polls_during_quiet_periods(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -2740,7 +2740,7 @@ def test_batch_watch_polls_during_quiet_periods(
         subscribers += 1
         return _QuietCompletingStream()
 
-    runner_obj(runner)["block_stream_factory"] = subscriber_factory
+    runner.obj["block_stream_factory"] = subscriber_factory
 
     result = _invoke_json(
         runner,
@@ -2764,7 +2764,7 @@ def test_batch_watch_polls_during_quiet_periods(
 
 
 def test_batch_watch_empty_submitted_subset_exits_without_subscriber(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2773,7 +2773,7 @@ def test_batch_watch_empty_submitted_subset_exits_without_subscriber(
     inject_fake_sp(runner, TransientSubmitFake())
     inject_fake_btc(runner, FakeBitcoinRPC())
 
-    runner_obj(runner)["block_stream_factory"] = lambda *a, **kw: pytest.fail(
+    runner.obj["block_stream_factory"] = lambda *a, **kw: pytest.fail(
         "watch subscribed with no submitted rows",
     )
     staging = tmp_path / "staging"
@@ -2805,7 +2805,7 @@ def test_batch_watch_empty_submitted_subset_exits_without_subscriber(
 
 
 def test_batch_watch_all_skipped_exits_without_subscriber(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -2815,7 +2815,7 @@ def test_batch_watch_all_skipped_exits_without_subscriber(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, FakeBitcoinRPC())
 
-    runner_obj(runner)["block_stream_factory"] = lambda *a, **kw: pytest.fail(
+    runner.obj["block_stream_factory"] = lambda *a, **kw: pytest.fail(
         "watch subscribed with only skipped rows",
     )
     staging = tmp_path / "staging"
@@ -2838,7 +2838,7 @@ def test_batch_watch_all_skipped_exits_without_subscriber(
 
 
 def test_batch_watch_enters_upgrade_for_submitted_subset_after_submit_failure(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2849,7 +2849,7 @@ def test_batch_watch_enters_upgrade_for_submitted_subset_after_submit_failure(
     inject_fake_btc(runner, FakeBitcoinRPC())
 
     sp.submit_chunk_size = 1
-    runner_obj(runner)["sleeper"] = RecordingSleeper()
+    runner.obj["sleeper"] = RecordingSleeper()
 
     class _InterruptingStream:
         def wait_for_block(self, timeout_ms: int) -> bytes | None:
@@ -2894,7 +2894,7 @@ def test_batch_watch_enters_upgrade_for_submitted_subset_after_submit_failure(
 
 
 def test_batch_watch_revalidates_cached_proofs_on_height_jump(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -2905,7 +2905,7 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, btc)
 
-    runner_obj(runner)["sleeper"] = RecordingSleeper()
+    runner.obj["sleeper"] = RecordingSleeper()
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -2992,7 +2992,7 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
 
 
 def test_batch_watch_revalidates_mixed_upgraded_content_row(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -3003,7 +3003,7 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, btc)
 
-    runner_obj(runner)["sleeper"] = RecordingSleeper()
+    runner.obj["sleeper"] = RecordingSleeper()
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3119,7 +3119,7 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
 
 
 def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -3130,7 +3130,7 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, btc)
 
-    runner_obj(runner)["sleeper"] = RecordingSleeper()
+    runner.obj["sleeper"] = RecordingSleeper()
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3234,7 +3234,7 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
 
 
 def test_batch_watch_content_reorg_revalidation_is_object_scoped(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -3245,7 +3245,7 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, btc)
 
-    runner_obj(runner)["sleeper"] = RecordingSleeper()
+    runner.obj["sleeper"] = RecordingSleeper()
 
     root_path = str(storage_root)
     staging = tmp_path / "staging"
@@ -3363,7 +3363,7 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
 
 
 def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -3374,7 +3374,7 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, btc)
 
-    runner_obj(runner)["sleeper"] = RecordingSleeper()
+    runner.obj["sleeper"] = RecordingSleeper()
 
     root_path = str(storage_root)
     staging = tmp_path / "staging"
@@ -3480,7 +3480,7 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
 
 
 def test_batch_watch_node_halt_exits_operational_error(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -3490,7 +3490,7 @@ def test_batch_watch_node_halt_exits_operational_error(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, TransientBitcoinRPC())
 
-    runner_obj(runner)["sleeper"] = RecordingSleeper()
+    runner.obj["sleeper"] = RecordingSleeper()
     stream = InMemoryHashBlockStream()
     stream.push(b"\x00" * 32)
     _inject_fake_zmq(runner, stream)
@@ -3523,7 +3523,7 @@ def test_batch_watch_node_halt_exits_operational_error(
 
 
 def test_batch_upgrade_failed_verify_job_is_retryable(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -3593,7 +3593,7 @@ def test_batch_upgrade_failed_verify_job_is_retryable(
 
 
 def test_batch_upgrade_poll_transient_marks_retryable(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3640,7 +3640,7 @@ def test_batch_upgrade_poll_transient_marks_retryable(
 
 
 def test_batch_upgrade_download_mismatch_marks_terminal(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3700,7 +3700,7 @@ def test_batch_upgrade_download_mismatch_marks_terminal(
 
 
 def test_batch_upgrade_bitcoin_transient_marks_retryable(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -3759,7 +3759,7 @@ def test_batch_upgrade_bitcoin_transient_marks_retryable(
 
 
 def test_batch_upgrade_expired_poll_gets_fresh_job(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3815,7 +3815,7 @@ def test_batch_upgrade_expired_poll_gets_fresh_job(
 
 
 def test_batch_inventory_upgrade_rejects_stale_plan_digest(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -3904,7 +3904,7 @@ def test_batch_inventory_upgrade_rejects_stale_plan_digest(
 
 
 def test_batch_rm_refuses_non_terminal_without_force(
-    runner: CliRunner, storage_root: Path, tmp_path: Path
+    runner: ObjRunner, storage_root: Path, tmp_path: Path
 ) -> None:
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3936,7 +3936,7 @@ def test_batch_rm_refuses_non_terminal_without_force(
 
 
 def test_batch_rm_waits_for_a_running_driver(
-    runner: CliRunner, storage_root: Path, tmp_path: Path
+    runner: ObjRunner, storage_root: Path, tmp_path: Path
 ) -> None:
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3951,7 +3951,7 @@ def test_batch_rm_waits_for_a_running_driver(
             updated_at="2026-05-12T10:05:00Z",
         ),
     )
-    runner_obj(runner)["lock_timeout"] = 0.01
+    runner.obj["lock_timeout"] = 0.01
 
     with held_flock(batch_state.batch_lock_path(staging, batch_id)):
         result = _invoke(runner, storage_root, staging, "batch", "rm", batch_id)
@@ -3976,7 +3976,7 @@ def _empty_batch(staging: Path, storage_root: Path, batch_id: str, **kw) -> None
 
 
 def test_batch_ids_resolve_from_a_unique_prefix(
-    runner: CliRunner, storage_root: Path, tmp_path: Path
+    runner: ObjRunner, storage_root: Path, tmp_path: Path
 ) -> None:
     staging = tmp_path / "staging"
     first = "0190a0a0-0000-7000-8000-000000000001"
@@ -4002,7 +4002,7 @@ def test_batch_ids_resolve_from_a_unique_prefix(
 
 
 def test_unstaged_objects_are_named_and_fail_the_run(
-    runner: CliRunner,
+    runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
     tmp_path: Path,
@@ -4045,7 +4045,7 @@ def test_unstaged_objects_are_named_and_fail_the_run(
 
 
 def test_inventory_batch_from_a_content_batch_takes_its_upgraded_rows(
-    runner: CliRunner, storage_root: Path, tmp_path: Path
+    runner: ObjRunner, storage_root: Path, tmp_path: Path
 ) -> None:
     staging = tmp_path / "staging"
     content_id = new_batch_id()

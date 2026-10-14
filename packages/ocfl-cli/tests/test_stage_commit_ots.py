@@ -21,8 +21,7 @@ from ots_helpers import (
     setup_at_inventory_upgraded,
     write_config,
 )
-from runner_helpers import injected, runner_obj, stage_args
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner, injected, stage_args
 
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
@@ -41,7 +40,7 @@ from ocfl_lib import LocalFS, StorageRoot
 
 
 def _stage_final_content_proof(
-    runner: CliRunner,
+    runner: ObjRunner,
     root: Path,
     staging: Path,
     object_id: str,
@@ -58,7 +57,7 @@ def _stage_final_content_proof(
 
 
 def _setup_missing_metadata_inventory_upgraded(
-    runner: CliRunner,
+    runner: ObjRunner,
     root: Path,
     staging: Path,
     object_id: str,
@@ -139,7 +138,7 @@ def _setup_missing_metadata_inventory_upgraded(
 class TestStageCommitOtsHappyPath:
     def test_inventory_upgraded_commit_writes_extension_and_purges_staging(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -188,7 +187,7 @@ class TestStageCommitOtsHappyPath:
 
     def test_commit_blocks_when_content_proof_invalidated_after_inventory_upgrade(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -234,7 +233,7 @@ class TestStageCommitOtsHappyPath:
 class TestStageCommitOtsAfterMetadataInvalidation:
     def test_commit_blocks_after_metadata_edit_invalidates_inventory_plan(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -293,7 +292,7 @@ class TestStageCommitOtsAfterMetadataInvalidation:
 class TestStageCommitOtsMetadataGate:
     def test_commit_blocks_when_timestamped_plan_is_missing_metadata(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -329,7 +328,7 @@ class TestStageCommitOtsMetadataGate:
 
     def test_commit_allows_missing_metadata_with_explicit_bypass(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -382,7 +381,7 @@ class TestStageCommitOtsMetadataGate:
 class TestStageCommitOtsCorruptedCache:
     def test_commit_refuses_when_plan_digest_does_not_match_verified_digest(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -438,7 +437,7 @@ class TestStageCommitOtsCorruptedCache:
 
     def test_commit_halts_with_re_run_hint_on_commitment_mismatch(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -483,7 +482,7 @@ class TestStageCommitOtsCorruptedCache:
 class TestStageCommitOtsMissingCache:
     def test_commit_refuses_with_re_run_hint_when_cache_absent(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -526,7 +525,7 @@ class TestStageCommitOtsMissingCache:
 class TestStageCommitOtsPreExecuteErrors:
     def test_changed_staged_file_reports_message_and_preserves_staging(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -572,7 +571,7 @@ class TestStageCommitOtsPreExecuteErrors:
 
     def test_missing_staged_file_reports_message_and_preserves_staging(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -618,7 +617,7 @@ class TestStageCommitOtsPreExecuteErrors:
 
     def test_lock_timeout_reports_canonical_exit_and_preserves_staging(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -637,7 +636,7 @@ class TestStageCommitOtsPreExecuteErrors:
             btc_fake.rpc,
         )
         root_path = str(empty_sha256_root.resolve())
-        runner_obj(runner)["lock_timeout"] = 0.01
+        runner.obj["lock_timeout"] = 0.01
 
         with locks.object_commit_lock(
             root_path, "obj:commit-lock-timeout", lock_runtime(30)
@@ -667,7 +666,7 @@ class TestStageCommitOtsPreExecuteErrors:
 class TestStageCommitOtsKeyboardInterrupt:
     def test_revert_removes_extension_file_and_preserves_staging(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
@@ -715,7 +714,7 @@ class TestStageCommitOtsKeyboardInterrupt:
 class TestStageCommitOtsCrashRecovery:
     def test_generic_crash_then_retry_converges(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,

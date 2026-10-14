@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from fakes.fault_fs import before_claim, raise_on_content_write
 from fakes.locks import held_flock, is_flocked, lock_runtime
-from runner_helpers import injected, runner_obj
+from runner_helpers import injected
 from seed_root import SEED_HEAD, SEED_ID
 
 from ocfl_cli.errors import LockTimeoutError
@@ -498,7 +498,7 @@ class TestCommitLocking:
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
         staging_dir = store.staging_path(root_path, oid)
-        runner_obj(runner)["lock_timeout"] = 0.01
+        runner.obj["lock_timeout"] = 0.01
 
         with held_flock(staging_dir / ".lock"):
             result = _invoke(runner, storage_root, staging, "commit", oid)
