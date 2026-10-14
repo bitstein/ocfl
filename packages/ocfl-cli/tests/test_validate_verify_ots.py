@@ -29,8 +29,6 @@ from ocfl_lib import (
 from ocfl_lib.ots import EXTENSION_NAME
 from tests.helpers.ots import build_attestation, build_ots_object
 
-# Content proofs sit in an earlier block than the inventory proof: one block
-# has one merkle root, and every proof is checked against Bitcoin.
 CONTENT_BLOCK_HEIGHT = DIGEST_BLOCK_HEIGHT - 10
 
 

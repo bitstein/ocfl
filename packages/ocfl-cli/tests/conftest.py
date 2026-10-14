@@ -1,5 +1,4 @@
 import json
-import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,17 +10,16 @@ from fakes import (
     InMemoryHashBlockStream,
     RecordingSleeper,
 )
+from seed_root import build_seed_root
 from typer.testing import CliRunner
 
 from ocfl_cli.ports import Runtime
 from ocfl_cli.system import SYSTEM_CLOCK
 from ocfl_lib import (
-    DigestAlgorithm,
     LocalFS,
     Spec,
     StorageRoot,
     get_layout,
-    scan_dir,
 )
 from tests.helpers.regtest import (
     RegtestNode,
@@ -100,23 +98,7 @@ def fixtures_root() -> Path:
 
 @pytest.fixture
 def storage_root(tmp_path: Path) -> Path:
-    """Create a valid storage root with one object for testing."""
-    fs = LocalFS(tmp_path)
-    layout = get_layout("0002-flat-direct-storage-layout")
-    root = StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
-
-    obj_dir = tmp_path / "test-files"
-    obj_dir.mkdir()
-    (obj_dir / "file1.txt").write_text("hello")
-    stage = scan_dir(fs, "test-files", DigestAlgorithm.SHA512)
-    root.commit(fs, "obj:test", stage, message="v1")
-
-    (obj_dir / "file2.txt").write_text("world")
-    stage2 = scan_dir(fs, "test-files", DigestAlgorithm.SHA512)
-    root.commit(fs, "obj:test", stage2, message="v2")
-
-    shutil.rmtree(obj_dir)
-
+    build_seed_root(tmp_path)
     return tmp_path
 
 
@@ -194,17 +176,3 @@ def bitcoind_regtest(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Regte
         yield node
     finally:
         stop_regtest(node)
-
-
-@pytest.fixture
-def real_ots_bytes(bitcoind_regtest: RegtestNode) -> bytes:
-    """Real OTS attestation for ``b"hello regtest"`` against bitcoind regtest."""
-    import hashlib
-
-    from tests.helpers.ots import build_regtest_attestation
-
-    digest = hashlib.sha256(b"hello regtest").digest()
-    ots_bytes, _height, _block_hash = build_regtest_attestation(
-        bitcoind_regtest, digest
-    )
-    return ots_bytes

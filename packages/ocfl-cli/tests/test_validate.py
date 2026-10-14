@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import cast
 
+from seed_root import SEED_ID
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -60,7 +61,7 @@ class TestValidateRoot:
         from ocfl_lib import LocalFS, StorageRoot
 
         root = StorageRoot.open(LocalFS(storage_root))
-        obj_path = storage_root / root.object_path("obj:test")
+        obj_path = storage_root / root.object_path(SEED_ID)
         inv_path = obj_path / "inventory.json"
         inv = json.loads(inv_path.read_text())
         inv["digestAlgorithm"] = "md5"
@@ -76,7 +77,7 @@ class TestValidateRoot:
         from ocfl_lib import LocalFS, StorageRoot
 
         root = StorageRoot.open(LocalFS(storage_root))
-        obj_path = storage_root / root.object_path("obj:test")
+        obj_path = storage_root / root.object_path(SEED_ID)
         inv_path = obj_path / "inventory.json"
         inv = json.loads(inv_path.read_text())
         inv["digestAlgorithm"] = "md5"
@@ -94,7 +95,7 @@ class TestValidateRoot:
         from ocfl_lib import LocalFS, StorageRoot
 
         root = StorageRoot.open(LocalFS(storage_root))
-        obj_path = storage_root / root.object_path("obj:test")
+        obj_path = storage_root / root.object_path(SEED_ID)
         (obj_path / "inventory.json").write_text("{")
 
         result = runner.invoke(app, ["--root", str(storage_root), "--json", "validate"])
@@ -113,12 +114,12 @@ class TestValidateRoot:
         from ocfl_lib import LocalFS, StorageRoot, ValidationReport
 
         fs = LocalFS(storage_root)
-        obj_path = StorageRoot.open(fs).object_path("obj:test")
+        obj_path = StorageRoot.open(fs).object_path(SEED_ID)
         report = ValidationReport(objects_checked=1, truncated=True)
         out = Console(file=io.StringIO(), color_system=None)
 
         validate_module.emit_root_object_results(
-            out, True, fs, {obj_path: "obj:test"}, report
+            out, True, fs, {obj_path: SEED_ID}, report
         )
 
         text = cast("io.StringIO", out.file).getvalue()
@@ -128,15 +129,13 @@ class TestValidateRoot:
 
 class TestValidateObject:
     def test_valid_object(self, runner: CliRunner, storage_root: Path):
-        result = runner.invoke(
-            app, ["--root", str(storage_root), "validate", "obj:test"]
-        )
+        result = runner.invoke(app, ["--root", str(storage_root), "validate", SEED_ID])
         assert result.exit_code == ExitCode.SUCCESS
         assert "Valid" in result.stdout
 
     def test_valid_object_json(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "--json", "validate", "obj:test"]
+            app, ["--root", str(storage_root), "--json", "validate", SEED_ID]
         )
         assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
@@ -156,7 +155,7 @@ class TestValidateObject:
                 "--root",
                 str(storage_root),
                 "validate",
-                "obj:test",
+                SEED_ID,
                 "--no-check-digests",
             ],
         )
@@ -165,9 +164,7 @@ class TestValidateObject:
     def test_object_emits_phase_headers_by_default(
         self, runner: CliRunner, storage_root: Path
     ):
-        result = runner.invoke(
-            app, ["--root", str(storage_root), "validate", "obj:test"]
-        )
+        result = runner.invoke(app, ["--root", str(storage_root), "validate", SEED_ID])
         assert result.exit_code == ExitCode.SUCCESS
         assert "Validating object: obj:test" in result.stderr
         assert "Checking OCFL structure" in result.stderr
@@ -183,7 +180,7 @@ class TestValidateObject:
                 "--root",
                 str(storage_root),
                 "validate",
-                "obj:test",
+                SEED_ID,
                 "--no-check-digests",
             ],
         )
@@ -208,7 +205,7 @@ class TestValidateObject:
 
 def _inflate_head_message(storage_root: Path) -> None:
     """Rewrite obj:test head inventory with an over-limit (L002) message."""
-    obj = storage_root / "obj:test"
+    obj = storage_root / SEED_ID
     inv = json.loads((obj / "inventory.json").read_bytes())
     inv["versions"][inv["head"]]["message"] = "x" * (64 * 1024 + 1)
     raw = json.dumps(inv, indent=2).encode()
@@ -226,7 +223,7 @@ class TestValidateLimitInfo:
     ):
         _inflate_head_message(storage_root)
         result = runner.invoke(
-            app, ["--root", str(storage_root), "--json", "validate", "obj:test"]
+            app, ["--root", str(storage_root), "--json", "validate", SEED_ID]
         )
         assert result.exit_code == ExitCode.SUCCESS, result.output
         data = json.loads(result.stdout)
@@ -245,9 +242,7 @@ class TestValidateLimitInfo:
 
     def test_object_text_shows_info(self, runner: CliRunner, storage_root: Path):
         _inflate_head_message(storage_root)
-        result = runner.invoke(
-            app, ["--root", str(storage_root), "validate", "obj:test"]
-        )
+        result = runner.invoke(app, ["--root", str(storage_root), "validate", SEED_ID])
         assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "Info: [L002]" in result.stderr
         assert "Valid" in result.stdout

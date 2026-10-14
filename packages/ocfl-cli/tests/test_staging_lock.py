@@ -48,22 +48,23 @@ def test_with_lock_timeout_raises(staging: Path):
 
 
 def test_with_lock_serializes_concurrent_writers(staging: Path):
-    """Two threads, each holds the lock for ~150ms; total wall time >= 300ms."""
-    barrier = threading.Barrier(2)
+    writers = 2
+    hold_s = 0.15
+    barrier = threading.Barrier(writers)
 
     def critical():
         barrier.wait(timeout=5)
         with with_lock(staging, lock_runtime(5)):
-            time.sleep(0.15)
+            time.sleep(hold_s)
 
-    threads = [threading.Thread(target=critical, daemon=True) for _ in range(2)]
+    threads = [threading.Thread(target=critical, daemon=True) for _ in range(writers)]
     t0 = time.monotonic()
     for t in threads:
         t.start()
     for t in threads:
         t.join(timeout=10)
     elapsed = time.monotonic() - t0
-    assert elapsed >= 0.3, f"expected serialization, got {elapsed:.3f}s"
+    assert elapsed >= writers * hold_s, f"expected serialization, got {elapsed:.3f}s"
 
 
 def test_with_lock_releases_on_exception(staging: Path):

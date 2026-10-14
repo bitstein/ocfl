@@ -2,6 +2,7 @@ import json
 from hashlib import sha512
 
 import pytest
+from seed_root import SEED_ID
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -100,13 +101,13 @@ class TestStageStatus:
 
     def test_status_existing_object_with_changes(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"
-        _invoke(runner, storage_root, staging, "new", "obj:test")
+        _invoke(runner, storage_root, staging, "new", SEED_ID)
 
         new_file = tmp_path / "new.txt"
         new_file.write_text("new content")
-        _invoke(runner, storage_root, staging, "add", "obj:test", str(new_file))
+        _invoke(runner, storage_root, staging, "add", SEED_ID, str(new_file))
 
-        result = _invoke(runner, storage_root, staging, "status", "obj:test")
+        result = _invoke(runner, storage_root, staging, "status", SEED_ID)
         assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "new.txt" in result.output
 

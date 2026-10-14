@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from seed_root import SEED_ID
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -10,7 +11,7 @@ from ocfl_cli.main import app
 class TestDiff:
     def test_diff(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "diff", "obj:test", "v1", "v2"]
+            app, ["--root", str(storage_root), "diff", SEED_ID, "v1", "v2"]
         )
         assert result.exit_code == ExitCode.SUCCESS
         assert "file2.txt" in result.stdout
@@ -18,7 +19,7 @@ class TestDiff:
 
     def test_diff_bare_versions(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "diff", "obj:test", "1", "2"]
+            app, ["--root", str(storage_root), "diff", SEED_ID, "1", "2"]
         )
         assert result.exit_code == ExitCode.SUCCESS
         assert "file2.txt" in result.stdout
@@ -27,7 +28,7 @@ class TestDiff:
         self, runner: CliRunner, storage_root: Path
     ):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "diff", "obj:test", "v1", "v9"]
+            app, ["--root", str(storage_root), "diff", SEED_ID, "v1", "v9"]
         )
         assert result.exit_code == ExitCode.GENERIC
         assert "not found" in result.stderr.lower()
@@ -35,7 +36,7 @@ class TestDiff:
 
     def test_diff_json(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "--json", "diff", "obj:test", "v1", "v2"]
+            app, ["--root", str(storage_root), "--json", "diff", SEED_ID, "v1", "v2"]
         )
         assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)

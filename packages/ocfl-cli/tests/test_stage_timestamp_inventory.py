@@ -14,6 +14,7 @@ from ots_helpers import (
     ots_for,
     register_attested,
     replace_attested_block,
+    verified_content_proof,
     write_config,
 )
 from pydantic import SecretStr
@@ -25,8 +26,8 @@ from ocfl_cli.config.ots import SimpleProofConfig
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.metadata import StagedMetadata, StagedUser
-from ocfl_cli.model.ots_state import Proof, VerifyJob
-from ocfl_cli.model.phase import Phase, TimestampTarget
+from ocfl_cli.model.ots_state import VerifyJob
+from ocfl_cli.model.phase import Phase
 from ocfl_cli.store.ots_state import load_ots, ots_cache_path, plan_path, save_ots
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow import timestamp as wf_timestamp
@@ -65,16 +66,7 @@ def _setup_content_upgraded(
         state,
         phase=Phase.CONTENT_UPGRADED,
         pending_digests=(da,),
-        proofs={
-            da: Proof(
-                target=TimestampTarget.CONTENT,
-                ots_path=f"ots-cache/{da}.ots",
-                verified=True,
-                block_height=800_000,
-                confirmations_at_verify=3,
-                verified_at="2026-04-23T16:30:00+00:00",
-            )
-        },
+        proofs={da: verified_content_proof(da)},
     )
     save_ots(sd, state)
     return sd, da, hashlib.sha256(ots_src.read_bytes()).hexdigest()
@@ -355,16 +347,7 @@ class TestUnverifiedContentGate:
             verify_jobs=(
                 VerifyJob(job_id="old-job", digests=(d,), status="COMPLETED"),
             ),
-            proofs={
-                d: Proof(
-                    target=TimestampTarget.CONTENT,
-                    ots_path=f"ots-cache/{d}.ots",
-                    verified=True,
-                    block_height=800_000,
-                    confirmations_at_verify=3,
-                    verified_at="2026-04-23T16:30:00+00:00",
-                )
-            },
+            proofs={d: verified_content_proof(d)},
         )
         save_ots(sd, state)
 

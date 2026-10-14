@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 from msgspec.structs import replace
+from ots_helpers import verified_content_proof
 from runner_helpers import staging_dir
 from typer.testing import CliRunner
 
@@ -71,17 +72,6 @@ def _mk_ots_staging(
     return sd
 
 
-def _verified_proof(digest: str = "deadbeef" * 8) -> Proof:
-    return Proof(
-        target=TimestampTarget.CONTENT,
-        ots_path=f"ots-cache/{digest}.ots",
-        verified=True,
-        block_height=800_000,
-        confirmations_at_verify=3,
-        verified_at="2026-04-23T16:30:00+00:00",
-    )
-
-
 def _inv_proof(version: str = "v1", digest: str = "feedface" * 8) -> StagedInventory:
     return StagedInventory(version=version, digest=digest, job_id="job-inv")
 
@@ -90,7 +80,7 @@ INV_DIGEST = "feedface" * 8
 
 
 def _inv_proof_entry() -> Proof:
-    return replace(_verified_proof(INV_DIGEST), target=TimestampTarget.INVENTORY)
+    return replace(verified_content_proof(INV_DIGEST), target=TimestampTarget.INVENTORY)
 
 
 def _submission(
@@ -138,7 +128,7 @@ class TestForceRequiredAtNonDraftingPhase:
                 {
                     "pending_digests": ("a" * 64,),
                     "submissions": (_submission("a" * 64),),
-                    "proofs": {"a" * 64: _verified_proof("a" * 64)},
+                    "proofs": {"a" * 64: verified_content_proof("a" * 64)},
                 },
             ),
             (
@@ -146,7 +136,7 @@ class TestForceRequiredAtNonDraftingPhase:
                 {
                     "submissions": (_submission("a" * 64), _submission("b" * 64)),
                     "proofs": {
-                        "a" * 64: _verified_proof("a" * 64),
+                        "a" * 64: verified_content_proof("a" * 64),
                         INV_DIGEST: _inv_proof_entry(),
                     },
                     "inventory": _inv_proof(),
@@ -156,7 +146,7 @@ class TestForceRequiredAtNonDraftingPhase:
                 Phase.INVENTORY_UPGRADED,
                 {
                     "proofs": {
-                        "a" * 64: _verified_proof("a" * 64),
+                        "a" * 64: verified_content_proof("a" * 64),
                         INV_DIGEST: _inv_proof_entry(),
                     },
                     "inventory": _inv_proof(),
@@ -213,7 +203,7 @@ class TestForceRequiredAtNonDraftingPhase:
                 Phase.INVENTORY_UPGRADED,
                 {
                     "proofs": {
-                        "a" * 64: _verified_proof("a" * 64),
+                        "a" * 64: verified_content_proof("a" * 64),
                         INV_DIGEST: _inv_proof_entry(),
                     },
                     "inventory": _inv_proof(),
@@ -261,7 +251,7 @@ class TestForceRequiredAtDraftingAfterRegression:
             sd,
             Phase.DRAFTING,
             pending_digests=(da,),
-            proofs={da: _verified_proof(da)},
+            proofs={da: verified_content_proof(da)},
         )
 
         store = StagingStore(staging)
@@ -324,7 +314,7 @@ class TestDiscardPurgesOtsCache:
             Phase.CONTENT_UPGRADED,
             pending_digests=(da,),
             submissions=(_submission(da),),
-            proofs={da: _verified_proof(da)},
+            proofs={da: verified_content_proof(da)},
         )
 
         cache = ots_cache_path(sd, da)
@@ -416,8 +406,8 @@ class TestDiscardWarnMessage:
             submissions=(_submission(da), _submission(db)),
             verify_jobs=(_verify_job(da),),
             proofs={
-                da: _verified_proof(da),
-                db: _verified_proof(db),
+                da: verified_content_proof(da),
+                db: verified_content_proof(db),
                 INV_DIGEST: _inv_proof_entry(),
             },
             inventory=_inv_proof(),

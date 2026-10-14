@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from seed_root import SEED_ID
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -11,35 +12,35 @@ class TestPurge:
     def test_purge_with_force(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
             app,
-            ["--root", str(storage_root), "purge", "obj:test", "--yes"],
+            ["--root", str(storage_root), "purge", SEED_ID, "--yes"],
         )
         assert result.exit_code == ExitCode.SUCCESS
         fs = LocalFS(storage_root)
         root = StorageRoot.open(fs)
-        assert not root.get_object("obj:test").exists
+        assert not root.get_object(SEED_ID).exists
 
     def test_purge_confirm_yes(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
             app,
-            ["--root", str(storage_root), "purge", "obj:test"],
+            ["--root", str(storage_root), "purge", SEED_ID],
             input="y\n",
         )
         assert result.exit_code == ExitCode.SUCCESS
         fs = LocalFS(storage_root)
         root = StorageRoot.open(fs)
-        assert not root.get_object("obj:test").exists
+        assert not root.get_object(SEED_ID).exists
 
     def test_purge_confirm_no(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
             app,
-            ["--root", str(storage_root), "purge", "obj:test"],
+            ["--root", str(storage_root), "purge", SEED_ID],
             input="n\n",
         )
         assert result.exit_code == ExitCode.GENERIC
         assert "Aborted" in result.output
         fs = LocalFS(storage_root)
         root = StorageRoot.open(fs)
-        assert root.get_object("obj:test").exists
+        assert root.get_object(SEED_ID).exists
 
     def test_purge_nonexistent(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
@@ -50,11 +51,11 @@ class TestPurge:
 
     def test_purge_yes_skips_the_prompt(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "purge", "obj:test", "-y"]
+            app, ["--root", str(storage_root), "purge", SEED_ID, "-y"]
         )
         assert result.exit_code == ExitCode.SUCCESS, result.output
         fs = LocalFS(storage_root)
-        assert not StorageRoot.open(fs).get_object("obj:test").exists
+        assert not StorageRoot.open(fs).get_object(SEED_ID).exists
 
     def test_force_is_a_hidden_alias(self, runner: CliRunner) -> None:
         result = runner.invoke(app, ["purge", "--help"])

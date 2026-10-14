@@ -6,10 +6,12 @@ from fakes import FakeClock, FakeSimpleProof
 from fakes.locks import held_flock
 from msgspec.structs import replace
 from ots_helpers import (
+    CATEGORY_ID,
     SP_OK,
     inject_fake_btc,
     inject_fake_sp,
     new_ots_staging,
+    verified_content_proof,
     write_config,
 )
 from runner_helpers import runner_obj, stage_args, staging_dir
@@ -68,17 +70,6 @@ def _set_phase(
         inventory=inventory,
     )
     save_ots(sd, state)
-
-
-def _verified_content_proof(digest: str) -> Proof:
-    return Proof(
-        target=TimestampTarget.CONTENT,
-        ots_path=f"ots-cache/{digest}.ots",
-        verified=True,
-        block_height=800_000,
-        confirmations_at_verify=3,
-        verified_at="2026-04-23T16:30:00+00:00",
-    )
 
 
 def _verified_inv_proof(version: str, inv_digest: str) -> StagedInventory:
@@ -359,7 +350,7 @@ class TestStageStatusOts:
             sd,
             Phase.CONTENT_UPGRADED,
             pending_digests=(da,),
-            proofs={da: _verified_content_proof(da)},
+            proofs={da: verified_content_proof(da)},
         )
 
         r = runner.invoke(
@@ -403,7 +394,7 @@ class TestStageStatusOts:
             sd,
             Phase.INVENTORY_PENDING,
             pending_digests=(da,),
-            proofs={da: _verified_content_proof(da)},
+            proofs={da: verified_content_proof(da)},
             verify_jobs=(
                 VerifyJob(job_id="job-inv", digests=(inv_d,), status="IN_PROGRESS"),
             ),
@@ -449,7 +440,7 @@ class TestStageStatusOts:
             sd,
             Phase.INVENTORY_PENDING,
             pending_digests=(da,),
-            proofs={da: _verified_content_proof(da)},
+            proofs={da: verified_content_proof(da)},
             verify_jobs=(
                 VerifyJob(job_id="job-inv-fail", digests=(inv_d,), status="FAILED"),
             ),
@@ -491,7 +482,7 @@ class TestStageStatusOts:
             sd,
             Phase.INVENTORY_UPGRADED,
             pending_digests=(da,),
-            proofs={da: _verified_content_proof(da)},
+            proofs={da: verified_content_proof(da)},
             inventory=_verified_inv_proof("v1", inv_d),
         )
 
@@ -529,7 +520,7 @@ class TestStageStatusOts:
             sd,
             Phase.COMMITTED,
             pending_digests=(da,),
-            proofs={da: _verified_content_proof(da)},
+            proofs={da: verified_content_proof(da)},
             inventory=_verified_inv_proof("v1", inv_d),
         )
 
@@ -824,8 +815,7 @@ class TestStageStatusOts:
         from datetime import UTC, datetime, timedelta
 
         fake_now = datetime(2026, 4, 25, 14, 0, 0, tzinfo=UTC)
-        submitted = fake_now - timedelta(seconds=7200)
-        # Submit two hours before `status` reads the clock.
+        submitted = fake_now - timedelta(hours=2)
         clock = FakeClock(submitted)
         runner_obj(runner)["clock"] = clock
 
@@ -967,7 +957,7 @@ class TestStageStatusOts:
         sp_section = data["simpleproof"]
         assert isinstance(sp_section, dict)
         assert sp_section["configured"] is True
-        assert sp_section["category_id"] == 641
+        assert sp_section["category_id"] == CATEGORY_ID
 
     def test_status_confirmations_required_from_config(
         self,

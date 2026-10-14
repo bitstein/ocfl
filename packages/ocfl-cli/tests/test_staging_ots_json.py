@@ -649,18 +649,17 @@ class TestHelpers:
 class TestCategoryIdDrift:
     def test_no_drift_returns_persisted(self, caplog, empty_state: OtsState):
         with caplog.at_level(logging.WARNING):
-            result = apply_category_id(empty_state, 641)
-        assert result == 641
+            result = apply_category_id(empty_state, empty_state.category_id)
+        assert result == empty_state.category_id
         warns = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert warns == []
 
     def test_drift_logs_warning_and_returns_persisted(
         self, caplog, empty_state: OtsState
     ):
-        # empty_state has category_id=641; pass a divergent config value.
         with caplog.at_level(logging.WARNING):
-            result = apply_category_id(empty_state, 999)
-        assert result == 641
+            result = apply_category_id(empty_state, empty_state.category_id + 1)
+        assert result == empty_state.category_id
         warns = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert warns, "expected a WARNING log on category_id drift"
         msg = " ".join(r.getMessage() for r in warns).lower()

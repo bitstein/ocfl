@@ -17,11 +17,12 @@ from tests.helpers.ots import build_attestation
 
 DIGEST_BLOCK_HEIGHT = 800_000
 MIN_CONFS = 3
+CATEGORY_ID = 641
 
-SP_OK = """\
+SP_OK = f"""\
 [simpleproof]
 base_url = "https://stage.example"
-proof_category_id = 641
+proof_category_id = {CATEGORY_ID}
 """
 
 BTC_OK = """\
@@ -98,6 +99,17 @@ def register_attested(
     # `build_attestation` has no ops, so the attested merkle root is the
     # digest itself; bitcoind reports merkle roots in display (reversed) hex.
     rpc.register_merkle_root(height, bytes.fromhex(digest_hex)[::-1].hex())
+
+
+def verified_content_proof(digest_hex: str) -> Proof:
+    return Proof(
+        target=TimestampTarget.CONTENT,
+        ots_path=f"ots-cache/{digest_hex}.ots",
+        verified=True,
+        block_height=DIGEST_BLOCK_HEIGHT,
+        confirmations_at_verify=MIN_CONFS,
+        verified_at="2026-04-23T16:30:00+00:00",
+    )
 
 
 def ots_for(digest_hex: str, *, block_height: int = DIGEST_BLOCK_HEIGHT) -> bytes:

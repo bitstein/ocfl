@@ -18,7 +18,9 @@ from fakes import (
 from fakes.locks import held_flock
 from msgspec.structs import replace
 from ots_helpers import (
+    MIN_CONFS,
     bury,
+    end_chain_below,
     inject_fake_btc,
     inject_fake_sp,
     ots_for,
@@ -68,6 +70,9 @@ from ocfl_cli.workflow.batch import upgrade as batch_upgrade
 from ocfl_lib import (
     BitcoinRpcTransientError,
 )
+
+_UNRELATED_DIGEST = "de" * 32
+_HEIGHT_JUMP = 5
 
 
 def _inv_submission(digest: str, batch_id: str, record_id: str | None) -> Submission:
@@ -2935,9 +2940,7 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
         ),
     )
     ots_cache_path(staging_dir, verified_digest).parent.mkdir(parents=True)
-    ots_cache_path(staging_dir, verified_digest).write_bytes(
-        ots_for("de" * 32)  # commits to another digest: a real mismatch
-    )
+    ots_cache_path(staging_dir, verified_digest).write_bytes(ots_for(_UNRELATED_DIGEST))
     save_batch(
         staging,
         BatchFile(
@@ -2966,7 +2969,7 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
             if self.calls == 1:
                 return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
             if self.calls == 2:
-                btc.extend(5)
+                btc.extend(_HEIGHT_JUMP)
                 return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
             raise KeyboardInterrupt
 
@@ -3055,7 +3058,7 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
     )
     ots_cache_path(upgraded_dir, upgraded_digest).parent.mkdir(parents=True)
     ots_cache_path(upgraded_dir, upgraded_digest).write_bytes(
-        ots_for("de" * 32)  # commits to another digest: a real mismatch
+        ots_for(_UNRELATED_DIGEST)
     )
     save_batch(
         staging,
@@ -3090,7 +3093,7 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
             if self.calls == 1:
                 return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
             if self.calls == 2:
-                btc.extend(5)
+                btc.extend(_HEIGHT_JUMP)
                 return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
             raise KeyboardInterrupt
 
@@ -3171,7 +3174,7 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
     )
     ots_cache_path(upgraded_dir, upgraded_digest).parent.mkdir(parents=True)
     ots_cache_path(upgraded_dir, upgraded_digest).write_bytes(
-        ots_for("de" * 32)  # commits to another digest: a real mismatch
+        ots_for(_UNRELATED_DIGEST)
     )
     save_batch(
         staging,
@@ -3206,7 +3209,7 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
             if self.calls == 1:
                 return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
             if self.calls == 2:
-                btc.extend(5)
+                btc.extend(_HEIGHT_JUMP)
                 return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
             raise KeyboardInterrupt
 
@@ -3301,10 +3304,8 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
         ),
     )
     ots_cache_path(failed_dir, failed_digest).parent.mkdir(parents=True)
-    ots_cache_path(failed_dir, failed_digest).write_bytes(
-        # Attested far above the tip: deeper than the confirmation depth.
-        ots_for(failed_digest, block_height=btc.tip_height + 1000)
-    )
+    ots_cache_path(failed_dir, failed_digest).write_bytes(ots_for(failed_digest))
+    end_chain_below(btc, _HEIGHT_JUMP + MIN_CONFS + 1)
     save_batch(
         staging,
         BatchFile(
@@ -3337,7 +3338,7 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
             if self.calls == 1:
                 return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
             if self.calls == 2:
-                btc.extend(5)
+                btc.extend(_HEIGHT_JUMP)
                 return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
             raise KeyboardInterrupt
 
@@ -3419,10 +3420,8 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
         ),
     )
     ots_cache_path(failed_dir, failed_digest).parent.mkdir(parents=True)
-    ots_cache_path(failed_dir, failed_digest).write_bytes(
-        # Attested far above the tip: deeper than the confirmation depth.
-        ots_for(failed_digest, block_height=btc.tip_height + 1000)
-    )
+    ots_cache_path(failed_dir, failed_digest).write_bytes(ots_for(failed_digest))
+    end_chain_below(btc, _HEIGHT_JUMP + MIN_CONFS + 1)
     save_batch(
         staging,
         BatchFile(
@@ -3455,7 +3454,7 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
             if self.calls == 1:
                 return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
             if self.calls == 2:
-                btc.extend(5)
+                btc.extend(_HEIGHT_JUMP)
                 return bytes.fromhex(btc.getblockchaininfo().best_block_hash)
             raise KeyboardInterrupt
 

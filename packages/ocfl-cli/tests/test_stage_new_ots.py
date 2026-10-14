@@ -1,7 +1,8 @@
 from pathlib import Path
 
 import pytest
-from ots_helpers import BTC_OK, SP_OK, write_config
+from ots_helpers import BTC_OK, CATEGORY_ID, SP_OK, write_config
+from seed_root import SEED_ID
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -115,14 +116,14 @@ class TestDigestForcing:
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
-            _stage_new_ots_args(storage_root, staging, "obj:test"),
+            _stage_new_ots_args(storage_root, staging, SEED_ID),
         )
 
         assert result.exit_code != ExitCode.SUCCESS, result.output
         combined = _strip_paths((result.output + (result.stderr or "")).lower())
         assert "sha-256" in combined or "sha256" in combined, result.output
         store = StagingStore(staging)
-        assert not store.exists(str(storage_root.resolve()), "obj:test")
+        assert not store.exists(str(storage_root.resolve()), SEED_ID)
 
 
 class TestConfigValidation:
@@ -213,8 +214,7 @@ class TestInitialOtsJson:
 
         assert state.schema_version == 2
         assert state.phase is Phase.DRAFTING
-        # Matches [simpleproof].proof_category_id from SP_OK.
-        assert state.category_id == 641
+        assert state.category_id == CATEGORY_ID
         assert state.pending_digests == ()
         assert state.submissions == ()
         assert state.verify_jobs == ()

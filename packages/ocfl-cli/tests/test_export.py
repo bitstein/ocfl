@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from seed_root import SEED_ID
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -34,7 +35,7 @@ def _rewrite_root_logical_paths(storage_root: Path, logical_paths: list[str]) ->
 def _find_object_root_inventory(storage_root: Path) -> Path:
     for inv_path in storage_root.rglob("inventory.json"):
         inv = json.loads(inv_path.read_bytes())
-        if inv.get("id") != "obj:test":
+        if inv.get("id") != SEED_ID:
             continue
         if any(
             child.name.startswith("0=ocfl_object_")
@@ -52,7 +53,7 @@ class TestExport:
         out.mkdir()
         result = runner.invoke(
             app,
-            ["--root", str(storage_root), "export", "obj:test", "--to", str(out)],
+            ["--root", str(storage_root), "export", SEED_ID, "--to", str(out)],
         )
         assert result.exit_code == ExitCode.SUCCESS
         assert (out / "file1.txt").read_text() == "hello"
@@ -67,7 +68,7 @@ class TestExport:
                 "--root",
                 str(storage_root),
                 "export",
-                "obj:test",
+                SEED_ID,
                 "--object-version",
                 "v1",
                 "--to",
@@ -87,7 +88,7 @@ class TestExport:
                 "--root",
                 str(storage_root),
                 "export",
-                "obj:test",
+                SEED_ID,
                 "--object-version",
                 "v9",
                 "--to",
@@ -109,7 +110,7 @@ class TestExport:
                 "--root",
                 str(storage_root),
                 "export",
-                "obj:test",
+                SEED_ID,
                 "--file",
                 "file1.txt",
                 "--to",
@@ -131,7 +132,7 @@ class TestExport:
                 "--root",
                 str(storage_root),
                 "export",
-                "obj:test",
+                SEED_ID,
                 "--file",
                 "file2*",
                 "--to",
@@ -149,7 +150,7 @@ class TestExport:
                 "--root",
                 str(storage_root),
                 "export",
-                "obj:test",
+                SEED_ID,
                 "--file",
                 "file1.txt",
                 "--to",
@@ -164,7 +165,7 @@ class TestExport:
     ):
         result = runner.invoke(
             app,
-            ["--root", str(storage_root), "export", "obj:test", "--to", "-"],
+            ["--root", str(storage_root), "export", SEED_ID, "--to", "-"],
         )
         assert result.exit_code == ExitCode.USAGE, result.output
         assert "--to - writes one file" in result.output
@@ -178,7 +179,7 @@ class TestExport:
         (out / "file1.txt").write_text("old")
         result = runner.invoke(
             app,
-            ["--root", str(storage_root), "export", "obj:test", "--to", str(out)],
+            ["--root", str(storage_root), "export", SEED_ID, "--to", str(out)],
         )
         assert result.exit_code == ExitCode.GENERIC
 
@@ -188,7 +189,7 @@ class TestExport:
                 "--root",
                 str(storage_root),
                 "export",
-                "obj:test",
+                SEED_ID,
                 "--to",
                 str(out),
                 "--replace",
@@ -206,7 +207,7 @@ class TestExport:
 
         result = runner.invoke(
             app,
-            ["--root", str(storage_root), "export", "obj:test", "--to", str(out)],
+            ["--root", str(storage_root), "export", SEED_ID, "--to", str(out)],
         )
 
         assert result.exit_code == ExitCode.GENERIC
@@ -224,7 +225,7 @@ class TestExport:
                 "--root",
                 str(storage_root),
                 "export",
-                "obj:test",
+                SEED_ID,
                 "--to",
                 str(tmp_path / "out"),
             ],
@@ -256,7 +257,7 @@ class TestExport:
                 "--root",
                 str(storage_root),
                 "export",
-                "obj:test",
+                SEED_ID,
                 "--to",
                 str(tmp_path / "out"),
             ],
@@ -273,7 +274,7 @@ class TestExport:
 
         result = runner.invoke(
             app,
-            ["--root", str(storage_root), "export", "obj:test", "--to", str(out)],
+            ["--root", str(storage_root), "export", SEED_ID, "--to", str(out)],
         )
 
         assert result.exit_code == ExitCode.SUCCESS
@@ -292,7 +293,7 @@ class TestExport:
                 "--root",
                 str(storage_root),
                 "export",
-                "obj:test",
+                SEED_ID,
                 "--to",
                 str(out),
                 "--replace",

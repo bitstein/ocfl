@@ -1,4 +1,5 @@
 import pytest
+from seed_root import SEED_DIGEST, SEED_HEAD, SEED_ID
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -49,7 +50,7 @@ class TestStageNew:
                 "--staging-root",
                 str(staging),
                 "new",
-                "obj:test",
+                SEED_ID,
             ],
         )
         assert result.exit_code == ExitCode.SUCCESS, result.output
@@ -58,11 +59,11 @@ class TestStageNew:
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
-        inv = store.load_inventory(root_path, "obj:test")
-        # Existing object has v2 head, so staged should be v3
-        assert inv.head == "v3"
+        inv = store.load_inventory(root_path, SEED_ID)
+        staged = str(SEED_HEAD.next())
+        assert inv.head == staged
         assert len(inv.manifest) > 0
-        assert inv.versions["v3"].state == {}
+        assert inv.versions[staged].state == {}
 
     def test_error_on_double_new(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"
@@ -172,7 +173,7 @@ class TestStageNew:
                 "--staging-root",
                 str(staging),
                 "new",
-                "obj:test",
+                SEED_ID,
             ],
         )
         assert result.exit_code == ExitCode.SUCCESS, result.output
@@ -181,9 +182,8 @@ class TestStageNew:
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
-        inv = store.load_inventory(root_path, "obj:test")
-        # storage_root fixture uses SHA512
-        assert inv.digest_algorithm == "sha512"
+        inv = store.load_inventory(root_path, SEED_ID)
+        assert inv.digest_algorithm == SEED_DIGEST.ocfl_name
 
     def test_digest_ignored_for_existing(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"
@@ -196,7 +196,7 @@ class TestStageNew:
                 "--staging-root",
                 str(staging),
                 "new",
-                "obj:test",
+                SEED_ID,
                 "--digest",
                 "sha256",
             ],
@@ -207,5 +207,5 @@ class TestStageNew:
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
-        inv = store.load_inventory(root_path, "obj:test")
-        assert inv.digest_algorithm == "sha512"
+        inv = store.load_inventory(root_path, SEED_ID)
+        assert inv.digest_algorithm == SEED_DIGEST.ocfl_name

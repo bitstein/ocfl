@@ -2,6 +2,7 @@ import json
 from hashlib import sha512
 from pathlib import Path
 
+from seed_root import SEED_ID
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -12,13 +13,13 @@ class TestLsRoot:
     def test_list_objects(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(app, ["--root", str(storage_root), "ls"])
         assert result.exit_code == ExitCode.SUCCESS
-        assert "obj:test" in result.stdout
+        assert SEED_ID in result.stdout
 
     def test_list_objects_json(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(app, ["--root", str(storage_root), "--json", "ls"])
         assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
-        assert "obj:test" in data
+        assert SEED_ID in data
 
     def test_empty_root(self, runner: CliRunner, tmp_path: Path):
         from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
@@ -33,7 +34,7 @@ class TestLsRoot:
 
 class TestLsObject:
     def test_list_files_head(self, runner: CliRunner, storage_root: Path):
-        result = runner.invoke(app, ["--root", str(storage_root), "ls", "obj:test"])
+        result = runner.invoke(app, ["--root", str(storage_root), "ls", SEED_ID])
         assert result.exit_code == ExitCode.SUCCESS
         assert "file1.txt" in result.stdout
         assert "file2.txt" in result.stdout
@@ -41,7 +42,7 @@ class TestLsObject:
     def test_list_files_version(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
             app,
-            ["--root", str(storage_root), "ls", "obj:test", "--object-version", "v1"],
+            ["--root", str(storage_root), "ls", SEED_ID, "--object-version", "v1"],
         )
         assert result.exit_code == ExitCode.SUCCESS
         assert "file1.txt" in result.stdout
@@ -50,7 +51,7 @@ class TestLsObject:
     def test_list_files_bare_version(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
             app,
-            ["--root", str(storage_root), "ls", "obj:test", "--object-version", "1"],
+            ["--root", str(storage_root), "ls", SEED_ID, "--object-version", "1"],
         )
         assert result.exit_code == ExitCode.SUCCESS
         assert "file1.txt" in result.stdout
@@ -60,7 +61,7 @@ class TestLsObject:
     ):
         result = runner.invoke(
             app,
-            ["--root", str(storage_root), "ls", "obj:test", "--object-version", "v9"],
+            ["--root", str(storage_root), "ls", SEED_ID, "--object-version", "v9"],
         )
         assert result.exit_code == ExitCode.GENERIC
         assert "not found" in result.stderr.lower()
@@ -68,7 +69,7 @@ class TestLsObject:
 
     def test_list_files_json(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "--json", "ls", "obj:test"]
+            app, ["--root", str(storage_root), "--json", "ls", SEED_ID]
         )
         assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
@@ -78,7 +79,7 @@ class TestLsObject:
 
     def test_list_files_digests(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "ls", "obj:test", "--digests"]
+            app, ["--root", str(storage_root), "ls", SEED_ID, "--digests"]
         )
         assert result.exit_code == ExitCode.SUCCESS
         assert result.stdout == (

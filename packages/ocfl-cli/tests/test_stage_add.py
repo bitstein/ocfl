@@ -1,4 +1,5 @@
 import pytest
+from seed_root import SEED_ID
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -226,10 +227,10 @@ class TestStageAdd:
 
     def test_dedup_with_prior_manifest(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"
-        _invoke_new(runner, storage_root, staging, "obj:test")
+        _invoke_new(runner, storage_root, staging, SEED_ID)
         store, root_path = _store_and_root(storage_root, staging)
 
-        obj = StorageRoot.open(LocalFS(storage_root)).get_object("obj:test")
+        obj = StorageRoot.open(LocalFS(storage_root)).get_object(SEED_ID)
         inv = obj.inventory.inventory
         [target_digest] = [
             d for d, ps in inv.versions[inv.head].state.items() if "file1.txt" in ps
@@ -242,12 +243,12 @@ class TestStageAdd:
             runner,
             storage_root,
             staging,
-            "obj:test",
+            SEED_ID,
             dup_file,
             extra_args=["--as", "dup.txt"],
         )
         assert result.exit_code == ExitCode.SUCCESS, result.output
-        assert target_digest not in store.load_content_map(root_path, "obj:test")
+        assert target_digest not in store.load_content_map(root_path, SEED_ID)
 
     def test_skip_symlinks(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"

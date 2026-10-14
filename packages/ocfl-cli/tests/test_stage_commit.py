@@ -6,6 +6,7 @@ import pytest
 from fakes.fault_fs import before_claim, raise_on_content_write
 from fakes.locks import held_flock, is_flocked, lock_runtime
 from runner_helpers import injected, runner_obj
+from seed_root import SEED_HEAD, SEED_ID
 
 from ocfl_cli.errors import LockTimeoutError
 from ocfl_cli.exit_codes import ExitCode
@@ -76,15 +77,15 @@ class TestStageCommit:
         src = tmp_path / "extra.txt"
         src.write_text("extra content")
 
-        _new_with_metadata(runner, storage_root, staging, "obj:test")
-        _invoke(runner, storage_root, staging, "add", "obj:test", str(src))
-        result = _invoke(runner, storage_root, staging, "commit", "obj:test")
+        _new_with_metadata(runner, storage_root, staging, SEED_ID)
+        _invoke(runner, storage_root, staging, "add", SEED_ID, str(src))
+        result = _invoke(runner, storage_root, staging, "commit", SEED_ID)
         assert result.exit_code == ExitCode.SUCCESS, result.output
 
         fs = LocalFS(storage_root)
         sr = StorageRoot.open(fs)
-        obj = sr.get_object("obj:test")
-        assert obj.head.number == 3  # was v2, now v3
+        obj = sr.get_object(SEED_ID)
+        assert obj.head == SEED_HEAD.next()
 
     def test_stale_file_detected(self, runner, storage_root, tmp_path):
         staging = tmp_path / "staging"

@@ -315,6 +315,8 @@ class TestWatchHeightJumpTriggersReverify:
         register_attested(btc_fake.rpc, da)
         register_attested(btc_fake.rpc, db, height=DIGEST_BLOCK_HEIGHT + 1)
 
+        dropped_notifications = 5
+
         class _JumpStream:
             def __init__(self) -> None:
                 self._n = 0
@@ -326,9 +328,7 @@ class TestWatchHeightJumpTriggersReverify:
                         btc_fake.rpc.getblockchaininfo().best_block_hash
                     )
                 if self._n == 2:
-                    # Simulate a ZMQ-notification gap: chain advanced 5 blocks
-                    # between hashblock messages.
-                    btc_fake.rpc.extend(5)
+                    btc_fake.rpc.extend(dropped_notifications)
                     return bytes.fromhex(
                         btc_fake.rpc.getblockchaininfo().best_block_hash
                     )

@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from seed_root import SEED_ID
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
@@ -9,14 +10,14 @@ from ocfl_cli.main import app
 
 class TestLog:
     def test_log(self, runner: CliRunner, storage_root: Path):
-        result = runner.invoke(app, ["--root", str(storage_root), "log", "obj:test"])
+        result = runner.invoke(app, ["--root", str(storage_root), "log", SEED_ID])
         assert result.exit_code == ExitCode.SUCCESS
         assert "v1" in result.stdout
         assert "v2" in result.stdout
 
     def test_log_reverse(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "log", "obj:test", "--reverse"]
+            app, ["--root", str(storage_root), "log", SEED_ID, "--reverse"]
         )
         assert result.exit_code == ExitCode.SUCCESS
         lines = result.stdout.strip().splitlines()
@@ -27,7 +28,7 @@ class TestLog:
     def test_log_limit(self, runner: CliRunner, storage_root: Path):
         for flag in ("-n", "--limit"):
             result = runner.invoke(
-                app, ["--root", str(storage_root), "log", "obj:test", flag, "1"]
+                app, ["--root", str(storage_root), "log", SEED_ID, flag, "1"]
             )
             assert result.exit_code == ExitCode.SUCCESS
             assert "v2" in result.stdout
@@ -35,7 +36,7 @@ class TestLog:
 
     def test_log_json(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "--json", "log", "obj:test"]
+            app, ["--root", str(storage_root), "--json", "log", SEED_ID]
         )
         assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
