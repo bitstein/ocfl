@@ -1,6 +1,7 @@
 """Tests for ocfl stage ls and ocfl stage status."""
 
 import json
+from hashlib import sha512
 
 import pytest
 from typer.testing import CliRunner
@@ -47,23 +48,13 @@ class TestStageLs:
         staging = _setup_staged_new(runner, storage_root, tmp_path)
         result = _invoke(runner, storage_root, staging, "ls", "obj:new", "--digests")
         assert result.exit_code == 0, result.output
-        # Should have digest hashes alongside paths
-        lines = result.output.strip().splitlines()
-        for line in lines:
-            # Each line should have a hash and a path
-            parts = line.split()
-            assert len(parts) >= 2
+        assert result.output == (
+            f"{sha512(b'aaa').hexdigest()}  a.txt\n"
+            f"{sha512(b'bbb').hexdigest()}  sub/b.txt\n"
+        )
 
     def test_ls_json(self, runner, storage_root, tmp_path):
         staging = _setup_staged_new(runner, storage_root, tmp_path)
-        result = _invoke(
-            runner,
-            storage_root,
-            staging,
-            "ls",
-            "obj:new",
-        )
-        # Use --json at app level
         result = runner.invoke(
             app,
             [

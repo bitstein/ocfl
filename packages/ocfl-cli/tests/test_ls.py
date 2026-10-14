@@ -1,6 +1,7 @@
 """Tests for ocfl ls command."""
 
 import json
+from hashlib import sha512
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -83,10 +84,10 @@ class TestLsObject:
             app, ["--root", str(storage_root), "ls", "obj:test", "--digests"]
         )
         assert result.exit_code == 0
-        # Should contain digest hashes
-        assert "file1.txt" in result.stdout
-        lines = result.stdout.strip().splitlines()
-        assert any(len(line.split()) >= 2 for line in lines)
+        assert result.stdout == (
+            f"{sha512(b'hello').hexdigest()}  file1.txt\n"
+            f"{sha512(b'world').hexdigest()}  file2.txt\n"
+        )
 
     def test_nonexistent_object(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(app, ["--root", str(storage_root), "ls", "nonexistent"])

@@ -114,9 +114,7 @@ class TestBuildFirstVersion:
             .add_version(state, created="2024-01-01T00:00:00Z")
             .build()
         )
-        # Only one content path in manifest (first logical path)
-        assert len(inv.manifest["abc"]) == 1
-        assert inv.manifest["abc"][0].startswith("v1/content/")
+        assert inv.manifest["abc"] == ["v1/content/a.txt"]
 
 
 class TestBuildSubsequentVersion:

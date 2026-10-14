@@ -798,9 +798,10 @@ class TestPhaseGate:
             ),
         )
         assert r.exit_code == 3, r.output
-        out = (r.output or "").lower()
-        # Either name the wrong phase, or hint at the next legal step.
-        assert "drafting" in out or "content" in out, r.output
+        assert r.output == (
+            "Error: command 'timestamp inventory' not legal in phase 'drafting'; "
+            "next: ocfl stage timestamp obj:err-draft\n"
+        )
 
     def test_phase_error_at_content_pending_with_hint(
         self,
@@ -836,8 +837,10 @@ class TestPhaseGate:
             ),
         )
         assert r.exit_code == 3, r.output
-        out = (r.output or "").lower()
-        assert "content-pending" in out or "content" in out, r.output
+        assert r.output == (
+            "Error: command 'timestamp inventory' not legal in phase "
+            "'content-pending'; next: ocfl stage upgrade obj:err-pend --watch\n"
+        )
 
 
 # =========================================================================== #
