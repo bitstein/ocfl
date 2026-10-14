@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from digests import D1
 
 from ocfl_lib.fs._local import LocalFS
 from ocfl_lib.validation._object import validate_object
@@ -140,20 +141,17 @@ def _make_object(
                     fp.write_text("data")
 
 
-_D1 = "a" * 128
-
-
 def _base_inv(**overrides):
     base = {
         "id": "http://example.org/obj1",
         "type": "https://ocfl.io/1.1/spec/#inventory",
         "digestAlgorithm": "sha512",
         "head": "v1",
-        "manifest": {_D1: ["v1/content/file.txt"]},
+        "manifest": {D1: ["v1/content/file.txt"]},
         "versions": {
             "v1": {
                 "created": "2024-01-01T00:00:00Z",
-                "state": {_D1: ["file.txt"]},
+                "state": {D1: ["file.txt"]},
                 "message": "init",
                 "user": {"name": "test", "address": "mailto:t@e.org"},
             },
@@ -198,19 +196,19 @@ class TestE010VersionDirSequence:
             versions={
                 "v1": {
                     "created": "2024-01-01T00:00:00Z",
-                    "state": {_D1: ["file.txt"]},
+                    "state": {D1: ["file.txt"]},
                 },
                 "v2": {
                     "created": "2024-01-02T00:00:00Z",
-                    "state": {_D1: ["file.txt"]},
+                    "state": {D1: ["file.txt"]},
                 },
                 "v3": {
                     "created": "2024-01-03T00:00:00Z",
-                    "state": {_D1: ["file.txt"]},
+                    "state": {D1: ["file.txt"]},
                 },
                 "v4": {
                     "created": "2024-01-04T00:00:00Z",
-                    "state": {_D1: ["file.txt"]},
+                    "state": {D1: ["file.txt"]},
                 },
             },
         )

@@ -1,7 +1,7 @@
+from digests import D1
+
 from ocfl_lib.validation._inventory import validate_inventory
 from ocfl_lib.validation._report import FindingCollector
-
-_D1 = "a" * 128
 
 
 def _inv_with_fixity(fixity, *, lax_digests=False):
@@ -11,11 +11,11 @@ def _inv_with_fixity(fixity, *, lax_digests=False):
         "type": "https://ocfl.io/1.1/spec/#inventory",
         "digestAlgorithm": "sha512",
         "head": "v1",
-        "manifest": {_D1: ["v1/content/file.txt"]},
+        "manifest": {D1: ["v1/content/file.txt"]},
         "versions": {
             "v1": {
                 "created": "2024-01-01T00:00:00Z",
-                "state": {_D1: ["file.txt"]},
+                "state": {D1: ["file.txt"]},
                 "message": "init",
                 "user": {"name": "Test", "address": "mailto:test@example.org"},
             },

@@ -9,10 +9,12 @@ if TYPE_CHECKING:
 from ocfl_lib.fs import CopyFS
 from ocfl_lib.fs._local import LocalFS
 
+_A_TXT = b"hello"
+
 
 @pytest.fixture
 def fs_dir(tmp_path: Path) -> Path:
-    (tmp_path / "a.txt").write_text("hello")
+    (tmp_path / "a.txt").write_bytes(_A_TXT)
     (tmp_path / "sub").mkdir()
     (tmp_path / "sub" / "b.txt").write_text("world")
     (tmp_path / "sub" / "deep").mkdir()
@@ -33,7 +35,7 @@ class TestProtocolConformance:
 class TestOpenFile:
     def test_read_file(self, fs: LocalFS):
         with fs.open_file("a.txt") as f:
-            assert f.read() == b"hello"
+            assert f.read() == _A_TXT
 
     def test_read_nested(self, fs: LocalFS):
         with fs.open_file("sub/b.txt") as f:
@@ -66,7 +68,7 @@ class TestReadDir:
 
     def test_file_size(self, fs: LocalFS):
         entries = {e.name: e for e in fs.read_dir("")}
-        assert entries["a.txt"].size == 5  # len("hello")
+        assert entries["a.txt"].size == len(_A_TXT)
 
     def test_not_found(self, fs: LocalFS):
         with pytest.raises(FileNotFoundError):
@@ -149,9 +151,9 @@ class TestMkdir:
 class TestCopy:
     def test_copy_file(self, fs: LocalFS, fs_dir: Path):
         n = fs.copy("a.txt", "copy.txt")
-        assert n == 5
-        assert (fs_dir / "copy.txt").read_bytes() == b"hello"
-        assert (fs_dir / "a.txt").read_bytes() == b"hello"
+        assert n == len(_A_TXT)
+        assert (fs_dir / "copy.txt").read_bytes() == _A_TXT
+        assert (fs_dir / "a.txt").read_bytes() == _A_TXT
 
     def test_copy_nested(self, fs: LocalFS, fs_dir: Path):
         fs.mkdir("out")

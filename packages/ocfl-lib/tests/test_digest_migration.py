@@ -31,7 +31,6 @@ def _make_src_dir(tmp_path: Path, files: dict[str, str]) -> Path:
     return src
 
 
-# Flat-direct layout: object "obj" lives at tmp_path / "obj".
 OID = "obj"
 
 
@@ -40,6 +39,10 @@ def _init_root(tmp_path: Path) -> LocalFS:
     layout = get_layout("0002-flat-direct-storage-layout")
     StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
     return fs
+
+
+def _obj_dir(tmp_path: Path, fs: LocalFS) -> Path:
+    return tmp_path / StorageRoot.open(fs).object_path(OID)
 
 
 def _commit(fs: LocalFS, stage: VersionState, **kw) -> Object:
@@ -93,15 +96,21 @@ class TestAlgorithmMigration:
 
         inv = obj.inventory.inventory
         for digest in inv.versions["v1"].state:
-            assert len(digest) == 128, f"v1 digest not sha512: {digest[:16]}..."
+            assert len(digest) == DigestAlgorithm.SHA512.hex_length, (
+                f"v1 digest not sha512: {digest[:16]}..."
+            )
         for digest in inv.versions["v2"].state:
-            assert len(digest) == 128, f"v2 digest not sha512: {digest[:16]}..."
+            assert len(digest) == DigestAlgorithm.SHA512.hex_length, (
+                f"v2 digest not sha512: {digest[:16]}..."
+            )
         for digest in inv.manifest:
-            assert len(digest) == 128, f"manifest digest not sha512: {digest[:16]}..."
+            assert len(digest) == DigestAlgorithm.SHA512.hex_length, (
+                f"manifest digest not sha512: {digest[:16]}..."
+            )
 
     def test_content_files_unchanged(self, tmp_path: Path):
         obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
-        obj_dir = tmp_path / "obj"
+        obj_dir = _obj_dir(tmp_path, obj_fs)
 
         inv1 = obj.inventory.inventory
         v1_contents = {}
@@ -140,7 +149,7 @@ class TestAlgorithmMigration:
 
     def test_old_root_sidecar_removed(self, tmp_path: Path):
         _obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
-        obj_dir = tmp_path / "obj"
+        obj_dir = _obj_dir(tmp_path, obj_fs)
         assert (obj_dir / "inventory.json.sha256").exists()
 
         src2 = tmp_path / "src2"
@@ -256,7 +265,7 @@ class TestAlgorithmMigration:
         with pytest.raises(OSError, match="disk full"):
             _commit(obj_fs, stage, created="2024-06-01T00:00:00Z")
 
-        obj_dir = tmp_path / "obj"
+        obj_dir = _obj_dir(tmp_path, obj_fs)
         assert not (obj_dir / "v2").exists()
 
         original_inv_bytes = (obj_dir / "v1" / "inventory.json").read_bytes()
@@ -270,7 +279,7 @@ class TestAlgorithmMigration:
 
     def test_migration_revert_restores_original_inventory(self, tmp_path: Path):
         _obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
-        obj_dir = tmp_path / "obj"
+        obj_dir = _obj_dir(tmp_path, obj_fs)
         orig_inv_bytes = (obj_dir / "inventory.json").read_bytes()
 
         src2 = tmp_path / "src2"

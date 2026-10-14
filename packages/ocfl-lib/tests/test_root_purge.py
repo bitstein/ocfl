@@ -76,16 +76,13 @@ class TestStorageRootPurge:
         layout = HashedNTupleLayout(tuple_size=1, number_of_tuples=1)
         root = StorageRoot.init(fsys, fsys, layout=layout)
 
+        hex_buckets = 16
         ids_by_parent: dict[str, list[str]] = {}
-        for i in range(64):
+        for i in range(hex_buckets + 1):
             obj_id = f"obj-{i}"
             parent = root.object_path(obj_id).split("/", 1)[0]
             ids_by_parent.setdefault(parent, []).append(obj_id)
-            if len(ids_by_parent[parent]) == 2:
-                obj_a, obj_b = ids_by_parent[parent]
-                break
-        else:  # pragma: no cover - impossible with 64 IDs into 16 hex buckets
-            raise AssertionError("could not find IDs with a shared parent")
+        obj_a, obj_b, *_ = next(ids for ids in ids_by_parent.values() if len(ids) >= 2)
 
         _commit_object(tmp_path, root, fsys, obj_a, {"file.txt": "a"})
         _commit_object(tmp_path, root, fsys, obj_b, {"file.txt": "b"})

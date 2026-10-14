@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from ocfl_lib._digest import (
+    _CHUNK_SIZE,
     DigestAlgorithm,
     bytes_digest,
     digest_files,
@@ -160,7 +161,7 @@ class TestStreamDigest:
         )
 
     def test_large_stream(self):
-        data = b"y" * 100_000
+        data = b"y" * (3 * _CHUNK_SIZE + 1)
         stream = io.BytesIO(data)
         assert (
             stream_digest(stream, DigestAlgorithm.SHA256)
@@ -214,8 +215,7 @@ class TestMultiDigest:
         assert result[DigestAlgorithm.SHA512] == EMPTY_DIGESTS[DigestAlgorithm.SHA512]
 
     def test_large_file(self, tmp_path: Path):
-        """Verify multi-pass works across chunk boundaries."""
-        data = b"z" * 100_000
+        data = b"z" * (3 * _CHUNK_SIZE + 1)
         f = tmp_path / "large.bin"
         f.write_bytes(data)
         result = multi_digest(f, [DigestAlgorithm.SHA256, DigestAlgorithm.MD5])

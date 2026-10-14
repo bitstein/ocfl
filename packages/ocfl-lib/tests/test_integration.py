@@ -1,3 +1,4 @@
+import hashlib
 import json
 from typing import TYPE_CHECKING
 
@@ -289,12 +290,12 @@ class TestOnDiskStructure:
             v1_dir / "inventory.json"
         ).read_bytes()
 
-        # Sidecar format: "{digest} inventory.json\n"
-        sidecar = (obj_dir / "inventory.json.sha512").read_text()
-        parts = sidecar.strip().split()
-        assert len(parts) == 2
-        assert parts[1] == "inventory.json"
-        assert len(parts[0]) == 128  # sha512 hex length
+        inventory_digest = hashlib.sha512(
+            (obj_dir / "inventory.json").read_bytes()
+        ).hexdigest()
+        assert (obj_dir / "inventory.json.sha512").read_text() == (
+            f"{inventory_digest} inventory.json\n"
+        )
 
     def test_object_structure_v2_forward_delta(self, tmp_path: Path):
         fsys = LocalFS(tmp_path)

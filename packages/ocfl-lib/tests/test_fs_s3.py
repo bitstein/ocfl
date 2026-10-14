@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 BUCKET = "test-bucket"
 REGION = "us-east-1"
+_A_TXT = b"hello"
 
 
 @pytest.fixture
@@ -27,7 +28,7 @@ def s3_client():
 
 
 def _seed(client: S3Client) -> None:
-    client.put_object(Bucket=BUCKET, Key="a.txt", Body=b"hello")
+    client.put_object(Bucket=BUCKET, Key="a.txt", Body=_A_TXT)
     client.put_object(Bucket=BUCKET, Key="sub/b.txt", Body=b"world")
     client.put_object(Bucket=BUCKET, Key="sub/deep/c.txt", Body=b"\x00\x01\x02")
 
@@ -53,7 +54,7 @@ class TestProtocolConformance:
 class TestOpenFile:
     def test_read_file(self, fs: S3FS):
         with fs.open_file("a.txt") as f:
-            assert f.read() == b"hello"
+            assert f.read() == _A_TXT
 
     def test_read_nested(self, fs: S3FS):
         with fs.open_file("sub/b.txt") as f:
@@ -86,7 +87,7 @@ class TestReadDir:
 
     def test_file_size(self, fs: S3FS):
         entries = {e.name: e for e in fs.read_dir("")}
-        assert entries["a.txt"].size == 5  # len("hello")
+        assert entries["a.txt"].size == len(_A_TXT)
 
     def test_not_found(self, fs: S3FS):
         with pytest.raises(FileNotFoundError):
@@ -266,11 +267,11 @@ class TestMkdir:
 class TestCopy:
     def test_copy_file(self, fs: S3FS, s3_client: S3Client):
         n = fs.copy("a.txt", "copy.txt")
-        assert n == 5
+        assert n == len(_A_TXT)
         body = s3_client.get_object(Bucket=BUCKET, Key="copy.txt")["Body"].read()
-        assert body == b"hello"
+        assert body == _A_TXT
         src = s3_client.get_object(Bucket=BUCKET, Key="a.txt")["Body"].read()
-        assert src == b"hello"
+        assert src == _A_TXT
 
     def test_copy_nested(self, fs: S3FS, s3_client: S3Client):
         fs.copy("sub/b.txt", "out/b_copy.txt")
@@ -349,7 +350,7 @@ class TestPrefix:
     def prefixed_fs(self, s3_client: S3Client) -> S3FS:
         from ocfl_lib.fs.s3 import S3FS
 
-        s3_client.put_object(Bucket=BUCKET, Key="myprefix/a.txt", Body=b"hello")
+        s3_client.put_object(Bucket=BUCKET, Key="myprefix/a.txt", Body=_A_TXT)
         s3_client.put_object(Bucket=BUCKET, Key="myprefix/sub/b.txt", Body=b"world")
         s3_client.put_object(
             Bucket=BUCKET, Key="myprefix/sub/deep/c.txt", Body=b"\x00\x01\x02"
@@ -359,7 +360,7 @@ class TestPrefix:
 
     def test_open_file(self, prefixed_fs: S3FS):
         with prefixed_fs.open_file("a.txt") as f:
-            assert f.read() == b"hello"
+            assert f.read() == _A_TXT
 
     def test_open_nested(self, prefixed_fs: S3FS):
         with prefixed_fs.open_file("sub/b.txt") as f:
@@ -420,7 +421,7 @@ class TestPrefix:
         body = s3_client.get_object(Bucket=BUCKET, Key="myprefix/a_copy.txt")[
             "Body"
         ].read()
-        assert body == b"hello"
+        assert body == _A_TXT
 
     def test_walk_files(self, prefixed_fs: S3FS):
         refs = sorted(prefixed_fs.walk_files(""), key=lambda r: r.path)

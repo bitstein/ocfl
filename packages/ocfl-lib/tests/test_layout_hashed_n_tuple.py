@@ -3,10 +3,13 @@
 import msgspec
 import pytest
 
+from ocfl_lib._digest import DigestAlgorithm
 from ocfl_lib._layout.ext0004_hashed_n_tuple import (
     HashedNTupleConfig,
     HashedNTupleLayout,
 )
+
+_MD5_HEX_LENGTH = DigestAlgorithm.MD5.hex_length
 
 
 class TestHashedNTupleLayout:
@@ -104,18 +107,18 @@ class TestHashedNTupleLayout:
             HashedNTupleLayout(tuple_size=3, number_of_tuples=0)
 
     def test_tuples_exceed_digest_length(self):
-        # md5 hex = 32 chars, 3*11 = 33 > 32
         with pytest.raises(ValueError):
             HashedNTupleLayout(
-                digest_algorithm="md5", tuple_size=3, number_of_tuples=11
+                digest_algorithm="md5",
+                tuple_size=3,
+                number_of_tuples=_MD5_HEX_LENGTH // 3 + 1,
             )
 
     def test_short_root_invalid_when_tuples_cover_full_digest(self):
-        # md5 hex = 32 chars, 2*16 = 32 = full digest, short_object_root invalid
         with pytest.raises(ValueError):
             HashedNTupleLayout(
                 digest_algorithm="md5",
                 tuple_size=2,
-                number_of_tuples=16,
+                number_of_tuples=_MD5_HEX_LENGTH // 2,
                 short_object_root=True,
             )

@@ -1,8 +1,7 @@
+from digests import D1, D2
+
 from ocfl_lib.validation._inventory import validate_inventory_against_prior
 from ocfl_lib.validation._report import FindingCollector
-
-_D1 = "a" * 128
-_D2 = "b" * 128
 
 
 def _inv(*, versions, head=None, id="http://example.org/obj1", manifest=None):
@@ -10,7 +9,7 @@ def _inv(*, versions, head=None, id="http://example.org/obj1", manifest=None):
     if head is None:
         head = max(versions.keys())
     if manifest is None:
-        manifest = {_D1: ["v1/content/file.txt"]}
+        manifest = {D1: ["v1/content/file.txt"]}
     return {
         "id": id,
         "type": "https://ocfl.io/1.1/spec/#inventory",
@@ -22,7 +21,7 @@ def _inv(*, versions, head=None, id="http://example.org/obj1", manifest=None):
 
 
 def _v1_block(**overrides):
-    base = {"created": "2024-01-01T00:00:00Z", "state": {_D1: ["file.txt"]}}
+    base = {"created": "2024-01-01T00:00:00Z", "state": {D1: ["file.txt"]}}
     base.update(overrides)
     return base
 
@@ -30,7 +29,7 @@ def _v1_block(**overrides):
 def _v2_block(**overrides):
     base = {
         "created": "2024-01-02T00:00:00Z",
-        "state": {_D1: ["file.txt"], _D2: ["file2.txt"]},
+        "state": {D1: ["file.txt"], D2: ["file2.txt"]},
     }
     base.update(overrides)
     return base
@@ -41,7 +40,7 @@ class TestIdConsistency:
         prior = _inv(id="http://example.org/obj1", versions={"v1": _v1_block()})
         current = _inv(
             id="http://example.org/CHANGED",
-            manifest={_D1: ["v1/content/file.txt"], _D2: ["v2/content/file2.txt"]},
+            manifest={D1: ["v1/content/file.txt"], D2: ["v2/content/file2.txt"]},
             versions={"v1": _v1_block(), "v2": _v2_block()},
         )
         r = FindingCollector()
@@ -51,7 +50,7 @@ class TestIdConsistency:
     def test_id_same_no_error(self):
         prior = _inv(versions={"v1": _v1_block()})
         current = _inv(
-            manifest={_D1: ["v1/content/file.txt"], _D2: ["v2/content/file2.txt"]},
+            manifest={D1: ["v1/content/file.txt"], D2: ["v2/content/file2.txt"]},
             versions={"v1": _v1_block(), "v2": _v2_block()},
         )
         r = FindingCollector()
@@ -62,7 +61,7 @@ class TestIdConsistency:
 class TestVersionSubset:
     def test_prior_version_missing_in_current(self):
         prior = _inv(
-            manifest={_D1: ["v1/content/file.txt"], _D2: ["v2/content/file2.txt"]},
+            manifest={D1: ["v1/content/file.txt"], D2: ["v2/content/file2.txt"]},
             versions={"v1": _v1_block(), "v2": _v2_block()},
         )
         current = _inv(versions={"v1": _v1_block()})
@@ -75,9 +74,9 @@ class TestVersionStateConsistency:
     def test_logical_paths_differ(self):
         prior = _inv(versions={"v1": _v1_block()})
         current = _inv(
-            manifest={_D1: ["v1/content/file.txt"], _D2: ["v2/content/file2.txt"]},
+            manifest={D1: ["v1/content/file.txt"], D2: ["v2/content/file2.txt"]},
             versions={
-                "v1": _v1_block(state={_D1: ["different.txt"]}),
+                "v1": _v1_block(state={D1: ["different.txt"]}),
                 "v2": _v2_block(),
             },
         )
@@ -86,11 +85,11 @@ class TestVersionStateConsistency:
         assert r.has_code("E066b")
 
     def test_prior_logical_path_missing_from_current(self):
-        prior = _inv(versions={"v1": _v1_block(state={_D1: ["prior-only.txt"]})})
+        prior = _inv(versions={"v1": _v1_block(state={D1: ["prior-only.txt"]})})
         current = _inv(
-            manifest={_D1: ["v1/content/file.txt"], _D2: ["v2/content/file2.txt"]},
+            manifest={D1: ["v1/content/file.txt"], D2: ["v2/content/file2.txt"]},
             versions={
-                "v1": _v1_block(state={_D1: []}),
+                "v1": _v1_block(state={D1: []}),
                 "v2": _v2_block(),
             },
         )
@@ -102,11 +101,11 @@ class TestVersionStateConsistency:
         assert "only in v1 inventory" in e066b[0].render()
 
     def test_current_logical_path_added_to_prior_version(self):
-        prior = _inv(versions={"v1": _v1_block(state={_D1: []})})
+        prior = _inv(versions={"v1": _v1_block(state={D1: []})})
         current = _inv(
-            manifest={_D1: ["v1/content/file.txt"], _D2: ["v2/content/file2.txt"]},
+            manifest={D1: ["v1/content/file.txt"], D2: ["v2/content/file2.txt"]},
             versions={
-                "v1": _v1_block(state={_D1: ["current-only.txt"]}),
+                "v1": _v1_block(state={D1: ["current-only.txt"]}),
                 "v2": _v2_block(),
             },
         )
@@ -120,7 +119,7 @@ class TestVersionStateConsistency:
     def test_matching_versions_no_error(self):
         prior = _inv(versions={"v1": _v1_block()})
         current = _inv(
-            manifest={_D1: ["v1/content/file.txt"], _D2: ["v2/content/file2.txt"]},
+            manifest={D1: ["v1/content/file.txt"], D2: ["v2/content/file2.txt"]},
             versions={"v1": _v1_block(), "v2": _v2_block()},
         )
         r = FindingCollector()

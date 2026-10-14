@@ -3,11 +3,15 @@
 import msgspec
 import pytest
 
+from ocfl_lib._digest import DigestAlgorithm
 from ocfl_lib._layout.ext0003_hash_and_id_n_tuple import (
+    _MAX_ENCODED_LENGTH,
     HashAndIdNTupleConfig,
     HashAndIdNTupleLayout,
     _percent_encode,
 )
+
+_SHA256_HEX_LENGTH = DigestAlgorithm.SHA256.hex_length
 
 
 class TestHashAndIdNTupleLayout:
@@ -64,37 +68,27 @@ class TestHashAndIdNTupleLayout:
         assert _percent_encode("abc-XYZ_012") == "abc-XYZ_012"
 
     def test_truncation_long_id(self):
-        # 260-char ID → encoded exceeds 100, truncated + digest appended
-        layout = HashAndIdNTupleLayout()
         long_id = "abcdefghij" * 26
-        result = layout.resolve(long_id)
-        parts = result.split("/")
-        # 3 tuple dirs + encoded leaf
-        assert len(parts) == 4
-        leaf = parts[3]
-        assert len(leaf.split("-")[-1]) == 64  # sha256 hex
+        assert len(_percent_encode(long_id)) > _MAX_ENCODED_LENGTH
+        *tuple_dirs, leaf = HashAndIdNTupleLayout().resolve(long_id).split("/")
+        assert len(tuple_dirs) == 3
+        assert len(leaf.split("-")[-1]) == _SHA256_HEX_LENGTH
         assert leaf.startswith("abcdefghij")
 
-    def test_truncation_101_char_id(self):
-        layout = HashAndIdNTupleLayout()
-        long_id = "abcdefghij" * 10 + "a"  # 101 chars, all safe, encoded=101 > 100
-        result = layout.resolve(long_id)
-        parts = result.split("/")
-        leaf = parts[3]
-        # should be truncated: 100 chars + '-' + 64-char digest
+    def test_truncation_just_over_max_length(self):
+        long_id = "abcdefghij" * 10 + "a"
+        assert len(long_id) == _MAX_ENCODED_LENGTH + 1
+        leaf = HashAndIdNTupleLayout().resolve(long_id).split("/")[3]
         assert "-" in leaf
         prefix, digest = leaf.rsplit("-", 1)
-        assert len(prefix) == 100
-        assert len(digest) == 64
+        assert len(prefix) == _MAX_ENCODED_LENGTH
+        assert len(digest) == _SHA256_HEX_LENGTH
 
-    def test_no_truncation_100_char_id(self):
-        layout = HashAndIdNTupleLayout()
-        id_100 = "abcdefghij" * 10  # exactly 100 safe chars
-        result = layout.resolve(id_100)
-        parts = result.split("/")
-        leaf = parts[3]
-        # 100 chars, no truncation needed
-        assert leaf == id_100
+    def test_no_truncation_at_max_length(self):
+        id_at_max = "abcdefghij" * 10
+        assert len(id_at_max) == _MAX_ENCODED_LENGTH
+        leaf = HashAndIdNTupleLayout().resolve(id_at_max).split("/")[3]
+        assert leaf == id_at_max
 
     def test_config_defaults(self):
         cfg = HashAndIdNTupleConfig()
