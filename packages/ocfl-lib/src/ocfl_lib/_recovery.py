@@ -76,6 +76,8 @@ class CommitState(enum.Enum):
 
 
 class RecoveryAction(enum.Enum):
+    """What `StorageRoot.recover` does to an interrupted commit."""
+
     RESUME = "resume"
     REVERT = "revert"
     REMOVE_STRAY = "remove_stray"
@@ -83,6 +85,8 @@ class RecoveryAction(enum.Enum):
 
 @dataclass(frozen=True, slots=True)
 class CommitStatus:
+    """How far an object's last commit got; `version` is the `vN` it was writing."""
+
     state: CommitState
     version: str | None = None
 

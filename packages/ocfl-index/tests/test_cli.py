@@ -4,14 +4,27 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import typer
 from index_fixtures import FixtureRoot
 from typer.testing import CliRunner
 
 from ocfl_index import db
 from ocfl_index.cli import app
 from ocfl_lib import DigestAlgorithm
+from tests.helpers.docs import iter_commands
 
 runner = CliRunner()
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        pytest.param(c, id=p)
+        for p, c in iter_commands(typer.main.get_command(app), "ocfl-index")
+    ],
+)
+def test_every_command_has_help(cmd) -> None:
+    assert (cmd.help or "").strip()
 
 
 def _db(tmp_path: Path) -> Path:

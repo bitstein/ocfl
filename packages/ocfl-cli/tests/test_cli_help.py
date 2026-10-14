@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 from ocfl_cli._common import installed_cli_version
 from ocfl_cli.exit_codes import EXIT_CODE_DOCS, ExitCode, format_exit_code_help
 from ocfl_cli.main import app, configure_logging
+from tests.helpers.docs import iter_commands
 
 
 def test_root_help_groups_commands_and_documents_exit_codes(
@@ -53,20 +54,27 @@ def test_validate_help_names_the_bitcoin_section(runner: CliRunner) -> None:
     assert "auto (chain when [bitcoin] is configured" in unboxed
 
 
-def _help_strings(cmd, path: str):
-    yield path, cmd.help
-    yield path, cmd.epilog
-    for param in cmd.params:
-        yield f"{path} {param.name}", getattr(param, "help", None)
-    for name, sub in getattr(cmd, "commands", {}).items():
-        yield from _help_strings(sub, f"{path} {name}")
+_COMMANDS = list(iter_commands(typer.main.get_command(app), "ocfl"))
+
+
+@pytest.mark.parametrize("cmd", [pytest.param(c, id=p) for p, c in _COMMANDS])
+def test_every_command_has_help(cmd) -> None:
+    assert (cmd.help or "").strip()
+
+
+def _help_strings():
+    for path, cmd in _COMMANDS:
+        yield path, cmd.help
+        yield path, cmd.epilog
+        for param in cmd.params:
+            yield f"{path} {param.name}", getattr(param, "help", None)
 
 
 @pytest.mark.parametrize(
     "text",
     [
         pytest.param(inspect.cleandoc(text), id=where)
-        for where, text in _help_strings(typer.main.get_command(app), "ocfl")
+        for where, text in _help_strings()
         if text
     ],
 )

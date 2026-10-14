@@ -7,6 +7,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+from ocfl_cli import _exit
 from ocfl_cli._exit import error_class_of, error_code_of, handle_error
 from ocfl_cli.errors import (
     AttestationMismatchError,
@@ -113,6 +114,15 @@ def test_handle_error_json(capsys) -> None:
     assert json.loads(captured.err) == {
         "error": {"code": "lock_timeout", "message": "busy", "exit": 4}
     }
+
+
+def test_exit_module_documents_the_json_error_shape(capsys) -> None:
+    with pytest.raises(typer.Exit):
+        handle_error(LockTimeoutError("busy"), json_mode=True)
+    keys = json.loads(capsys.readouterr().err)["error"]
+    shape = '{"error": {' + ", ".join(f'"{k}"' for k in keys) + "}}"
+
+    assert shape in (_exit.__doc__ or "")
 
 
 def test_root_config_error_exits_6(

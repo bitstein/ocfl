@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class ObjectRow:
+    """One indexed object and its head version."""
+
     object_id: str
     root_relpath: str
     spec_version: str
@@ -19,6 +21,8 @@ class ObjectRow:
 
 @dataclass(frozen=True, slots=True)
 class VersionRow:
+    """One version of an object, with its inventory metadata."""
+
     object_id: str
     version_num: int
     version: str
@@ -30,6 +34,8 @@ class VersionRow:
 
 @dataclass(frozen=True, slots=True)
 class PathRow:
+    """A logical path in one version and the digest of its content."""
+
     object_id: str
     version_num: int
     logical_path: str
@@ -38,6 +44,8 @@ class PathRow:
 
 @dataclass(frozen=True, slots=True)
 class BlobRow:
+    """One distinct content digest; `media_type` is None until sniffed."""
+
     digest: str
     size: int
     media_type: str | None
@@ -46,6 +54,12 @@ class BlobRow:
 
 @dataclass(frozen=True, slots=True)
 class OtsAttestation:
+    """A parsed `.ots` proof, keyed by the digest of its bytes.
+
+    `block_height` is None for a pending proof. A proof that does not parse
+    has `parse_error` set and an empty `attested_digest`.
+    """
+
     proof_digest: str
     attested_digest: str
     block_height: int | None
@@ -55,6 +69,8 @@ class OtsAttestation:
 
 @dataclass(frozen=True, slots=True)
 class ScanReport:
+    """What one `Index.refresh` changed, and how long it took."""
+
     objects_scanned: int = 0
     objects_changed: int = 0
     versions_added: int = 0
@@ -65,6 +81,8 @@ class ScanReport:
 
 @dataclass(frozen=True, slots=True)
 class StatusReport:
+    """The index's schema version, last scans, and row counts."""
+
     root_path: str
     schema_version: str | None
     last_scan_at: str | None
@@ -74,6 +92,8 @@ class StatusReport:
 
 @dataclass(frozen=True, slots=True)
 class ObjectDetail:
+    """An object with all its versions and its head version's paths."""
+
     object: ObjectRow
     versions: tuple[VersionRow, ...]
     head_paths: tuple[PathRow, ...]
