@@ -78,7 +78,6 @@ def populated_state() -> OtsState:
                 digests=(d1, d2),
                 status="submitted",
                 target=TimestampTarget.CONTENT,
-                job_id="job-1",
                 attempts=1,
             ),
         ),
@@ -335,7 +334,6 @@ class TestTypedDecoding:
                             "digests": "abc",
                             "status": "submitted",
                             "target": "content",
-                            "job_id": "job-1",
                             "attempts": 1,
                         }
                     ],
@@ -517,7 +515,6 @@ class TestSchemaMigration:
                             "digests": [digest],
                             "status": "submitted",
                             "target": "content",
-                            "job_id": "job-1",
                             "attempts": 1,
                         }
                     ],
@@ -613,7 +610,6 @@ class TestSubmitIntentDurability:
                     digests=(d1,),
                     status="submitting",
                     target=TimestampTarget.CONTENT,
-                    job_id=None,
                     attempts=0,
                 ),
             ),
@@ -624,7 +620,6 @@ class TestSubmitIntentDurability:
         save_ots(tmp_path, intent)
         loaded = load_ots(tmp_path)
         assert loaded.submissions[0].status == "submitting"
-        assert loaded.submissions[0].job_id is None
 
     def test_intent_to_finalize_two_step(self, tmp_path: Path):
         """Step 1: write intent. Step 2: finalize. Reader at any moment sees one
@@ -641,7 +636,6 @@ class TestSubmitIntentDurability:
                     digests=(d1,),
                     status="submitting",
                     target=TimestampTarget.CONTENT,
-                    job_id=None,
                     attempts=0,
                 ),
             ),
@@ -664,7 +658,6 @@ class TestSubmitIntentDurability:
                     digests=(d1,),
                     status="submitted",
                     target=TimestampTarget.CONTENT,
-                    job_id="job-x",
                     attempts=1,
                 ),
             ),
@@ -678,7 +671,6 @@ class TestSubmitIntentDurability:
         # Disk shape post-finalize is consistent — never half-old / half-new.
         raw = json.loads((tmp_path / "ots.json").read_bytes())
         assert raw["submissions"][0]["status"] == "submitted"
-        assert raw["submissions"][0]["job_id"] == "job-x"
 
 
 class TestHelpers:
@@ -768,7 +760,6 @@ class TestSubmissionShape:
             digests=(_bare_hex("a"),),
             status="submitted",
             target=TimestampTarget.CONTENT,
-            job_id="j",
             attempts=1,
         )
         assert isinstance(s.digests, tuple)

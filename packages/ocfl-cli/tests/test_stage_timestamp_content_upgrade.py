@@ -217,7 +217,6 @@ def _force_content_pending(sd: Path, digests: tuple[str, ...]) -> None:
                 digests=digests,
                 status="submitted",
                 target=TimestampTarget.CONTENT,
-                job_id=None,
                 attempts=1,
             ),
         ),

@@ -111,7 +111,6 @@ def _submission(
         digests=(digest,),
         status=status,
         target=target,
-        job_id="job-1",
         attempts=1,
         batch_id=batch_id,
     )

@@ -34,7 +34,6 @@ class Submission(msgspec.Struct, frozen=True):
     digests: tuple[str, ...]
     status: str  # "submitting" | "submitted" | "failed"
     target: TimestampTarget
-    job_id: str | None = None
     attempts: int = 0
     batch_id: str | None = None
     record_ids: tuple[str | None, ...] | None = None

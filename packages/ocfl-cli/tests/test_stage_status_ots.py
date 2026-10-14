@@ -383,9 +383,6 @@ class TestStageStatusOts:
             Phase.CONTENT_PENDING,
             pending_digests=(da,),
             submissions=(
-                # Production never back-fills Submission.job_id; the verify job
-                # is matched to its submission by digest overlap. (Fabricating
-                # job_id here would let a job_id-keyed join pass spuriously.)
                 Submission(
                     submitted_at="2026-04-25T14:00:00+00:00",
                     digests=(da,),
@@ -451,7 +448,6 @@ class TestStageStatusOts:
                     digests=(da,),
                     status="failed",
                     target=TimestampTarget.CONTENT,
-                    job_id="job-fail",
                     attempts=1,
                 ),
             ),
@@ -856,7 +852,6 @@ class TestStageStatusOts:
                     digests=(da,),
                     status="submitted",
                     target=TimestampTarget.CONTENT,
-                    job_id="job-h",
                     attempts=1,
                 ),
             ),
@@ -930,7 +925,6 @@ class TestStageStatusOts:
                     digests=(da,),
                     status="submitted",
                     target=TimestampTarget.CONTENT,
-                    job_id="job-sec",
                     attempts=1,
                 ),
             ),
@@ -993,8 +987,6 @@ class TestStageStatusOts:
         )
         assert r.exit_code == 0, r.output
         sd = _staging_dir(empty_sha256_root, staging, "obj:s-h-hr")
-        state = load_ots(sd)
-        assert state.submissions[0].job_id is None
 
         r = runner.invoke(
             app,

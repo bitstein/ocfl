@@ -545,7 +545,6 @@ def _seed_submitting_intent(staging_dir: Path, digests: tuple[str, ...]) -> None
                 digests=digests,
                 status="submitting",
                 target=TimestampTarget.CONTENT,
-                job_id=None,
                 attempts=0,
             ),
         ),

@@ -182,7 +182,6 @@ class TestRetryResubmitsOnlyFailed:
             digests=(d1, d2),
             status="failed",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=1,
         )
         submitted = Submission(
@@ -190,7 +189,6 @@ class TestRetryResubmitsOnlyFailed:
             digests=(d3,),
             status="submitted",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=1,
         )
         submitting = Submission(
@@ -198,7 +196,6 @@ class TestRetryResubmitsOnlyFailed:
             digests=(d4,),
             status="submitting",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=2,
         )
         _set_state(
@@ -280,7 +277,6 @@ class TestRetryEmptyFailedNoop:
             digests=(d,),
             status="submitted",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=1,
         )
         _set_state(
@@ -351,7 +347,6 @@ class TestRetryMultipleFailedIndependent:
             digests=(da,),
             status="failed",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=1,
         )
         failed_b = Submission(
@@ -359,7 +354,6 @@ class TestRetryMultipleFailedIndependent:
             digests=(db,),
             status="failed",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=2,
         )
         _set_state(
@@ -443,7 +437,6 @@ class TestRetryPhaseGate:
             digests=(d,),
             status="failed",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=1,
         )
         _set_state(
@@ -507,7 +500,6 @@ class TestRetryCrashSafeShape:
             digests=(d,),
             status="failed",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=1,
         )
         _set_state(
