@@ -14,17 +14,11 @@ def purge(
         bool,
         typer.Option("--yes", "-y", help="Skip the confirmation prompt."),
     ] = False,
-    force: Annotated[
-        bool,
-        # The old spelling of --yes. Elsewhere --force overrides a safety
-        # check, so it is hidden here.
-        typer.Option("--force", hidden=True),
-    ] = False,
 ) -> None:
     """Permanently remove an object from the storage root."""
     root, fs = open_root(ctx)
 
-    if not (yes or force):
+    if not yes:
         typer.confirm(
             f"Permanently delete {object_id!r}? This cannot be undone",
             abort=True,

@@ -12,7 +12,7 @@ class TestPurge:
     def test_purge_with_force(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
             app,
-            ["--root", str(storage_root), "purge", "obj:test", "--force"],
+            ["--root", str(storage_root), "purge", "obj:test", "--yes"],
         )
         assert result.exit_code == 0
         # Object should be gone
@@ -47,7 +47,7 @@ class TestPurge:
     def test_purge_nonexistent(self, runner: CliRunner, storage_root: Path):
         result = runner.invoke(
             app,
-            ["--root", str(storage_root), "purge", "nonexistent", "--force"],
+            ["--root", str(storage_root), "purge", "nonexistent", "--yes"],
         )
         assert result.exit_code == 1
 

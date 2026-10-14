@@ -134,7 +134,7 @@ class TestRoundTrip:
     def test_purge(self, runner: CliRunner, s3_storage_root):
         result = runner.invoke(
             app,
-            ["--root", s3_storage_root, "purge", "obj:test", "--force"],
+            ["--root", s3_storage_root, "purge", "obj:test", "--yes"],
         )
         assert result.exit_code == 0, result.output
         # Verify object is gone

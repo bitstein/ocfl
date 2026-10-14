@@ -1,22 +1,3 @@
-"""Tests for ``ocfl validate --verify-ots`` default-on behavior.
-
-Pinned by ``OTS workflow contract``:
-
-- ``--verify-ots`` defaults ON when the OTS extension is present in the
-  object; ``--no-verify-ots`` opts out (offline CI).
-- Default-on requires ``[bitcoin]`` config; missing config raises
-  ``ConfigError`` with an actionable hint mentioning ``[bitcoin]``
-  (CLI exit 6 per the canonical exit-code mapping).
-- Default-on walks the attestation chain via ``verify_attestation`` and
-  cross-checks the merkle root against the Bitcoin chain. A mismatch
-  surfaces a new ``E906`` (verify-time mismatch) error and exits 1.
-- Structural validation ALWAYS runs, regardless of
-  ``--verify-ots``/``--no-verify-ots``.
-
-Tests inject a ``FakeBitcoinRPC`` via ``runner.obj["btc_rpc_factory"]``
-(see ``conftest.py::runner`` for the auto-attach mechanism).
-"""
-
 import hashlib
 import json
 from pathlib import Path
@@ -287,26 +268,26 @@ class TestDefaultOnVerifyOts:
 
 
 # =========================================================================== #
-# Test 2: --no-verify-ots skips network walk (offline CI)
+# Test 2: --ots=local skips network walk (offline CI)
 # =========================================================================== #
 
 
-class TestNoVerifyOtsSkipsWalk:
-    def test_no_verify_ots_skips_network_walk(
+class TestOtsLocalSkipsWalk:
+    def test_ots_local_skips_network_walk(
         self,
         runner: CliRunner,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``--no-verify-ots`` skips the chain walk entirely.
+        """``--ots=local`` skips the chain walk entirely.
 
         No merkle roots registered, chain at default height (genesis-only).
-        Default-on would fail; ``--no-verify-ots`` must succeed.
+        Default-on would fail; ``--ots=local`` must succeed.
         """
         _write_config(tmp_path, monkeypatch)
         # Inject the fake but DO NOT register any merkle / extend chain;
-        # if the cmd touches the RPC despite --no-verify-ots, verification
+        # if the cmd touches the RPC despite --ots=local, verification
         # will fail and surface the bug.
         _inject_fake_btc(runner, btc_fake.rpc)
 
@@ -320,7 +301,7 @@ class TestNoVerifyOtsSkipsWalk:
                 "--json",
                 "validate",
                 "obj-test",
-                "--no-verify-ots",
+                "--ots=local",
             ],
         )
         assert r.exit_code == 0, r.output
@@ -330,7 +311,7 @@ class TestNoVerifyOtsSkipsWalk:
         codes = {e["code"] for e in data["errors"]}
         assert "E906" not in codes
 
-    def test_omits_ots_section_when_no_verify_ots(
+    def test_omits_ots_section_when_ots_local(
         self,
         runner: CliRunner,
         btc_fake,
@@ -349,7 +330,7 @@ class TestNoVerifyOtsSkipsWalk:
                 str(root),
                 "validate",
                 "obj-test",
-                "--no-verify-ots",
+                "--ots=local",
             ],
         )
         assert r.exit_code == 0, r.output
@@ -407,56 +388,38 @@ class TestMissingBitcoinConfig:
         assert r.exit_code == 0, r.output
         assert "local checks only" in r.stderr
 
-    @pytest.mark.parametrize("flag", ["--ots=chain", "--verify-ots"])
     def test_chain_without_bitcoin_config_raises_config_error(
         self,
         runner: CliRunner,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        flag: str,
     ) -> None:
-        """``--ots=chain`` (or the old ``--verify-ots``) needs ``[bitcoin]``:
+        """``--ots=chain`` needs ``[bitcoin]``:
         exit 6, and the message names the section."""
         _write_config(tmp_path, monkeypatch, body=_SP_OK)
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
 
-        r = runner.invoke(app, ["--root", str(root), "validate", "obj-test", flag])
+        r = runner.invoke(
+            app, ["--root", str(root), "validate", "obj-test", "--ots=chain"]
+        )
 
         assert r.exit_code == 6, r.output
         assert "[bitcoin]" in r.output
 
-    def test_ots_and_verify_ots_conflict(
-        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _write_config(tmp_path, monkeypatch, body=_SP_OK)
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
-        r = runner.invoke(
-            app,
-            [
-                "--root",
-                str(root),
-                "validate",
-                "obj-test",
-                "--ots=chain",
-                "--no-verify-ots",
-            ],
-        )
-        assert r.exit_code == 2, r.output
-
 
 # =========================================================================== #
-# Test 4: structural validation always runs (E902 with --no-verify-ots)
+# Test 4: structural validation always runs (E902 with --ots=local)
 # =========================================================================== #
 
 
 class TestStructuralAlwaysRuns:
-    def test_structural_validation_always_runs_with_no_verify_ots(
+    def test_structural_validation_always_runs_with_ots_local(
         self,
         runner: CliRunner,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``--no-verify-ots`` skips the chain walk but NOT the structural
+        """``--ots=local`` skips the chain walk but NOT the structural
         checks: a missing companion file still surfaces E902 and exits 1.
         """
         _write_config(tmp_path, monkeypatch)
@@ -477,14 +440,14 @@ class TestStructuralAlwaysRuns:
                 "--json",
                 "validate",
                 "obj-test",
-                "--no-verify-ots",
+                "--ots=local",
             ],
         )
         assert r.exit_code == 1, r.output
         data = json.loads(r.stdout)
         codes = {e["code"] for e in data["errors"]}
         assert "E902" in codes, (
-            f"structural E902 must surface with --no-verify-ots; got codes={codes}"
+            f"structural E902 must surface with --ots=local; got codes={codes}"
         )
 
 
@@ -766,7 +729,7 @@ class TestRegtestVerifyOtsEndToEnd:
 
         Builds an OCFL object with content + inventory ``.ots`` companions
         anchored to real regtest blocks (``OP_RETURN`` commit, real merkle
-        path, real block header). Runs ``ocfl validate --verify-ots`` —
+        path, real block header). Runs ``ocfl validate`` (auto, so chain) —
         production ``btc_rpc_factory`` path drives a real
         ``BitcoinRPCClient`` against the regtest node.
         """

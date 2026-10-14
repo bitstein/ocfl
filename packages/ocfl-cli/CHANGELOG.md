@@ -11,7 +11,7 @@ No release is published yet, so every entry below is unreleased and may still ch
 
 ### Validate (issues 16 and 34 of docs/cli-surface-review.md)
 
-- `ocfl validate --ots=auto|local|chain` replaces default-on `--verify-ots`. `auto` (the default) checks the OTS proofs against Bitcoin when `[bitcoin]` is configured and otherwise runs the local checks and says so on stderr (it was exit 6). `chain` needs `[bitcoin]` (exit 6 without). `local` never asks a node. Every mode runs the extension's own checks; there is no mode that skips them. `--verify-ots`/`--no-verify-ots` still work (hidden) as `chain`/`local`; with `--ots` they are a usage error.
+- `ocfl validate --ots=auto|local|chain` replaces default-on `--verify-ots`. `auto` (the default) checks the OTS proofs against Bitcoin when `[bitcoin]` is configured and otherwise runs the local checks and says so on stderr (it was exit 6). `chain` needs `[bitcoin]` (exit 6 without). `local` never asks a node. Every mode runs the extension's own checks; there is no mode that skips them.
 - Root-level `ocfl validate` checks every object's proofs against Bitcoin too (it ignored the chain).
 
 ### CLI surface (docs/roadmap.md §7)
@@ -32,7 +32,7 @@ No release is published yet, so every entry below is unreleased and may still ch
   - `stage batch create inventory --from C_ID` takes the objects a content batch upgraded.
   - Batch ids accept a unique prefix (an ambiguous one is exit 2, an unknown one exit 1).
   - A batch row for an object with no Staging Area is skipped as `not_staged` (was `committed`), one with a plain Staging Area as `not_ots`; `stage batch create|submit` then exit 1 (`objects_not_staged`) naming them, and the rows' `next` says how to stage them.
-  - `ocfl purge -y/--yes` skips the prompt (`--force` still works, hidden). `ocfl log -n/--limit`. `stage rm -R/--recursive` replaces `-r`.
+  - `ocfl purge -y/--yes` skips the prompt; `--force` is gone. `ocfl log -n/--limit`. `stage rm -R/--recursive` replaces `-r`.
   - `ocfl ls` and `ocfl export` take `-V/--object-version` (was `-V/--version`); `ocfl --version` prints the program version.
   - `stage new --digest` offers sha512 and sha256 only (the other choices were refused anyway).
   - `stage ls OBJ --json` is always `[{"path"[, "digest"]}]`; `stage ls` with no object lists the root's Staging Areas (`[{"object_id", "phase"}]`, phase null for a plain one).

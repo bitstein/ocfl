@@ -10,7 +10,7 @@ from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import open_location, open_root, output_json, resolve_root
 from ocfl_cli._exit import error_line
-from ocfl_cli.errors import ConfigError, ErrorContext, UsageError
+from ocfl_cli.errors import ConfigError, ErrorContext
 from ocfl_cli.workflow import validation as wf_validation
 from ocfl_lib import (
     Finding,
@@ -53,7 +53,7 @@ def validate(
         typer.Option("--no-check-digests", help="Skip content digest verification."),
     ] = False,
     ots_mode: Annotated[
-        OtsMode | None,
+        OtsMode,
         typer.Option(
             "--ots",
             help=(
@@ -62,23 +62,13 @@ def validate(
                 "or chain (against Bitcoin). Default: auto."
             ),
         ),
-    ] = None,
-    verify_ots: Annotated[
-        bool | None,
-        # The old spelling: --verify-ots is --ots=chain, --no-verify-ots
-        # --ots=local.
-        typer.Option("--verify-ots/--no-verify-ots", hidden=True),
-    ] = None,
+    ] = OtsMode.AUTO,
 ) -> None:
     """Validate an OCFL storage root or a specific object."""
     as_json = appctx.json_mode(ctx)
     check_digests = not no_check_digests
     suppress = _suppressed_codes(ctx)
-    if verify_ots is not None:
-        if ots_mode is not None:
-            raise UsageError("--ots and --verify-ots/--no-verify-ots conflict")
-        ots_mode = OtsMode.CHAIN if verify_ots else OtsMode.LOCAL
-    chain = _chain_for(ctx, ots_mode or OtsMode.AUTO)
+    chain = _chain_for(ctx, ots_mode)
 
     if object_id is not None:
         _validate_object(ctx, object_id, check_digests, as_json, suppress, chain)
