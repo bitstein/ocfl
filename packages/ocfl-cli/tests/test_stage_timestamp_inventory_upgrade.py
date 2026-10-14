@@ -343,13 +343,11 @@ class TestInventoryCrashRecovery:
         )
         assert r.exit_code != ExitCode.SUCCESS, r.output
         post_crash = load_ots(sd)
-        # If verified=True is recorded, cache bytes must already exist
-        # (the implication direction of the three-step invariant).
         if (
             post_crash.inventory_proof is not None
             and post_crash.inventory_proof.verified is True
         ):
-            assert ots_cache_path(sd, inv_digest).is_file()
+            assert ots_cache_path(sd, inv_digest).is_file(), "verified implies cached"
 
         _uninstall_crash_fault(monkeypatch)
 

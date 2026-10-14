@@ -266,9 +266,8 @@ class TestStageCommitOtsAfterMetadataInvalidation:
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
-        # ADR-0004: plan.json stays; the staged inventory is dropped.
-        assert plan_path(sd).exists()
-        assert load_ots(sd).inventory is None
+        assert plan_path(sd).exists(), "ADR-0004: moving back keeps plan.json"
+        assert load_ots(sd).inventory is None, "staged inventory is dropped"
 
         r = runner.invoke(
             app,

@@ -186,17 +186,15 @@ class TestInventorySubmissionPrimitives:
             run.area, category_config=641, runtime=run.runtime
         )
 
-        # The intent and plan.json are durable before the POST; the phase
-        # moves only once the digest is sent.
         (digest,) = prepared.digests
         state = load_ots(sd)
-        assert state.phase is Phase.CONTENT_UPGRADED
+        assert state.phase is Phase.CONTENT_UPGRADED, "phase moves only after the POST"
         assert state.inventory is not None
         assert state.inventory.digest == digest
         (intent,) = [s for s in state.submissions if s.target == "inventory"]
         assert (intent.status, intent.digests) == ("submitting", (digest,))
         assert not sp_fake._submissions
-        assert plan_path(sd).is_file()
+        assert plan_path(sd).is_file(), "plan.json is durable before the POST"
 
         result = wf_timestamp.submit_prepared_locked(run, prepared)
 

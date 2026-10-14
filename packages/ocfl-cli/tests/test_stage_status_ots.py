@@ -625,8 +625,7 @@ class TestStageStatusOts:
             "obj:s-nocache",
             ("a.txt", b"alpha"),
         )
-        # Sanity: no ots-cache dir.
-        assert not (sd / "ots-cache").exists()
+        assert not (sd / "ots-cache").exists(), "precondition: no ots-cache dir"
 
         r = runner.invoke(
             app,
@@ -895,15 +894,6 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """OTS staging exists but [bitcoin] absent from config: status MUST
-        emit ``bitcoin: null`` (no RPC call). [simpleproof] still configured.
-
-        Pinning the [bitcoin]-absent branch: see step-17 spec deliberation
-        — when [bitcoin] is missing, status returns ``bitcoin=null`` rather
-        than failing or making an RPC call. The OTS staging itself was
-        created earlier with [bitcoin] present (required by ``stage new
-        --ots``); we then drop [bitcoin] from config before invoking status.
-        """
         write_config(tmp_path, monkeypatch)  # full config to enable `stage new --ots`
         inject_fake_sp(runner, sp_fake)
 
@@ -925,7 +915,7 @@ class TestStageStatusOts:
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
         data = json.loads(r.output)
-        assert data["bitcoin"] is None
+        assert data["bitcoin"] is None, "no [bitcoin]: null, not an error or RPC call"
 
     def test_status_simpleproof_configured_reflects_config(
         self,
@@ -1050,7 +1040,6 @@ class TestStageStatusNonOtsFallback:
         assert isinstance(data, dict)
         assert data["extension"] is None
         assert isinstance(data["changes"], list)
-        # OTS-only keys MUST NOT appear in the non-OTS shape.
         for key in (
             "schema_version",
             "phase",

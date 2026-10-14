@@ -835,7 +835,6 @@ def test_batch_content_new_batch_acquires_lease_before_file_is_visible(
     observed_clean = []
 
     def checked_flock(fd, operation):
-        # The lease is the batch lock: an exclusive flock on `batches/<id>.lock`.
         path = os.readlink(f"/proc/self/fd/{fd}")
         if path.endswith(".lock") and Path(path).parent.name == "batches":
             observed_clean.append(not list((staging / "batches").glob("*.json")))
@@ -856,7 +855,7 @@ def test_batch_content_new_batch_acquires_lease_before_file_is_visible(
     )
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
-    assert observed_clean == [True]
+    assert observed_clean == [True], "lease (batch flock) precedes the batch file"
 
 
 def test_batch_content_competing_batch_driver_refuses_live_lease(
@@ -1041,9 +1040,6 @@ def test_batch_content_recovers_object_intent_without_batch_row(
             updated_at="2026-05-12T10:00:00Z",
         ),
     )
-    # Watch the real flocks: `batches/<id>.lock` is the batch lock, a
-    # Staging Area's `.lock` the object lock. One order only, batch first:
-    # nothing takes the batch lock while it holds an object lock.
     batch_lock = str(staging / "batches" / f"{batch_id}.lock")
     events: list[str] = []
     original_flock = fcntl.flock
@@ -1068,7 +1064,9 @@ def test_batch_content_recovers_object_intent_without_batch_row(
     )
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
-    assert events[0] == "batch" and events.count("batch") == 1, events
+    assert events[0] == "batch" and events.count("batch") == 1, (
+        f"batch lock must be taken first, once, never under an object lock: {events}"
+    )
     assert "object" in events
     batch = batch_state.load_batch(staging, batch_id)
     assert batch.objects[0].object_id == "obj:orphan"
@@ -3936,8 +3934,9 @@ def test_batch_rm_refuses_non_terminal_without_force(
 
     assert forced.exit_code == ExitCode.SUCCESS, forced.output
     assert not batch_file_path(staging, batch_id).exists()
-    # The lock file goes too (ADR-0005): nothing of the batch is left.
-    assert not list((staging / "batches").glob(f"{batch_id}*"))
+    assert not list((staging / "batches").glob(f"{batch_id}*")), (
+        "ADR-0005: rm removes the lock file too"
+    )
 
 
 def test_batch_rm_waits_for_a_running_driver(

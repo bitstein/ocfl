@@ -456,10 +456,9 @@ class TestCrashSafeResubmit:
 
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
-        # Every `submitting` intent must be cleared (resolved to `submitted`
-        # or replaced) — leaving a stale `submitting` entry would loop on
-        # every subsequent run.
-        assert all(s.status != "submitting" for s in state.submissions)
+        assert all(s.status != "submitting" for s in state.submissions), (
+            "a stale `submitting` intent would resubmit on every run"
+        )
 
 
 class TestDoubleSubmitBenign:

@@ -59,8 +59,9 @@ class TestDigestForcing:
         )
         assert result.exit_code != ExitCode.SUCCESS, result.output
         combined = _strip_paths((result.output + (result.stderr or "")).lower())
-        # Rejection comes from our code, not Typer's unknown-option handler.
-        assert "no such option" not in combined, result.output
+        assert "no such option" not in combined, (
+            f"rejected by Typer, not our check: {result.output}"
+        )
         assert "sha-256" in combined or "sha256" in combined, result.output
         store = StagingStore(staging)
         assert not store.exists(str(storage_root.resolve()), "obj:new")

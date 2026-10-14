@@ -482,10 +482,9 @@ class TestSecretStrAPI:
 
 class TestConfigErrorNotValueError:
     def test_config_error_does_not_inherit_value_error(self) -> None:
-        """ConfigError must drop the ValueError base. Stray ``except ValueError``
-        handlers in unrelated code paths must not silently swallow operator-
-        facing config faults."""
-        assert not issubclass(ConfigError, ValueError)
+        assert not issubclass(ConfigError, ValueError), (
+            "a stray `except ValueError` would swallow config faults"
+        )
 
     def test_validation_failure_does_not_leak_value_error(self, tmp_path: Path) -> None:
         path = _write(
@@ -534,8 +533,7 @@ class TestSecretRepr:
         text = repr(sp)
         assert "ACCESS_SECRET_VALUE" not in text
         assert "API_SECRET_VALUE" not in text
-        # Non-secret fields still visible.
-        assert "https://x.example" in text
+        assert "https://x.example" in text, "non-secret fields stay visible"
 
     def test_bitcoin_repr_redacts_password(self) -> None:
         btc = BitcoinConfig(
@@ -546,8 +544,7 @@ class TestSecretRepr:
         )
         text = repr(btc)
         assert "RPC_SECRET_VALUE" not in text
-        # Non-secret fields still visible.
-        assert "u" in text
+        assert "u" in text, "non-secret fields stay visible"
 
 
 @pytest.mark.skipif(

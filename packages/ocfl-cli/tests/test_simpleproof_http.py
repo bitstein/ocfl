@@ -406,8 +406,7 @@ class TestVerifyBatch:
         assert req.method == "POST"
         assert str(req.url) == BASE + VERIFY_PATH
         assert req.headers.get("x-api-key") == API_KEY
-        # /hashes auth header MUST NOT be sent on v2
-        assert "x-access-token" not in req.headers
+        assert "x-access-token" not in req.headers, "v2 verify sends no /hashes auth"
         body = json.loads(req.content)
         assert body == {"proofCategoryId": CATEGORY, "hashes": digests}
 
@@ -867,8 +866,7 @@ class TestAuthHeaderScrubbing:
         with pytest.raises(SimpleProofTransient) as info:
             client.submit_hashes(_digests(3), CATEGORY)
 
-        # Sanity: wire request actually carried the token.
-        assert seen["token"] == ACCESS_TOKEN
+        assert seen["token"] == ACCESS_TOKEN, "request carried the access token"
         self._assert_no_plaintext_creds(info.value)
 
     def test_401_path_scrubs_x_access_token(self) -> None:
@@ -921,9 +919,8 @@ class TestSubmitHashesAtomicity:
             client.submit_hashes(digests, CATEGORY)
 
         assert chunk1_payload == digests[:1000]
-        # Bad-request fails fast → no retry on the failing chunk.
-        assert n == 2
-        assert sleeps == []
+        assert n == 2, "400 is not retried"
+        assert sleeps == [], "400 is not retried"
 
         partial = info.value.partial_result
         assert isinstance(partial, SubmitResult)

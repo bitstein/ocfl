@@ -519,14 +519,15 @@ class TestStageMetadata:
         assert updated_state.phase is Phase.CONTENT_UPGRADED
         assert updated_state.inventory is None
         assert updated_state.inventory_proof is None
-        # ADR-0004: moving back keeps every proof, job and plan.json.
-        assert updated_state.verify_jobs == (content_job, inventory_job)
+        assert updated_state.verify_jobs == (content_job, inventory_job), (
+            "ADR-0004: moving back keeps every verify job"
+        )
         assert updated_state.proofs == {
             content_digest: content_proof,
             inventory_digest: inv_proof,
-        }
+        }, "ADR-0004: moving back keeps every proof"
         assert updated_state.pending_digests == (content_digest,)
-        assert plan_path(staging_dir).exists()
+        assert plan_path(staging_dir).exists(), "ADR-0004: moving back keeps plan.json"
 
     def test_metadata_edit_invalidates_ots_state_before_metadata_write(
         self,

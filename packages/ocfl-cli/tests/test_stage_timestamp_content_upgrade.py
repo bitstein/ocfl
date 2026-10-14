@@ -1255,13 +1255,9 @@ class TestCrashRecovery:
         )
         assert r.exit_code != ExitCode.SUCCESS, r.output
         load_ots(sd)
-        # If verified=True is recorded for d, the cache write completed (the
-        # implication direction of the invariant). The companion `a.txt.ots`
-        # is placed from the cache on every pass, so it may still be missing
-        # here; the converging pass below places it.
         post_crash = load_ots(sd)
         if d in post_crash.proofs and post_crash.proofs[d].verified is True:
-            assert ots_cache_path(sd, d).is_file()
+            assert ots_cache_path(sd, d).is_file(), "verified implies cached"
 
         _uninstall_crash_fault(monkeypatch)
 
@@ -1423,8 +1419,7 @@ class TestOrphanGuard:
         assert "Held by 1 orphan digest" in r.output
         assert "Phase: content-pending" in r.output
         state = load_ots(sd)
-        # Orphan-guard: phase MUST NOT advance even though d verifies.
-        assert state.phase is Phase.CONTENT_PENDING
+        assert state.phase is Phase.CONTENT_PENDING, "an orphan digest holds the phase"
         assert state.proofs[d].verified is True
         d_b = hashlib.sha256(b"bravo").hexdigest()
         assert d_b not in state.pending_digests

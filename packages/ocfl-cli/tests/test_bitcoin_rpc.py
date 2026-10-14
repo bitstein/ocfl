@@ -382,8 +382,7 @@ class TestAuthHeaderScrubbing:
         with pytest.raises(BitcoinRpcTransientError) as info:
             rpc.getblockchaininfo()
 
-        # Sanity: the wire request actually carried Basic auth.
-        assert seen_auth["value"].startswith("Basic ")
+        assert seen_auth["value"].startswith("Basic "), "request carried Basic auth"
         self._assert_no_plaintext(info.value)
 
     def test_401_propagates_with_scrubbed_authorization(self) -> None:

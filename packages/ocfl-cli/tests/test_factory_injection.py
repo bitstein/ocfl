@@ -22,9 +22,6 @@ def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``sp_client_factory`` injected via ``runner.invoke(obj=...)`` drives
-    ``stage timestamp content`` — the production default factory MUST NOT
-    be called when an injected one is present."""
     write_config(tmp_path, monkeypatch)
 
     calls: list[str] = []

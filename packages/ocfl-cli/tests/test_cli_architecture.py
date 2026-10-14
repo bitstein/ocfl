@@ -75,7 +75,6 @@ class TestLayers:
         assert set(commands["forbidden_modules"]) == {f"ocfl_cli.{a}" for a in ADAPTERS}
 
     def test_no_private_names_cross_modules(self):
-        """A `_name` is private to its module, a `_module` to its package."""
         bad: list[str] = []
 
         def check_module(full: str, me: str, where: str) -> None:
@@ -123,11 +122,12 @@ class TestLayers:
                     bad.append(
                         f"{_rel(p)}:{node.lineno} {aliases[node.value.id]}.{node.attr}"
                     )
-        assert not bad, "\n".join(bad)
+        assert not bad, (
+            "a `_name` is private to its module, a `_module` to its package:\n"
+            + "\n".join(bad)
+        )
 
     def test_tests_use_no_private_names(self):
-        """Tests reach only public names. They may import a package's `_module`:
-        they are white-box tests of the CLI package."""
         bad: list[str] = []
         for p in _py_files(CLI_TESTS):
             tree = _tree(p)
@@ -155,7 +155,7 @@ class TestLayers:
                 ):
                     full = f"{aliases[node.value.id]}.{node.attr}"
                     bad.append(f"{p.name}:{node.lineno} {full}")
-        assert not bad, "\n".join(bad)
+        assert not bad, "tests use only public names or `_module`s:\n" + "\n".join(bad)
 
     def test_below_the_commands_there_is_no_ui(self):
         ui = {"typer", "click", "rich"}
@@ -714,8 +714,6 @@ class TestLocks:
             assert "batch_state.batch_lock" in calls, name
 
     def test_the_engine_takes_no_other_batch_lock(self):
-        """Inside a run the driver already holds the batch lock (a second flock
-        on the same file from the same process would block itself)."""
         bad = [
             f"{_rel(p)}:{n.lineno}"
             for p in _py_files(CLI_SRC / "workflow/batch")
@@ -723,7 +721,9 @@ class TestLocks:
             for n in ast.walk(_tree(p))
             if isinstance(n, ast.Call) and ast.unparse(n.func).endswith("batch_lock")
         ]
-        assert not bad, bad
+        assert not bad, (
+            f"driver holds the batch lock; a second flock self-blocks: {bad}"
+        )
 
 
 class TestSurfaceReview:
