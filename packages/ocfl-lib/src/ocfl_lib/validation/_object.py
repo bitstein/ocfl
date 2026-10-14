@@ -412,13 +412,12 @@ def _validate_version_dir(
     if vinv_head != vkey:
         result.error("E040", where=vkey, got=vinv_head, expected=vkey)
 
-    # E092: non-head version inventories must describe their content correctly.
-    # Under check_digests, verify every non-head version. Always verify when the
-    # version alg differs from root, even in lax mode, so a mismatched non-head
-    # alg can never go unchecked.
     vinv_alg_name = vinv_data.get("digestAlgorithm", "")
-    alg_differs = vinv_alg_name != root_inv_data.get("digestAlgorithm", "")
-    if vkey != head and (check_digests or alg_differs):
+    if _must_verify_version_digests(
+        is_head=vkey == head,
+        check_digests=check_digests,
+        alg_differs=vinv_alg_name != root_inv_data.get("digestAlgorithm", ""),
+    ):
         try:
             vinv_alg = DigestAlgorithm.from_ocfl_name(as_str(vinv_alg_name) or "")
         except ValueError:
@@ -437,6 +436,15 @@ def _validate_version_dir(
     _check_version_metadata(vinv_data, root_inv_data, result, vkey=vkey)
 
     return _inventory_spec(vinv_data)
+
+
+def _must_verify_version_digests(
+    *, is_head: bool, check_digests: bool, alg_differs: bool
+) -> bool:
+    """E092 for a non-head version. One whose digestAlgorithm differs from the
+    root's is verified even without `check_digests`, so it never goes unchecked.
+    """
+    return not is_head and (check_digests or alg_differs)
 
 
 def _empty_dirs_below(fsys: FS, dir_path: str, entries: list[FsEntry]) -> Iterator[str]:

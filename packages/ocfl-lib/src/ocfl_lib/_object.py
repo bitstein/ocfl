@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, BinaryIO, Literal, Self
 
 from ocfl_lib._digest import DigestAlgorithm
-from ocfl_lib._digest_map import PathMap, to_path_map
+from ocfl_lib._digest_map import PathMap, from_path_map, to_path_map
 from ocfl_lib._errors import (
     ContentNotFound,
     InventorySidecarMismatch,
@@ -187,48 +187,20 @@ class Object:
                     )
                 )
 
-        # Rename detection: pair added/removed sharing a digest
-        # Build digest → [paths] maps for added and removed
-        added_by_digest: dict[str, list[str]] = {}
-        for path, digest in added.items():
-            added_by_digest.setdefault(digest, []).append(path)
-        removed_by_digest: dict[str, list[str]] = {}
-        for path, digest in removed.items():
-            removed_by_digest.setdefault(digest, []).append(path)
-
-        paired_added: set[str] = set()
-        paired_removed: set[str] = set()
-
-        for digest in added_by_digest:
-            if digest not in removed_by_digest:
-                continue
-            a_paths = sorted(added_by_digest[digest])
-            r_paths = sorted(removed_by_digest[digest])
-            # Pair up: min(len(a), len(r)) renames, rest are pure adds/removes
-            for a_path, r_path in zip(a_paths, r_paths, strict=False):
-                entries.append(
-                    DiffEntry(
-                        path=a_path,
-                        action="renamed",
-                        digest_before=digest,
-                        digest_after=digest,
-                        renamed_from=r_path,
-                    )
-                )
-                paired_added.add(a_path)
-                paired_removed.add(r_path)
-
-        # Remaining unpaired adds/removes
-        for path in sorted(added):
-            if path not in paired_added:
-                entries.append(
-                    DiffEntry(path=path, action="added", digest_after=added[path])
-                )
-        for path in sorted(removed):
-            if path not in paired_removed:
-                entries.append(
-                    DiffEntry(path=path, action="deleted", digest_before=removed[path])
-                )
+        renames = _pair_renames(added, removed)
+        renamed_to = {e.path for e in renames}
+        renamed_from = {e.renamed_from for e in renames}
+        entries.extend(renames)
+        entries.extend(
+            DiffEntry(path=path, action="added", digest_after=digest)
+            for path, digest in added.items()
+            if path not in renamed_to
+        )
+        entries.extend(
+            DiffEntry(path=path, action="deleted", digest_before=digest)
+            for path, digest in removed.items()
+            if path not in renamed_from
+        )
 
         entries.sort(key=lambda e: e.path)
         return entries
@@ -280,3 +252,24 @@ class _ObjectContentSource(ContentSource):
             raise ContentNotFound(f"digest {digest!r} not in manifest")
         full = join_path(self._obj_path, paths[0])
         return self._fsys, full
+
+
+def _pair_renames(added: PathMap, removed: PathMap) -> list[DiffEntry]:
+    """Pair added with removed paths of one digest, in sorted path order.
+
+    Paths a digest has more of on one side than the other stay unpaired.
+    """
+    removed_by_digest = from_path_map(removed)
+    return [
+        DiffEntry(
+            path=to,
+            action="renamed",
+            digest_before=digest,
+            digest_after=digest,
+            renamed_from=frm,
+        )
+        for digest, to_paths in from_path_map(added).items()
+        for to, frm in zip(
+            sorted(to_paths), sorted(removed_by_digest.get(digest, [])), strict=False
+        )
+    ]

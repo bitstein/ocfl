@@ -51,30 +51,30 @@ def validate_ots_extension(
         result.warning("W904", properties=", ".join(cfg.unknown))
     ordered = sorted(inv_versions, key=inv_versions.__getitem__)
 
-    version_inventories = _read_version_inventories(fsys, obj_path, ordered)
+    readable_inventories = _read_readable_inventories(fsys, obj_path, ordered)
     if (
         cfg.proof_digest_algorithm != _SHA256
         or alg.ocfl_name != _SHA256
         or any(
             vi.digest_algorithm not in (None, _SHA256)
-            for vi in version_inventories.values()
+            for vi in readable_inventories.values()
         )
     ):
         result.error("E901")
         return
 
     for v in covered:
-        if v not in version_inventories:
+        if v not in readable_inventories:
             result.error("E909", version=v)
 
     if cfg.timestamp_content:
         _check_content_proofs(fsys, obj_path, inv_data, covered, result)
     _check_inventory_proofs(
-        fsys, obj_path, cfg, ordered, covered, version_inventories, result
+        fsys, obj_path, cfg, ordered, covered, readable_inventories, result
     )
 
 
-def _read_version_inventories(
+def _read_readable_inventories(
     fsys: FS, obj_path: str, versions: list[str]
 ) -> dict[str, _VersionInventory]:
     found: dict[str, _VersionInventory] = {}
@@ -136,7 +136,7 @@ def _check_inventory_proofs(
     cfg: ots.OtsConfig,
     ordered: list[str],
     covered: list[str],
-    version_inventories: dict[str, _VersionInventory],
+    readable_inventories: dict[str, _VersionInventory],
     result: FindingCollector,
 ) -> None:
     """Inventory-proof rules (E904, E905, W902) and moved timestampFrom (W905)."""
@@ -151,9 +151,9 @@ def _check_inventory_proofs(
             if cfg.timestamp_inventory:
                 result.error("E904", version=v)
             continue
-        if v not in version_inventories:
-            continue  # E909
-        raw = version_inventories[v].raw
+        if v not in readable_inventories:
+            continue
+        raw = readable_inventories[v].raw
         parsed = _check_proof(
             fsys, obj_path, proof, hashlib.sha256(raw).hexdigest(), result
         )

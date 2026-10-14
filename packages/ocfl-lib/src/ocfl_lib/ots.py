@@ -368,7 +368,7 @@ def object_proofs(fsys: FS, obj_path: str) -> tuple[ProofRef, ...]:
         try:
             raw = fs_utils.read_all(fsys, join_path(obj_path, v, "inventory.json"))
         except FileNotFoundError:
-            continue  # E909
+            continue
         refs.append(ProofRef("inventory", v, path, hashlib.sha256(raw).hexdigest()))
     return tuple(refs)
 

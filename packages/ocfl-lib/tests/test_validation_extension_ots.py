@@ -65,6 +65,13 @@ def test_inventory_version_ots_missing(tmp_path: Path) -> None:
     assert r.has_code("E904"), f"expected E904, got errors={[e.code for e in r.errors]}"
 
 
+def test_missing_version_inventory_is_one_e909(tmp_path: Path) -> None:
+    build_ots_object(tmp_path)
+    (tmp_path / "v1" / "inventory.json").unlink()
+    r = _validate(tmp_path)
+    assert [e.code for e in r.errors if e.code.startswith("E9")] == ["E909"]
+
+
 def test_inventory_ots_digest_mismatch(tmp_path: Path) -> None:
     """Inventory `.ots` committing to wrong digest → E905."""
     bad_ots = build_attestation(

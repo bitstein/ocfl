@@ -52,8 +52,7 @@ _ALLOWED_ALGORITHMS = frozenset({"sha512", "sha256"})
 
 _TYPE_RE = re.compile(r"^https://ocfl\.io/(\d+\.\d+)/spec/#inventory$")
 
-# Simple URI check: has a scheme followed by :
-_URI_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*:")
+_URI_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*:")
 
 
 def validate_inventory(
@@ -143,7 +142,7 @@ def _check_id(id_val: JsonValue, result: FindingCollector, *, where: str) -> Non
         result.error("E037a", where=where)
         return
     note_limits(result, id_val, where=where, field="id", limit=MAX_OBJECT_ID)
-    if not _URI_RE.match(id_val):
+    if not _URI_SCHEME_RE.match(id_val):
         result.warning("W005", where=where, id=id_val)
 
 
@@ -525,7 +524,7 @@ def _validate_user(
     if "address" not in user:
         result.warning("W008", where=where, version=version)
     elif isinstance(user["address"], str):
-        if not _URI_RE.match(user["address"]):
+        if not _URI_SCHEME_RE.match(user["address"]):
             result.warning("W009", where=where, version=version)
     elif not isinstance(user["address"], str):
         result.error("E054c", where=where, version=version)

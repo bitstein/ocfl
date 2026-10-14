@@ -60,6 +60,10 @@ class S3FileReader(io.RawIOBase):
         super().close()
 
 
+def _is_dir_marker(key: str) -> bool:
+    return key.endswith("/")
+
+
 class _CountingReader:
     def __init__(self, data: Readable) -> None:
         self._data = data
@@ -154,8 +158,7 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
                     )
             for obj in page.get("Contents", ()):
                 obj_key = obj["Key"]
-                # Skip the prefix marker itself.
-                if obj_key in (prefix, key):
+                if _is_dir_marker(obj_key):
                     continue
                 found_any = True
                 entry_name = obj_key[len(prefix) :]
@@ -318,8 +321,7 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
         for page in pages:
             for obj in page.get("Contents", ()):
                 obj_key = obj["Key"]
-                # Skip directory markers.
-                if obj_key.endswith("/"):
+                if _is_dir_marker(obj_key):
                     continue
                 rel = obj_key[len(root_prefix) :]
                 yield FileRef(path=rel, size=obj["Size"])
