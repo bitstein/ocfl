@@ -11,7 +11,12 @@ from fakes.locks import held_flock, is_flocked
 from msgspec.structs import replace
 from runner_helpers import ObjRunner
 
-from ocfl_cli.errors import AttestationMismatchError, LockTimeoutError, PhaseError
+from ocfl_cli.errors import (
+    AttestationMismatchError,
+    InventoryProofMissingError,
+    LockTimeoutError,
+    PhaseError,
+)
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.batch import BatchFile, BatchObject
@@ -265,12 +270,21 @@ def test_mixed_batch_commits_upgraded_and_skips_other_rows(
     ]
 
 
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (AttestationMismatchError("plan digest mismatch"), "attestation_mismatch"),
+        (InventoryProofMissingError("plan digest mismatch"), "phase_error"),
+    ],
+)
 def test_batch_commit_continues_after_failure_and_exits_one(
     runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     runtime: Runtime,
     monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    reason: str,
 ) -> None:
     staging = tmp_path / "staging"
     for object_id in ("obj:stale", "obj:next"):
@@ -288,7 +302,7 @@ def test_batch_commit_continues_after_failure_and_exits_one(
     def fake_commit_ots(**kwargs) -> None:
         calls.append(kwargs["object_id"])
         if kwargs["object_id"] == "obj:stale":
-            raise AttestationMismatchError("plan digest mismatch")
+            raise error
         shutil.rmtree(kwargs["staging_dir"])
 
     commit_object = fake_commit_ots
@@ -305,7 +319,7 @@ def test_batch_commit_continues_after_failure_and_exits_one(
             "batch_id": batch.batch_id,
             "target": "inventory",
             "object_id": "obj:stale",
-            "reason": "attestation_mismatch",
+            "reason": reason,
             "message": "plan digest mismatch",
         },
         {

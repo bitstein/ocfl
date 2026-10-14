@@ -6,6 +6,7 @@ from ocfl_cli.errors import (
     BatchMismatchError,
     CommitFailedError,
     ErrorContext,
+    InventoryProofMissingError,
     LockTimeoutError,
     MissingStagedMetadataError,
     PhaseError,
@@ -424,7 +425,7 @@ def watch(
 def commit_failure_reason(exc: Exception) -> str:
     if isinstance(exc, AttestationMismatchError):
         return "attestation_mismatch"
-    if isinstance(exc, PhaseError):
+    if isinstance(exc, (PhaseError, InventoryProofMissingError)):
         return "phase_error"
     if isinstance(exc, MissingStagedMetadataError):
         return "missing_metadata"
@@ -512,6 +513,7 @@ def commit(
             except (
                 AttestationMismatchError,
                 PhaseError,
+                InventoryProofMissingError,
                 MissingStagedMetadataError,
                 StagingFileMissingError,
                 StagingFileChangedError,

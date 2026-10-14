@@ -873,8 +873,8 @@ class TestAuthHeaderScrubbing:
         self._assert_no_plaintext_creds(info.value)
 
 
-class TestSubmitHashesAtomicity:
-    def test_first_chunk_ok_second_chunk_400_partial_result_attached(self) -> None:
+class TestSubmitHashesChunkFailure:
+    def test_second_chunk_400_raises_without_retry(self) -> None:
         digests = _digests(1500)
         n = 0
         chunk1_payload: list[str] = []
@@ -891,30 +891,12 @@ class TestSubmitHashesAtomicity:
         sleeps, sleep = _make_sleep()
         client = _make_client(handler, sleep=sleep, attempts=3)
 
-        with pytest.raises(SimpleProofBadRequest) as info:
+        with pytest.raises(SimpleProofBadRequest):
             client.submit_hashes(digests, CATEGORY)
 
         assert chunk1_payload == digests[:1000]
         assert n == 2, "400 is not retried"
         assert sleeps == [], "400 is not retried"
-
-        partial = info.value.partial_result
-        assert isinstance(partial, SubmitResult)
-        assert partial.digests == tuple(digests[:1000])
-        assert len(partial.record_ids) == 1000
-
-    def test_first_chunk_fails_partial_result_is_none(self) -> None:
-        digests = _digests(1500)
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(400, content=b"bad")
-
-        client = _make_client(handler)
-
-        with pytest.raises(SimpleProofBadRequest) as info:
-            client.submit_hashes(digests, CATEGORY)
-
-        assert info.value.partial_result is None
 
 
 class TestCheckAccess:

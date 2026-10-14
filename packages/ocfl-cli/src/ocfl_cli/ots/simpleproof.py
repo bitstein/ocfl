@@ -151,7 +151,9 @@ def _response_error_detail(resp: httpx.Response) -> str | None:
     return None
 
 
-def _retry_after_seconds(value: str, clock: Clock) -> float | None:
+def _retry_after_seconds(value: str | None, clock: Clock) -> float | None:
+    if value is None:
+        return None
     try:
         delay = float(value)
     except ValueError:
@@ -220,14 +222,12 @@ class SimpleProofHttpClient:
                     f"SimpleProof rejected request: HTTP {status}{suffix}"
                 ) from exc
             if status == 429:
-                transient = SimpleProofTransient(
-                    f"SimpleProof rate-limited: HTTP {status}"
-                )
-                if (retry_after := exc.response.headers.get("Retry-After")) is not None:
-                    transient.retry_after = _retry_after_seconds(
-                        retry_after, self._clock
-                    )
-                raise transient from exc
+                raise SimpleProofTransient(
+                    f"SimpleProof rate-limited: HTTP {status}",
+                    retry_after=_retry_after_seconds(
+                        exc.response.headers.get("Retry-After"), self._clock
+                    ),
+                ) from exc
             if 500 <= status < 600:
                 raise SimpleProofTransient(f"SimpleProof HTTP {status}") from exc
             raise SimpleProofError(f"SimpleProof HTTP {status}") from exc
@@ -265,19 +265,11 @@ class SimpleProofHttpClient:
             for i in range(0, len(digests), SUBMIT_CHUNK_SIZE)
         ]
         for chunk in chunks:
-            try:
-                returned_hashes = retry(
-                    lambda c=chunk: self._submit_chunk(c, category_id),
-                    sleep=self._sleep,
-                    attempts=self._attempts,
-                )
-            except SimpleProofError as exc:
-                if all_digests:
-                    exc.partial_result = SubmitResult(
-                        digests=tuple(all_digests),
-                        record_ids=tuple(all_record_ids),
-                    )
-                raise
+            returned_hashes = retry(
+                lambda c=chunk: self._submit_chunk(c, category_id),
+                sleep=self._sleep,
+                attempts=self._attempts,
+            )
             all_digests.extend(chunk)
             all_record_ids.extend(returned_hashes)
         return SubmitResult(

@@ -3,7 +3,7 @@ from typing import Annotated
 import typer
 
 from ocfl_cli._common import open_root
-from ocfl_cli.errors import ErrorContext, InventoryProofMissingError, PhaseError
+from ocfl_cli.errors import ErrorContext, PhaseError
 from ocfl_cli.stage._app import require_existing_staging, stage_of
 from ocfl_cli.workflow import commit as wf_commit
 from ocfl_cli.workflow import staging as wf_staging
@@ -41,8 +41,6 @@ def commit(
                 allow_missing_metadata=allow_missing_metadata,
                 runtime=stage.runtime,
             )
-        except InventoryProofMissingError:
-            raise  # its message names the command to run
         except PhaseError as e:
             next_action = wf_status.next_step(store, root_path, object_id, staging_dir)
             raise ErrorContext(e, suffix=f"; next: {next_action}") from e

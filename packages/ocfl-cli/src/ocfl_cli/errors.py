@@ -4,22 +4,9 @@ Single-rooted at CLIError. Like the lib's errors, every class carries an
 `ErrorClass` (how a caller should react, which picks the exit code) and a
 stable snake_case `code` (part of the `--json` error contract). Bitcoin RPC
 errors are the lib's own (`ocfl_lib.BitcoinRpcError` and subclasses).
-
-The `Transient` marker mixin signals a retriable fault to `ots._retry.retry`.
-Concrete exception classes that mix it in (e.g. `SimpleProofTransient`)
-may set per-instance `retry_after` to override the backoff schedule.
-
-`SimpleProofError.partial_result` follows the same per-instance pattern:
-when a multi-chunk submit fails partway, the raise site attaches a
-`SubmitResult` aggregating chunks that succeeded before the failure.
 """
 
-from typing import TYPE_CHECKING
-
 from ocfl_lib import ErrorClass
-
-if TYPE_CHECKING:
-    from ocfl_cli.model.simpleproof import SubmitResult
 
 
 class CLIError(Exception):
@@ -91,10 +78,7 @@ class PhaseError(StagingError):
     error_class = ErrorClass.STATE
 
 
-class InventoryProofMissingError(PhaseError):
-    """The staged inventory has no final proof yet, or its plan or cached
-    proof is missing: run the timestamp workflow again (not a halt)."""
-
+class InventoryProofMissingError(StagingError):
     code = "inventory_proof_missing"
     error_class = ErrorClass.STATE
 
@@ -129,30 +113,15 @@ class OTSError(CLIError):
     error_class = ErrorClass.SERVICE
 
 
-class Transient:
-    """Marker mixin for retriable exceptions.
-
-    `retry_after` is a class-level default; per-instance overrides are set
-    at raise time (e.g., `exc.retry_after = float(resp.headers["Retry-After"])`).
-    When set, the retry helper sleeps exactly that many seconds with no
-    configured backoff for that attempt.
-    """
-
-    retry_after: float | None = None
+class Transient(Exception):
+    def __init__(self, *args: object, retry_after: float | None = None) -> None:
+        super().__init__(*args)
+        self.retry_after = retry_after
 
 
 class SimpleProofError(OTSError):
-    """Base class for SimpleProof API faults.
-
-    `partial_result` is a class-level default; per-instance overrides are
-    set at raise time when a multi-chunk `submit_hashes` fails partway
-    (e.g., `exc.partial_result = SubmitResult(...)`). Callers inspect this
-    to recover digests/record_ids that did make it to SP before retrying.
-    """
-
     code = "simpleproof_error"
     error_class = ErrorClass.SERVICE
-    partial_result: SubmitResult | None = None
 
 
 class SimpleProofAuthError(SimpleProofError):
@@ -165,7 +134,7 @@ class SimpleProofBadRequest(SimpleProofError):
     error_class = ErrorClass.SERVICE
 
 
-class SimpleProofTransient(SimpleProofError, Transient):
+class SimpleProofTransient(Transient, SimpleProofError):
     code = "simpleproof_transient"
     error_class = ErrorClass.SERVICE
 

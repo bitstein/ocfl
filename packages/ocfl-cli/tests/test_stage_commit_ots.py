@@ -777,3 +777,86 @@ class TestStageCommitOtsCrashRecovery:
 
         assert not store.exists(root_path, "obj:commit-crash")
         assert not sd.exists()
+
+
+class TestStageCommitOtsErrorOutput:
+    @pytest.mark.parametrize("json_mode", [False, True])
+    def test_inventory_proof_missing_names_its_own_command(
+        self,
+        runner: ObjRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        json_mode: bool,
+    ) -> None:
+        write_config(tmp_path, monkeypatch)
+        staging = tmp_path / "staging"
+        sd, _da, inv_digest, _ots_bytes = setup_at_inventory_upgraded(
+            runner, empty_sha256_root, staging, "obj:out", sp_fake, btc_fake.rpc
+        )
+        ots_cache_path(sd, inv_digest).unlink()
+
+        args = stage_args(empty_sha256_root, staging, "commit", "obj:out")
+        r = runner.invoke(app, ["--json", *args] if json_mode else args)
+
+        message = (
+            f"ots-cache/{inv_digest}.ots missing; run 'ocfl stage upgrade obj:out'"
+        )
+        assert r.exit_code == ExitCode.PHASE
+        assert r.stdout == ""
+        if json_mode:
+            assert json.loads(r.stderr) == {
+                "error": {
+                    "code": "inventory_proof_missing",
+                    "message": message,
+                    "exit": int(ExitCode.PHASE),
+                }
+            }
+        else:
+            assert r.stderr == f"Error: {message}\n"
+
+    @pytest.mark.parametrize("json_mode", [False, True])
+    def test_phase_error_appends_next_step(
+        self,
+        runner: ObjRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        json_mode: bool,
+    ) -> None:
+        write_config(tmp_path, monkeypatch)
+        staging = tmp_path / "staging"
+        setup_at_inventory_upgraded(
+            runner, empty_sha256_root, staging, "obj:out", sp_fake, btc_fake.rpc
+        )
+        r = runner.invoke(
+            app,
+            stage_args(
+                empty_sha256_root, staging, "metadata", "obj:out", "--message", "m"
+            ),
+        )
+        assert r.exit_code == ExitCode.SUCCESS, r.output
+
+        args = stage_args(empty_sha256_root, staging, "commit", "obj:out")
+        r = runner.invoke(app, ["--json", *args] if json_mode else args)
+
+        message = (
+            "command 'commit (ots path)' not legal in phase 'content-upgraded'; "
+            "next: ocfl stage timestamp obj:out"
+        )
+        assert r.exit_code == ExitCode.PHASE
+        assert r.stdout == ""
+        if json_mode:
+            assert json.loads(r.stderr) == {
+                "error": {
+                    "code": "phase_error",
+                    "message": message,
+                    "exit": int(ExitCode.PHASE),
+                }
+            }
+        else:
+            assert r.stderr == f"Error: {message}\n"
