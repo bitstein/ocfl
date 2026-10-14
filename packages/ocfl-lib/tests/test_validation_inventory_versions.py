@@ -1,33 +1,17 @@
+from builders import inventory
 from digests import D1, D2
 
 from ocfl_lib.validation._inventory import validate_inventory
 from ocfl_lib.validation._report import FindingCollector
 
 
-def _inv(**overrides):
-    """Minimal valid inventory with overrides."""
-    base = {
-        "id": "http://example.org/obj1",
-        "type": "https://ocfl.io/1.1/spec/#inventory",
-        "digestAlgorithm": "sha512",
-        "head": "v1",
-        "manifest": {D1: ["v1/content/file.txt"]},
-        "versions": {
-            "v1": {
-                "created": "2024-01-01T00:00:00Z",
-                "state": {D1: ["file.txt"]},
-            },
-        },
-    }
-    base.update(overrides)
-    return base
-
-
 class TestVersionKeys:
     def test_invalid_version_key(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(versions={"bad": {"created": "2024-01-01T00:00:00Z", "state": {}}}),
+            inventory(
+                versions={"bad": {"created": "2024-01-01T00:00:00Z", "state": {}}}
+            ),
             r,
         )
         assert r.has_code("E046")
@@ -35,7 +19,7 @@ class TestVersionKeys:
     def test_must_start_at_v1(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 head="v2",
                 versions={
                     "v2": {
@@ -51,7 +35,7 @@ class TestVersionKeys:
     def test_contiguous_versions(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 head="v3",
                 manifest={
                     D1: ["v1/content/file.txt"],
@@ -73,7 +57,7 @@ class TestVersionKeys:
         assert r.has_code("E010")
 
     def test_empty_versions_still_reported_when_head_missing(self):
-        inv = _inv(versions={})
+        inv = inventory(versions={})
         del inv["head"]
         r = FindingCollector()
         validate_inventory(inv, r)
@@ -83,7 +67,7 @@ class TestVersionKeys:
     def test_zero_padded_warning(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 head="v001",
                 versions={
                     "v001": {
@@ -99,7 +83,7 @@ class TestVersionKeys:
     def test_mixed_padding_emits_E011_E012_E013(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 head="v2",
                 manifest={
                     D1: ["v01/content/file.txt"],
@@ -125,7 +109,7 @@ class TestVersionKeys:
     def test_inconsistent_pad_width_emits_E012(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 head="v002",
                 manifest={
                     D1: ["v01/content/file.txt"],
@@ -150,7 +134,7 @@ class TestVersionKeys:
     def test_consistent_padding_no_E012(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 head="v002",
                 manifest={
                     D1: ["v001/content/file.txt"],
@@ -177,7 +161,7 @@ class TestHead:
     def test_head_not_highest(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 head="v1",
                 manifest={
                     D1: ["v1/content/file.txt"],
@@ -202,13 +186,13 @@ class TestHead:
 class TestVersionBlock:
     def test_missing_created(self):
         r = FindingCollector()
-        validate_inventory(_inv(versions={"v1": {"state": {D1: ["file.txt"]}}}), r)
+        validate_inventory(inventory(versions={"v1": {"state": {D1: ["file.txt"]}}}), r)
         assert r.has_code("E048")
 
     def test_non_string_created(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 versions={
                     "v1": {
                         "created": 12345,
@@ -223,7 +207,7 @@ class TestVersionBlock:
     def test_created_no_timezone(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 versions={
                     "v1": {
                         "created": "2024-01-01T00:00:00",
@@ -238,7 +222,7 @@ class TestVersionBlock:
     def test_created_invalid_iso_rejected(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 versions={
                     "v1": {
                         "created": "not-a-date",
@@ -253,7 +237,7 @@ class TestVersionBlock:
     def test_created_with_offset_tz_accepted(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 versions={
                     "v1": {
                         "created": "2024-01-01T00:00:00+02:00",
@@ -269,7 +253,7 @@ class TestVersionBlock:
     def test_created_with_offset_requires_seconds(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 versions={
                     "v1": {
                         "created": "2024-01-01T00:00+00:00",
@@ -284,14 +268,14 @@ class TestVersionBlock:
     def test_missing_state(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(versions={"v1": {"created": "2024-01-01T00:00:00Z"}}), r
+            inventory(versions={"v1": {"created": "2024-01-01T00:00:00Z"}}), r
         )
         assert r.has_code("E048c")
 
     def test_state_not_object(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 versions={
                     "v1": {
                         "created": "2024-01-01T00:00:00Z",
@@ -308,7 +292,7 @@ class TestStateDigests:
     def test_state_digest_not_in_manifest(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 versions={
                     "v1": {
                         "created": "2024-01-01T00:00:00Z",
@@ -323,7 +307,7 @@ class TestStateDigests:
     def test_state_value_not_list(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 versions={
                     "v1": {
                         "created": "2024-01-01T00:00:00Z",
@@ -340,7 +324,7 @@ class TestLogicalPaths:
     def test_dot_in_path(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 versions={
                     "v1": {
                         "created": "2024-01-01T00:00:00Z",
@@ -356,7 +340,7 @@ class TestLogicalPaths:
     def test_dotdot_in_path(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 versions={
                     "v1": {
                         "created": "2024-01-01T00:00:00Z",
@@ -372,7 +356,7 @@ class TestLogicalPaths:
     def test_leading_slash_path(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 versions={
                     "v1": {
                         "created": "2024-01-01T00:00:00Z",
@@ -388,7 +372,7 @@ class TestLogicalPaths:
     def test_duplicate_logical_path(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 manifest={D1: ["v1/content/a.txt"], D2: ["v1/content/b.txt"]},
                 versions={
                     "v1": {
@@ -404,7 +388,7 @@ class TestLogicalPaths:
     def test_non_adjacent_prefix_conflict(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 manifest={D1: ["v1/content/a", "v1/content/a!", "v1/content/a/b"]},
                 versions={
                     "v1": {
@@ -422,7 +406,7 @@ class TestVersionMetadata:
     def test_no_message_warning(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 versions={
                     "v1": {
                         "created": "2024-01-01T00:00:00Z",
@@ -437,7 +421,7 @@ class TestVersionMetadata:
     def test_no_user_warning(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 versions={
                     "v1": {
                         "created": "2024-01-01T00:00:00Z",
@@ -452,7 +436,7 @@ class TestVersionMetadata:
     def test_user_not_object(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 versions={
                     "v1": {
                         "created": "2024-01-01T00:00:00Z",
@@ -468,7 +452,7 @@ class TestVersionMetadata:
     def test_user_address_not_uri(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 versions={
                     "v1": {
                         "created": "2024-01-01T00:00:00Z",
@@ -487,7 +471,7 @@ class TestManifestUsage:
     def test_unreferenced_manifest_digest(self):
         r = FindingCollector()
         validate_inventory(
-            _inv(
+            inventory(
                 manifest={
                     D1: ["v1/content/file.txt"],
                     D2: ["v1/content/unused.txt"],

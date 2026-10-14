@@ -1,8 +1,9 @@
 import json
-import pathlib
 
 import msgspec
 import pytest
+from builders import FIXTURES_ROOT, inventory
+from digests import D1
 
 from ocfl_lib._digest import DigestAlgorithm, bytes_digest
 from ocfl_lib._inventory import (
@@ -12,29 +13,9 @@ from ocfl_lib._inventory import (
     VersionInfo,
 )
 
-MINIMAL_INV_DICT = {
-    "id": "http://example.org/obj1",
-    "type": "https://ocfl.io/1.1/spec/#inventory",
-    "digestAlgorithm": "sha512",
-    "head": "v1",
-    "manifest": {
-        "abc123": ["v1/content/file.txt"],
-    },
-    "versions": {
-        "v1": {
-            "created": "2024-01-01T00:00:00Z",
-            "state": {
-                "abc123": ["file.txt"],
-            },
-        },
-    },
-}
-
 
 def _inv_json(**overrides: object) -> bytes:
-    """Build inventory JSON bytes with optional field overrides."""
-    d = {**MINIMAL_INV_DICT, **overrides}
-    return json.dumps(d).encode()
+    return json.dumps(inventory(**overrides)).encode()
 
 
 class TestUserInfo:
@@ -108,7 +89,7 @@ class TestInventory:
         assert inv.type == "https://ocfl.io/1.1/spec/#inventory"
         assert inv.digest_algorithm == "sha512"
         assert inv.head == "v1"
-        assert inv.manifest == {"abc123": ["v1/content/file.txt"]}
+        assert inv.manifest == {D1: ["v1/content/file.txt"]}
         assert "v1" in inv.versions
         assert inv.content_directory is None
         assert inv.fixity is None
@@ -126,9 +107,7 @@ class TestInventory:
 
     def test_decode_full_fixture(self):
         fixture = (
-            pathlib.Path(__file__).parents[3]
-            / "tests"
-            / "fixtures"
+            FIXTURES_ROOT
             / "1.1"
             / "good-objects"
             / "diff_files_same_md5"
@@ -191,7 +170,7 @@ class TestInventory:
 
     def test_decode_rejects_missing_required(self):
         for field in ("id", "type", "digestAlgorithm", "head", "manifest", "versions"):
-            d = {**MINIMAL_INV_DICT}
+            d = inventory()
             del d[field]
             with pytest.raises(msgspec.ValidationError):
                 msgspec.json.decode(json.dumps(d).encode(), type=Inventory)
@@ -258,9 +237,7 @@ class TestStoredInventory:
 
     def test_byte_preservation_from_fixture(self):
         fixture = (
-            pathlib.Path(__file__).parents[3]
-            / "tests"
-            / "fixtures"
+            FIXTURES_ROOT
             / "1.1"
             / "good-objects"
             / "minimal_no_content"

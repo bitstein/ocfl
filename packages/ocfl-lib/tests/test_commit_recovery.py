@@ -6,6 +6,7 @@ from pathlib import Path
 
 import boto3
 import pytest
+from builders import Died
 from moto import mock_aws
 
 from ocfl_lib import (
@@ -27,10 +28,6 @@ LAYOUT = "0004-hashed-n-tuple-storage-layout"
 OID = "ark:/1/obj"
 BUCKET = "commit-recovery"
 R, V, S = RecoveryAction.RESUME, RecoveryAction.REVERT, RecoveryAction.REMOVE_STRAY
-
-
-class Died(BaseException):
-    """The writer process died: no undo runs."""
 
 
 def _local_dies(root: Path, when):

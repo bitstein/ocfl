@@ -1,30 +1,18 @@
 import unicodedata
 
+from builders import inventory, version_block
 from digests import D1, D2, D3
 
 from ocfl_lib.validation._inventory import validate_inventory
 from ocfl_lib.validation._report import FindingCollector
 
 
-def _inv_with_manifest(manifest, *, alg="sha512", content_dir="content", versions=None):
-    """Build inventory dict with given manifest."""
-    if versions is None:
-        # Default: v1 state references first digest in manifest
-        first_digest = next(iter(manifest)) if manifest else D1
-        versions = {
-            "v1": {
-                "created": "2024-01-01T00:00:00Z",
-                "state": {first_digest: ["file.txt"]},
-            },
-        }
-    return {
-        "id": "http://example.org/obj1",
-        "type": "https://ocfl.io/1.1/spec/#inventory",
-        "digestAlgorithm": alg,
-        "head": "v1",
-        "manifest": manifest,
-        "versions": versions,
-    }
+def _inv_with_manifest(manifest):
+    first_digest = next(iter(manifest)) if manifest else D1
+    return inventory(
+        manifest=manifest,
+        versions={"v1": version_block(state={first_digest: ["file.txt"]})},
+    )
 
 
 class TestManifestDigestFormat:
@@ -104,7 +92,7 @@ class TestManifestDuplicatePaths:
                 "state": {D1: ["a.txt"], D2: ["b.txt"]},
             },
         }
-        validate_inventory(_inv_with_manifest(manifest, versions=versions), r)
+        validate_inventory(inventory(manifest=manifest, versions=versions), r)
         assert r.has_code("E101")
 
 
@@ -121,7 +109,7 @@ class TestManifestPathConflicts:
                 "state": {D1: ["a.txt"], D2: ["b.txt"]},
             },
         }
-        validate_inventory(_inv_with_manifest(manifest, versions=versions), r)
+        validate_inventory(inventory(manifest=manifest, versions=versions), r)
         assert r.has_code("E101") or r.has_code("E095")
 
     def test_non_adjacent_path_prefix_conflict(self):
@@ -137,7 +125,7 @@ class TestManifestPathConflicts:
                 "state": {D1: ["a"], D2: ["a!"], D3: ["b"]},
             },
         }
-        validate_inventory(_inv_with_manifest(manifest, versions=versions), r)
+        validate_inventory(inventory(manifest=manifest, versions=versions), r)
         assert r.has_code("E101b")
 
 
@@ -201,7 +189,7 @@ class TestManifestNullBytes:
             },
         }
         validate_inventory(
-            _inv_with_manifest({D1: ["v1/content/file.txt"]}, versions=versions),
+            inventory(manifest={D1: ["v1/content/file.txt"]}, versions=versions),
             r,
         )
         assert r.has_code("L001")
@@ -238,7 +226,7 @@ class TestAbsurdLengthCaps:
             },
         }
         validate_inventory(
-            _inv_with_manifest({D1: ["v1/content/file.txt"]}, versions=versions),
+            inventory(manifest={D1: ["v1/content/file.txt"]}, versions=versions),
             r,
         )
         assert r.has_code("L002")
@@ -253,7 +241,7 @@ class TestAbsurdLengthCaps:
             },
         }
         validate_inventory(
-            _inv_with_manifest({D1: ["v1/content/file.txt"]}, versions=versions),
+            inventory(manifest={D1: ["v1/content/file.txt"]}, versions=versions),
             r,
         )
         assert r.has_code("L002")
@@ -268,7 +256,7 @@ class TestAbsurdLengthCaps:
             },
         }
         validate_inventory(
-            _inv_with_manifest({D1: ["v1/content/file.txt"]}, versions=versions),
+            inventory(manifest={D1: ["v1/content/file.txt"]}, versions=versions),
             r,
         )
         assert r.has_code("L002")
@@ -321,7 +309,7 @@ class TestLimitsAreInfoOnly:
             },
         }
         validate_inventory(
-            _inv_with_manifest({D1: ["v1/content/file.txt"]}, versions=versions),
+            inventory(manifest={D1: ["v1/content/file.txt"]}, versions=versions),
             r,
         )
         assert "L001" in _info_codes(r)
@@ -351,6 +339,6 @@ class TestUnicodeNormalizationCharacterization:
                 "state": {D1: [nfc], D2: [nfd]},
             },
         }
-        validate_inventory(_inv_with_manifest(manifest, versions=versions), r)
+        validate_inventory(inventory(manifest=manifest, versions=versions), r)
         assert not r.has_code("E101a")
         assert not r.has_code("E095a")

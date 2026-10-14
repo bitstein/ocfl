@@ -3,6 +3,7 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
+from builders import stage_files, write_tree
 
 from ocfl_lib._digest import DigestAlgorithm
 from ocfl_lib._inventory import UserInfo
@@ -24,14 +25,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ocfl_lib._layout.types import Layout
-
-
-def _write_files(base: Path, files: dict[str, str]) -> None:
-    """Create files under base directory."""
-    for name, content in files.items():
-        p = base / name
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content)
 
 
 # Object ID templates per layout (base used for single, suffixed for multi)
@@ -80,10 +73,9 @@ class TestRoundTripAllLayouts:
         fsys = LocalFS(root_dir)
         root = StorageRoot.init(fsys, fsys, layout=layout)
 
-        src1 = tmp_path / "src1"
-        src1.mkdir()
-        _write_files(src1, {"hello.txt": "hello", "dir/nested.txt": "nested"})
-        stage1 = scan_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
+        stage1 = stage_files(
+            tmp_path, {"hello.txt": "hello", "dir/nested.txt": "nested"}, name="src1"
+        )
         obj = root.commit(
             fsys,
             obj_id,
@@ -96,10 +88,11 @@ class TestRoundTripAllLayouts:
         assert obj.id == obj_id
         assert obj.head == VNum(1)
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        _write_files(src2, {"hello.txt": "hello modified", "new.txt": "brand new"})
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = stage_files(
+            tmp_path,
+            {"hello.txt": "hello modified", "new.txt": "brand new"},
+            name="src2",
+        )
         obj = root.commit(
             fsys,
             obj_id,
@@ -152,10 +145,7 @@ class TestRoundTripAllLayouts:
         ids = [f"{base}-{i}" for i in range(3)]
 
         for i, oid in enumerate(ids):
-            src = tmp_path / f"src-{i}"
-            src.mkdir()
-            _write_files(src, {"data.txt": f"content-{i}"})
-            stage = scan_dir(LocalFS(tmp_path), f"src-{i}", DigestAlgorithm.SHA512)
+            stage = stage_files(tmp_path, {"data.txt": f"content-{i}"}, name=f"src-{i}")
             root.commit(fsys, oid, stage, created="2024-01-01T00:00:00Z")
 
         found_ids = sorted(o.id for o in root.objects())
@@ -172,9 +162,7 @@ class TestFixityRoundTrip:
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src = tmp_path / "src"
-        src.mkdir()
-        _write_files(src, {"a.txt": "aaa", "b.txt": "bbb"})
+        write_tree(tmp_path / "src", {"a.txt": "aaa", "b.txt": "bbb"})
         stage = scan_dir(
             LocalFS(tmp_path),
             "src",
@@ -198,9 +186,7 @@ class TestFixityRoundTrip:
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src = tmp_path / "src"
-        src.mkdir()
-        _write_files(src, {"file.txt": "content"})
+        write_tree(tmp_path / "src", {"file.txt": "content"})
         stage = scan_dir(
             LocalFS(tmp_path),
             "src",
@@ -222,9 +208,7 @@ class TestFixityRoundTrip:
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src1 = tmp_path / "src1"
-        src1.mkdir()
-        _write_files(src1, {"keep.txt": "stable", "change.txt": "old"})
+        write_tree(tmp_path / "src1", {"keep.txt": "stable", "change.txt": "old"})
         stage1 = scan_dir(
             LocalFS(tmp_path),
             "src1",
@@ -233,9 +217,7 @@ class TestFixityRoundTrip:
         )
         root.commit(fsys, "fix-v2", stage1, created="2024-01-01T00:00:00Z")
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        _write_files(src2, {"keep.txt": "stable", "change.txt": "new"})
+        write_tree(tmp_path / "src2", {"keep.txt": "stable", "change.txt": "new"})
         stage2 = scan_dir(
             LocalFS(tmp_path),
             "src2",
@@ -260,10 +242,7 @@ class TestOnDiskStructure:
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src = tmp_path / "src"
-        src.mkdir()
-        _write_files(src, {"file.txt": "hello"})
-        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+        stage = stage_files(tmp_path, {"file.txt": "hello"})
         root.commit(fsys, "struct-obj", stage, created="2024-01-01T00:00:00Z")
 
         obj_dir = tmp_path / "struct-obj"
@@ -301,16 +280,14 @@ class TestOnDiskStructure:
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src1 = tmp_path / "src1"
-        src1.mkdir()
-        _write_files(src1, {"keep.txt": "stable", "change.txt": "old"})
-        stage1 = scan_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
+        stage1 = stage_files(
+            tmp_path, {"keep.txt": "stable", "change.txt": "old"}, name="src1"
+        )
         root.commit(fsys, "delta-obj", stage1, created="2024-01-01T00:00:00Z")
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        _write_files(src2, {"keep.txt": "stable", "change.txt": "new"})
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = stage_files(
+            tmp_path, {"keep.txt": "stable", "change.txt": "new"}, name="src2"
+        )
         root.commit(fsys, "delta-obj", stage2, created="2024-06-01T00:00:00Z")
 
         obj_dir = tmp_path / "delta-obj"
@@ -356,10 +333,7 @@ class TestOnDiskStructure:
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src = tmp_path / "src"
-        src.mkdir()
-        _write_files(src, {"file.txt": "content"})
-        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+        stage = stage_files(tmp_path, {"file.txt": "content"})
         root.commit(
             fsys,
             "inv-test",
@@ -398,10 +372,7 @@ class TestSpecVersions:
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout(), spec=spec)
         assert root.spec == spec
 
-        src = tmp_path / "src"
-        src.mkdir()
-        _write_files(src, {"file.txt": "content"})
-        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+        stage = stage_files(tmp_path, {"file.txt": "content"})
         obj = root.commit(fsys, "spec-obj", stage, created="2024-01-01T00:00:00Z")
 
         assert obj.spec == spec
@@ -416,10 +387,7 @@ class TestSpecVersions:
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src = tmp_path / "src"
-        src.mkdir()
-        _write_files(src, {"file.txt": "hello"})
-        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA256)
+        stage = stage_files(tmp_path, {"file.txt": "hello"}, alg=DigestAlgorithm.SHA256)
 
         obj = root.commit(fsys, "sha256-obj", stage, created="2024-01-01T00:00:00Z")
 
@@ -440,32 +408,28 @@ class TestDiffIntegration:
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src1 = tmp_path / "src1"
-        src1.mkdir()
-        _write_files(
-            src1,
+        stage1 = stage_files(
+            tmp_path,
             {
                 "keep.txt": "stable",
                 "modify.txt": "original",
                 "delete.txt": "going away",
                 "rename-old.txt": "will be renamed",
             },
+            name="src1",
         )
-        stage1 = scan_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
         root.commit(fsys, "diff-obj", stage1, created="2024-01-01T00:00:00Z")
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        _write_files(
-            src2,
+        stage2 = stage_files(
+            tmp_path,
             {
                 "keep.txt": "stable",
                 "modify.txt": "changed",
                 "added.txt": "new file",
                 "rename-new.txt": "will be renamed",
             },
+            name="src2",
         )
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
         obj = root.commit(fsys, "diff-obj", stage2, created="2024-06-01T00:00:00Z")
 
         diff = obj.diff_versions(VNum(1), VNum(2))
@@ -493,15 +457,10 @@ class TestEdgeCases:
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src1 = tmp_path / "src1"
-        src1.mkdir()
-        _write_files(src1, {"file.txt": "hello"})
-        stage1 = scan_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
+        stage1 = stage_files(tmp_path, {"file.txt": "hello"}, name="src1")
         root.commit(fsys, "empty-obj", stage1, created="2024-01-01T00:00:00Z")
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = stage_files(tmp_path, {}, name="src2")
         obj = root.commit(fsys, "empty-obj", stage2, created="2024-06-01T00:00:00Z")
 
         assert obj.head == VNum(2)
@@ -518,10 +477,7 @@ class TestEdgeCases:
         layout = HashedNTupleLayout()
         root = StorageRoot.init(fsys, fsys, layout=layout)
 
-        src1 = tmp_path / "src1"
-        src1.mkdir()
-        _write_files(src1, {"file.txt": "v1"})
-        stage1 = scan_dir(LocalFS(tmp_path), "src1", DigestAlgorithm.SHA512)
+        stage1 = stage_files(tmp_path, {"file.txt": "v1"}, name="src1")
         root.commit(
             fsys,
             "http://example.org/reopen",
@@ -532,10 +488,7 @@ class TestEdgeCases:
         root2 = StorageRoot.open(fsys)
         assert root2.layout is not None
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        _write_files(src2, {"file.txt": "v2"})
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = stage_files(tmp_path, {"file.txt": "v2"}, name="src2")
         obj = root2.commit(
             fsys,
             "http://example.org/reopen",
@@ -554,11 +507,8 @@ class TestEdgeCases:
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src = tmp_path / "src"
-        src.mkdir()
         files = {f"file-{i:03d}.txt": f"content-{i}" for i in range(50)}
-        _write_files(src, files)
-        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+        stage = stage_files(tmp_path, files)
 
         obj = root.commit(fsys, "many-files", stage, created="2024-01-01T00:00:00Z")
 
@@ -591,10 +541,7 @@ class TestEdgeCases:
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src = tmp_path / "src"
-        src.mkdir()
-        _write_files(src, {"a.txt": "same", "b.txt": "same"})
-        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+        stage = stage_files(tmp_path, {"a.txt": "same", "b.txt": "same"})
 
         obj = root.commit(fsys, "dedup-obj", stage, created="2024-01-01T00:00:00Z")
 
@@ -625,10 +572,7 @@ class TestEdgeCases:
         assert cfg["tupleSize"] == 2
         assert cfg["numberOfTuples"] == 2
 
-        src = tmp_path / "src"
-        src.mkdir()
-        _write_files(src, {"file.txt": "content"})
-        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+        stage = stage_files(tmp_path, {"file.txt": "content"})
         obj = root2.commit(
             fsys,
             "http://example.org/cfg-test",
@@ -645,14 +589,7 @@ class TestEdgeCases:
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
         for i in range(5):
-            src = tmp_path / f"src-{i}"
-            src.mkdir()
-            _write_files(src, {"data.txt": f"content-{i}"})
-            stage = scan_dir(
-                LocalFS(tmp_path),
-                f"src-{i}",
-                DigestAlgorithm.SHA512,
-            )
+            stage = stage_files(tmp_path, {"data.txt": f"content-{i}"}, name=f"src-{i}")
             root.commit(
                 fsys,
                 f"obj-{i}",
@@ -668,10 +605,7 @@ class TestEdgeCases:
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src = tmp_path / "src"
-        src.mkdir()
-        _write_files(src, {"file.txt": "hello"})
-        stage = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
+        stage = stage_files(tmp_path, {"file.txt": "hello"})
         root.commit(fsys, "cold-obj", stage, created="2024-01-01T00:00:00Z")
 
         root2 = StorageRoot.open(fsys)

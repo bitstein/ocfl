@@ -5,13 +5,12 @@ import shutil
 from pathlib import Path
 
 import pytest
+from builders import FIXTURES_ROOT, inventory
 from digests import D1
 
 from ocfl_lib.fs._local import LocalFS
 from ocfl_lib.validation._object import validate_object
 from ocfl_lib.validation._report import ValidationReport
-
-FIXTURES_ROOT = Path(__file__).resolve().parents[3] / "tests" / "fixtures"
 
 _CODE_RE = re.compile(r"[EW]\d+")
 
@@ -110,7 +109,6 @@ def _make_object(
     version_inv: dict | None = None,
     empty_content: bool = False,
 ) -> None:
-    """Build a minimal OCFL object on disk for unit testing."""
     (tmp_path / "0=ocfl_object_1.1").write_text("ocfl_object_1.1\n")
     inv_bytes = json.dumps(root_inv, sort_keys=True, separators=(",", ":")).encode()
     (tmp_path / "inventory.json").write_bytes(inv_bytes)
@@ -141,38 +139,18 @@ def _make_object(
                     fp.write_text("data")
 
 
-def _base_inv(**overrides):
-    base = {
-        "id": "http://example.org/obj1",
-        "type": "https://ocfl.io/1.1/spec/#inventory",
-        "digestAlgorithm": "sha512",
-        "head": "v1",
-        "manifest": {D1: ["v1/content/file.txt"]},
-        "versions": {
-            "v1": {
-                "created": "2024-01-01T00:00:00Z",
-                "state": {D1: ["file.txt"]},
-                "message": "init",
-                "user": {"name": "test", "address": "mailto:t@e.org"},
-            },
-        },
-    }
-    base.update(overrides)
-    return base
-
-
 class TestE019ContentDirectoryAdded:
     def test_version_sets_cd_when_root_absent(self, tmp_path: Path):
-        root_inv = _base_inv()
-        ver_inv = _base_inv(contentDirectory="content")
+        root_inv = inventory()
+        ver_inv = inventory(contentDirectory="content")
         _make_object(tmp_path, root_inv, version_inv=ver_inv)
         fsys = LocalFS(tmp_path)
         r = validate_object(fsys, "", check_digests=False)
         assert r.has_code("E019")
 
     def test_root_cd_differs_from_first_version_cd(self, tmp_path: Path):
-        root_inv = _base_inv(contentDirectory="content")
-        ver_inv = _base_inv(contentDirectory="data")
+        root_inv = inventory(contentDirectory="content")
+        ver_inv = inventory(contentDirectory="data")
         _make_object(tmp_path, root_inv, version_inv=ver_inv)
         fsys = LocalFS(tmp_path)
         r = validate_object(fsys, "", check_digests=False)
@@ -181,8 +159,8 @@ class TestE019ContentDirectoryAdded:
 
 class TestE020ContentDirectoryMismatch:
     def test_version_cd_differs_from_root(self, tmp_path: Path):
-        root_inv = _base_inv(contentDirectory="content")
-        ver_inv = _base_inv(contentDirectory="data")
+        root_inv = inventory(contentDirectory="content")
+        ver_inv = inventory(contentDirectory="data")
         _make_object(tmp_path, root_inv, version_inv=ver_inv)
         fsys = LocalFS(tmp_path)
         r = validate_object(fsys, "", check_digests=False)
@@ -191,7 +169,7 @@ class TestE020ContentDirectoryMismatch:
 
 class TestE010VersionDirSequence:
     def test_version_dirs_must_be_contiguous(self, tmp_path: Path):
-        root_inv = _base_inv(
+        root_inv = inventory(
             head="v4",
             versions={
                 "v1": {
@@ -531,7 +509,7 @@ class TestE006InvalidNamaste:
         assert any("0=alsogarbage" in m for m in msgs)
 
     def test_valid_plus_unparseable_fires_E006_for_extra(self, tmp_path: Path):
-        root_inv = _base_inv()
+        root_inv = inventory()
         _make_object(tmp_path, root_inv)
         (tmp_path / "0=garbage").write_text("nope\n")
         fsys = LocalFS(tmp_path)
@@ -543,7 +521,7 @@ class TestE006InvalidNamaste:
 
 class TestW003EmptyContentDir:
     def test_empty_content_dir_warns(self, tmp_path: Path):
-        root_inv = _base_inv(
+        root_inv = inventory(
             manifest={},
             versions={
                 "v1": {

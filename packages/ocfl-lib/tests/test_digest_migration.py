@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 import pytest
+from builders import stage_files, write_tree
 
 from ocfl_lib import (
     DigestAlgorithm,
@@ -18,17 +19,6 @@ from ocfl_lib.validation import validate_object
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-def _make_src_dir(tmp_path: Path, files: dict[str, str]) -> Path:
-    """Create a source directory with given files."""
-    src = tmp_path / "src"
-    src.mkdir(exist_ok=True)
-    for name, content in files.items():
-        p = src / name
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content)
-    return src
 
 
 OID = "obj"
@@ -54,9 +44,7 @@ def _create_v1(
     files: dict[str, str],
     alg: DigestAlgorithm = DigestAlgorithm.SHA256,
 ) -> tuple[Object, LocalFS]:
-    """Helper: create v1 object with given files and algorithm."""
-    src = _make_src_dir(tmp_path, files)
-    stage = scan_dir(LocalFS(src.parent), "src", alg)
+    stage = stage_files(tmp_path, files, alg=alg)
     fs = _init_root(tmp_path)
     obj = _commit(fs, stage, spec=Spec.V1_1, created="2024-01-01T00:00:00Z")
     return obj, fs
@@ -68,12 +56,9 @@ class TestAlgorithmMigration:
         obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
         assert obj.inventory.inventory.digest_algorithm == "sha256"
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        (src2 / "file.txt").write_text("hello")
-        (src2 / "new.txt").write_text("world")
-
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = stage_files(
+            tmp_path, {"file.txt": "hello", "new.txt": "world"}, name="src2"
+        )
         obj = _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         inv = obj.inventory.inventory
@@ -87,11 +72,7 @@ class TestAlgorithmMigration:
     def test_version_states_remapped(self, tmp_path: Path):
         obj, obj_fs = _create_v1(tmp_path, {"a.txt": "aaa"})
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        (src2 / "a.txt").write_text("bbb")
-
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = stage_files(tmp_path, {"a.txt": "bbb"}, name="src2")
         obj = _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         inv = obj.inventory.inventory
@@ -118,12 +99,9 @@ class TestAlgorithmMigration:
             for cp in paths:
                 v1_contents[cp] = (obj_dir / cp).read_bytes()
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        (src2 / "file.txt").write_text("hello")
-        (src2 / "extra.txt").write_text("extra")
-
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = stage_files(
+            tmp_path, {"file.txt": "hello", "extra.txt": "extra"}, name="src2"
+        )
         obj = _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         for cp, content in v1_contents.items():
@@ -132,12 +110,9 @@ class TestAlgorithmMigration:
     def test_read_back_after_migration(self, tmp_path: Path):
         obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        (src2 / "file.txt").write_text("hello")
-        (src2 / "new.txt").write_text("world")
-
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = stage_files(
+            tmp_path, {"file.txt": "hello", "new.txt": "world"}, name="src2"
+        )
         obj = _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         with obj.open_logical_path(VNum(1), "file.txt") as f:
@@ -152,11 +127,7 @@ class TestAlgorithmMigration:
         obj_dir = _obj_dir(tmp_path, obj_fs)
         assert (obj_dir / "inventory.json.sha256").exists()
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        (src2 / "file.txt").write_text("hello")
-
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = stage_files(tmp_path, {"file.txt": "hello"}, name="src2")
         _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         assert not (obj_dir / "inventory.json.sha256").exists()
@@ -166,11 +137,7 @@ class TestAlgorithmMigration:
         obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
         old_manifest = dict(obj.inventory.inventory.manifest)
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        (src2 / "file.txt").write_text("hello")
-
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = stage_files(tmp_path, {"file.txt": "hello"}, name="src2")
         obj = _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         inv = obj.inventory.inventory
@@ -183,11 +150,7 @@ class TestAlgorithmMigration:
     def test_dedup_across_migration(self, tmp_path: Path):
         obj, obj_fs = _create_v1(tmp_path, {"file.txt": "same content"})
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        (src2 / "file.txt").write_text("same content")
-
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = stage_files(tmp_path, {"file.txt": "same content"}, name="src2")
         obj = _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         inv = obj.inventory.inventory
@@ -199,12 +162,9 @@ class TestAlgorithmMigration:
     def test_two_step_migration(self, tmp_path: Path):
         obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        (src2 / "file.txt").write_text("hello")
-        (src2 / "new.txt").write_text("world")
-
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = stage_files(
+            tmp_path, {"file.txt": "hello", "new.txt": "world"}, name="src2"
+        )
         root = StorageRoot.open(obj_fs)
         plan = root.plan(OID, stage2, created="2024-06-01T00:00:00Z")
         obj = root.commit(obj_fs, OID, plan, content=stage2.content_source)
@@ -215,9 +175,9 @@ class TestAlgorithmMigration:
         assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
 
     def test_existing_fixity_preserved(self, tmp_path: Path):
-        src = _make_src_dir(tmp_path, {"file.txt": "hello"})
+        write_tree(tmp_path / "src", {"file.txt": "hello"})
         stage1 = scan_dir(
-            LocalFS(src.parent),
+            LocalFS(tmp_path),
             "src",
             DigestAlgorithm.SHA256,
             fixity_algs=[DigestAlgorithm.MD5],
@@ -228,11 +188,7 @@ class TestAlgorithmMigration:
         assert obj.inventory.inventory.fixity is not None
         assert "md5" in obj.inventory.inventory.fixity
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        (src2 / "file.txt").write_text("hello")
-
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = stage_files(tmp_path, {"file.txt": "hello"}, name="src2")
         obj = _commit(obj_fs, stage2, created="2024-06-01T00:00:00Z")
 
         inv = obj.inventory.inventory
@@ -282,10 +238,7 @@ class TestAlgorithmMigration:
         obj_dir = _obj_dir(tmp_path, obj_fs)
         orig_inv_bytes = (obj_dir / "inventory.json").read_bytes()
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        (src2 / "file.txt").write_text("hello")
-        stage = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage = stage_files(tmp_path, {"file.txt": "hello"}, name="src2")
 
         class FailRootInventory(LocalFS):
             def write(self, name, data):

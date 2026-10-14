@@ -3,6 +3,7 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
+from builders import inventory, version_block
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -28,7 +29,6 @@ def _make_object(
     spec: str = "1.1",
     content: dict[str, bytes] | None = None,
 ) -> None:
-    """Create a minimal valid OCFL object at parent/name."""
     obj = parent / name
     obj.mkdir(parents=True, exist_ok=True)
     (obj / f"0=ocfl_object_{spec}").write_text(f"ocfl_object_{spec}\n")
@@ -44,21 +44,12 @@ def _make_object(
         manifest[digest] = [content_path]
         state[digest] = [logical_path]
 
-    inv = {
-        "id": object_id,
-        "type": f"https://ocfl.io/{spec}/spec/#inventory",
-        "digestAlgorithm": "sha512",
-        "head": "v1",
-        "manifest": manifest,
-        "versions": {
-            "v1": {
-                "created": "2024-01-01T00:00:00Z",
-                "state": state,
-                "message": "init",
-                "user": {"name": "test"},
-            },
-        },
-    }
+    inv = inventory(
+        id=object_id,
+        type=f"https://ocfl.io/{spec}/spec/#inventory",
+        manifest=manifest,
+        versions={"v1": version_block(state=state)},
+    )
 
     inv_bytes = json.dumps(inv, sort_keys=True, separators=(",", ":")).encode()
     (obj / "inventory.json").write_bytes(inv_bytes)
@@ -83,7 +74,6 @@ def _make_root(
     layout_ext: str | None = None,
     layout_desc: str = "",
 ) -> Path:
-    """Create a minimal valid OCFL storage root."""
     (tmp_path / f"0=ocfl_{spec}").write_text(f"ocfl_{spec}\n")
     if layout_ext:
         layout_data = {"extension": layout_ext, "description": layout_desc}

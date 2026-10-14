@@ -10,12 +10,12 @@ import shutil
 from pathlib import Path
 
 import pytest
+from builders import FIXTURES_ROOT
 
 REPO = Path(__file__).resolve().parents[3]
 LIB_SRC = REPO / "packages/ocfl-lib/src/ocfl_lib"
 CLI_SRC = REPO / "packages/ocfl-cli/src/ocfl_cli"
 INDEX_SRC = REPO / "packages/ocfl-index/src/ocfl_index"
-FIXTURES = REPO / "tests/fixtures"
 
 
 def _py_files(root: Path) -> list[Path]:
@@ -306,11 +306,11 @@ class TestValidationReport:
         from ocfl_lib import LocalFS
         from ocfl_lib.validation import Finding, ValidationReport, validate_object
 
-        good = FIXTURES / "1.1/good-objects/minimal_one_version_one_file"
+        good = FIXTURES_ROOT / "1.1/good-objects/minimal_one_version_one_file"
         report = validate_object(LocalFS(good), "")
         assert isinstance(report, ValidationReport)
         assert report.is_valid
-        bad = FIXTURES / "1.1/bad-objects/E001_extra_file_in_root"
+        bad = FIXTURES_ROOT / "1.1/bad-objects/E001_extra_file_in_root"
         report = validate_object(LocalFS(bad), "")
         assert not report.is_valid
         f = next(f for f in report.findings if f.code.startswith("E001"))
@@ -324,7 +324,7 @@ class TestValidationReport:
 
         fs = LocalFS(tmp_path)
         StorageRoot.init(fs, fs, spec=Spec.V1_1)
-        src = FIXTURES / "1.1/warn-objects/W005_id_not_uri"
+        src = FIXTURES_ROOT / "1.1/warn-objects/W005_id_not_uri"
         shutil.copytree(src, tmp_path / "a/obj")
         report = validate_root(fs, "")
         assert report.is_valid

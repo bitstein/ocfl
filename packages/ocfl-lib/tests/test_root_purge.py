@@ -1,8 +1,8 @@
 from typing import TYPE_CHECKING
 
 import pytest
+from builders import Died, stage_files
 
-from ocfl_lib._digest import DigestAlgorithm
 from ocfl_lib._errors import (
     LayoutNotConfigured,
     ObjectLockedError,
@@ -11,7 +11,6 @@ from ocfl_lib._errors import (
 )
 from ocfl_lib._layout import FlatDirectLayout, HashedNTupleLayout
 from ocfl_lib._root import StorageRoot
-from ocfl_lib._version_state import scan_dir
 from ocfl_lib.fs._local import LocalFS
 
 if TYPE_CHECKING:
@@ -21,13 +20,7 @@ if TYPE_CHECKING:
 def _commit_object(
     tmp_path: Path, root: StorageRoot, fsys: LocalFS, obj_id: str, files: dict[str, str]
 ) -> None:
-    src = tmp_path / f"src-{obj_id.replace(':', '-')}"
-    src.mkdir(exist_ok=True)
-    for name, content in files.items():
-        p = src / name
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content)
-    stage = scan_dir(LocalFS(src.parent), src.name, DigestAlgorithm.SHA512)
+    stage = stage_files(tmp_path, files, name=f"src-{obj_id.replace(':', '-')}")
     root.commit(fsys, obj_id, stage, created="2024-01-01T00:00:00Z")
 
 
@@ -110,10 +103,6 @@ class TestStorageRootPurge:
 
         with pytest.raises(LayoutNotConfigured, match="no layout"):
             root.purge(fsys, "obj-a")
-
-
-class Died(BaseException):
-    """The purging process died: nothing after this ran."""
 
 
 class _Recorder(LocalFS):

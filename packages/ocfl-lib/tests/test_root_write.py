@@ -2,6 +2,7 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
+from builders import stage_files
 
 from ocfl_lib._digest import DigestAlgorithm
 from ocfl_lib._errors import LayoutNotConfigured
@@ -15,17 +16,6 @@ from ocfl_lib.validation._object import validate_object
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-def _make_src(tmp_path: Path, files: dict[str, str]) -> Path:
-    """Create source directory with given files."""
-    src = tmp_path / "src"
-    src.mkdir(exist_ok=True)
-    for name, content in files.items():
-        p = src / name
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content)
-    return src
 
 
 class TestStorageRootInit:
@@ -114,12 +104,10 @@ class TestStorageRootInit:
 
 class TestStorageRootCommit:
     def test_commit_new_object(self, tmp_path: Path):
-        src = _make_src(tmp_path, {"file.txt": "hello"})
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src_fs = LocalFS(src.parent)
-        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = stage_files(tmp_path, {"file.txt": "hello"})
 
         obj = root.commit(
             fsys,
@@ -135,12 +123,10 @@ class TestStorageRootCommit:
         assert obj.spec == Spec.V1_1
 
     def test_commit_validates(self, tmp_path: Path):
-        src = _make_src(tmp_path, {"file.txt": "hello"})
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src_fs = LocalFS(src.parent)
-        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = stage_files(tmp_path, {"file.txt": "hello"})
 
         root.commit(fsys, "my-obj", stage, created="2024-01-01T00:00:00Z")
 
@@ -148,18 +134,13 @@ class TestStorageRootCommit:
         assert result.is_valid, f"errors: {[e.render() for e in result.errors]}"
 
     def test_commit_update_existing(self, tmp_path: Path):
-        src1 = _make_src(tmp_path, {"file.txt": "v1"})
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src_fs = LocalFS(src1.parent)
-        stage1 = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage1 = stage_files(tmp_path, {"file.txt": "v1"})
         root.commit(fsys, "my-obj", stage1, created="2024-01-01T00:00:00Z")
 
-        src2 = tmp_path / "src2"
-        src2.mkdir()
-        (src2 / "file.txt").write_text("v2")
-        stage2 = scan_dir(LocalFS(tmp_path), "src2", DigestAlgorithm.SHA512)
+        stage2 = stage_files(tmp_path, {"file.txt": "v2"}, name="src2")
 
         obj = root.commit(
             fsys, "my-obj", stage2, created="2024-06-01T00:00:00Z", message="v2"
@@ -167,12 +148,10 @@ class TestStorageRootCommit:
         assert obj.head == VNum(2)
 
     def test_commit_readable_via_get_object(self, tmp_path: Path):
-        src = _make_src(tmp_path, {"file.txt": "hello"})
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout())
 
-        src_fs = LocalFS(src.parent)
-        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = stage_files(tmp_path, {"file.txt": "hello"})
         root.commit(fsys, "my-obj", stage, created="2024-01-01T00:00:00Z")
 
         obj = root.get_object("my-obj")
@@ -184,30 +163,25 @@ class TestStorageRootCommit:
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys)
 
-        src = _make_src(tmp_path, {"file.txt": "x"})
-        stage = scan_dir(LocalFS(src.parent), "src", DigestAlgorithm.SHA512)
+        stage = stage_files(tmp_path, {"file.txt": "x"})
 
         with pytest.raises(LayoutNotConfigured, match="no layout"):
             root.commit(fsys, "obj", stage, created="2024-01-01T00:00:00Z")
 
     def test_commit_defaults_spec_to_root(self, tmp_path: Path):
-        src = _make_src(tmp_path, {"file.txt": "x"})
         fsys = LocalFS(tmp_path)
         root = StorageRoot.init(fsys, fsys, layout=FlatDirectLayout(), spec=Spec.V1_0)
 
-        src_fs = LocalFS(src.parent)
-        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = stage_files(tmp_path, {"file.txt": "x"})
         obj = root.commit(fsys, "my-obj", stage, created="2024-01-01T00:00:00Z")
         assert obj.spec == Spec.V1_0
 
     def test_commit_with_hashed_layout(self, tmp_path: Path):
-        src = _make_src(tmp_path, {"file.txt": "hello"})
         fsys = LocalFS(tmp_path)
         layout = HashedNTupleLayout()
         root = StorageRoot.init(fsys, fsys, layout=layout)
 
-        src_fs = LocalFS(src.parent)
-        stage = scan_dir(src_fs, "src", DigestAlgorithm.SHA512)
+        stage = stage_files(tmp_path, {"file.txt": "hello"})
         obj = root.commit(fsys, "test:obj", stage, created="2024-01-01T00:00:00Z")
 
         assert obj.id == "test:obj"
