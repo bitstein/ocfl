@@ -63,9 +63,6 @@ class TargetRules:
     commits: bool
     not_ready_reason: FixedBatchReason
 
-    def command(self, verb: str = "timestamp") -> str:
-        return f"{verb} {self.target.value}"
-
     def prepare(
         self, area: Area, state: OtsState, *, allow_missing_metadata: bool
     ) -> tuple[OtsState, tuple[str, ...]]:

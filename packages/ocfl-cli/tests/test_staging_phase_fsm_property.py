@@ -3,29 +3,14 @@ from hypothesis.stateful import RuleBasedStateMachine, invariant, precondition, 
 from hypothesis.strategies import sampled_from
 
 from ocfl_cli.errors import PhaseError
-from ocfl_cli.model.phase import Phase, check_transition
-
-COMMANDS = [
-    "add",
-    "rm",
-    "mv",
-    "timestamp content",
-    "upgrade content",
-    "retry content",
-    "timestamp inventory",
-    "upgrade inventory",
-    "retry inventory",
-    "commit (ots path)",
-    "discard",
-    "status",
-]
+from ocfl_cli.model.phase import Phase, PhaseCommand, check_transition
 
 REGRESS_FROM = {
     Phase.CONTENT_UPGRADED,
     Phase.INVENTORY_PENDING,
     Phase.INVENTORY_UPGRADED,
 }
-MUTATING = {"add", "rm", "mv"}
+MUTATING = {PhaseCommand.ADD, PhaseCommand.RM, PhaseCommand.MV}
 TERMINAL = Phase.COMMITTED
 
 
@@ -35,8 +20,8 @@ class PhaseFSM(RuleBasedStateMachine):
         self.phase: Phase = Phase.DRAFTING
 
     @precondition(lambda self: self.phase is not TERMINAL)
-    @rule(cmd=sampled_from(COMMANDS))
-    def step(self, cmd: str) -> None:
+    @rule(cmd=sampled_from(list(PhaseCommand)))
+    def step(self, cmd: PhaseCommand) -> None:
         before = self.phase
         try:
             after = check_transition(before, cmd)
@@ -46,9 +31,9 @@ class PhaseFSM(RuleBasedStateMachine):
         assert isinstance(after, Phase)
         if cmd in MUTATING and before in REGRESS_FROM:
             assert after is Phase.DRAFTING
-        if cmd == "status":
+        if cmd is PhaseCommand.STATUS:
             assert after is before
-        if cmd == "discard":
+        if cmd is PhaseCommand.DISCARD:
             assert after is before
         self.phase = after
 

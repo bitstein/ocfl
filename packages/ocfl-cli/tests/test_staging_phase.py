@@ -1,7 +1,14 @@
+import re
+
 import pytest
 
 from ocfl_cli.errors import PhaseError
-from ocfl_cli.model.phase import Phase, check_transition
+from ocfl_cli.model.phase import (
+    Phase,
+    PhaseCommand,
+    TimestampTarget,
+    check_transition,
+)
 
 D = Phase.DRAFTING
 CP = Phase.CONTENT_PENDING
@@ -111,16 +118,30 @@ class TestPhaseEnum:
 def test_check_transition_matrix(phase: Phase, command: str, expected: Phase | str):
     if expected == RAISES_PHASE_ERROR:
         with pytest.raises(PhaseError):
-            check_transition(phase, command)
+            check_transition(phase, PhaseCommand(command))
     else:
-        result = check_transition(phase, command)
+        result = check_transition(phase, PhaseCommand(command))
         assert result is expected
         assert isinstance(result, Phase)
 
 
-def test_check_transition_unknown_command_raises():
-    with pytest.raises(PhaseError):
-        check_transition(Phase.DRAFTING, "frobnicate")
+def test_matrix_names_every_command():
+    assert {c for _, c in MATRIX} == {c.value for c in PhaseCommand}
+
+
+def test_committed_has_no_legal_command():
+    for command in PhaseCommand:
+        with pytest.raises(
+            PhaseError,
+            match=re.escape(f"command '{command}' not legal in phase 'committed'"),
+        ):
+            check_transition(COMM, command)
+
+
+@pytest.mark.parametrize("target", list(TimestampTarget))
+@pytest.mark.parametrize("verb", ["timestamp", "upgrade", "retry"])
+def test_targeted_names_the_verb_and_target(verb, target):
+    assert PhaseCommand.targeted(verb, target) == f"{verb} {target}"
 
 
 def test_matrix_covers_every_pre_committed_phase():

@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from msgspec.structs import replace
 from platformdirs import user_state_path
@@ -9,7 +9,7 @@ from ocfl_cli.config.archive import validate_digest_name
 from ocfl_cli.errors import CLIError, StagingError, UsageError
 from ocfl_cli.model.metadata import StagedMetadata, StagedUser
 from ocfl_cli.model.ots_state import OtsState
-from ocfl_cli.model.phase import Phase, check_transition
+from ocfl_cli.model.phase import Phase, PhaseCommand, check_transition
 from ocfl_cli.store.ingest import ingest_file
 from ocfl_cli.store.ots_state import (
     has_ots,
@@ -181,7 +181,7 @@ def path_kinds(state: StateMap, paths: list[str]) -> dict[str, str]:
 def apply_rm_mv_regression(
     staging_dir: Path,
     new_inv_state: StateMap,
-    command: str,
+    command: Literal[PhaseCommand.ADD, PhaseCommand.RM, PhaseCommand.MV],
     cause: str,
 ) -> None:
     """Update `ots.json` for stage add/rm/mv regressions. Caller holds the lock.
@@ -463,7 +463,7 @@ def add_sources(
     if has_ots(staging_dir):
         with with_lock(staging_dir, runtime):
             _finalize()
-            apply_rm_mv_regression(staging_dir, state, "add", command)
+            apply_rm_mv_regression(staging_dir, state, PhaseCommand.ADD, command)
     else:
         _finalize()
 
@@ -518,7 +518,7 @@ def move_path(
                 pair_ots_companion_rename(state, src_path, dst_path)
             store.save_inventory(root_path, object_id, update_head_state(inv, state))
             apply_rm_mv_regression(
-                staging_dir, state, "mv", f"stage mv {src_path} {dst_path}"
+                staging_dir, state, PhaseCommand.MV, f"stage mv {src_path} {dst_path}"
             )
     else:
         store.save_inventory(root_path, object_id, update_head_state(inv, state))
@@ -583,7 +583,7 @@ def remove_paths(
             pair_ots_companion_remove(state, path_kinds(before, removed_paths))
             _finalize()
             apply_rm_mv_regression(
-                staging_dir, state, "rm", f"stage rm {' '.join(paths)}"
+                staging_dir, state, PhaseCommand.RM, f"stage rm {' '.join(paths)}"
             )
     else:
         _finalize()

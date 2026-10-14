@@ -16,7 +16,7 @@ from ocfl_cli.errors import (
     StagingFileMissingError,
 )
 from ocfl_cli.model.metadata import StagedMetadata, StagedUser
-from ocfl_cli.model.phase import Phase, check_transition
+from ocfl_cli.model.phase import Phase, PhaseCommand, check_transition
 from ocfl_cli.store.locks import object_commit_lock
 from ocfl_cli.store.ots_state import (
     load_ots,
@@ -265,7 +265,7 @@ def commit_ots(
 ) -> None:
     def prepare() -> _Prepared:
         state = load_ots(staging_dir)
-        target_phase = check_transition(state.phase, "commit (ots path)")
+        target_phase = check_transition(state.phase, PhaseCommand.COMMIT)
         require_verified_content_before_inventory(state)
         plan = _timestamped_plan(staging_dir, state, object_id)
         version = plan.inventory.inventory.versions[plan.version]

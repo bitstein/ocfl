@@ -1,5 +1,5 @@
 import enum
-from typing import Any
+from typing import Literal, Self
 
 from ocfl_cli.errors import PhaseError
 
@@ -32,100 +32,61 @@ def target_for(phase: Phase) -> TimestampTarget | None:
     return _TARGETS[phase]
 
 
-# Sentinels for the transition matrix.
-_STAY = object()  # outcome: phase unchanged
-_ERR = object()  # outcome: PhaseError
-_REGRESS = object()  # outcome: Phase.DRAFTING
+type TimestampVerb = Literal["timestamp", "upgrade", "retry"]
 
-_EDITABLE = (
-    Phase.DRAFTING,
-    Phase.CONTENT_PENDING,
-    Phase.CONTENT_UPGRADED,
-    Phase.INVENTORY_PENDING,
-    Phase.INVENTORY_UPGRADED,
-)
 
-# (phase, command) -> Phase | sentinel. A timestamp command is
-# "<verb> <target>": the verb is the `stage` command (`timestamp`, `upgrade`,
-# `retry`), the target the one it works on.
-# Mirrors `tests/test_staging_phase.py::MATRIX`.
-_TRANSITIONS: dict[tuple[Phase, str], Any] = {
-    **{
-        (p, c): outcome
-        for c in ("add", "rm", "mv")
-        for p, outcome in zip(
-            _EDITABLE, (_STAY, _STAY, _REGRESS, _REGRESS, _REGRESS), strict=True
-        )
-    },
-    **dict(
-        zip(
-            ((p, "timestamp content") for p in _EDITABLE),
-            (Phase.CONTENT_PENDING, _STAY, _STAY, _ERR, _ERR),
-            strict=True,
-        )
-    ),
-    **dict(
-        zip(
-            ((p, "upgrade content") for p in _EDITABLE),
-            (_ERR, _STAY, _STAY, _ERR, _ERR),
-            strict=True,
-        )
-    ),
-    **dict(
-        zip(
-            ((p, "retry content") for p in _EDITABLE),
-            (_ERR, _STAY, _ERR, _ERR, _ERR),
-            strict=True,
-        )
-    ),
-    **dict(
-        zip(
-            ((p, "timestamp inventory") for p in _EDITABLE),
-            (_ERR, _ERR, Phase.INVENTORY_PENDING, _STAY, _STAY),
-            strict=True,
-        )
-    ),
-    **dict(
-        zip(
-            ((p, "upgrade inventory") for p in _EDITABLE),
-            (_ERR, _ERR, _ERR, Phase.INVENTORY_UPGRADED, _STAY),
-            strict=True,
-        )
-    ),
-    **dict(
-        zip(
-            ((p, "retry inventory") for p in _EDITABLE),
-            (_ERR, _ERR, _ERR, _STAY, _ERR),
-            strict=True,
-        )
-    ),
-    **dict(
-        zip(
-            ((p, "commit (ots path)") for p in _EDITABLE),
-            (_ERR, _ERR, _ERR, _ERR, Phase.COMMITTED),
-            strict=True,
-        )
-    ),
-    **{(p, c): _STAY for c in ("discard", "status") for p in _EDITABLE},
+class PhaseCommand(enum.StrEnum):
+    ADD = "add"
+    RM = "rm"
+    MV = "mv"
+    TIMESTAMP_CONTENT = "timestamp content"
+    UPGRADE_CONTENT = "upgrade content"
+    RETRY_CONTENT = "retry content"
+    TIMESTAMP_INVENTORY = "timestamp inventory"
+    UPGRADE_INVENTORY = "upgrade inventory"
+    RETRY_INVENTORY = "retry inventory"
+    COMMIT = "commit (ots path)"
+    DISCARD = "discard"
+    STATUS = "status"
+
+    @classmethod
+    def targeted(cls, verb: TimestampVerb, target: TimestampTarget) -> Self:
+        return cls(f"{verb} {target.value}")
+
+
+_D = Phase.DRAFTING
+_CP = Phase.CONTENT_PENDING
+_CU = Phase.CONTENT_UPGRADED
+_IP = Phase.INVENTORY_PENDING
+_IU = Phase.INVENTORY_UPGRADED
+
+_EDIT = {_D: _D, _CP: _CP, _CU: _D, _IP: _D, _IU: _D}
+_UNCHANGED = {_D: _D, _CP: _CP, _CU: _CU, _IP: _IP, _IU: _IU}
+
+_NEXT_PHASE: dict[PhaseCommand, dict[Phase, Phase]] = {
+    PhaseCommand.ADD: _EDIT,
+    PhaseCommand.RM: _EDIT,
+    PhaseCommand.MV: _EDIT,
+    PhaseCommand.TIMESTAMP_CONTENT: {_D: _CP, _CP: _CP, _CU: _CU},
+    PhaseCommand.UPGRADE_CONTENT: {_CP: _CP, _CU: _CU},
+    PhaseCommand.RETRY_CONTENT: {_CP: _CP},
+    PhaseCommand.TIMESTAMP_INVENTORY: {_CU: _IP, _IP: _IP, _IU: _IU},
+    PhaseCommand.UPGRADE_INVENTORY: {_IP: _IU, _IU: _IU},
+    PhaseCommand.RETRY_INVENTORY: {_IP: _IP},
+    PhaseCommand.COMMIT: {_IU: Phase.COMMITTED},
+    PhaseCommand.DISCARD: _UNCHANGED,
+    PhaseCommand.STATUS: _UNCHANGED,
 }
 
 
-def is_legal(phase: Phase, command: str) -> bool:
-    outcome = _TRANSITIONS.get((phase, command), _ERR)
-    return outcome is not _ERR
+def is_legal(phase: Phase, command: PhaseCommand) -> bool:
+    return phase in _NEXT_PHASE[command]
 
 
-def check_transition(phase: Phase, command: str) -> Phase:
-    try:
-        outcome = _TRANSITIONS[(phase, command)]
-    except KeyError:
+def check_transition(phase: Phase, command: PhaseCommand) -> Phase:
+    next_phase = _NEXT_PHASE[command].get(phase)
+    if next_phase is None:
         raise PhaseError(
-            f"command {command!r} not legal in phase {phase.value!r}"
-        ) from None
-    if outcome is _ERR:
-        raise PhaseError(f"command {command!r} not legal in phase {phase.value!r}")
-    if outcome is _STAY:
-        return phase
-    if outcome is _REGRESS:
-        return Phase.DRAFTING
-    return outcome  # explicit Phase target (advance)
+            f"command {command.value!r} not legal in phase {phase.value!r}"
+        )
+    return next_phase

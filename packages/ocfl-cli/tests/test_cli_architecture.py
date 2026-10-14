@@ -660,13 +660,15 @@ class TestCliSurface:
 
 class TestDiscardAndConfig:
     def test_discard_replaces_reset(self):
-        from ocfl_cli.model.phase import Phase, is_legal
+        from ocfl_cli.model.phase import Phase, PhaseCommand, is_legal
         from ocfl_cli.stage import stage_app
 
         commands = _click(stage_app).commands
         assert "discard" in commands and "reset" not in commands
-        assert all(is_legal(p, "discard") for p in Phase if p is not Phase.COMMITTED)
-        assert not any(is_legal(p, "reset") for p in Phase)
+        assert all(
+            is_legal(p, PhaseCommand.DISCARD) for p in Phase if p is not Phase.COMMITTED
+        )
+        assert "reset" not in PhaseCommand
 
     def test_config_group(self):
         from ocfl_cli.main import app

@@ -8,7 +8,9 @@ from ocfl_cli.errors import AttestationMismatchError, PhaseError
 from ocfl_cli.model.ots_state import OtsState, Proof, Submission
 from ocfl_cli.model.phase import (
     Phase,
+    PhaseCommand,
     TimestampTarget,
+    TimestampVerb,
     check_transition,
     is_legal,
     target_for,
@@ -160,24 +162,24 @@ class Idle:
 
 
 def idle(
-    run: TimestampRun, verb: str, *, expect: TimestampTarget | None = None
+    run: TimestampRun, verb: TimestampVerb, *, expect: TimestampTarget | None = None
 ) -> Idle | None:
     if expect is not None:
         return None
     state = load_ots(run.staging_dir)
     rules = resolve(state, None)
-    if is_legal(state.phase, rules.command(verb)):
+    if is_legal(state.phase, PhaseCommand.targeted(verb, rules.target)):
         return None
     shown = next((r for r in targets.ALL if r.upgraded_phase is state.phase), rules)
     return Idle(target=shown.target, phase=state.phase)
 
 
 def check(
-    run: TimestampRun, verb: str, *, expect: TimestampTarget | None = None
+    run: TimestampRun, verb: TimestampVerb, *, expect: TimestampTarget | None = None
 ) -> TimestampTarget:
     state = load_ots(run.staging_dir)
     rules = resolve(state, expect)
-    check_transition(state.phase, rules.command(verb))
+    check_transition(state.phase, PhaseCommand.targeted(verb, rules.target))
     return rules.target
 
 
@@ -224,7 +226,9 @@ def prepare_submission_locked(
     """
     state = load_ots(area.staging_dir)
     rules = resolve(state, expect)
-    target_phase = check_transition(state.phase, rules.command())
+    target_phase = check_transition(
+        state.phase, PhaseCommand.targeted("timestamp", rules.target)
+    )
     category_id = apply_category_id(state, category_config)
     previous = state.phase
     if previous is rules.upgraded_phase:
@@ -510,7 +514,7 @@ def upgrade_locked(
     state = load_ots(run.staging_dir)
     rules = resolve(state, expect)
     previous = state.phase
-    check_transition(state.phase, rules.command("upgrade"))
+    check_transition(state.phase, PhaseCommand.targeted("upgrade", rules.target))
     category_id = apply_category_id(state, run.category_config)
     rules.check_upgradable(state)
     min_confs = run.min_confirmations
@@ -579,7 +583,9 @@ def retry_locked(
     """
     state = load_ots(run.staging_dir)
     rules = resolve(state, expect)
-    target_phase = check_transition(state.phase, rules.command("retry"))
+    target_phase = check_transition(
+        state.phase, PhaseCommand.targeted("retry", rules.target)
+    )
     category_id = apply_category_id(state, run.category_config)
     failed = [
         i
