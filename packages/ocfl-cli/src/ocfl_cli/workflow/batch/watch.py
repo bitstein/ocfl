@@ -1,6 +1,5 @@
 """Batch watch: re-verify rows when the chain moves."""
 
-from pathlib import Path  # noqa: TC003 - Typer reads option annotations at runtime.
 from typing import TYPE_CHECKING
 
 import msgspec
@@ -31,6 +30,8 @@ from ocfl_cli.workflow.common import unverify, verified_proof
 from ocfl_cli.workflow.targets import rules_for
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from ocfl_cli.model import batch as batch_model
     from ocfl_cli.model.ots_state import OtsState
     from ocfl_cli.model.phase import TimestampTarget

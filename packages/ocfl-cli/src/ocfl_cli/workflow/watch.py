@@ -20,11 +20,11 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from ocfl_cli.errors import LockTimeoutError
-from ocfl_cli.model.phase import TimestampTarget  # noqa: TC001 - signature() reads it.
 from ocfl_cli.store.ots_state import apply_category_id, load_ots, save_ots, with_lock
 from ocfl_cli.workflow import timestamp
 
 if TYPE_CHECKING:
+    from ocfl_cli.model.phase import TimestampTarget
     from ocfl_cli.ports import BlockStream
 
 

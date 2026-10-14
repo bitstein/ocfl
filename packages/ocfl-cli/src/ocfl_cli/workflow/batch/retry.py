@@ -1,6 +1,5 @@
 """Batch retry: resubmit the failed chunks."""
 
-from pathlib import Path  # noqa: TC003 - Typer reads option annotations at runtime.
 from typing import TYPE_CHECKING
 
 import msgspec
@@ -26,6 +25,8 @@ from ocfl_cli.workflow.batch.submit import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from ocfl_cli.model.phase import TimestampTarget
     from ocfl_cli.ports import Runtime
     from ocfl_cli.store.staging import StagingStore

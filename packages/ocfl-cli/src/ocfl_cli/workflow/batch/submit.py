@@ -1,6 +1,5 @@
 """Batch submission to SimpleProof, chunk by chunk, mirrored into each object."""
 
-from pathlib import Path  # noqa: TC003 - Typer reads option annotations at runtime.
 from typing import TYPE_CHECKING
 
 import msgspec
@@ -22,6 +21,8 @@ from ocfl_cli.workflow.batch.reasons import (
 from ocfl_cli.workflow.targets import rules_for
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from ocfl_cli.model.ots_state import OtsState, Submission
     from ocfl_cli.model.phase import TimestampTarget
     from ocfl_cli.ports import Runtime

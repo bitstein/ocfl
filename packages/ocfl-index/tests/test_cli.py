@@ -14,15 +14,6 @@ from ocfl_lib import DigestAlgorithm
 runner = CliRunner()
 
 
-def _combined_output(result: object) -> str:
-    """Return stdout plus any captured stderr, robust across Click versions."""
-    text = getattr(result, "output", "")
-    stderr_bytes = getattr(result, "stderr_bytes", None)
-    if stderr_bytes:
-        text += getattr(result, "stderr", "")
-    return text
-
-
 def _db(tmp_path: Path) -> Path:
     return tmp_path / "i.db"
 
@@ -157,7 +148,7 @@ def test_cli_open_time_contention_is_friendly(tmp_path: Path, argv: list[str]) -
         holder.execute("ROLLBACK")
         holder.close()
 
-    output = _combined_output(result)
+    output = result.output
     assert result.exit_code == 1, output
     assert "index busy" in output
     assert "database is locked" not in output
@@ -179,7 +170,7 @@ def test_cli_refresh_time_contention_is_friendly(tmp_path: Path) -> None:
         holder.execute("ROLLBACK")
         holder.close()
 
-    output = _combined_output(result)
+    output = result.output
     assert result.exit_code == 1, output
     assert "index busy" in output
     assert "database is locked" not in output

@@ -1,6 +1,5 @@
 """Batch upgrade: verify jobs, download proofs, verify them against Bitcoin."""
 
-from pathlib import Path  # noqa: TC003 - Typer reads option annotations at runtime.
 from typing import TYPE_CHECKING
 
 import msgspec
@@ -29,6 +28,8 @@ from ocfl_cli.workflow.targets import Area, rules_for
 from ocfl_lib import BitcoinRpcError
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from ocfl_cli.model.ots_state import OtsState
     from ocfl_cli.model.phase import TimestampTarget
     from ocfl_cli.model.simpleproof import SimpleProofDownloadResult
