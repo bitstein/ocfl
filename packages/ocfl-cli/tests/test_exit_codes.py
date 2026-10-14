@@ -1,5 +1,3 @@
-"""Canonical CLI exit-code contract: one handler, `ErrorClass` -> `ExitCode`."""
-
 import json
 from pathlib import Path
 

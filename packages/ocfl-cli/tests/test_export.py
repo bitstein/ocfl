@@ -1,5 +1,3 @@
-"""Tests for ocfl export command."""
-
 import json
 from pathlib import Path
 
@@ -177,14 +175,12 @@ class TestExport:
         out = tmp_path / "out"
         out.mkdir()
         (out / "file1.txt").write_text("old")
-        # Without --replace should fail
         result = runner.invoke(
             app,
             ["--root", str(storage_root), "export", "obj:test", "--to", str(out)],
         )
         assert result.exit_code == 1
 
-        # With --replace should succeed
         result = runner.invoke(
             app,
             [

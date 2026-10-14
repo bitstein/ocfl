@@ -1,23 +1,3 @@
-"""Tests for `ocfl stage new --ots` (OTS workflow step 9).
-
-Pins step 9 of `OTS workflow contract`:
-- `--ots` flag forces sha256 (rejects any other `--digest` with explicit
-  SHA-256 reference; non-zero exit).
-- `--ots` requires `[simpleproof]` + `[bitcoin]` config to be present and
-  valid; missing sections fail early with actionable hints (config error
-  → exit 6 per the canonical exit-code mapping).
-- On success, writes initial `<staging>/ots.json` at schema_version=2
-  with phase=drafting, category_id=[simpleproof].proof_category_id,
-  empty submissions/verify_jobs/proofs/pending_digests, and
-  inventory_proof=None. Staging inventory uses sha256 digest algorithm.
-- Extension config (`extensions/NNNN-ots-timestamps/config.json`) is NOT
-  written here — that lands at first commit (step 9 deliverable bullet).
-- Regression: plain `stage new` (no `--ots`) writes no `ots.json` and
-  preserves pre-OTS behavior.
-- Re-running `stage new --ots` for the same (root, object) is rejected
-  (existing-staging guard inherited from `stage new`).
-"""
-
 from pathlib import Path
 
 import pytest
@@ -27,10 +7,6 @@ from ocfl_cli.main import app
 from ocfl_cli.model.phase import Phase
 from ocfl_cli.store.ots_state import has_ots, load_ots
 from ocfl_cli.store.staging import StagingStore
-
-# --------------------------------------------------------------------------- #
-# Config fixtures
-# --------------------------------------------------------------------------- #
 
 _SP_OK = """\
 [simpleproof]
@@ -50,7 +26,6 @@ def _write_config(
     monkeypatch: pytest.MonkeyPatch,
     body: str,
 ) -> Path:
-    """Write *body* to a config.toml under *tmp_path* and point OCFL_CONFIG at it."""
     cfg = tmp_path / "ocfl-config" / "config.toml"
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text(body)
@@ -89,11 +64,6 @@ def _strip_paths(text: str) -> str:
     return " ".join(tok for tok in text.split() if not tok.startswith("/"))
 
 
-# --------------------------------------------------------------------------- #
-# Layer-1: digest forcing
-# --------------------------------------------------------------------------- #
-
-
 class TestDigestForcing:
     def test_ots_with_sha512_rejected(
         self,
@@ -102,7 +72,6 @@ class TestDigestForcing:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """`--ots --digest sha512` must reject with explicit SHA-256 message."""
         _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
         staging = tmp_path / "staging"
         result = runner.invoke(
@@ -114,7 +83,6 @@ class TestDigestForcing:
         # Rejection comes from our code, not Typer's unknown-option handler.
         assert "no such option" not in combined, result.output
         assert "sha-256" in combined or "sha256" in combined, result.output
-        # No staging dir should have been created.
         store = StagingStore(staging)
         assert not store.exists(str(storage_root.resolve()), "obj:new")
 
@@ -147,7 +115,6 @@ class TestDigestForcing:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """`--ots --digest sha256` is the no-op redundant case; must succeed."""
         _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
         staging = tmp_path / "staging"
         result = runner.invoke(
@@ -166,7 +133,6 @@ class TestDigestForcing:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Existing OTS objects must already use SHA-256."""
         _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
         staging = tmp_path / "staging"
         result = runner.invoke(
@@ -181,11 +147,6 @@ class TestDigestForcing:
         assert not store.exists(str(storage_root.resolve()), "obj:test")
 
 
-# --------------------------------------------------------------------------- #
-# Layer-1: config presence (fail early per resolved question 4)
-# --------------------------------------------------------------------------- #
-
-
 class TestConfigValidation:
     def test_missing_simpleproof_rejected(
         self,
@@ -194,7 +155,6 @@ class TestConfigValidation:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """`--ots` without `[simpleproof]` must reject with actionable hint."""
         _write_config(tmp_path, monkeypatch, _BTC_OK_COOKIE)  # only [bitcoin]
         staging = tmp_path / "staging"
         result = runner.invoke(
@@ -205,7 +165,6 @@ class TestConfigValidation:
         combined = _strip_paths((result.output + (result.stderr or "")).lower())
         assert "no such option" not in combined, result.output
         assert "simpleproof" in combined, result.output
-        # No staging dir should have been created.
         store = StagingStore(staging)
         assert not store.exists(str(storage_root.resolve()), "obj:new")
 
@@ -216,7 +175,6 @@ class TestConfigValidation:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """`--ots` without `[bitcoin]` must reject with actionable hint."""
         _write_config(tmp_path, monkeypatch, _SP_OK)  # only [simpleproof]
         staging = tmp_path / "staging"
         result = runner.invoke(
@@ -237,7 +195,6 @@ class TestConfigValidation:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Empty config: `--ots` rejects, hint mentions at least one section."""
         _write_config(tmp_path, monkeypatch, "")
         staging = tmp_path / "staging"
         result = runner.invoke(
@@ -252,11 +209,6 @@ class TestConfigValidation:
         assert not store.exists(str(storage_root.resolve()), "obj:new")
 
 
-# --------------------------------------------------------------------------- #
-# Layer-2: initial ots.json shape
-# --------------------------------------------------------------------------- #
-
-
 class TestInitialOtsJson:
     def test_ots_json_initialized(
         self,
@@ -265,8 +217,6 @@ class TestInitialOtsJson:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """`--ots` writes initial ots.json with the schema-v1 shape per
-        `staging_ots_json.schema` and `commands.stage_new_ots.behavior`."""
         _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
         staging = tmp_path / "staging"
         result = runner.invoke(
@@ -300,7 +250,6 @@ class TestInitialOtsJson:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """`--ots` forces sha256 even when no `--digest` given."""
         _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
         staging = tmp_path / "staging"
         result = runner.invoke(
@@ -320,8 +269,6 @@ class TestInitialOtsJson:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """`category_id` in fresh `ots.json` reflects current
-        `[simpleproof].proof_category_id`."""
         custom = _SP_OK.replace("proof_category_id = 641", "proof_category_id = 7777")
         _write_config(tmp_path, monkeypatch, custom + _BTC_OK_COOKIE)
         staging = tmp_path / "staging"
@@ -343,8 +290,6 @@ class TestInitialOtsJson:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Extension config lands at first commit, not `stage new`. Step 9
-        deliverable bullet 5 explicitly carves this out."""
         _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
         staging = tmp_path / "staging"
         result = runner.invoke(
@@ -353,14 +298,8 @@ class TestInitialOtsJson:
         )
         assert result.exit_code == 0, result.output
 
-        # No `extensions/` directory should appear in the storage root yet.
         ext_dir = storage_root / "extensions"
         assert not ext_dir.exists()
-
-
-# --------------------------------------------------------------------------- #
-# Layer-2: rejection of double-OTS staging (existing-exists guard)
-# --------------------------------------------------------------------------- #
 
 
 class TestDoubleOtsStaging:
@@ -371,8 +310,6 @@ class TestDoubleOtsStaging:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A second `stage new --ots` for the same (root, object) must fail —
-        same guard as plain `stage new`."""
         _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
         staging = tmp_path / "staging"
         args = _stage_new_ots_args(storage_root, staging, "obj:new")
@@ -386,11 +323,6 @@ class TestDoubleOtsStaging:
         assert "already" in combined
 
 
-# --------------------------------------------------------------------------- #
-# Layer-2: regression — plain `stage new` (no `--ots`) preserved
-# --------------------------------------------------------------------------- #
-
-
 class TestNonOtsRegression:
     def test_no_ots_json_without_flag(
         self,
@@ -399,8 +331,6 @@ class TestNonOtsRegression:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Plain `stage new` writes no `ots.json` even when the OTS config
-        sections are present in user config."""
         _write_config(tmp_path, monkeypatch, _SP_OK + _BTC_OK_COOKIE)
         staging = tmp_path / "staging"
         result = runner.invoke(

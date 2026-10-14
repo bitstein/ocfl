@@ -1,5 +1,3 @@
-"""Typed preflight helpers for stage commands."""
-
 import pytest
 import typer
 from pydantic import SecretStr

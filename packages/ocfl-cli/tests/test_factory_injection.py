@@ -1,11 +1,3 @@
-"""Factory-injection seam contract.
-
-Pins the seam: callers (production `main`, tests via
-``runner.invoke(obj=...)``) supply ``sp_client_factory`` /
-``btc_rpc_factory`` callables on ``ctx.obj``; service consumes them via
-``factory(cfg)`` instead of constructing clients directly.
-"""
-
 from pathlib import Path
 
 import pytest
@@ -117,8 +109,6 @@ def test_default_factories_registered_when_obj_omits_them(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Production path: ``main`` callback installs default factories on
-    ``ctx.obj`` so the stage commands have something to call."""
     _write_config(tmp_path, monkeypatch)
 
     seen: dict[str, object] = {}

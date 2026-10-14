@@ -1,5 +1,3 @@
-"""Tests for ocfl log command."""
-
 import json
 from pathlib import Path
 
@@ -21,7 +19,6 @@ class TestLog:
         )
         assert result.exit_code == 0
         lines = result.stdout.strip().splitlines()
-        # v1 should appear before v2 in reverse (oldest first)
         v1_idx = next(i for i, line in enumerate(lines) if "v1" in line)
         v2_idx = next(i for i, line in enumerate(lines) if "v2" in line)
         assert v1_idx < v2_idx

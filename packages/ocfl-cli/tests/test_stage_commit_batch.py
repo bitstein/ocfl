@@ -1,5 +1,3 @@
-"""Tests for `ocfl stage batch commit`."""
-
 import json
 import shutil
 from collections.abc import Callable
@@ -427,7 +425,6 @@ def test_batch_commit_holds_the_batch_lock(
     tmp_path: Path,
     runtime: Runtime,
 ) -> None:
-    """The batch lock is the lease: commit holds it for the whole run."""
     staging = tmp_path / "staging"
     _stage_dir(staging, storage_root, "obj:leased")
     batch = _batch(

@@ -1,5 +1,3 @@
-"""Typed CLI context accessors."""
-
 from typing import cast
 
 import pytest

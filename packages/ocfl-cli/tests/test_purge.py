@@ -1,5 +1,3 @@
-"""Tests for ocfl purge command."""
-
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -15,7 +13,6 @@ class TestPurge:
             ["--root", str(storage_root), "purge", "obj:test", "--yes"],
         )
         assert result.exit_code == 0
-        # Object should be gone
         fs = LocalFS(storage_root)
         root = StorageRoot.open(fs)
         assert not root.get_object("obj:test").exists
@@ -39,7 +36,6 @@ class TestPurge:
         )
         assert result.exit_code == 1
         assert "Aborted" in result.output
-        # Object should still exist
         fs = LocalFS(storage_root)
         root = StorageRoot.open(fs)
         assert root.get_object("obj:test").exists

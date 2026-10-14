@@ -1,5 +1,3 @@
-"""Tests for ocfl stage discard."""
-
 from pathlib import Path
 
 import pytest
@@ -45,11 +43,9 @@ class TestStageDiscard:
         assert not store.exists(root_path, "obj:new")
 
     def test_discard_no_staging_warns(self, runner, storage_root, tmp_path):
-        """Discard on non-existent staging warns and exits 0."""
         staging = tmp_path / "staging"
         result = _invoke(runner, storage_root, staging, "discard", "obj:nope")
         assert result.exit_code == 0
-        # Should have a warning
         assert "no staging" in result.output.lower() or "warn" in result.output.lower()
 
 
@@ -262,8 +258,6 @@ class TestForceRequiredAtDraftingAfterRegression:
         staging = tmp_path / "staging"
         sd = _mk_ots_staging(runner, storage_root, staging, "obj:regressed")
 
-        # Mirrors post-rm/mv regression shape: phase=drafting but
-        # proofs preserved — that still counts as progress.
         da = "a" * 64
         _pin_state(
             sd,
@@ -394,7 +388,6 @@ class TestDiscardWarnMessage:
             Phase.INVENTORY_PENDING,
             inventory=_inv_proof(),
             proofs={INV_DIGEST: _inv_proof_entry()},
-            # The inventory's batch lives on its Submission, like content's.
             submissions=(
                 _submission(
                     INV_DIGEST, batch_id=batch_id, target=TimestampTarget.INVENTORY

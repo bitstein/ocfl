@@ -1,5 +1,3 @@
-"""In-memory FakeBitcoinRPC + InMemoryHashBlockStream."""
-
 from collections import deque
 from dataclasses import dataclass, field
 from hashlib import sha256

@@ -1,5 +1,3 @@
-"""Tests for ocfl stage ls and ocfl stage status."""
-
 import json
 from hashlib import sha512
 
@@ -22,7 +20,6 @@ def _invoke(runner, storage_root, staging, *args):
 
 
 def _setup_staged_new(runner, storage_root, tmp_path):
-    """Stage a new object with two files."""
     staging = tmp_path / "staging"
     src_dir = tmp_path / "src"
     src_dir.mkdir()
@@ -71,7 +68,6 @@ class TestStageLs:
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert isinstance(data, list)
-        # The same shape as `ocfl ls OBJ --json` (issue 19).
         assert {"path": "a.txt"} in data
 
     def test_ls_without_object_lists_staging_areas(
@@ -94,7 +90,6 @@ class TestStageLs:
 
 class TestStageStatus:
     def test_status_new_object(self, runner, storage_root, tmp_path):
-        """New object: all files show as added."""
         staging = _setup_staged_new(runner, storage_root, tmp_path)
         result = _invoke(runner, storage_root, staging, "status", "obj:new")
         assert result.exit_code == 0, result.output
@@ -103,11 +98,9 @@ class TestStageStatus:
         assert "sub/b.txt" in result.output
 
     def test_status_existing_object_with_changes(self, runner, storage_root, tmp_path):
-        """Existing object with added file shows additions."""
         staging = tmp_path / "staging"
         _invoke(runner, storage_root, staging, "new", "obj:test")
 
-        # Add a new file
         new_file = tmp_path / "new.txt"
         new_file.write_text("new content")
         _invoke(runner, storage_root, staging, "add", "obj:test", str(new_file))
@@ -133,7 +126,6 @@ class TestStageStatus:
         )
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        # Non-OTS staging: status JSON is wrapped {"extension": null, "changes": [...]}
         assert isinstance(data, dict)
         assert data["extension"] is None
         assert isinstance(data["changes"], list)

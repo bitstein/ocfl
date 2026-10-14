@@ -1,5 +1,3 @@
-"""`ocfl config path | show | check`."""
-
 import json
 import socket
 from pathlib import Path

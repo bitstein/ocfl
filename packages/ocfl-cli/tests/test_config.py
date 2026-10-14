@@ -1,5 +1,3 @@
-"""Tests for ocfl CLI user config (~/.config/ocfl/config.toml)."""
-
 import json
 import shutil
 from pathlib import Path
@@ -195,7 +193,6 @@ class TestEffective:
         assert cfg.effective_suppress(arch) == frozenset({"W004"})
 
     def test_empty_suppress_overrides_defaults(self):
-        """suppress = [] explicitly opts out of default suppressions."""
         cfg = Config(
             defaults_suppress=("W004",),
             archives={"strict": ArchiveConfig(name="strict", root="/x", suppress=())},
@@ -253,7 +250,6 @@ class TestAliasResolution:
     def test_env_var_beats_implicit_default(
         self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
     ):
-        """OCFL_ROOT env takes precedence over implicit single-archive."""
         cfg = _write_config(
             tmp_path / "config.toml",
             """

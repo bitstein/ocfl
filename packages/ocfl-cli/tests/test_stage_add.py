@@ -1,5 +1,3 @@
-"""Tests for ocfl stage add."""
-
 import pytest
 from typer.testing import CliRunner
 
@@ -14,7 +12,6 @@ def runner():
 
 
 def _invoke_new(runner, storage_root, staging, object_id="obj:new"):
-    """Helper: create a fresh staging area for a new object."""
     return runner.invoke(
         app,
         [
@@ -63,12 +60,10 @@ class TestStageAdd:
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
-        # Should have one file in v1 state
         assert len(inv.versions["v1"].state) == 1
         paths = [p for ps in inv.versions["v1"].state.values() for p in ps]
         assert "hello.txt" in paths
 
-        # Content map should reference the file
         cm = store.load_content_map(root_path, "obj:new")
         assert len(cm) == 1
         entry = next(iter(cm.values()))
@@ -176,7 +171,6 @@ class TestStageAdd:
         assert inv.versions["v1"].state == {}
 
     def test_add_dir_with_as_prefix(self, runner, storage_root, tmp_path):
-        """--as with directory sets parent logical path prefix."""
         staging = tmp_path / "staging"
         src_dir = tmp_path / "mydir"
         src_dir.mkdir()
@@ -199,7 +193,6 @@ class TestStageAdd:
         assert "prefix/x.txt" in paths
 
     def test_overwrite_existing_path(self, runner, storage_root, tmp_path):
-        """Adding a file that overwrites an existing logical path."""
         staging = tmp_path / "staging"
         src1 = tmp_path / "v1.txt"
         src1.write_text("version 1")
@@ -227,12 +220,10 @@ class TestStageAdd:
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
-        # Should have only one path with the new content
         paths = [p for ps in inv.versions["v1"].state.values() for p in ps]
         assert paths.count("file.txt") == 1
 
     def test_dedup_with_prior_manifest(self, runner, storage_root, tmp_path):
-        """Content already in prior manifest shouldn't appear in content.json."""
         staging = tmp_path / "staging"
         _invoke_new(runner, storage_root, staging, "obj:test")
         store, root_path = _store_and_root(storage_root, staging)
@@ -258,7 +249,6 @@ class TestStageAdd:
         assert target_digest not in store.load_content_map(root_path, "obj:test")
 
     def test_skip_symlinks(self, runner, storage_root, tmp_path):
-        """Symlinks are skipped."""
         staging = tmp_path / "staging"
         src_dir = tmp_path / "mydir"
         src_dir.mkdir()
@@ -278,7 +268,6 @@ class TestStageAdd:
         assert "link.txt" not in paths
 
     def test_skip_empty_dirs(self, runner, storage_root, tmp_path):
-        """Empty directories are skipped."""
         staging = tmp_path / "staging"
         src_dir = tmp_path / "mydir"
         src_dir.mkdir()
@@ -293,5 +282,4 @@ class TestStageAdd:
         inv = store.load_inventory(root_path, "obj:new")
         paths = [p for ps in inv.versions["v1"].state.values() for p in ps]
         assert "file.txt" in paths
-        # No directory entries
         assert not any("empty" in p for p in paths)

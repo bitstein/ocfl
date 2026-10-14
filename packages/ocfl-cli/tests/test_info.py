@@ -1,5 +1,3 @@
-"""Tests for ocfl info command."""
-
 import json
 from pathlib import Path
 

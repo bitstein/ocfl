@@ -1,5 +1,3 @@
-"""Shared CLI test fixtures."""
-
 import json
 import shutil
 from collections.abc import Iterator
@@ -57,7 +55,6 @@ def pytest_collection_modifyitems(
 
 @pytest.fixture(autouse=True)
 def _isolate_user_config(tmp_path_factory, monkeypatch):
-    """Keep config and dotenv reads inside pytest-owned temp paths."""
     base = tmp_path_factory.mktemp("ocfl-config")
     sentinel = base / "config.toml"
     env_file = base / ".env"
@@ -108,14 +105,12 @@ def storage_root(tmp_path: Path) -> Path:
     layout = get_layout("0002-flat-direct-storage-layout")
     root = StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
 
-    # Create a test object with 2 versions
     obj_dir = tmp_path / "test-files"
     obj_dir.mkdir()
     (obj_dir / "file1.txt").write_text("hello")
     stage = scan_dir(fs, "test-files", DigestAlgorithm.SHA512)
     root.commit(fs, "obj:test", stage, message="v1")
 
-    # v2
     (obj_dir / "file2.txt").write_text("world")
     stage2 = scan_dir(fs, "test-files", DigestAlgorithm.SHA512)
     root.commit(fs, "obj:test", stage2, message="v2")
@@ -148,7 +143,6 @@ def sleeper() -> RecordingSleeper:
 
 @pytest.fixture
 def runtime(sleeper: RecordingSleeper) -> Runtime:
-    """The ports for calling use cases directly: real clock, no real sleeps."""
     return Runtime(
         clock=SYSTEM_CLOCK,
         sleeper=sleeper,

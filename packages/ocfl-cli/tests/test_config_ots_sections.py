@@ -1,11 +1,3 @@
-"""Tests for [simpleproof] + [bitcoin] config sections.
-
-Covers the SimpleProofConfig + BitcoinConfig pydantic settings models: URL
-schemes, rpc_user/rpc_password requirements, confirmations range, env/dotenv
-precedence, secret repr redaction, and dotenv permission enforcement. Locks in
-the API exposed by :mod:`ocfl_cli.config`.
-"""
-
 import logging
 import os
 import sys
@@ -37,9 +29,6 @@ def _write(path: Path, body: str) -> Path:
     return path
 
 
-# Reusable section snippets. Tests compose these or override individual
-# lines via ``.replace()`` to keep TOML inline and obvious.
-
 _SP_OK = """\
 [simpleproof]
 base_url = "https://stage.example"
@@ -51,11 +40,6 @@ _BTC_OK = """\
 rpc_url = "http://127.0.0.1:8332"
 zmq_endpoint = "tcp://127.0.0.1:28332"
 """
-
-
-# --------------------------------------------------------------------------- #
-# 1. Valid load
-# --------------------------------------------------------------------------- #
 
 
 def _load_strict(path: Path | None = None) -> Config:
@@ -80,15 +64,15 @@ class TestValidLoad:
         assert cfg.simpleproof.proof_category_id == 641
         assert cfg.simpleproof.access_token.get_secret_value() == "tok"
         assert cfg.simpleproof.api_key.get_secret_value() == "key"
-        assert cfg.simpleproof.timeout_s == 30  # default
+        assert cfg.simpleproof.timeout_s == 30
 
         assert isinstance(cfg.bitcoin, BitcoinConfig)
         assert cfg.bitcoin.rpc_url == "http://127.0.0.1:8332"
         assert cfg.bitcoin.zmq_endpoint == "tcp://127.0.0.1:28332"
         assert cfg.bitcoin.rpc_user == "u"
         assert cfg.bitcoin.rpc_password.get_secret_value() == "p"
-        assert cfg.bitcoin.confirmations == 3  # default
-        assert cfg.bitcoin.rpc_timeout_s == 10  # default
+        assert cfg.bitcoin.confirmations == 3
+        assert cfg.bitcoin.rpc_timeout_s == 10
 
     def test_explicit_overrides(self, tmp_path: Path) -> None:
         body = (
@@ -107,11 +91,6 @@ class TestValidLoad:
         assert cfg.bitcoin.rpc_timeout_s == 25
         assert cfg.bitcoin.rpc_user == "u"
         assert cfg.bitcoin.rpc_password.get_secret_value() == "p"
-
-
-# --------------------------------------------------------------------------- #
-# 2-4. URL scheme checks
-# --------------------------------------------------------------------------- #
 
 
 class TestUrlSchemes:
@@ -210,11 +189,6 @@ class TestUrlSchemes:
             _load_strict(path)
 
 
-# --------------------------------------------------------------------------- #
-# 5. rpc_user + rpc_password required
-# --------------------------------------------------------------------------- #
-
-
 class TestRpcAuth:
     def test_user_pass_ok(self, tmp_path: Path) -> None:
         path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
@@ -282,11 +256,6 @@ class TestRpcAuth:
             _load_strict(path)
 
 
-# --------------------------------------------------------------------------- #
-# 6. confirmations range + WARNING for <3
-# --------------------------------------------------------------------------- #
-
-
 def _btc_with_conf(n: int) -> str:
     return _BTC_OK + f"confirmations = {n}\n"
 
@@ -329,11 +298,6 @@ class TestConfirmationsRange:
             if r.levelno >= logging.WARNING and "confirm" in r.message.lower()
         ]
         assert not warns, f"unexpected confirmations warning: {warns!r}"
-
-
-# --------------------------------------------------------------------------- #
-# 7. Env override precedence (env > toml > default)
-# --------------------------------------------------------------------------- #
 
 
 class TestEnvOverride:
@@ -454,11 +418,6 @@ class TestDotenv:
             _load_strict(_write(tmp_path / "c.toml", _SP_OK + _BTC_OK))
 
 
-# --------------------------------------------------------------------------- #
-# 7b. Bitcoin env override (BITCOIN_* mirrors SIMPLEPROOF_*)
-# --------------------------------------------------------------------------- #
-
-
 class TestBitcoinEnvOverride:
     def test_rpc_url_env_wins_over_toml(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -506,11 +465,6 @@ class TestBitcoinEnvOverride:
             _load_strict(path)
 
 
-# --------------------------------------------------------------------------- #
-# 7c. SecretStr API: tokens/passwords are SecretStr, not str
-# --------------------------------------------------------------------------- #
-
-
 class TestSecretStrAPI:
     def test_simpleproof_secrets_are_secret_str(self, tmp_path: Path) -> None:
         path = _write(tmp_path / "c.toml", _SP_OK + _BTC_OK)
@@ -538,11 +492,6 @@ class TestSecretStrAPI:
         assert "p" not in str(cfg.bitcoin.rpc_password)
 
 
-# --------------------------------------------------------------------------- #
-# 8. ConfigError vs ValueError
-# --------------------------------------------------------------------------- #
-
-
 class TestConfigErrorNotValueError:
     def test_config_error_does_not_inherit_value_error(self) -> None:
         """ConfigError must drop the ValueError base. Stray ``except ValueError``
@@ -558,7 +507,7 @@ class TestConfigErrorNotValueError:
         try:
             _load_strict(path)
         except ConfigError:
-            pass  # expected
+            pass
         except ValueError as e:  # pragma: no cover - failure path
             pytest.fail(f"ValueError leaked from load_config: {e!r}")
         else:  # pragma: no cover - failure path
@@ -566,8 +515,6 @@ class TestConfigErrorNotValueError:
 
 
 class TestBrokenSectionIsDeferred:
-    """A section that does not load fails only what needs it (issue 32)."""
-
     def test_load_records_the_error_and_require_raises_it(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -586,11 +533,6 @@ class TestBrokenSectionIsDeferred:
         path = _write(tmp_path / "c.toml", "[bitcoin\n")
         with pytest.raises(ConfigError):
             load_config(path)
-
-
-# --------------------------------------------------------------------------- #
-# 9. Secret repr redaction
-# --------------------------------------------------------------------------- #
 
 
 class TestSecretRepr:
@@ -618,11 +560,6 @@ class TestSecretRepr:
         assert "RPC_SECRET_VALUE" not in text
         # Non-secret fields still visible.
         assert "u" in text
-
-
-# --------------------------------------------------------------------------- #
-# 10. File-permission hard error on loose dotenv perms
-# --------------------------------------------------------------------------- #
 
 
 @pytest.mark.skipif(
@@ -683,11 +620,6 @@ class TestTomlSecretsRejected:
         path = _write(tmp_path / "c.toml", body)
         with pytest.raises(ConfigError, match=env_name):
             _load_strict(path)
-
-
-# --------------------------------------------------------------------------- #
-# 11. Section absent → None
-# --------------------------------------------------------------------------- #
 
 
 class TestSectionAbsent:

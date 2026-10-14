@@ -1,5 +1,3 @@
-"""Tests for pure ingest_file helper."""
-
 import dataclasses
 import hashlib
 from pathlib import Path

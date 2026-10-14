@@ -1,10 +1,3 @@
-"""A storage filesystem fake for the `fs_factory` port: hooks on chosen calls.
-
-`tests/helpers/faults.py` simulates a dead process (`Crash`, no undo). These
-CLI tests need the commit's own failure paths instead: an exception the
-commit reverts from, or another writer acting just before a step.
-"""
-
 from collections.abc import Callable
 from typing import Any
 
@@ -15,11 +8,6 @@ type Hook = Callable[[str, tuple[Any, ...], Callable[[], Any]], Any]
 
 
 def hooked_fs(location: str, hook: Hook):
-    """The real backend at `location`, with every public call going through `hook`.
-
-    The wrapper subclasses the backend, so backend checks (ClaimFS,
-    ConditionalFS) still see the real one.
-    """
     fs = open_fs(location)
 
     def __getattribute__(self, name):
@@ -42,11 +30,6 @@ def hooked_fs(location: str, hook: Hook):
 
 
 def raise_on_content_write(exc: BaseException) -> Callable[[str], Any]:
-    """An `fs_factory` whose first write of version content raises `exc`.
-
-    The commit is building `vN/content/` in the work dir: nothing is claimed
-    yet, so the commit reverts and the object is untouched.
-    """
     fired = False
 
     def hook(name, args, call):
@@ -60,7 +43,6 @@ def raise_on_content_write(exc: BaseException) -> Callable[[str], Any]:
 
 
 def before_claim(action: Callable[[], None]) -> Callable[[str], Any]:
-    """An `fs_factory` that runs `action` just before the commit's claim."""
 
     def hook(name, args, call):
         if name == "rename_noreplace":

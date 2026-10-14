@@ -1,5 +1,3 @@
-"""Batch timestamping state file helpers."""
-
 import json
 import os
 import signal
@@ -292,7 +290,6 @@ def test_batch_lock_serializes_writers(tmp_path: Path):
 
 
 def test_batch_lock_waits_through_the_sleeper(tmp_path: Path):
-    """The wait is `lock_timeout` seconds of `Runtime.sleeper`, not real time."""
     batch_id = new_batch_id()
     sleeper = RecordingSleeper()
     with held_flock(batch_lock_path(tmp_path, batch_id)):
@@ -308,7 +305,6 @@ def test_batch_lock_waits_through_the_sleeper(tmp_path: Path):
 
 
 def test_batch_lock_is_free_once_its_holder_dies(tmp_path: Path):
-    """No lease file, no heartbeat: the kernel drops a dead holder's flock."""
     batch_id = new_batch_id()
     path = batch_lock_path(tmp_path, batch_id)
     path.parent.mkdir(parents=True)

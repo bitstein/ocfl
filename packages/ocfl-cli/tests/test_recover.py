@@ -1,5 +1,3 @@
-"""Tests for `ocfl recover OBJ --resume|--revert|--remove-stray VN`."""
-
 import json
 from io import BytesIO
 from pathlib import Path

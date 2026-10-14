@@ -1,5 +1,3 @@
-"""Integration tests for S3 CLI support via moto mock."""
-
 import shutil
 
 import boto3
@@ -28,7 +26,6 @@ def runner():
 
 @pytest.fixture
 def s3_env():
-    """Activate moto mock and create bucket."""
     with mock_aws():
         client = boto3.client("s3", region_name="us-east-1")
         client.create_bucket(Bucket=BUCKET)
@@ -42,12 +39,10 @@ def s3_root_url():
 
 @pytest.fixture
 def s3_storage_root(s3_env, s3_root_url, tmp_path):
-    """Create a valid S3 storage root with one object (2 versions)."""
     fs = S3FS(BUCKET, "ocfl-root", client=s3_env)
     layout = get_layout("0002-flat-direct-storage-layout")
     root = StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
 
-    # Stage locally, commit to S3
     local_fs = LocalFS(tmp_path)
     obj_dir = tmp_path / "test-files"
     obj_dir.mkdir()
@@ -76,7 +71,6 @@ class TestInit:
             ],
         )
         assert result.exit_code == 0, result.output
-        # Verify NAMASTE file exists on S3
         resp = s3_env.list_objects_v2(Bucket=BUCKET, Prefix="ocfl-root/0=ocfl_1.1")
         assert resp.get("KeyCount", 0) > 0
 
@@ -137,7 +131,6 @@ class TestRoundTrip:
             ["--root", s3_storage_root, "purge", "obj:test", "--yes"],
         )
         assert result.exit_code == 0, result.output
-        # Verify object is gone
         ls_result = runner.invoke(app, ["--root", s3_storage_root, "ls"])
         assert ls_result.exit_code == 0
         assert "obj:test" not in ls_result.stdout

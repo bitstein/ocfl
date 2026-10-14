@@ -1,5 +1,3 @@
-"""Tests for ocfl init command."""
-
 import json
 from pathlib import Path
 
@@ -16,13 +14,11 @@ class TestInit:
         assert (tmp_path / "0=ocfl_1.1").exists()
 
     def test_init_default_layout(self, runner: CliRunner, tmp_path: Path):
-        """Default layout is 0004-hashed-n-tuple-storage-layout."""
         runner.invoke(app, ["--root", str(tmp_path), "init"])
         data = json.loads((tmp_path / "ocfl_layout.json").read_text())
         assert data["extension"] == "0004-hashed-n-tuple-storage-layout"
 
     def test_init_reopen(self, runner: CliRunner, tmp_path: Path):
-        """Initialized root can be reopened."""
         runner.invoke(app, ["--root", str(tmp_path), "init"])
         fs = LocalFS(tmp_path)
         root = StorageRoot.open(fs)

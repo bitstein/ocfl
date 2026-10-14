@@ -1,5 +1,3 @@
-"""Tests for ocfl_cli.ots._retry.retry helper."""
-
 from collections.abc import Callable
 
 import pytest

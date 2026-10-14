@@ -1,5 +1,3 @@
-"""`resolve_root_path` keys staging by root; S3 URIs must not hit Path.resolve."""
-
 from pathlib import Path
 
 import pytest

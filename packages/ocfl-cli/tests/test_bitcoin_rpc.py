@@ -1,11 +1,3 @@
-"""Layer-2 tests for the CLI's Bitcoin RPC client (the lib's ``BitcoinRpcClient``)
-against ``httpx2.MockTransport``.
-
-The client must accept an injected ``httpx2.Client`` so tests can swap in a
-``MockTransport``. Production callers build their own ``Client`` with
-``httpx2.BasicAuth`` (rpc_user/password) and a timeout.
-"""
-
 import json
 from collections.abc import Callable
 
@@ -359,15 +351,12 @@ class TestErrorMapping:
 
 
 class TestAuthHeaderScrubbing:
-    """Authorization plaintext must never escape via the propagated exception."""
-
     _USER = "rpcuser"
     _PASSWORD = "super-secret-password"
 
     def _assert_no_plaintext(self, exc: BaseException) -> None:
         chain_text = _exc_chain_text(exc)
         assert self._PASSWORD not in chain_text
-        # Base64("rpcuser:super-secret-password")
         import base64
 
         token = base64.b64encode(f"{self._USER}:{self._PASSWORD}".encode()).decode()
@@ -379,8 +368,6 @@ class TestAuthHeaderScrubbing:
                 continue
             assert self._PASSWORD not in auth_value
             assert token not in auth_value
-            # Some explicit redaction marker is preferred but we only require
-            # absence of plaintext above.
 
     def test_5xx_propagates_with_scrubbed_authorization(self) -> None:
         seen_auth: dict[str, str] = {}

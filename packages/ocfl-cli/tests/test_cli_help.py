@@ -1,5 +1,3 @@
-"""CLI help contract."""
-
 import importlib.metadata
 import inspect
 import logging

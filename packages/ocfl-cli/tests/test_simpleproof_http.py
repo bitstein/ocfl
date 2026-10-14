@@ -1,73 +1,3 @@
-"""Layer-2 tests for ``SimpleProofHttpClient`` against ``httpx2.MockTransport``.
-
-Locks in the public API and wire shapes for step 6 (cli-sp-client).
-
-API
----
-    @dataclass(frozen=True, slots=True)
-    class SimpleProofCreds:
-        access_token: str = ""   # x-access-token (v1 /hashes)
-        api_key: str = ""        # x-api-key      (v2 verify/poll)
-
-    class SimpleProofHttpClient:
-        def __init__(
-            self,
-            base_url: str,
-            creds: SimpleProofCreds,
-            *,
-            client: httpx2.Client,
-            sleep: Callable[[float], None] = time.sleep,
-            attempts: int = 3,
-        ) -> None: ...
-
-Wire shapes
------------
-    POST {base}/api/proof/timestamp/hashes
-        headers: x-access-token: <token>
-        body:    {"proofCategoryId": <int>, "hashes": [<hex>, ...]}
-        200:     {"ok": true, "files": [<hex>, ...]}
-
-    POST {base}/api/v2/proofs/verify-batches
-        headers: x-api-key: <key>
-        body:    {"proofCategoryId": <int>, "hashes": [<hex>, ...]}
-        200:     {"jobId": <str>}
-
-    GET {base}/api/v2/proofs/jobs/{job_id}
-        headers: x-api-key: <key>
-        200:     {"jobId": <str>,
-                  "status": "COMPLETED"|"IN_PROGRESS"|"FAILED",
-                  "resultsUrl": <str>|null}
-
-    GET <resultsUrl>
-        200: {"results": [{"digest": <hex>, "otsDownloadUrl": <str>}, ...]}
-
-    GET <otsDownloadUrl>
-        200: raw ``.ots`` bytes
-
-Per-chunk atomicity
--------------------
-    ``submit_hashes`` POSTs each ≤1000-hash chunk independently. When a
-    chunk fails after retries, the proximate ``SimpleProofError`` instance
-    carries a per-instance attribute ``partial_result: SubmitResult | None``
-    aggregating digests/returned hashes from chunks that succeeded before the
-    failure (``None`` when no chunks succeeded yet). Same per-instance
-    pattern as ``Transient.retry_after``.
-
-Parser-error mapping
---------------------
-    Bad ``.ots`` bytes (``ocfl_lib._errors.OtsParseError``) downloaded from
-    SP are wrapped in ``AttestationMismatchError`` (HALT) with the
-    ``OtsParseError`` as ``__cause__``. SP is never trusted to hand back
-    the right bytes.
-
-Auth-header scrubbing
----------------------
-    Before any ``httpx2.HTTPStatusError`` propagates, the client replaces
-    ``x-access-token`` and ``x-api-key`` values on ``exc.request.headers``
-    with ``<redacted>``. Plaintext credentials must not be reachable
-    through the raised exception's chain.
-"""
-
 import hashlib
 import json
 from collections.abc import Callable
@@ -98,10 +28,6 @@ from ocfl_cli.ots.simpleproof import (
 )
 from ocfl_lib import OtsParseError
 from tests.helpers.ots import build_attestation
-
-# ---------------------------------------------------------------------------
-# constants / helpers
-# ---------------------------------------------------------------------------
 
 BASE = "https://sp.test"
 ACCESS_TOKEN = "tok-XYZ-VERY-SECRET-1234"
@@ -200,11 +126,6 @@ def _exc_chain_request_headers(exc: BaseException) -> list[httpx.Headers]:
     return headers
 
 
-# ---------------------------------------------------------------------------
-# submit_hashes — chunking
-# ---------------------------------------------------------------------------
-
-
 class TestSubmitHashesChunking:
     def test_999_digests_one_chunk(self) -> None:
         digests = _digests(999)
@@ -275,11 +196,6 @@ class TestSubmitHashesChunking:
         client.submit_hashes(_digests(3), CATEGORY)
 
         assert seen == [ACCESS_TOKEN]
-
-
-# ---------------------------------------------------------------------------
-# submit_hashes — error mapping + retries
-# ---------------------------------------------------------------------------
 
 
 class TestSubmitHashesErrors:
@@ -412,7 +328,6 @@ class TestSubmitHashesErrors:
 
         assert info.value.retry_after == 5.0
         assert n == 3
-        # 2 retries -> 2 sleeps; both honor Retry-After.
         assert sleeps == [5.0, 5.0]
 
     def test_429_malformed_retry_after_uses_backoff(self) -> None:
@@ -466,11 +381,6 @@ class TestSubmitHashesErrors:
             client.submit_hashes(_digests(2), CATEGORY)
 
         assert len(sleeps) == 2
-
-
-# ---------------------------------------------------------------------------
-# verify_batch
-# ---------------------------------------------------------------------------
 
 
 class TestVerifyBatch:
@@ -552,11 +462,6 @@ class TestVerifyBatch:
             "SimpleProof rejected request: HTTP 400: "
             "Missing proofCategoryId or empty hashes array"
         )
-
-
-# ---------------------------------------------------------------------------
-# poll_job
-# ---------------------------------------------------------------------------
 
 
 class TestPollJob:
@@ -661,11 +566,6 @@ class TestPollJob:
         status = client.poll_job("job-expired")
 
         assert status.status == "EXPIRED"
-
-
-# ---------------------------------------------------------------------------
-# download_results
-# ---------------------------------------------------------------------------
 
 
 class TestDownloadResults:
@@ -850,8 +750,6 @@ class TestDownloadResults:
         }
 
     def test_commitment_digest_mismatch_raises_attestation_mismatch(self) -> None:
-        # .ots bytes commit to digest X but the server claims they belong
-        # to digest Y. SP is never trusted: HALT.
         actual_bytes = _bytes_digest("real-file")
         claimed_bytes = _bytes_digest("WRONG-file")
         ots_bytes = build_attestation(actual_bytes, block_height=800_000)
@@ -881,8 +779,6 @@ class TestDownloadResults:
             client.download_results(results_url, {claimed_hex})
 
     def test_truncated_ots_bytes_raises_attestation_mismatch(self) -> None:
-        # Truncated/malformed .ots → OtsParseError → wrapped in
-        # AttestationMismatchError (HALT) with OtsParseError as __cause__.
         good = _bytes_digest("file-c")
         good_hex = good.hex()
         truncated = build_attestation(good, block_height=800_000)[:8]
@@ -910,13 +806,10 @@ class TestDownloadResults:
         with pytest.raises(AttestationMismatchError) as info:
             client.download_results(results_url, {good_hex})
 
-        # Underlying parser failure preserved in cause chain.
         cause: BaseException | None = info.value.__cause__
         assert isinstance(cause, OtsParseError)
 
     def test_unexpected_digest_from_sp_raises_attestation_mismatch(self) -> None:
-        # SP returns a digest the caller never submitted. Even if the .ots
-        # bytes self-commit cleanly, treat as HALT — SP is never trusted.
         submitted_bytes = _bytes_digest("submitted-file")
         rogue_bytes = _bytes_digest("rogue-file")
         submitted_hex = submitted_bytes.hex()
@@ -945,11 +838,6 @@ class TestDownloadResults:
 
         with pytest.raises(AttestationMismatchError, match="not in submission set"):
             client.download_results(results_url, {submitted_hex})
-
-
-# ---------------------------------------------------------------------------
-# auth-header scrubbing
-# ---------------------------------------------------------------------------
 
 
 class TestAuthHeaderScrubbing:
@@ -1011,17 +899,7 @@ class TestAuthHeaderScrubbing:
         self._assert_no_plaintext_creds(info.value)
 
 
-# ---------------------------------------------------------------------------
-# per-chunk atomicity
-# ---------------------------------------------------------------------------
-
-
 class TestSubmitHashesAtomicity:
-    """When a chunk fails after retries, prior chunks' SubmitResult is
-    surfaced via ``exc.partial_result``. Same per-instance attribute
-    pattern as ``Transient.retry_after``.
-    """
-
     def test_first_chunk_ok_second_chunk_400_partial_result_attached(self) -> None:
         digests = _digests(1500)
         n = 0
@@ -1032,10 +910,8 @@ class TestSubmitHashesAtomicity:
             n += 1
             payload = json.loads(request.content)
             if n == 1:
-                # First chunk: 1000 hashes succeed.
                 chunk1_payload.extend(payload["hashes"])
                 return _ok_submit(payload["hashes"])
-            # Second chunk (1=2): 500 hashes — server rejects.
             return httpx.Response(400, content=b"bad")
 
         sleeps, sleep = _make_sleep()
@@ -1044,7 +920,6 @@ class TestSubmitHashesAtomicity:
         with pytest.raises(SimpleProofBadRequest) as info:
             client.submit_hashes(digests, CATEGORY)
 
-        # First chunk wired correctly.
         assert chunk1_payload == digests[:1000]
         # Bad-request fails fast → no retry on the failing chunk.
         assert n == 2
@@ -1067,11 +942,6 @@ class TestSubmitHashesAtomicity:
             client.submit_hashes(digests, CATEGORY)
 
         assert info.value.partial_result is None
-
-
-# ---------------------------------------------------------------------------
-# check_access — `ocfl config check`
-# ---------------------------------------------------------------------------
 
 
 class TestCheckAccess:

@@ -1,5 +1,3 @@
-"""Tests for ocfl ls command."""
-
 import json
 from hashlib import sha512
 from pathlib import Path
@@ -22,7 +20,6 @@ class TestLsRoot:
         assert "obj:test" in data
 
     def test_empty_root(self, runner: CliRunner, tmp_path: Path):
-        """Empty root (no objects) should still succeed."""
         from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 
         fs = LocalFS(tmp_path)
@@ -50,7 +47,6 @@ class TestLsObject:
         assert "file2.txt" not in result.stdout
 
     def test_list_files_bare_version(self, runner: CliRunner, storage_root: Path):
-        """Accept '1' as well as 'v1'."""
         result = runner.invoke(
             app,
             ["--root", str(storage_root), "ls", "obj:test", "--object-version", "1"],

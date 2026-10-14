@@ -1,5 +1,3 @@
-"""Tests for staged version metadata CLI commands."""
-
 from pathlib import Path
 from typing import Any
 
@@ -343,7 +341,6 @@ class TestStageMetadata:
             observed_lock = True
             original_save_metadata(self, *args, **kwargs)
 
-        # The store is the adapter: its write must happen under the lock.
         monkeypatch.setattr(StagingStore, "save_metadata", assert_locked)
 
         result = _invoke(
