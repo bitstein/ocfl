@@ -168,10 +168,8 @@ def _retry_after_seconds(value: str, clock: Clock) -> float | None:
 class SimpleProofHttpClient:
     """Real HTTP implementation.
 
-    Callers inject a fully-configured ``httpx2.Client`` so tests can swap in
-    a ``MockTransport`` and lifecycle stays caller-controlled. ``sleep`` is
-    forwarded to ``ocfl_cli.ots._retry.retry`` and ``clock`` reads HTTP-date
-    ``Retry-After`` values, so tests bypass wall-clock time.
+    ``sleep`` is forwarded to ``ocfl_cli.ots._retry.retry`` and ``clock``
+    reads HTTP-date ``Retry-After`` values, so tests bypass wall-clock time.
     """
 
     submit_chunk_size = SUBMIT_CHUNK_SIZE
@@ -441,12 +439,6 @@ class SimpleProofHttpClient:
 
 
 def default_sp_factory(cfg: Config) -> SimpleProofClient:
-    """Construct the production `SimpleProofHttpClient` from `cfg`.
-
-    Registered on `ctx.obj["sp_client_factory"]` by `main` so use case
-    callers (and tests via `runner.invoke(obj=...)`) share one entry
-    point for client construction.
-    """
     sp_cfg = cfg.simpleproof
     if sp_cfg is None:
         raise RuntimeError("simpleproof config missing")

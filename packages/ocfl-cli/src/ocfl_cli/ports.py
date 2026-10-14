@@ -1,8 +1,7 @@
 """Ports: what the use cases need from the outside world, as Protocols.
 
 Adapters implement them (``ocfl_cli.system``, ``ocfl_cli.ots``, the lib's
-``BitcoinRpcClient``); ``main`` wires the production ones into ``AppCtx`` and
-tests inject fakes through ``ctx.obj`` under the same names.
+``BitcoinRpcClient``).
 """
 
 from collections.abc import Callable
@@ -81,3 +80,22 @@ class Runtime:
     sleeper: Sleeper
     block_streams: BlockStreamFactory
     lock_timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS
+
+
+@dataclass(slots=True)
+class Ports:
+    sp_client_factory: SpClientFactory
+    btc_rpc_factory: BtcRpcFactory
+    block_stream_factory: BlockStreamFactory
+    clock: Clock
+    sleeper: Sleeper
+    fs_factory: FsFactory
+    lock_timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS
+
+    def runtime(self) -> Runtime:
+        return Runtime(
+            clock=self.clock,
+            sleeper=self.sleeper,
+            block_streams=self.block_stream_factory,
+            lock_timeout=self.lock_timeout,
+        )

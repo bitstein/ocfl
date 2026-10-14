@@ -383,7 +383,7 @@ class TestStageMetadata:
         )
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
-        runner.obj["lock_timeout"] = 0.01
+        runner.ports.lock_timeout = 0.01
 
         with with_lock(staging_dir, lock_runtime(1)):
             result = _invoke(
@@ -413,7 +413,7 @@ class TestStageMetadata:
         )
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
-        runner.obj["lock_timeout"] = 0.01
+        runner.ports.lock_timeout = 0.01
 
         with with_lock(staging_dir, lock_runtime(1)):
             result = _invoke(

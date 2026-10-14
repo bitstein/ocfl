@@ -3,7 +3,6 @@ import logging
 import threading
 from contextlib import ExitStack
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -41,13 +40,13 @@ from ocfl_lib import LocalFS, StorageRoot
 
 def _inject_fake_zmq(runner: ObjRunner, stream: BlockStream) -> None:
 
-    runner.obj["block_stream_factory"] = lambda *a, **kw: stream
+    runner.ports.block_stream_factory = lambda *a, **kw: stream
 
 
 @pytest.fixture(autouse=True)
 def no_block_processing_delay(runner: ObjRunner) -> None:
 
-    runner.obj["sleeper"] = RecordingSleeper()
+    runner.ports.sleeper = RecordingSleeper()
 
 
 RECHECKED = "Rechecking cached proofs after chain movement"
@@ -125,7 +124,7 @@ class TestWatchLoopAdvancesOnBlock:
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        runner.obj["block_stream_factory"] = lambda *a, **kw: pytest.fail(
+        runner.ports.block_stream_factory = lambda *a, **kw: pytest.fail(
             "already-upgraded watch subscribed to ZMQ",
         )
 
@@ -189,11 +188,8 @@ class TestWatchLoopAdvancesOnBlock:
 
         _inject_fake_zmq(runner, _ConfirmingStream(btc_fake.rpc))
 
-        calls: list[str] = []
-
-        runner.obj["sleeper"] = SimpleNamespace(
-            sleep=lambda _seconds: calls.append("sleep")
-        )
+        sleeper = RecordingSleeper()
+        runner.ports.sleeper = sleeper
 
         staging = tmp_path / "staging"
         sd, digests = new_ots_staging(
@@ -221,7 +217,7 @@ class TestWatchLoopAdvancesOnBlock:
         )
 
         assert r.exit_code == ExitCode.SUCCESS, r.output
-        assert calls == ["sleep"]
+        assert len(sleeper.calls) == 1
 
     def test_watch_loop_advances_on_block(
         self,
@@ -477,7 +473,7 @@ class TestWatchLockTimeoutWarningAndContinue:
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        runner.obj["lock_timeout"] = 1
+        runner.ports.lock_timeout = 1
 
         staging = tmp_path / "staging"
         sd, digests = new_ots_staging(
@@ -685,11 +681,8 @@ class TestRegtestRealZmqHashblockDelivery:
 
         result: dict[str, Any] = {}
 
-        # Fresh CliRunner per thread (process-global stdout/stderr issues
-        # with the fixture runner under threads); pass `runner.obj` so the
-        # injected sp_client_factory still flows through.
-        thread_obj = dict(runner.obj)
-
+        # Fresh CliRunner per thread: the fixture runner's stdout/stderr
+        # swap is process-global.
         def _run() -> None:
             r = CliRunner().invoke(
                 app,
@@ -702,7 +695,7 @@ class TestRegtestRealZmqHashblockDelivery:
                     "--expect",
                     "content",
                 ),
-                obj=thread_obj,
+                obj=runner.ports,
             )
             result["exit"] = r.exit_code
             result["output"] = r.output

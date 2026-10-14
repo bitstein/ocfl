@@ -4,15 +4,15 @@ from typing import Annotated
 import typer
 from rich.text import Text
 
-from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
 from ocfl_cli._common import open_root, output_json
 from ocfl_cli.stage._app import (
     DigestOption,
+    StageCtx,
     require_existing_staging,
     require_ots_config,
     resolve_root_path,
-    stage_store,
+    stage_of,
 )
 from ocfl_cli.workflow import staging as wf_staging
 
@@ -45,6 +45,7 @@ def new(
     ] = False,
 ) -> None:
     """Create a new staging area for an object."""
+    stage = stage_of(ctx)
     try:
         metadata = wf_staging.staged_metadata_from_options(
             message=message,
@@ -53,23 +54,21 @@ def new(
         )
     except wf_staging.MetadataInputError as e:
         raise typer.BadParameter(str(e)) from None
-    cfg = appctx.config(ctx)
     ots_category_id = None
     if ots:
-        ots_category_id = require_ots_config(cfg, digest).proof_category_id
+        ots_category_id = require_ots_config(stage.config, digest).proof_category_id
         digest = DigestOption.SHA256
 
-    store = stage_store(ctx)
-    sr, _fs = open_root(ctx)
+    sr, _fs = open_root(stage)
     digest_name = (
         digest.value
         if digest is not None
-        else cfg.effective_digest(appctx.archive(ctx))
+        else stage.config.effective_digest(stage.archive)
     )
     wf_staging.new_staging(
-        store,
+        stage.store,
         sr,
-        resolve_root_path(ctx),
+        resolve_root_path(stage.root),
         object_id,
         metadata=metadata,
         digest_name=digest_name,
@@ -106,7 +105,8 @@ def metadata(
     ] = False,
 ) -> None:
     """Edit staged version metadata."""
-    resolved = require_existing_staging(ctx, object_id, hint="run 'stage new' first")
+    stage = stage_of(ctx)
+    resolved = require_existing_staging(stage, object_id, hint="run 'stage new' first")
     try:
         wf_staging.edit_metadata(
             resolved,
@@ -117,7 +117,7 @@ def metadata(
             clear_message=clear_message,
             clear_name=clear_name,
             clear_address=clear_address,
-            runtime=appctx.runtime(ctx),
+            runtime=stage.runtime,
         )
     except wf_staging.MetadataInputError as e:
         raise typer.BadParameter(str(e)) from None
@@ -133,14 +133,15 @@ def add(
     ] = None,
 ) -> None:
     """Add files to a staged object version."""
-    resolved = require_existing_staging(ctx, object_id, hint="run 'stage new' first")
+    stage = stage_of(ctx)
+    resolved = require_existing_staging(stage, object_id, hint="run 'stage new' first")
     wf_staging.add_sources(
         resolved,
         object_id,
         [Path(s) for s in src],
         as_path=as_path,
         command=f"stage add {' '.join(src)}",
-        runtime=appctx.runtime(ctx),
+        runtime=stage.runtime,
     )
 
 
@@ -151,10 +152,9 @@ def mv(
     dst_path: Annotated[str, typer.Argument(help="Destination logical path.")],
 ) -> None:
     """Rename a logical path in the staged version."""
-    resolved = require_existing_staging(ctx, object_id)
-    wf_staging.move_path(
-        resolved, object_id, src_path, dst_path, runtime=appctx.runtime(ctx)
-    )
+    stage = stage_of(ctx)
+    resolved = require_existing_staging(stage, object_id)
+    wf_staging.move_path(resolved, object_id, src_path, dst_path, runtime=stage.runtime)
 
 
 def rm(
@@ -169,9 +169,10 @@ def rm(
     ] = False,
 ) -> None:
     """Remove logical paths from the staged version."""
-    resolved = require_existing_staging(ctx, object_id)
+    stage = stage_of(ctx)
+    resolved = require_existing_staging(stage, object_id)
     wf_staging.remove_paths(
-        resolved, object_id, paths, recursive=recursive, runtime=appctx.runtime(ctx)
+        resolved, object_id, paths, recursive=recursive, runtime=stage.runtime
     )
 
 
@@ -186,27 +187,28 @@ def ls_cmd(
     ] = False,
 ) -> None:
     """List the Staging Areas, or the files in one staged head version."""
+    stage = stage_of(ctx)
     if object_id is None:
-        _ls_stagings(ctx)
+        _ls_stagings(stage)
         return
-    resolved = require_existing_staging(ctx, object_id)
+    resolved = require_existing_staging(stage, object_id)
     entries = wf_staging.list_entries(resolved, object_id)
 
-    if appctx.json_mode(ctx):
+    if stage.json:
         output_json(
             [{"path": p, "digest": d} if digests else {"path": p} for p, d in entries]
         )
     else:
         for p, d in entries:
             if digests:
-                appctx.console(ctx).print(Text.assemble(_style.digest(d), "  ", p))
+                stage.console.print(Text.assemble(_style.digest(d), "  ", p))
             else:
                 typer.echo(p)
 
 
-def _ls_stagings(ctx: typer.Context) -> None:
-    rows = wf_staging.list_stagings(stage_store(ctx), resolve_root_path(ctx))
-    if appctx.json_mode(ctx):
+def _ls_stagings(stage: StageCtx) -> None:
+    rows = wf_staging.list_stagings(stage.store, resolve_root_path(stage.root))
+    if stage.json:
         output_json(
             [
                 {
@@ -235,8 +237,9 @@ def discard(
     ] = False,
 ) -> None:
     """Delete staging area for an object."""
+    stage = stage_of(ctx)
     removed = wf_staging.discard_staging(
-        stage_store(ctx), resolve_root_path(ctx), object_id, force=force
+        stage.store, resolve_root_path(stage.root), object_id, force=force
     )
     if not removed:
         typer.echo(f"No staging exists for {object_id!r}", err=True)

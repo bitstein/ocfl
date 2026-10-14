@@ -5,16 +5,17 @@ import typer
 from fakes import FakeSimpleProof
 from ots_helpers import write_config
 from runner_helpers import ObjRunner, stage_args
+from typer.testing import CliRunner
 
-from ocfl_cli._appctx import app_ctx
+from ocfl_cli import _appctx as appctx
 from ocfl_cli.exit_codes import ExitCode
-from ocfl_cli.main import app
+from ocfl_cli.main import app, production_ports
 from ocfl_cli.model.phase import Phase
 from ocfl_cli.store.ots_state import load_ots
 from ocfl_cli.store.staging import StagingStore
 
 
-def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
+def test_injected_sp_factory_consumed_by_timestamp_content(
     runner: ObjRunner,
     empty_sha256_root: Path,
     sp_fake: FakeSimpleProof,
@@ -29,13 +30,14 @@ def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
         calls.append("called")
         return sp_fake
 
-    obj = {"sp_client_factory": factory}
+    ports = production_ports()
+    ports.sp_client_factory = factory
     staging = tmp_path / "staging"
 
     r = runner.invoke(
         app,
         stage_args(empty_sha256_root, staging, "new", "obj:fac", "--ots"),
-        obj=obj,
+        obj=ports,
     )
     assert r.exit_code == ExitCode.SUCCESS, r.output
 
@@ -44,7 +46,7 @@ def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
     r = runner.invoke(
         app,
         stage_args(empty_sha256_root, staging, "add", "obj:fac", str(src)),
-        obj=obj,
+        obj=ports,
     )
     assert r.exit_code == ExitCode.SUCCESS, r.output
 
@@ -53,7 +55,7 @@ def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
         stage_args(
             empty_sha256_root, staging, "timestamp", "obj:fac", "--expect", "content"
         ),
-        obj=obj,
+        obj=ports,
     )
     assert r.exit_code == ExitCode.SUCCESS, r.output
 
@@ -66,9 +68,7 @@ def test_sp_factory_from_ctx_obj_consumed_by_timestamp_content(
     assert state.phase is Phase.CONTENT_PENDING
 
 
-def test_default_factories_registered_when_obj_omits_them(
-    runner: ObjRunner,
-    empty_sha256_root: Path,
+def test_default_factories_when_obj_is_omitted(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -78,12 +78,12 @@ def test_default_factories_registered_when_obj_omits_them(
 
     @app.command("_factory_probe")
     def _probe(ctx: typer.Context) -> None:
-        typed = app_ctx(ctx)
-        seen["sp"] = typed.sp_client_factory
-        seen["btc"] = typed.btc_rpc_factory
+        state = appctx.of(ctx)
+        seen["sp"] = state.sp_client_factory
+        seen["btc"] = state.btc_rpc_factory
 
     try:
-        r = runner.invoke(app, ["_factory_probe"])
+        r = CliRunner().invoke(app, ["_factory_probe"])
         assert r.exit_code == ExitCode.SUCCESS, r.output
         assert callable(seen["sp"]), "main must install default sp_client_factory"
         assert callable(seen["btc"]), "main must install default btc_rpc_factory"

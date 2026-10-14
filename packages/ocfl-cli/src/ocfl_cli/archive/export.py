@@ -5,6 +5,7 @@ from typing import Annotated
 
 import typer
 
+from ocfl_cli import _appctx as appctx
 from ocfl_cli._common import open_root, parse_version
 from ocfl_cli.errors import CLIError, UsageError
 from ocfl_lib import ObjectNotFound, to_path_map
@@ -31,7 +32,8 @@ def export(
     ] = False,
 ) -> None:
     """Export object content to local filesystem or stdout."""
-    root, _fs = open_root(ctx)
+    app = appctx.of(ctx)
+    root, _fs = open_root(app)
 
     obj = root.get_object(object_id)
     if not obj.exists:

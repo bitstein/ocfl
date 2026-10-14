@@ -240,12 +240,6 @@ def open_store(staging_root: Path) -> StagingStore:
     return StagingStore(staging_root)
 
 
-def require_store(value: object) -> StagingStore:
-    if not isinstance(value, StagingStore):
-        raise RuntimeError("internal error: missing ctx.obj['staging']")
-    return value
-
-
 @dataclass(frozen=True, slots=True)
 class StagingResolved:
     store: StagingStore

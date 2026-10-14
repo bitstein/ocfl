@@ -4,7 +4,6 @@ import os
 import shutil
 from contextlib import ExitStack
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from fakes import FakeSimpleProof, RecordingSleeper
@@ -46,13 +45,13 @@ from tests.helpers.ots import build_attestation
 
 def _inject_fake_zmq(runner: ObjRunner, stream: BlockStream) -> None:
 
-    runner.obj["block_stream_factory"] = lambda *a, **kw: stream
+    runner.ports.block_stream_factory = lambda *a, **kw: stream
 
 
 @pytest.fixture(autouse=True)
 def no_block_processing_delay(runner: ObjRunner) -> None:
 
-    runner.obj["sleeper"] = RecordingSleeper()
+    runner.ports.sleeper = RecordingSleeper()
 
 
 def _ots_pending(digest_hex: str) -> bytes:
@@ -597,11 +596,8 @@ class TestInventoryWatchLoop:
 
         _inject_fake_zmq(runner, _OneBlockStream())
 
-        calls: list[str] = []
-
-        runner.obj["sleeper"] = SimpleNamespace(
-            sleep=lambda _seconds: calls.append("sleep")
-        )
+        sleeper = RecordingSleeper()
+        runner.ports.sleeper = sleeper
 
         r = runner.invoke(
             app,
@@ -617,7 +613,7 @@ class TestInventoryWatchLoop:
         )
 
         assert r.exit_code == ExitCode.SUCCESS, r.output
-        assert calls == ["sleep"]
+        assert len(sleeper.calls) == 1
 
     def test_watch_advances_on_block(
         self,
@@ -737,7 +733,7 @@ class TestInventoryWatchLoop:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        runner.obj["lock_timeout"] = 1
+        runner.ports.lock_timeout = 1
 
         staging = tmp_path / "staging"
         sd, _da, inv_digest = setup_at_inventory_pending(

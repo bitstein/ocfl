@@ -5,6 +5,7 @@ from typing import Any
 import typer
 
 from ocfl_cli import _appctx as appctx
+from ocfl_cli._appctx import AppCtx, BrokenConfig
 from ocfl_cli._common import output_json
 from ocfl_cli.config import config_path, env_file_path, redacted, user_env_file_path
 from ocfl_cli.workflow import config_check
@@ -25,6 +26,7 @@ def _staging_root() -> Path:
 @config_app.command("path")
 def path_cmd(ctx: typer.Context) -> None:
     """Print the config file, secrets file and staging root paths."""
+    state = appctx.tolerating_broken_config(ctx)
     cfg_path = config_path()
     env_path = env_file_path() or user_env_file_path()
     data = {
@@ -34,7 +36,7 @@ def path_cmd(ctx: typer.Context) -> None:
         "env_file_exists": env_path.is_file(),
         "staging_root": str(_staging_root()),
     }
-    if appctx.json_mode(ctx):
+    if state.json:
         output_json(data)
         return
     for key in ("config", "env_file", "staging_root"):
@@ -51,11 +53,9 @@ def _lines(prefix: str, value: Any) -> list[str]:
 @config_app.command("show")
 def show_cmd(ctx: typer.Context) -> None:
     """Print the effective config; secrets are shown as <redacted>."""
-    error = appctx.config_error(ctx)
-    if error is not None:
-        raise error
-    data = redacted(appctx.config(ctx))
-    if appctx.json_mode(ctx):
+    app = appctx.of(ctx)
+    data = redacted(app.config)
+    if app.json:
         output_json(data)
         return
     for section, value in data.items():
@@ -72,13 +72,17 @@ def check_cmd(ctx: typer.Context) -> None:
     Exits 6 when the config or a credential is wrong, 1 when a service
     cannot be reached.
     """
-    checks = config_check.run_checks(
-        appctx.config(ctx),
-        appctx.config_error(ctx),
-        sp_factory=appctx.sp_client_factory(ctx),
-        btc_factory=appctx.btc_rpc_factory(ctx),
-    )
-    if appctx.json_mode(ctx):
+    state = appctx.tolerating_broken_config(ctx)
+    match state:
+        case BrokenConfig(error=error):
+            checks = config_check.broken_config_checks(error)
+        case AppCtx() as app:
+            checks = config_check.run_checks(
+                app.config,
+                sp_factory=app.sp_client_factory,
+                btc_factory=app.btc_rpc_factory,
+            )
+    if state.json:
         output_json(
             {"ok": all(c.ok for c in checks), "checks": [c.as_dict() for c in checks]}
         )

@@ -4,17 +4,16 @@ from typing import TYPE_CHECKING, Annotated
 
 import typer
 
-from ocfl_cli import _appctx as appctx
 from ocfl_cli._common import open_root, output_json
 from ocfl_cli.errors import ObjectsNotStagedError, UsageError
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.model.phase import TimestampTarget
 from ocfl_cli.stage._app import (
+    StageCtx,
     require_bitcoin,
-    require_config,
     require_simpleproof,
     resolve_root_path,
-    stage_store,
+    stage_of,
 )
 from ocfl_cli.stage.render import render_section, short_job_id
 from ocfl_cli.workflow.batch import drive
@@ -66,9 +65,9 @@ def short_block_hash(block_hash: str) -> str:
 
 
 class _CliBatchEvents:
-    def __init__(self, ctx: typer.Context, *, resumed_by_id: bool) -> None:
-        self._json = appctx.json_mode(ctx)
-        self._staging_root = stage_store(ctx).root
+    def __init__(self, stage: StageCtx, *, resumed_by_id: bool) -> None:
+        self._json = stage.json
+        self._staging_root = stage.store.root
         self._resumed_by_id = resumed_by_id
         # The batch as the last watch left it.
         self.final: BatchFile | None = None
@@ -205,10 +204,6 @@ class _CliBatchEvents:
 BatchArg = Annotated[str, typer.Argument(help="Batch ID.")]
 
 
-def _events(ctx: typer.Context, *, resumed_by_id: bool) -> _CliBatchEvents:
-    return _CliBatchEvents(ctx, resumed_by_id=resumed_by_id)
-
-
 def _selected(object_ids: list[str] | None, objects_file: Path | None) -> list[str]:
     selected = list(object_ids or ())
     if objects_file is not None:
@@ -226,8 +221,8 @@ def _require_staged(batch: BatchFile | None) -> None:
         )
 
 
-def _report_submitted(ctx: typer.Context, batch: BatchFile) -> None:
-    if not appctx.json_mode(ctx):
+def _report_submitted(stage: StageCtx, batch: BatchFile) -> None:
+    if not stage.json:
         counts = batch_counts(batch)
         typer.echo(
             f"batch submitted: {batch.batch_id} prepared={counts['prepared']} "
@@ -245,25 +240,26 @@ def _watch(
     category: int | None,
     allow_missing_metadata: bool,
 ) -> None:
-    cfg = require_config(ctx)
+    stage = stage_of(ctx)
+    cfg = stage.config
     require_simpleproof(ctx, cfg)
     require_bitcoin(ctx, cfg)
-    sr, _fs = open_root(ctx)
-    events = _events(ctx, resumed_by_id=batch_id is not None)
+    sr, _fs = open_root(stage)
+    events = _CliBatchEvents(stage, resumed_by_id=batch_id is not None)
     exit_code = drive.watch(
-        stage_store(ctx),
+        stage.store,
         cfg,
         sr,
         target=target,
-        root_path=resolve_root_path(ctx),
+        root_path=resolve_root_path(stage.root),
         selected=selected,
         batch_id=batch_id,
         category=category,
         allow_missing_metadata=allow_missing_metadata,
-        sp_factory=appctx.sp_client_factory(ctx),
-        btc_factory=appctx.btc_rpc_factory(ctx),
+        sp_factory=stage.sp_client_factory,
+        btc_factory=stage.btc_rpc_factory,
         events=events,
-        runtime=appctx.runtime(ctx),
+        runtime=stage.runtime,
     )
     if exit_code:
         raise typer.Exit(exit_code)
@@ -279,26 +275,27 @@ def _submit(
     category: int | None,
     allow_missing_metadata: bool,
 ) -> None:
-    cfg = require_config(ctx)
+    stage = stage_of(ctx)
+    cfg = stage.config
     require_simpleproof(ctx, cfg)
-    sr, _fs = open_root(ctx)
-    events = _events(ctx, resumed_by_id=batch_id is not None)
+    sr, _fs = open_root(stage)
+    events = _CliBatchEvents(stage, resumed_by_id=batch_id is not None)
     batch = drive.submit(
-        stage_store(ctx),
+        stage.store,
         cfg,
         sr,
         target=target,
-        root_path=resolve_root_path(ctx),
+        root_path=resolve_root_path(stage.root),
         selected=selected,
         batch_id=batch_id,
         category=category,
         allow_missing_metadata=allow_missing_metadata,
-        sp_factory=appctx.sp_client_factory(ctx),
+        sp_factory=stage.sp_client_factory,
         events=events,
-        runtime=appctx.runtime(ctx),
+        runtime=stage.runtime,
     )
     events.summary(batch)
-    _report_submitted(ctx, batch)
+    _report_submitted(stage, batch)
     _require_staged(batch)
 
 
@@ -342,6 +339,7 @@ def batch_create(
     ] = False,
 ) -> None:
     """Create a batch of Staging Areas and submit their digests together."""
+    stage = stage_of(ctx)
     if target is TimestampTarget.CONTENT:
         for flag, given in (
             ("--allow-missing-metadata", allow_missing_metadata),
@@ -351,7 +349,7 @@ def batch_create(
                 raise UsageError(f"{flag} applies to inventory batches only")
     selected = _selected(object_ids, objects_file)
     if from_batch is not None:
-        selected.extend(upgraded_objects(stage_store(ctx).root, from_batch))
+        selected.extend(upgraded_objects(stage.store.root, from_batch))
     if not selected:
         raise UsageError("a new batch needs OBJECT..., --objects-file or --from")
     run = _watch if watch_flag else _submit
@@ -389,6 +387,7 @@ def batch_upgrade(
     ] = False,
 ) -> None:
     """Fetch the batch's proofs from SimpleProof and verify them against Bitcoin."""
+    stage = stage_of(ctx)
     if watch_flag:
         _watch(
             ctx,
@@ -399,22 +398,22 @@ def batch_upgrade(
             allow_missing_metadata=False,
         )
         return
-    cfg = require_config(ctx)
+    cfg = stage.config
     require_simpleproof(ctx, cfg)
     require_bitcoin(ctx, cfg)
-    events = _events(ctx, resumed_by_id=True)
+    events = _CliBatchEvents(stage, resumed_by_id=True)
     batch = drive.upgrade(
-        stage_store(ctx),
+        stage.store,
         cfg,
-        lambda: open_root(ctx)[0],
+        lambda: open_root(stage)[0],
         batch_id=batch_id,
-        sp_factory=appctx.sp_client_factory(ctx),
-        btc_factory=appctx.btc_rpc_factory(ctx),
+        sp_factory=stage.sp_client_factory,
+        btc_factory=stage.btc_rpc_factory,
         events=events,
-        runtime=appctx.runtime(ctx),
+        runtime=stage.runtime,
     )
     events.summary(batch)
-    if not appctx.json_mode(ctx):
+    if not stage.json:
         counts = batch_counts(batch)
         typer.echo(
             f"batch upgraded: {batch.batch_id} submitted={counts['submitted']} "
@@ -426,19 +425,20 @@ def batch_upgrade(
 
 def batch_retry(ctx: typer.Context, batch_id: BatchArg) -> None:
     """Resubmit the batch's failed SimpleProof submissions."""
-    cfg = require_config(ctx)
+    stage = stage_of(ctx)
+    cfg = stage.config
     require_simpleproof(ctx, cfg)
-    events = _events(ctx, resumed_by_id=True)
+    events = _CliBatchEvents(stage, resumed_by_id=True)
     batch = drive.retry(
-        stage_store(ctx),
+        stage.store,
         cfg,
         batch_id=batch_id,
-        sp_factory=appctx.sp_client_factory(ctx),
+        sp_factory=stage.sp_client_factory,
         events=events,
-        runtime=appctx.runtime(ctx),
+        runtime=stage.runtime,
     )
     events.summary(batch)
-    if not appctx.json_mode(ctx):
+    if not stage.json:
         counts = batch_counts(batch)
         typer.echo(
             f"batch retried: {batch.batch_id} prepared={counts['prepared']} "
@@ -448,13 +448,14 @@ def batch_retry(ctx: typer.Context, batch_id: BatchArg) -> None:
 
 def batch_commit(ctx: typer.Context, batch_id: BatchArg) -> None:
     """Commit every object of an inventory batch whose proofs are final."""
+    stage = stage_of(ctx)
     failures = drive.commit(
-        stage_store(ctx),
-        lambda: open_root(ctx),
-        root_path=resolve_root_path(ctx),
+        stage.store,
+        lambda: open_root(stage),
+        root_path=resolve_root_path(stage.root),
         batch_id=batch_id,
-        events=_events(ctx, resumed_by_id=True),
-        runtime=appctx.runtime(ctx),
+        events=_CliBatchEvents(stage, resumed_by_id=True),
+        runtime=stage.runtime,
     )
     if failures:
         raise typer.Exit(1)
@@ -462,9 +463,10 @@ def batch_commit(ctx: typer.Context, batch_id: BatchArg) -> None:
 
 def batch_ls(ctx: typer.Context) -> None:
     """List the batches in the staging root."""
-    staging_root = stage_store(ctx).root
+    stage = stage_of(ctx)
+    staging_root = stage.store.root
     rows = [batch_to_list_row(batch) for batch in load_batches_or_exit(staging_root)]
-    if appctx.json_mode(ctx):
+    if stage.json:
         output_json(rows)
         return
     for row in rows:
@@ -486,11 +488,12 @@ def batch_status(
     ] = False,
 ) -> None:
     """Show each object of a batch: its status and the next command."""
-    out = appctx.console(ctx)
-    staging_root = stage_store(ctx).root
+    stage = stage_of(ctx)
+    out = stage.console
+    staging_root = stage.store.root
     batch = load_batch_or_usage(staging_root, batch_id)
     data = batch_status_dict(staging_root, batch, verbose=detail)
-    if appctx.json_mode(ctx):
+    if stage.json:
         output_json(data)
         return
     render_section(out, "Batch")
@@ -524,7 +527,8 @@ def batch_rm(
     ] = False,
 ) -> None:
     """Delete a batch's file when cleanup is safe."""
+    stage = stage_of(ctx)
     removed = remove_batch(
-        stage_store(ctx).root, batch_id, force=force, runtime=appctx.runtime(ctx)
+        stage.store.root, batch_id, force=force, runtime=stage.runtime
     )
     typer.echo(f"removed batch {removed}")

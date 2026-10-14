@@ -180,12 +180,6 @@ def verify_attestation(
 
 
 def default_btc_factory(cfg: Config) -> BitcoinRPC:
-    """Construct the production `BitcoinRpcClient` from `cfg`.
-
-    Registered on `ctx.obj["btc_rpc_factory"]` by `main` so use case
-    callers (and tests via `runner.invoke(obj=...)`) share one entry
-    point for client construction.
-    """
     btc_cfg = cfg.bitcoin
     if btc_cfg is None:
         raise RuntimeError("bitcoin config missing")
@@ -197,11 +191,6 @@ def default_btc_factory(cfg: Config) -> BitcoinRPC:
 
 
 def default_block_stream_factory(cfg: Config) -> BlockStream:
-    """The production block stream: ZMQ `hashblock` from the configured node.
-
-    Registered on `ctx.obj["block_stream_factory"]` by `main`; tests inject
-    an in-memory stream under the same key.
-    """
     btc_cfg = cfg.bitcoin
     if btc_cfg is None:
         raise RuntimeError("bitcoin config missing")

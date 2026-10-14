@@ -229,16 +229,59 @@ class TestPorts:
         import dataclasses
 
         from ocfl_cli._appctx import AppCtx
+        from ocfl_cli.ports import Ports
 
-        names = {f.name for f in dataclasses.fields(AppCtx)}
-        ports = {
+        assert {f.name for f in dataclasses.fields(Ports)} == {
+            "sp_client_factory",
+            "btc_rpc_factory",
+            "block_stream_factory",
             "clock",
             "sleeper",
-            "block_stream_factory",
-            "lock_timeout",
             "fs_factory",
+            "lock_timeout",
         }
-        assert ports <= names
+        names = {f.name for f in dataclasses.fields(AppCtx)}
+        assert {
+            "runtime",
+            "fs_factory",
+            "sp_client_factory",
+            "btc_rpc_factory",
+        } <= names
+
+
+class TestAppCtx:
+    @staticmethod
+    def _entry_points():
+        from ocfl_cli.archive.config import config_app
+        from ocfl_cli.main import app
+        from ocfl_cli.stage._app import stage_callback
+
+        commands = (*app.registered_commands, *config_app.registered_commands)
+        return [*(c.callback for c in commands), stage_callback]
+
+    def test_every_entry_point_reads_the_run_state_first(self):
+        import inspect
+        import textwrap
+
+        bad = []
+        for fn in self._entry_points():
+            node = ast.parse(textwrap.dedent(inspect.getsource(fn))).body[0]
+            assert isinstance(node, ast.FunctionDef)
+            body = node.body[1:] if ast.get_docstring(node) is not None else node.body
+            first = ast.unparse(body[0])
+            if not re.fullmatch(
+                r"(\w+ = )?appctx\.(of|tolerating_broken_config)\(ctx\)", first
+            ):
+                bad.append(f"{fn.__module__}.{fn.__name__}: {first}")
+        assert not bad, bad
+
+    def test_only_the_config_commands_tolerate_a_broken_config(self):
+        homes = {
+            _rel(p)
+            for p in _py_files(CLI_SRC)
+            if "tolerating_broken_config(" in p.read_text()
+        }
+        assert homes == {"_appctx.py", "archive/config.py"}, homes
 
     def test_only_the_system_adapter_reads_time(self):
         homes = set()
@@ -661,10 +704,6 @@ class TestDiscardAndConfig:
         )
         text = json.dumps(redacted(cfg))
         assert not [s for s in ("s-1", "s-2", "s-3", "s-4") if s in text]
-
-    def test_only_the_config_group_runs_on_a_broken_config(self):
-        text = (CLI_SRC / "main.py").read_text()
-        assert 'ctx.invoked_subcommand != "config"' in text
 
 
 class TestLocks:

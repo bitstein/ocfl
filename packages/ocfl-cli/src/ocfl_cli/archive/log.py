@@ -21,8 +21,8 @@ def log(
     ] = None,
 ) -> None:
     """Show version history of an object."""
-    as_json = appctx.json_mode(ctx)
-    root, _fs = open_root(ctx)
+    app = appctx.of(ctx)
+    root, _fs = open_root(app)
 
     obj = root.get_object(object_id)
     if not obj.exists:
@@ -34,7 +34,7 @@ def log(
     if num is not None:
         versions = versions[:num]
 
-    if as_json:
+    if app.json:
         entries = []
         for v in versions:
             info = obj.version_info(v)
@@ -51,7 +51,7 @@ def log(
     else:
         for v in versions:
             info = obj.version_info(v)
-            appctx.console(ctx).print(
+            app.console.print(
                 Text.assemble(_style.version(str(v)), "  ", _style.date(info.created))
             )
             if info.message:

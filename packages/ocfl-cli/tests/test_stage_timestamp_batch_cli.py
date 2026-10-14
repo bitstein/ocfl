@@ -37,7 +37,7 @@ from ocfl_cli.errors import (
     UsageError,
 )
 from ocfl_cli.exit_codes import ExitCode
-from ocfl_cli.main import app
+from ocfl_cli.main import app, production_ports
 from ocfl_cli.model import batch as batch_model
 from ocfl_cli.model.batch import (
     BatchFile,
@@ -240,7 +240,7 @@ def _invoke_json(runner: ObjRunner, storage_root: Path, staging: Path, *args: st
 
 def _inject_fake_zmq(runner: ObjRunner, stream) -> None:
 
-    runner.obj["block_stream_factory"] = lambda *a, **kw: stream
+    runner.ports.block_stream_factory = lambda *a, **kw: stream
 
 
 def _run_batch_command_process(
@@ -252,14 +252,14 @@ def _run_batch_command_process(
     out: multiprocessing.Queue,
 ) -> None:
     runner = CliRunner()
-    obj = {}
+    ports = production_ports()
     if marker is not None and release is not None:
-        obj["sp_client_factory"] = lambda cfg: BlockingSubmitFake(
+        ports.sp_client_factory = lambda cfg: BlockingSubmitFake(
             Path(marker), Path(release)
         )
     else:
-        obj["sp_client_factory"] = lambda cfg: FakeSimpleProof()
-    result = runner.invoke(app, stage_args(Path(root), Path(staging), *args), obj=obj)
+        ports.sp_client_factory = lambda cfg: FakeSimpleProof()
+    result = runner.invoke(app, stage_args(Path(root), Path(staging), *args), obj=ports)
     diagnostic = result.output
     if result.exception is not None:
         diagnostic = f"{diagnostic}{result.exception!r}"
@@ -2598,7 +2598,7 @@ def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, FakeBitcoinRPC())
 
-    runner.obj["sleeper"] = RecordingSleeper()
+    runner.ports.sleeper = RecordingSleeper()
     subscribers = 0
 
     class _InterruptingStream:
@@ -2610,7 +2610,7 @@ def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
         subscribers += 1
         return _InterruptingStream()
 
-    runner.obj["block_stream_factory"] = subscriber_factory
+    runner.ports.block_stream_factory = subscriber_factory
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -2653,7 +2653,7 @@ def test_batch_watch_human_output_reports_observed_blocks(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, btc)
 
-    runner.obj["sleeper"] = RecordingSleeper()
+    runner.ports.sleeper = RecordingSleeper()
 
     class _OneBlockStream:
         seen = False
@@ -2665,7 +2665,7 @@ def test_batch_watch_human_output_reports_observed_blocks(
                 return bytes.fromhex(btc.getblockhash(btc.tip_height))
             raise KeyboardInterrupt
 
-    runner.obj["block_stream_factory"] = lambda *a, **kw: _OneBlockStream()
+    runner.ports.block_stream_factory = lambda *a, **kw: _OneBlockStream()
     staging = tmp_path / "staging"
     _new_ots_with_files(
         runner,
@@ -2740,7 +2740,7 @@ def test_batch_watch_polls_during_quiet_periods(
         subscribers += 1
         return _QuietCompletingStream()
 
-    runner.obj["block_stream_factory"] = subscriber_factory
+    runner.ports.block_stream_factory = subscriber_factory
 
     result = _invoke_json(
         runner,
@@ -2773,7 +2773,7 @@ def test_batch_watch_empty_submitted_subset_exits_without_subscriber(
     inject_fake_sp(runner, TransientSubmitFake())
     inject_fake_btc(runner, FakeBitcoinRPC())
 
-    runner.obj["block_stream_factory"] = lambda *a, **kw: pytest.fail(
+    runner.ports.block_stream_factory = lambda *a, **kw: pytest.fail(
         "watch subscribed with no submitted rows",
     )
     staging = tmp_path / "staging"
@@ -2815,7 +2815,7 @@ def test_batch_watch_all_skipped_exits_without_subscriber(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, FakeBitcoinRPC())
 
-    runner.obj["block_stream_factory"] = lambda *a, **kw: pytest.fail(
+    runner.ports.block_stream_factory = lambda *a, **kw: pytest.fail(
         "watch subscribed with only skipped rows",
     )
     staging = tmp_path / "staging"
@@ -2849,7 +2849,7 @@ def test_batch_watch_enters_upgrade_for_submitted_subset_after_submit_failure(
     inject_fake_btc(runner, FakeBitcoinRPC())
 
     sp.submit_chunk_size = 1
-    runner.obj["sleeper"] = RecordingSleeper()
+    runner.ports.sleeper = RecordingSleeper()
 
     class _InterruptingStream:
         def wait_for_block(self, timeout_ms: int) -> bytes | None:
@@ -2905,7 +2905,7 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, btc)
 
-    runner.obj["sleeper"] = RecordingSleeper()
+    runner.ports.sleeper = RecordingSleeper()
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3003,7 +3003,7 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, btc)
 
-    runner.obj["sleeper"] = RecordingSleeper()
+    runner.ports.sleeper = RecordingSleeper()
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3130,7 +3130,7 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, btc)
 
-    runner.obj["sleeper"] = RecordingSleeper()
+    runner.ports.sleeper = RecordingSleeper()
     root_path = str(storage_root)
     staging = tmp_path / "staging"
     batch_id = new_batch_id()
@@ -3245,7 +3245,7 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, btc)
 
-    runner.obj["sleeper"] = RecordingSleeper()
+    runner.ports.sleeper = RecordingSleeper()
 
     root_path = str(storage_root)
     staging = tmp_path / "staging"
@@ -3374,7 +3374,7 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, btc)
 
-    runner.obj["sleeper"] = RecordingSleeper()
+    runner.ports.sleeper = RecordingSleeper()
 
     root_path = str(storage_root)
     staging = tmp_path / "staging"
@@ -3490,7 +3490,7 @@ def test_batch_watch_node_halt_exits_operational_error(
     inject_fake_sp(runner, sp_fake)
     inject_fake_btc(runner, TransientBitcoinRPC())
 
-    runner.obj["sleeper"] = RecordingSleeper()
+    runner.ports.sleeper = RecordingSleeper()
     stream = InMemoryHashBlockStream()
     stream.push(b"\x00" * 32)
     _inject_fake_zmq(runner, stream)
@@ -3951,7 +3951,7 @@ def test_batch_rm_waits_for_a_running_driver(
             updated_at="2026-05-12T10:05:00Z",
         ),
     )
-    runner.obj["lock_timeout"] = 0.01
+    runner.ports.lock_timeout = 0.01
 
     with held_flock(batch_state.batch_lock_path(staging, batch_id)):
         result = _invoke(runner, storage_root, staging, "batch", "rm", batch_id)

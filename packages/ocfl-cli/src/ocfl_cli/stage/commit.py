@@ -2,10 +2,9 @@ from typing import Annotated
 
 import typer
 
-from ocfl_cli import _appctx as appctx
 from ocfl_cli._common import open_root
 from ocfl_cli.errors import ErrorContext, InventoryProofMissingError, PhaseError
-from ocfl_cli.stage._app import require_existing_staging
+from ocfl_cli.stage._app import require_existing_staging, stage_of
 from ocfl_cli.workflow import commit as wf_commit
 from ocfl_cli.workflow import staging as wf_staging
 from ocfl_cli.workflow import status as wf_status
@@ -23,8 +22,9 @@ def commit(
     ] = False,
 ) -> None:
     """Commit staged changes to the storage root."""
-    sr, fs = open_root(ctx)
-    resolved = require_existing_staging(ctx, object_id)
+    stage = stage_of(ctx)
+    sr, fs = open_root(stage)
+    resolved = require_existing_staging(stage, object_id)
     store = resolved.store
     root_path = resolved.root_path
     staging_dir = resolved.staging_dir
@@ -39,7 +39,7 @@ def commit(
                 object_id=object_id,
                 staging_dir=staging_dir,
                 allow_missing_metadata=allow_missing_metadata,
-                runtime=appctx.runtime(ctx),
+                runtime=stage.runtime,
             )
         except InventoryProofMissingError:
             raise  # its message names the command to run
@@ -56,5 +56,5 @@ def commit(
         object_id=object_id,
         staging_dir=staging_dir,
         allow_missing_metadata=allow_missing_metadata,
-        runtime=appctx.runtime(ctx),
+        runtime=stage.runtime,
     )

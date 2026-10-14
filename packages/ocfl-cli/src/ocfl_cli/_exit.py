@@ -13,6 +13,7 @@ import typer
 from typer.core import TyperGroup
 
 from ocfl_cli import _style
+from ocfl_cli._appctx import AppCtx
 from ocfl_cli.errors import CLIError, ErrorContext
 from ocfl_cli.exit_codes import exit_code_for_class
 from ocfl_lib import ErrorClass, OcflError
@@ -82,11 +83,12 @@ class OcflGroup(TyperGroup):
         try:
             return super().invoke(ctx)
         except HANDLED as exc:
-            obj = ctx.obj if isinstance(ctx.obj, dict) else {}
-            console = obj.get("err_console")
-            if console is None:
-                no_color = bool(ctx.params.get("no_color"))
-                console = _style.make_console(stderr=True, no_color=no_color)
+            match ctx.obj:
+                case AppCtx(err_console=console):
+                    pass
+                case _:
+                    no_color = bool(ctx.params.get("no_color"))
+                    console = _style.make_console(stderr=True, no_color=no_color)
             handle_error(
                 exc, json_mode=bool(ctx.params.get("json_output")), console=console
             )

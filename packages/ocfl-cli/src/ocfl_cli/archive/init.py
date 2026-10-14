@@ -4,7 +4,7 @@ from typing import Annotated
 import typer
 
 from ocfl_cli import _appctx as appctx
-from ocfl_cli._common import open_location, resolve_root
+from ocfl_cli._common import resolve_root
 from ocfl_cli.errors import CLIError
 from ocfl_lib import Spec, StorageRoot, get_layout
 
@@ -28,7 +28,8 @@ def init(
     ] = "",
 ) -> None:
     """Initialize a new OCFL storage root."""
-    root_path = resolve_root(appctx.root(ctx))
+    app = appctx.of(ctx)
+    root_path = resolve_root(app.root)
 
     config = None
     if layout_config is not None:
@@ -39,7 +40,7 @@ def init(
 
     layout_obj = get_layout(layout, config=config)
 
-    fs = open_location(ctx, root_path)
+    fs = app.fs_factory(root_path)
     StorageRoot.init(
         fs,
         fs,

@@ -500,7 +500,7 @@ class TestCommitLocking:
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
         staging_dir = store.staging_path(root_path, oid)
-        runner.obj["lock_timeout"] = 0.01
+        runner.ports.lock_timeout = 0.01
 
         with held_flock(staging_dir / ".lock"):
             result = _invoke(runner, storage_root, staging, "commit", oid)

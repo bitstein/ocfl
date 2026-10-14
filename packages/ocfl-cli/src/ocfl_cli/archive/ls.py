@@ -9,6 +9,7 @@ from ocfl_cli._common import open_root, output_json, parse_version
 from ocfl_lib import ObjectNotFound, to_path_map
 
 if TYPE_CHECKING:
+    from ocfl_cli._appctx import AppCtx
     from ocfl_lib import VNum
 
 
@@ -26,18 +27,17 @@ def ls(
     ] = False,
 ) -> None:
     """List objects in root, or files in an object version."""
-    as_json = appctx.json_mode(ctx)
-
+    app = appctx.of(ctx)
     if object_id is not None:
-        _ls_object(ctx, object_id, version, digests, as_json)
+        _ls_object(app, object_id, version, digests)
     else:
-        _ls_root(ctx, as_json)
+        _ls_root(app)
 
 
-def _ls_root(ctx: typer.Context, json_mode: bool) -> None:
-    root, _fs = open_root(ctx)
+def _ls_root(app: AppCtx) -> None:
+    root, _fs = open_root(app)
     ids = [obj.id for obj in root.objects()]
-    if json_mode:
+    if app.json:
         output_json(ids)
     else:
         for oid in ids:
@@ -45,13 +45,9 @@ def _ls_root(ctx: typer.Context, json_mode: bool) -> None:
 
 
 def _ls_object(
-    ctx: typer.Context,
-    object_id: str,
-    version_str: str | None,
-    digests: bool,
-    json_mode: bool,
+    app: AppCtx, object_id: str, version_str: str | None, digests: bool
 ) -> None:
-    root, _fs = open_root(ctx)
+    root, _fs = open_root(app)
 
     obj = root.get_object(object_id)
     if not obj.exists:
@@ -61,7 +57,7 @@ def _ls_object(
 
     path_map = to_path_map(state)  # path → digest
 
-    if json_mode:
+    if app.json:
         entries = [
             {"path": p, "digest": d} if digests else {"path": p}
             for p, d in sorted(path_map.items())
@@ -70,8 +66,6 @@ def _ls_object(
     else:
         for path, digest in sorted(path_map.items()):
             if digests:
-                appctx.console(ctx).print(
-                    Text.assemble(_style.digest(digest), "  ", path)
-                )
+                app.console.print(Text.assemble(_style.digest(digest), "  ", path))
             else:
                 typer.echo(path)

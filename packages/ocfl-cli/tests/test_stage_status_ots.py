@@ -648,7 +648,7 @@ class TestStageStatusOts:
             ("a.txt", b"alpha"),
         )
 
-        runner.obj["lock_timeout"] = 0.01
+        runner.ports.lock_timeout = 0.01
         with held_flock(sd / ".lock"):
             r = runner.invoke(
                 app,
@@ -745,7 +745,7 @@ class TestStageStatusOts:
         submitted = fake_now - timedelta(seconds=30)
         submitted_iso = submitted.isoformat(timespec="seconds")
 
-        runner.obj["clock"] = FakeClock(fake_now)
+        runner.ports.clock = FakeClock(fake_now)
 
         _write_phase_bypassing_fsm(
             sd,
@@ -802,7 +802,7 @@ class TestStageStatusOts:
         fake_now = datetime(2026, 4, 25, 14, 0, 0, tzinfo=UTC)
         submitted = fake_now - timedelta(hours=2)
         clock = FakeClock(submitted)
-        runner.obj["clock"] = clock
+        runner.ports.clock = clock
 
         r = runner.invoke(
             app,

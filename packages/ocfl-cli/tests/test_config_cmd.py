@@ -7,7 +7,7 @@ from fakes import FakeBitcoinRPC, FakeSimpleProof
 from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
-from ocfl_cli.main import app
+from ocfl_cli.main import app, production_ports
 from ocfl_lib import BitcoinRpcAuthError, BitcoinRpcTransientError
 
 SECRETS = {
@@ -51,11 +51,10 @@ def cfg_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, listener: str) -> P
 
 
 def _run(*args: str, sp=None, btc=None):
-    obj = {
-        "sp_client_factory": lambda cfg: sp if sp is not None else FakeSimpleProof(),
-        "btc_rpc_factory": lambda cfg: btc if btc is not None else FakeBitcoinRPC(),
-    }
-    return CliRunner().invoke(app, list(args), obj=obj)
+    ports = production_ports()
+    ports.sp_client_factory = lambda cfg: sp if sp is not None else FakeSimpleProof()
+    ports.btc_rpc_factory = lambda cfg: btc if btc is not None else FakeBitcoinRPC()
+    return CliRunner().invoke(app, list(args), obj=ports)
 
 
 def _checks(result) -> dict[str, dict]:
@@ -90,13 +89,31 @@ class TestPath:
         assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "(missing)" in r.stdout
 
-    def test_runs_with_a_broken_config(self, cfg_dir: Path) -> None:
-        (cfg_dir / "config.toml").write_text("not = [toml")
-        assert _run("config", "path").exit_code == ExitCode.SUCCESS
 
-    def test_other_commands_still_fail_on_a_broken_config(self, cfg_dir) -> None:
+class TestBrokenConfig:
+    @pytest.mark.parametrize(
+        ("args", "code"),
+        [
+            (("config", "path"), ExitCode.SUCCESS),
+            (("config", "show"), ExitCode.CONFIG),
+            (("config", "check"), ExitCode.CONFIG),
+            (("ls",), ExitCode.CONFIG),
+            (("stage", "ls"), ExitCode.CONFIG),
+            (("stage", "batch", "ls"), ExitCode.CONFIG),
+            (("ls", "--help"), ExitCode.SUCCESS),
+            (("ls", "--bogus"), ExitCode.USAGE),
+        ],
+    )
+    def test_exit_code(self, cfg_dir: Path, args: tuple[str, ...], code) -> None:
         (cfg_dir / "config.toml").write_text("not = [toml")
-        assert _run("ls").exit_code == ExitCode.CONFIG
+        assert _run(*args).exit_code == code
+
+    def test_stage_fails_before_making_the_staging_root(
+        self, cfg_dir: Path, tmp_path: Path
+    ) -> None:
+        (cfg_dir / "config.toml").write_text("not = [toml")
+        assert _run("stage", "ls").exit_code == ExitCode.CONFIG
+        assert not (tmp_path / "staging").exists()
 
 
 class TestShow:
@@ -112,10 +129,6 @@ class TestShow:
         for out in (text.stdout + text.stderr, doc.stdout + doc.stderr):
             for secret in SECRETS.values():
                 assert secret not in out
-
-    def test_a_broken_config_is_exit_6(self, cfg_dir: Path) -> None:
-        (cfg_dir / "config.toml").write_text("not = [toml")
-        assert _run("config", "show").exit_code == ExitCode.CONFIG
 
 
 class TestCheck:

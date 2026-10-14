@@ -636,7 +636,7 @@ class TestStageCommitOtsPreExecuteErrors:
             btc_fake.rpc,
         )
         root_path = str(empty_sha256_root.resolve())
-        runner.obj["lock_timeout"] = 0.01
+        runner.ports.lock_timeout = 0.01
 
         with locks.object_commit_lock(
             root_path, "obj:commit-lock-timeout", lock_runtime(30)

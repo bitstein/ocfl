@@ -98,20 +98,17 @@ def _bitcoin_zmq(cfg: Config) -> Check:
     return _ok("bitcoin_zmq", f"{endpoint}: listening")
 
 
+def broken_config_checks(error: ConfigError) -> tuple[Check, ...]:
+    return (_fail("config", str(error), ErrorClass.CONFIG), _env_file())
+
+
 def run_checks(
-    cfg: Config,
-    config_error: ConfigError | None,
-    *,
-    sp_factory: SpClientFactory,
-    btc_factory: BtcRpcFactory,
+    cfg: Config, *, sp_factory: SpClientFactory, btc_factory: BtcRpcFactory
 ) -> tuple[Check, ...]:
-    env = _env_file()
-    if config_error is not None:
-        return (_fail("config", str(config_error), ErrorClass.CONFIG), env)
     where = str(cfg.path) if cfg.path is not None else "no config file (defaults)"
     return (
         _ok("config", where),
-        env,
+        _env_file(),
         _simpleproof(cfg, sp_factory),
         _bitcoin_rpc(cfg, btc_factory),
         _bitcoin_zmq(cfg),

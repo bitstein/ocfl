@@ -2,10 +2,9 @@ from typing import TYPE_CHECKING, Annotated
 
 import typer
 
-from ocfl_cli import _appctx as appctx
 from ocfl_cli import errors as errors
 from ocfl_cli._common import output_json
-from ocfl_cli.stage._app import require_existing_staging
+from ocfl_cli.stage._app import require_existing_staging, stage_of
 from ocfl_cli.stage.render import (
     render_metadata_status,
     render_section,
@@ -70,34 +69,32 @@ def status(
     object_id: Annotated[str, typer.Argument(help="Object ID.")],
 ) -> None:
     """Show changes in staged version vs committed head (OTS-aware)."""
-    out = appctx.console(ctx)
-    resolved = require_existing_staging(ctx, object_id)
+    stage = stage_of(ctx)
+    resolved = require_existing_staging(stage, object_id)
     store = resolved.store
     root_path = resolved.root_path
     staging_dir = resolved.staging_dir
 
-    json_mode = appctx.json_mode(ctx)
     if wf_staging.is_ots_staging(staging_dir):
-        cfg = appctx.config(ctx)
         data = wf_status.status_ots_dict(
-            cfg,
+            stage.config,
             store,
             root_path,
             object_id,
             staging_dir,
-            btc_factory=appctx.btc_rpc_factory(ctx),
-            runtime=appctx.runtime(ctx),
+            btc_factory=stage.btc_rpc_factory,
+            runtime=stage.runtime,
         )
-        if json_mode:
+        if stage.json:
             output_json(data)
         else:
-            _render_status_ots(out, data)
+            _render_status_ots(stage.console, data)
     else:
         data = wf_status.status_diff_dict(store, root_path, object_id)
-        if json_mode:
+        if stage.json:
             output_json(data)
         else:
-            render_status_diff(out, data)
+            render_status_diff(stage.console, data)
             render_metadata_status(
-                out, data["metadata"], leading_blank=bool(data["changes"])
+                stage.console, data["metadata"], leading_blank=bool(data["changes"])
             )

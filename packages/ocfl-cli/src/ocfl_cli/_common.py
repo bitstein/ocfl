@@ -7,18 +7,13 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ocfl_cli import _appctx as appctx
 from ocfl_cli.errors import CLIError
 from ocfl_lib import StorageRoot, VNum
-from ocfl_lib.fs import open_fs
 
 if TYPE_CHECKING:
     import httpx2 as httpx
-    import typer
 
-    from ocfl_cli.ports import FsFactory
-    from ocfl_lib.fs import LocalFS
-    from ocfl_lib.fs.s3 import S3FS
+    from ocfl_cli._appctx import AppCtx
 
 logger = logging.getLogger(__name__)
 
@@ -42,15 +37,8 @@ def resolve_root(root: str | None) -> str:
     return str(Path(raw).resolve())
 
 
-DEFAULT_FS_FACTORY: FsFactory = open_fs
-
-
-def open_location(ctx: typer.Context, location: str) -> LocalFS | S3FS:
-    return appctx.fs_factory(ctx)(location)
-
-
-def open_root(ctx: typer.Context) -> tuple[StorageRoot, Any]:
-    fs = open_location(ctx, resolve_root(appctx.root(ctx)))
+def open_root(app: AppCtx) -> tuple[StorageRoot, Any]:
+    fs = app.fs_factory(resolve_root(app.root))
     return StorageRoot.open(fs), fs
 
 

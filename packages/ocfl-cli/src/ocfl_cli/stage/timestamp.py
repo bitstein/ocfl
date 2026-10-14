@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 
-from ocfl_cli import _appctx as appctx
 from ocfl_cli._common import open_root, output_json
 from ocfl_cli.errors import (
     AttestationMismatchError,
@@ -21,7 +20,12 @@ from ocfl_cli.errors import (
 )
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.model.phase import TimestampTarget
-from ocfl_cli.stage._app import TimestampPreflight, require_timestamp_preflight
+from ocfl_cli.stage._app import (
+    StageCtx,
+    TimestampPreflight,
+    require_timestamp_preflight,
+    stage_of,
+)
 from ocfl_cli.stage.render import pluralize, render_section, short_job_id
 from ocfl_cli.workflow import common as wf_common
 from ocfl_cli.workflow import staging as wf_staging
@@ -237,7 +241,7 @@ def _document(
 
 
 def _render(
-    ctx: typer.Context,
+    stage: StageCtx,
     run: timestamp.TimestampRun,
     verb: str,
     outcome: Outcome,
@@ -245,12 +249,12 @@ def _render(
     before: Phase,
 ) -> None:
     next_action = timestamp.next_step(run)
-    if appctx.json_mode(ctx):
+    if stage.json:
         output_json(
             _document(run, verb, outcome, before=before, next_action=next_action)
         )
         return
-    out = appctx.console(ctx)
+    out = stage.console
     after = before
     match outcome:
         case timestamp.Idle():
@@ -287,9 +291,9 @@ def _render(
 
 
 def _timestamp_run(
-    ctx: typer.Context, preflight: TimestampPreflight, object_id: str
+    stage: StageCtx, preflight: TimestampPreflight, object_id: str
 ) -> timestamp.TimestampRun:
-    sr, _fs = open_root(ctx)
+    sr, _fs = open_root(stage)
     resolved = preflight.resolved
     return timestamp.TimestampRun(
         cfg=preflight.cfg,
@@ -300,18 +304,15 @@ def _timestamp_run(
         staging_dir=resolved.staging_dir,
         sp_factory=preflight.sp_factory,
         btc_factory=preflight.btc_factory,
-        runtime=appctx.runtime(ctx),
+        runtime=stage.runtime,
     )
 
 
 def _run_for(
     ctx: typer.Context, object_id: str, *, bitcoin: bool
 ) -> timestamp.TimestampRun:
-    return _timestamp_run(
-        ctx,
-        require_timestamp_preflight(ctx, object_id, bitcoin=bitcoin),
-        object_id,
-    )
+    preflight = require_timestamp_preflight(ctx, object_id, bitcoin=bitcoin)
+    return _timestamp_run(stage_of(ctx), preflight, object_id)
 
 
 def _phase(run: timestamp.TimestampRun) -> Phase:
@@ -328,15 +329,15 @@ def _verb[T](run: timestamp.TimestampRun, call: Callable[[], T]) -> T:
 
 
 def _watch(
-    ctx: typer.Context,
+    stage: StageCtx,
     run: timestamp.TimestampRun,
     verb: str,
     target: TimestampTarget,
     *,
     before: Phase,
 ) -> None:
-    json_mode = appctx.json_mode(ctx)
-    out = appctx.console(ctx)
+    json_mode = stage.json
+    out = stage.console
     state = wf_staging.ots_state(run.staging_dir)
 
     def progress(kind: str, data: dict[str, Any]) -> None:
@@ -395,6 +396,7 @@ def timestamp_cmd(
 
     Drafting: the content files. Content-upgraded: the inventory.
     """
+    stage = stage_of(ctx)
     run = _run_for(ctx, object_id, bitcoin=watch_flag)
     before = _phase(run)
     result = _verb(
@@ -404,9 +406,9 @@ def timestamp_cmd(
         ),
     )
     if watch_flag and not result.done:
-        _watch(ctx, run, "timestamp", result.target, before=before)
+        _watch(stage, run, "timestamp", result.target, before=before)
         return
-    _render(ctx, run, "timestamp", result, before=before)
+    _render(stage, run, "timestamp", result, before=before)
 
 
 def upgrade_cmd(
@@ -416,18 +418,19 @@ def upgrade_cmd(
     watch_flag: WatchOption = False,
 ) -> None:
     """Fetch the proofs SimpleProof has made and verify them against Bitcoin."""
+    stage = stage_of(ctx)
     run = _run_for(ctx, object_id, bitcoin=True)
     before = _phase(run)
     idle = _verb(run, lambda: timestamp.idle(run, "upgrade", expect=expect))
     if idle is not None:
-        _render(ctx, run, "upgrade", idle, before=before)
+        _render(stage, run, "upgrade", idle, before=before)
         return
     if watch_flag:
         target = _verb(run, lambda: timestamp.check(run, "upgrade", expect=expect))
-        _watch(ctx, run, "upgrade", target, before=before)
+        _watch(stage, run, "upgrade", target, before=before)
         return
     result = _verb(run, lambda: timestamp.upgrade(run, expect=expect))
-    _render(ctx, run, "upgrade", result, before=before)
+    _render(stage, run, "upgrade", result, before=before)
     if not result.done:
         raise typer.Exit(ExitCode.PENDING)
 
@@ -438,11 +441,12 @@ def retry_cmd(
     expect: ExpectOption = None,
 ) -> None:
     """Resubmit the failed SimpleProof submissions of the Phase's target."""
+    stage = stage_of(ctx)
     run = _run_for(ctx, object_id, bitcoin=False)
     before = _phase(run)
     idle = _verb(run, lambda: timestamp.idle(run, "retry", expect=expect))
     if idle is not None:
-        _render(ctx, run, "retry", idle, before=before)
+        _render(stage, run, "retry", idle, before=before)
         return
     result = _verb(run, lambda: timestamp.retry(run, expect=expect))
-    _render(ctx, run, "retry", result, before=before)
+    _render(stage, run, "retry", result, before=before)

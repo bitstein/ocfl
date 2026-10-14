@@ -56,11 +56,11 @@ def write_config(
 
 
 def inject_fake_sp(runner: ObjRunner, fake: FakeSimpleProof) -> None:
-    runner.obj["sp_client_factory"] = lambda cfg: fake
+    runner.ports.sp_client_factory = lambda cfg: fake
 
 
 def inject_fake_btc(runner: ObjRunner, fake: BitcoinRPC) -> None:
-    runner.obj["btc_rpc_factory"] = lambda cfg: fake
+    runner.ports.btc_rpc_factory = lambda cfg: fake
 
 
 def _grow_chain_to(rpc: FakeBitcoinRPC, height: int) -> None:

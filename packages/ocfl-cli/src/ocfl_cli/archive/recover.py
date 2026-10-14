@@ -43,6 +43,7 @@ def recover(
     ] = None,
 ) -> None:
     """Finish or undo an object's interrupted commit, read from storage."""
+    app = appctx.of(ctx)
     if resume + revert + (remove_stray is not None) != 1:
         raise UsageError(
             "exactly one of --resume, --revert or --remove-stray VN is required"
@@ -54,15 +55,15 @@ def recover(
     else:
         action = RecoveryAction.REMOVE_STRAY
 
-    root, fs = open_root(ctx)
+    root, fs = open_root(app)
     content = (
-        _staged_content(ctx, staging_root, object_id)
+        _staged_content(app.root, staging_root, object_id)
         if action is RecoveryAction.RESUME and not isinstance(fs, ClaimFS)
         else None
     )
     status = root.recover(fs, object_id, action, version=remove_stray, content=content)
 
-    if appctx.json_mode(ctx):
+    if app.json:
         output_json(
             {
                 "object_id": object_id,
@@ -72,16 +73,16 @@ def recover(
             }
         )
     elif status.state is CommitState.CLEAN:
-        appctx.console(ctx).print(f"{object_id}: no unfinished commit")
+        app.console.print(f"{object_id}: no unfinished commit")
     else:
-        appctx.console(ctx).print(
+        app.console.print(
             f"{object_id}: {status.state.value} {status.version}: "
             f"{action.value.replace('_', '-')} done"
         )
 
 
 def _staged_content(
-    ctx: typer.Context, staging_root: str | None, object_id: str
+    root: str | None, staging_root: str | None, object_id: str
 ) -> ContentSource | None:
     path = Path(staging_root) if staging_root else default_staging_root()
-    return staged_content_for_recovery(path, resolve_root(appctx.root(ctx)), object_id)
+    return staged_content_for_recovery(path, resolve_root(root), object_id)
