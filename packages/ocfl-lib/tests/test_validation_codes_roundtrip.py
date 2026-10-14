@@ -16,16 +16,27 @@ _ERRORS_JSON = (
 )
 
 _KNOWN_UNREACHED: dict[str, str] = {
-    "E026a": "unknown digest type fails at algorithm parse, before validation",
-    "E038a": "inventory type mismatch reported via E038b/E038c",
-    "E058b": "sidecar filename parsed before validation entry",
+    "E026a": (
+        "unknown digestAlgorithm reported via E025a; unknown fixity algorithm"
+        " via E056b (ignored under lax_digests)"
+    ),
+    "E038a": "not implemented (#2)",
+    "E058b": "sidecar with an unknown algorithm suffix reported via E058a (see #3)",
     "E050a": "per-digest E050f fires instead of the aggregate",
-    "E066d": "prior version state digests reported via E066b",
-    "E066e": "prior version state digests reported via E066b",
+    "E066d": (
+        "same logical path with a different digest in a prior inventory"
+        " reported via E066c"
+    ),
+    "E066e": (
+        "same logical path with a different digest in a prior inventory"
+        " reported via E066c"
+    ),
     "E111": "non-object fixity value reported via E056a",
     "E110": "id change between versions reported as E037b, as ocfl-py does",
-    "E049c": "bad created date reported via E049b",
-    "L003": "unsupported file type raised by the fs layer, outside validation/",
+    "E049c": "bad created date reported via E049b (RFC 3339 gaps: #4)",
+    "L003": (
+        "symlinks and fifos raise OcflFileTypeError from the fs layer, no report (#6)"
+    ),
 }
 
 _CODE_RE = re.compile(r"^[EWL]\d+[a-z]?$")

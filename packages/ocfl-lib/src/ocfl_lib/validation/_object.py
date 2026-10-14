@@ -1,7 +1,7 @@
 import contextlib
 import json
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from ocfl_lib import ots
 from ocfl_lib._digest import DigestAlgorithm, bytes_digest, stream_digest
@@ -11,6 +11,7 @@ from ocfl_lib._spec import VERSION_DIR_RE, Namaste
 from ocfl_lib.fs import _utils as fs_utils
 from ocfl_lib.validation._extension_ots import check_chain, validate_ots_extension
 from ocfl_lib.validation._inventory import (
+    listed_paths,
     validate_inventory,
     validate_inventory_against_prior,
 )
@@ -19,13 +20,14 @@ from ocfl_lib.validation._report import FindingCollector
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from ocfl_lib._inventory import Inventory
     from ocfl_lib._json_value import JsonObject
     from ocfl_lib.fs._protocols import FS, FileWalker, FsEntry
     from ocfl_lib.validation._report import ValidationReport
 
 _SIDECAR_RE = re.compile(r"^inventory\.json\.(\S+)$")
 
-_KNOWN_EXTENSIONS = frozenset(
+REGISTERED_EXTENSIONS = frozenset(
     {
         "0001-digest-algorithms",
         "0002-flat-direct-storage-layout",
@@ -34,9 +36,9 @@ _KNOWN_EXTENSIONS = frozenset(
         "0005-mutable-head",
         "0006-flat-omit-prefix-storage-layout",
         "0007-n-tuple-omit-prefix-storage-layout",
-        ots.EXTENSION_NAME,
     }
 )
+_KNOWN_OBJECT_EXTENSIONS = REGISTERED_EXTENSIONS | {ots.EXTENSION_NAME}
 
 
 def validate_object(
@@ -69,90 +71,25 @@ def _validate_object(
     check_digests: bool,
     lax_digests: bool,
 ) -> None:
-    # 1. Read root entries
     try:
         entries = list(fsys.read_dir(path))
     except OSError:
-        result.error("E003e", path=path or ".")
-        return
-
+        entries = []
     if not entries:
         result.error("E003e", path=path or ".")
         return
 
-    # 2. Find and validate NAMASTE declaration
-    raw_zero_files = [e for e in entries if e.name.startswith("0=")]
-    decl_files = []
-    namaste = None
-    for entry in entries:
-        n = Namaste.parse(entry.name)
-        if n is not None and n.kind == "object":
-            decl_files.append(n)
+    namaste = _check_object_declaration(fsys, path, entries, result)
 
-    parsed_names = {d.filename for d in decl_files}
-    for zf in raw_zero_files:
-        if zf.name not in parsed_names:
-            result.error("E006", filename=zf.name)
-
-    if not decl_files:
-        if raw_zero_files:
-            result.error("E003c", assumed_version="1.1")
-        else:
-            result.error("E003a", assumed_version="1.1")
-    elif len(decl_files) > 1:
-        result.error(
-            "E003b",
-            files=", ".join(d.filename for d in decl_files),
-            using_version=str(decl_files[0].spec),
-        )
-        namaste = decl_files[0]
-    else:
-        namaste = decl_files[0]
-
-    if namaste is not None:
-        decl_path = join_path(path, namaste.filename)
-        try:
-            content = fs_utils.read_text(fsys, decl_path)
-            if content != namaste.content:
-                result.error("E007", filename=namaste.filename)
-        except OSError:
-            pass
-
-    # 3. Read and validate root inventory.json
-    inv_path = join_path(path, "inventory.json")
-    try:
-        inv_bytes = fs_utils.read_all(fsys, inv_path)
-    except OSError:
-        result.error("E063")
+    loaded = _load_root_inventory(fsys, path, result, lax_digests=lax_digests)
+    if loaded is None:
         return
-
-    try:
-        inv_data = parse_json(inv_bytes)
-    except (json.JSONDecodeError, ValueError) as e:
-        result.error("E033", where="root", explanation=str(e))
-        return
-
-    if not isinstance(inv_data, dict):
-        result.error("E034", where="root")
-        return
-    if isinstance(object_id := inv_data.get("id"), str):
-        result.object_id = object_id
-
-    inv = validate_inventory(inv_data, result, lax_digests=lax_digests, where="root")
-    if inv is None:
-        return
-
-    # 4. Validate root inventory sidecar
-    try:
-        alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
-    except ValueError:
-        return
+    inv_bytes, inv_data, inv, alg = loaded
 
     sidecar_name = f"inventory.json.{alg.ocfl_name}"
     sidecar_path = join_path(path, sidecar_name)
     _validate_sidecar(fsys, sidecar_path, inv_bytes, alg, result, where="root")
 
-    # 5. Determine content directory and version list
     content_dir = (
         inv.content_directory if inv.content_directory is not None else "content"
     )
@@ -165,7 +102,6 @@ def _validate_object(
 
     _check_first_version_content_dir(fsys, path, inv_data, inv_versions, result)
 
-    # 6. Validate object root structure
     _check_version_dir_sequence(entries, result)
 
     # extensions/ and logs/ are allowed per spec
@@ -174,39 +110,18 @@ def _validate_object(
         allowed_root.add(namaste.filename)
     for vkey in inv_versions:
         allowed_root.add(vkey)
+    _check_object_root_entries(entries, allowed_root, result)
 
-    for entry in entries:
-        if entry.name in allowed_root:
-            continue
-        if Namaste.parse(entry.name) is not None:
-            continue
-        if entry.is_dir and VERSION_DIR_RE.match(entry.name):
-            if entry.name not in inv_versions:
-                result.error("E046b", dir=entry.name)
-            continue
-        if entry.is_file:
-            result.error("E001a", file=entry.name)
-        elif entry.is_dir:
-            result.error("E001b", dir=entry.name)
-        else:
-            result.error("E001c", entry=entry.name)
-
-    # 7. Check extensions directory
-    ext_path = join_path(path, "extensions")
-    try:
-        ext_entries = list(fsys.read_dir(ext_path))
-        for entry in ext_entries:
-            if not entry.is_dir:
-                result.error("E067", entry=entry.name)
-            elif entry.name not in _KNOWN_EXTENSIONS:
-                result.warning("W013", entry=entry.name)
-    except OSError:
-        pass
-
+    check_extensions_dir(
+        fsys,
+        path,
+        result,
+        known=_KNOWN_OBJECT_EXTENSIONS,
+        not_dir_code="E067",
+        unknown_code="W013",
+    )
     validate_ots_extension(fsys, path, inv_data, alg, inv_versions, result)
 
-    # 8. Validate each version directory. E103: each version's spec must be
-    # the same as or later than the preceding version's; root is the last.
     prev_spec: tuple[str, str] | None = None  # (version dir, spec version)
     for vkey, _vnum in sorted(inv_versions.items(), key=lambda x: x[1]):
         vdir = join_path(path, vkey)
@@ -225,12 +140,155 @@ def _validate_object(
         prev_spec = _check_spec_sequence(prev_spec, vkey, vspec, result)
     _check_spec_sequence(prev_spec, "root", _inventory_spec(inv_data), result)
 
-    # 9. Validate content files against manifest
     manifest = object_field(inv_data, "manifest")
-    manifest_paths: set[str] = set()
-    for paths in manifest.values():
-        if isinstance(paths, list):
-            manifest_paths.update(p for p in paths if isinstance(p, str))
+    _check_content_files(fsys, path, manifest, content_dir, inv_versions, result)
+
+    if check_digests:
+        _verify_digests(fsys, path, manifest, alg, result, where="root")
+        fixity = inv_data.get("fixity")
+        if fixity and isinstance(fixity, dict):
+            _verify_fixity_digests(fsys, path, fixity, result, where="root")
+
+
+def split_declarations(
+    entries: list[FsEntry], kind: Literal["root", "object"]
+) -> tuple[list[str], list[Namaste]]:
+    """(names of "0=" entries that are not a `kind` declaration, the `kind`
+    declarations), both in entry order.
+    """
+    decls = [
+        n
+        for entry in entries
+        if (n := Namaste.parse(entry.name)) is not None and n.kind == kind
+    ]
+    parsed_names = {d.filename for d in decls}
+    unparsed = [
+        e.name
+        for e in entries
+        if e.name.startswith("0=") and e.name not in parsed_names
+    ]
+    return unparsed, decls
+
+
+def declaration_mismatch(fsys: FS, path: str, decl: Namaste) -> bool:
+    """True when the declaration file reads with the wrong content; unreadable is
+    not a mismatch.
+    """
+    try:
+        content = fs_utils.read_text(fsys, join_path(path, decl.filename))
+    except OSError:
+        return False
+    return content != decl.content
+
+
+def check_extensions_dir(
+    fsys: FS,
+    path: str,
+    result: FindingCollector,
+    *,
+    known: frozenset[str],
+    not_dir_code: str,
+    unknown_code: str,
+) -> None:
+    try:
+        ext_entries = list(fsys.read_dir(join_path(path, "extensions")))
+    except OSError:
+        return
+    for entry in ext_entries:
+        if not entry.is_dir:
+            result.error(not_dir_code, entry=entry.name)
+        elif entry.name not in known:
+            result.warning(unknown_code, entry=entry.name)
+
+
+def _check_object_declaration(
+    fsys: FS, path: str, entries: list[FsEntry], result: FindingCollector
+) -> Namaste | None:
+    """E006, E003a/E003b/E003c, E007. With several declarations the first is
+    used.
+    """
+    unparsed, decls = split_declarations(entries, "object")
+    for name in unparsed:
+        result.error("E006", filename=name)
+    if not decls:
+        result.error("E003c" if unparsed else "E003a", assumed_version="1.1")
+        return None
+    if len(decls) > 1:
+        result.error(
+            "E003b",
+            files=", ".join(d.filename for d in decls),
+            using_version=str(decls[0].spec),
+        )
+    namaste = decls[0]
+    if declaration_mismatch(fsys, path, namaste):
+        result.error("E007", filename=namaste.filename)
+    return namaste
+
+
+def _load_root_inventory(
+    fsys: FS, path: str, result: FindingCollector, *, lax_digests: bool
+) -> tuple[bytes, JsonObject, Inventory, DigestAlgorithm] | None:
+    """None means stop: E063, E033, E034, or a failed `validate_inventory`. An
+    unparseable digestAlgorithm stops silently; `validate_inventory` already
+    reported E025a.
+    """
+    try:
+        inv_bytes = fs_utils.read_all(fsys, join_path(path, "inventory.json"))
+    except OSError:
+        result.error("E063")
+        return None
+
+    try:
+        inv_data = parse_json(inv_bytes)
+    except (json.JSONDecodeError, ValueError) as e:
+        result.error("E033", where="root", explanation=str(e))
+        return None
+
+    if not isinstance(inv_data, dict):
+        result.error("E034", where="root")
+        return None
+    if isinstance(object_id := inv_data.get("id"), str):
+        result.object_id = object_id
+
+    inv = validate_inventory(inv_data, result, lax_digests=lax_digests, where="root")
+    if inv is None:
+        return None
+
+    try:
+        alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
+    except ValueError:
+        return None
+    return inv_bytes, inv_data, inv, alg
+
+
+def _check_object_root_entries(
+    entries: list[FsEntry], allowed: set[str], result: FindingCollector
+) -> None:
+    for entry in entries:
+        if entry.name in allowed:
+            continue
+        if Namaste.parse(entry.name) is not None:
+            continue
+        if entry.is_dir and VERSION_DIR_RE.match(entry.name):
+            result.error("E046b", dir=entry.name)
+            continue
+        if entry.is_file:
+            result.error("E001a", file=entry.name)
+        elif entry.is_dir:
+            result.error("E001b", dir=entry.name)
+        else:
+            result.error("E001c", entry=entry.name)
+
+
+def _check_content_files(
+    fsys: FileWalker,
+    path: str,
+    manifest: JsonObject,
+    content_dir: str,
+    inv_versions: dict[str, int],
+    result: FindingCollector,
+) -> None:
+    manifest_paths = listed_paths(manifest)
 
     actual_files: set[str] = set()
     prefix_len = len(path) + 1 if path else 0
@@ -250,13 +308,6 @@ def _validate_object(
     missing = manifest_paths - actual_files
     if missing:
         result.error("E092b", where="root", content_path=", ".join(sorted(missing)))
-
-    # 10. If check_digests: verify content file digests
-    if check_digests:
-        _verify_digests(fsys, path, manifest, alg, result, where="root")
-        fixity = inv_data.get("fixity")
-        if fixity and isinstance(fixity, dict):
-            _verify_fixity_digests(fsys, path, fixity, result, where="root")
 
 
 def _validate_version_dir(

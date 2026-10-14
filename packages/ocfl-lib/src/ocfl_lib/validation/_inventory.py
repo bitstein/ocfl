@@ -12,7 +12,8 @@ from ocfl_lib.validation._limits import (
     MAX_OBJECT_ID,
     MAX_PATH,
     MAX_USER_NAME,
-    contains_null,
+    note_limits,
+    note_overlong,
 )
 
 if TYPE_CHECKING:
@@ -30,6 +31,15 @@ _KNOWN_KEYS = frozenset(
         "contentDirectory",
         "fixity",
     }
+)
+
+_REQUIRED_KEYS = (
+    ("id", "E036a"),
+    ("type", "E036b"),
+    ("digestAlgorithm", "E036c"),
+    ("head", "E036d"),
+    ("manifest", "E041a"),
+    ("versions", "E041b"),
 )
 
 _ALLOWED_ALGORITHMS = frozenset({"sha512", "sha256"})
@@ -74,107 +84,43 @@ def _validate_structure(
     lax_digests: bool,
 ) -> bool:
     """Phase 1: raw dict structural validation. Returns False on fatal error."""
-    ok = True
-
-    # Required keys
-    for key, code in [
-        ("id", "E036a"),
-        ("type", "E036b"),
-        ("digestAlgorithm", "E036c"),
-        ("head", "E036d"),
-        ("manifest", "E041a"),
-        ("versions", "E041b"),
-    ]:
-        if key not in data:
-            result.error(code, where=where)
-            ok = False
-
-    if not ok:
-        if "versions" in data and data["versions"] == {}:
+    missing = [code for key, code in _REQUIRED_KEYS if key not in data]
+    for code in missing:
+        result.error(code, where=where)
+    if missing:
+        if data.get("versions") == {}:
             result.error("E008", where=where)
         return False
 
-    # Unknown keys
     for key in data:
         if key not in _KNOWN_KEYS:
             result.error("E102", where=where, key=key)
 
-    # id validation
-    id_val = data["id"]
-    if not isinstance(id_val, str) or not id_val:
-        result.error("E037a", where=where)
-    else:
-        if contains_null(id_val):
-            result.info("L001", where=where, field="id")
-        if len(id_val) > MAX_OBJECT_ID:
-            result.info(
-                "L002",
-                where=where,
-                field="id",
-                limit=MAX_OBJECT_ID,
-                actual=len(id_val),
-            )
-        if not _URI_RE.match(id_val):
-            result.warning("W005", where=where, id=id_val)
-
-    # type validation
-    type_val = data["type"]
-    if not isinstance(type_val, str):
-        result.error("E038d", where=where)
-    else:
-        m = _TYPE_RE.match(type_val)
-        if not m:
-            result.error("E038b", where=where, got=type_val, assumed_spec_version="1.1")
-        else:
-            ver = m.group(1)
-            if ver not in Spec:
-                result.error(
-                    "E038c", where=where, got=type_val, assumed_spec_version="1.1"
-                )
-
-    # digestAlgorithm validation
-    alg = data["digestAlgorithm"]
-    if not isinstance(alg, str) or alg not in _ALLOWED_ALGORITHMS:
-        result.error("E025a", where=where, digest_algorithm=str(alg))
-    elif alg == "sha256":
-        result.warning("W004", where=where)
-
-    # contentDirectory validation
+    _check_id(data["id"], result, where=where)
+    _check_type(data["type"], result, where=where)
+    _check_digest_algorithm(data["digestAlgorithm"], result, where=where)
     if "contentDirectory" in data:
-        cd = data["contentDirectory"]
-        if not isinstance(cd, str) or "/" in cd:
-            result.error("E017", where=where)
-        elif cd in (".", ".."):
-            result.error("E018", where=where)
+        _check_content_directory(data["contentDirectory"], result, where=where)
 
-    # manifest must be object
     manifest = data["manifest"]
     if not isinstance(manifest, dict):
         result.error("E041c", where=where)
         return False
-
-    # versions must be object
     if not isinstance(data["versions"], dict):
         result.error("E044", where=where)
         return False
 
-    # manifest validation
     alg_name = data["digestAlgorithm"]
-    content_dir = data.get("contentDirectory", "content")
     if isinstance(alg_name, str) and alg_name in _ALLOWED_ALGORITHMS:
         _validate_manifest(
             manifest,
             result,
             where=where,
             alg_name=alg_name,
-            content_dir=content_dir,
+            content_dir=data.get("contentDirectory", "content"),
             lax_digests=lax_digests,
         )
-
-    # versions validation
     _validate_versions(data, result, where=where)
-
-    # fixity validation
     if "fixity" in data:
         _validate_fixity(
             data["fixity"],
@@ -183,8 +129,45 @@ def _validate_structure(
             where=where,
             lax_digests=lax_digests,
         )
-
     return True
+
+
+def _check_id(id_val: JsonValue, result: FindingCollector, *, where: str) -> None:
+    if not isinstance(id_val, str) or not id_val:
+        result.error("E037a", where=where)
+        return
+    note_limits(result, id_val, where=where, field="id", limit=MAX_OBJECT_ID)
+    if not _URI_RE.match(id_val):
+        result.warning("W005", where=where, id=id_val)
+
+
+def _check_type(type_val: JsonValue, result: FindingCollector, *, where: str) -> None:
+    if not isinstance(type_val, str):
+        result.error("E038d", where=where)
+        return
+    m = _TYPE_RE.match(type_val)
+    if not m:
+        result.error("E038b", where=where, got=type_val, assumed_spec_version="1.1")
+    elif m.group(1) not in Spec:
+        result.error("E038c", where=where, got=type_val, assumed_spec_version="1.1")
+
+
+def _check_digest_algorithm(
+    alg: JsonValue, result: FindingCollector, *, where: str
+) -> None:
+    if not isinstance(alg, str) or alg not in _ALLOWED_ALGORITHMS:
+        result.error("E025a", where=where, digest_algorithm=str(alg))
+    elif alg == "sha256":
+        result.warning("W004", where=where)
+
+
+def _check_content_directory(
+    cd: JsonValue, result: FindingCollector, *, where: str
+) -> None:
+    if not isinstance(cd, str) or "/" in cd:
+        result.error("E017", where=where)
+    elif cd in (".", ".."):
+        result.error("E018", where=where)
 
 
 def _validate_manifest(
@@ -223,26 +206,13 @@ def _validate_manifest(
                 result.error("E091", where=where, digest=digest)
                 continue
 
-            # Null byte + length sanity checks (non-spec, info only)
-            if contains_null(path):
-                result.info("L001", where=where, field="manifest path")
-            if len(path) > MAX_PATH:
-                result.info(
-                    "L002",
-                    where=where,
-                    field="manifest path",
-                    limit=MAX_PATH,
-                    actual=len(path),
-                )
-
-            # Path segment validation
-            if path.startswith("/") or path.endswith("/"):
-                result.error("E100", where=where, path=path)
-                continue
-
-            segments = path.split("/")
-            if any(s in ("", ".", "..") for s in segments):
-                result.error("E099", where=where, path=path)
+            note_limits(
+                result, path, where=where, field="manifest path", limit=MAX_PATH
+            )
+            segments = _path_segments(
+                result, path, slash_code="E100", segment_code="E099", where=where
+            )
+            if segments is None:
                 continue
 
             if len(segments) < 3:
@@ -360,13 +330,13 @@ def _validate_versions(
             result.warning("W007a", where=where, version=vkey)
         elif not isinstance(vblock["message"], str):
             result.error("E094", where=where, version=vkey)
-        elif len(vblock["message"]) > MAX_MESSAGE:
-            result.info(
-                "L002",
+        else:
+            note_overlong(
+                result,
+                vblock["message"],
                 where=where,
                 field=f"{vkey} message",
                 limit=MAX_MESSAGE,
-                actual=len(vblock["message"]),
             )
 
         if "user" not in vblock:
@@ -448,27 +418,16 @@ def _validate_version_state(
             if not isinstance(path, str):
                 continue
 
-            # Null byte + length sanity checks (non-spec, info only)
-            if contains_null(path):
-                result.info("L001", where=where, field="logical path")
-            if len(path) > MAX_PATH:
-                result.info(
-                    "L002",
-                    where=where,
-                    field="logical path",
-                    limit=MAX_PATH,
-                    actual=len(path),
-                )
-
-            # Check for leading/trailing slash
-            if path.startswith("/") or path.endswith("/"):
-                result.error("E053", where=where, version=version, path=path)
-                continue
-
-            # Check for ., .., empty segments
-            segments = path.split("/")
-            if any(s in ("", ".", "..") for s in segments):
-                result.error("E052", where=where, version=version, path=path)
+            note_limits(result, path, where=where, field="logical path", limit=MAX_PATH)
+            segments = _path_segments(
+                result,
+                path,
+                slash_code="E053",
+                segment_code="E052",
+                where=where,
+                version=version,
+            )
+            if segments is None:
                 continue
 
             all_logical_paths.append(path)
@@ -495,6 +454,45 @@ def _path_prefix_conflicts(paths: set[str]) -> list[str]:
     return sorted(conflicts)
 
 
+def _path_segments(
+    result: FindingCollector,
+    path: str,
+    *,
+    slash_code: str,
+    segment_code: str,
+    **params: object,
+) -> list[str] | None:
+    """`path` split on "/", or None after reporting `slash_code` for a leading or
+    trailing slash, else `segment_code` for an empty, "." or ".." segment.
+    """
+    if path.startswith("/") or path.endswith("/"):
+        result.error(slash_code, **params, path=path)
+        return None
+    segments = path.split("/")
+    if any(s in ("", ".", "..") for s in segments):
+        result.error(segment_code, **params, path=path)
+        return None
+    return segments
+
+
+def listed_paths(digest_map: JsonObject) -> set[str]:
+    paths: set[str] = set()
+    for listed in digest_map.values():
+        if isinstance(listed, list):
+            paths.update(p for p in listed if isinstance(p, str))
+    return paths
+
+
+def _digest_by_path(digest_map: JsonObject) -> dict[str, str]:
+    digest_of: dict[str, str] = {}
+    for digest, listed in digest_map.items():
+        if isinstance(listed, list):
+            for p in listed:
+                if isinstance(p, str):
+                    digest_of[p] = str(digest)
+    return digest_of
+
+
 def _validate_user(
     user: JsonValue,
     result: FindingCollector,
@@ -509,13 +507,13 @@ def _validate_user(
     name = user.get("name")
     if not isinstance(name, str):
         result.error("E054b", where=where, version=version)
-    elif len(name) > MAX_USER_NAME:
-        result.info(
-            "L002",
+    else:
+        note_overlong(
+            result,
+            name,
             where=where,
             field=f"{version} user name",
             limit=MAX_USER_NAME,
-            actual=len(name),
         )
 
     if "address" not in user:
@@ -539,10 +537,7 @@ def _validate_fixity(
         result.error("E056a", where=where)
         return
 
-    manifest_paths: set[str] = set()
-    for paths in manifest.values():
-        if isinstance(paths, list):
-            manifest_paths.update(p for p in paths if isinstance(p, str))
+    manifest_paths = listed_paths(manifest)
 
     for alg_name, digest_map in fixity.items():
         try:
@@ -576,13 +571,16 @@ def _validate_fixity(
                 if not isinstance(path, str):
                     continue
 
-                if path.startswith("/") or path.endswith("/"):
-                    result.error("E100", where=where, path=path)
-                    continue
-
-                segments = path.split("/")
-                if any(s in ("", ".", "..") for s in segments):
-                    result.error("E099", where=where, path=path)
+                if (
+                    _path_segments(
+                        result,
+                        path,
+                        slash_code="E100",
+                        segment_code="E099",
+                        where=where,
+                    )
+                    is None
+                ):
                     continue
 
                 if path not in manifest_paths:
@@ -603,121 +601,111 @@ def validate_inventory_against_prior(
     where: str = "root",
 ) -> None:
     """Validate current inventory against a prior version's inventory."""
-    # ID must not change
     cur_id = current.get("id", "")
     pri_id = prior.get("id", "")
     if cur_id != pri_id:
         result.error("E037b", where=where, root_id=str(cur_id), version_id=str(pri_id))
 
-    # Prior versions must be subset of current
     cur_versions = current.get("versions", {})
     pri_versions = prior.get("versions", {})
-
     if not isinstance(cur_versions, dict) or not isinstance(pri_versions, dict):
         return
 
-    prior_head = prior.get("head", "")
+    prior_head = str(prior.get("head", ""))
+    if any(vkey not in cur_versions for vkey in pri_versions):
+        result.error("E066a", prior_head=prior_head, where=where)
+        return
 
-    for vkey in pri_versions:
-        if vkey not in cur_versions:
-            result.error("E066a", prior_head=str(prior_head), where=where)
-            return
+    _check_prior_manifest_covers(current, prior, pri_versions, result, where=where)
 
-    # E023b: prior manifest must include all content paths under its version scope
+    same_alg = current.get("digestAlgorithm") == prior.get("digestAlgorithm")
+    for vkey, prior_block in pri_versions.items():
+        _check_shared_version(
+            prior_block,
+            cur_versions[vkey],
+            result,
+            version=vkey,
+            prior_head=prior_head,
+            where=where,
+            compare_digests=same_alg,
+        )
+
+
+def _check_prior_manifest_covers(
+    current: JsonObject,
+    prior: JsonObject,
+    prior_versions: JsonObject,
+    result: FindingCollector,
+    *,
+    where: str,
+) -> None:
+    """E023b: current content paths under a prior version must be in its manifest."""
     cur_manifest = current.get("manifest", {})
     pri_manifest = prior.get("manifest", {})
-    if isinstance(cur_manifest, dict) and isinstance(pri_manifest, dict):
-        cur_content: set[str] = set()
-        for paths in cur_manifest.values():
-            if isinstance(paths, list):
-                cur_content.update(p for p in paths if isinstance(p, str))
-        pri_content: set[str] = set()
-        for paths in pri_manifest.values():
-            if isinstance(paths, list):
-                pri_content.update(p for p in paths if isinstance(p, str))
-        pri_prefixes = [vkey + "/" for vkey in pri_versions]
-        missing = {
-            p
-            for p in cur_content
-            if any(p.startswith(pfx) for pfx in pri_prefixes) and p not in pri_content
-        }
-        if missing:
+    if not isinstance(cur_manifest, dict) or not isinstance(pri_manifest, dict):
+        return
+    pri_content = listed_paths(pri_manifest)
+    pri_prefixes = tuple(vkey + "/" for vkey in prior_versions)
+    missing = {
+        p
+        for p in listed_paths(cur_manifest)
+        if p.startswith(pri_prefixes) and p not in pri_content
+    }
+    if missing:
+        result.error("E023b", where=where, missing_filepaths=", ".join(sorted(missing)))
+
+
+def _check_shared_version(
+    prior_block: JsonValue,
+    current_block: JsonValue,
+    result: FindingCollector,
+    *,
+    version: str,
+    prior_head: str,
+    where: str,
+    compare_digests: bool,
+) -> None:
+    pri_state = prior_block.get("state", {}) if isinstance(prior_block, dict) else {}
+    cur_state = (
+        current_block.get("state", {}) if isinstance(current_block, dict) else {}
+    )
+    if not isinstance(pri_state, dict) or not isinstance(cur_state, dict):
+        return
+
+    pri_digest_of = _digest_by_path(pri_state)
+    cur_digest_of = _digest_by_path(cur_state)
+    only_in_prior = pri_digest_of.keys() - cur_digest_of.keys()
+    only_in_current = cur_digest_of.keys() - pri_digest_of.keys()
+    if only_in_prior:
+        result.error(
+            "E066b",
+            prior_head=prior_head,
+            version=version,
+            where=where,
+            logical_paths=", ".join(sorted(only_in_prior)),
+            only_in=prior_head,
+        )
+    if only_in_current:
+        result.error(
+            "E066b",
+            prior_head=prior_head,
+            version=version,
+            where=where,
+            logical_paths=", ".join(sorted(only_in_current)),
+            only_in=where,
+        )
+
+    if not compare_digests:
+        return
+    for lpath, pd in pri_digest_of.items():
+        cd = cur_digest_of.get(lpath)
+        if cd is not None and pd.lower() != cd.lower():
             result.error(
-                "E023b", where=where, missing_filepaths=", ".join(sorted(missing))
-            )
-
-    # For shared versions: state must match
-    for vkey in pri_versions:
-        if vkey not in cur_versions:
-            continue
-
-        pri, cur = pri_versions[vkey], cur_versions[vkey]
-        pri_state = pri.get("state", {}) if isinstance(pri, dict) else {}
-        cur_state = cur.get("state", {}) if isinstance(cur, dict) else {}
-
-        if not isinstance(pri_state, dict) or not isinstance(cur_state, dict):
-            continue
-
-        # Compare logical paths per digest
-        pri_paths: set[str] = set()
-        cur_paths: set[str] = set()
-        for paths in pri_state.values():
-            if isinstance(paths, list):
-                pri_paths.update(p for p in paths if isinstance(p, str))
-        for paths in cur_state.values():
-            if isinstance(paths, list):
-                cur_paths.update(p for p in paths if isinstance(p, str))
-
-        only_in_prior = pri_paths - cur_paths
-        only_in_current = cur_paths - pri_paths
-
-        if only_in_prior:
-            result.error(
-                "E066b",
-                prior_head=str(prior_head),
-                version=vkey,
+                "E066c",
+                prior_head=prior_head,
+                version=version,
+                logical_path=lpath,
+                prior_content=pd,
                 where=where,
-                logical_paths=", ".join(sorted(only_in_prior)),
-                only_in=str(prior_head),
+                current_content=cd,
             )
-        if only_in_current:
-            result.error(
-                "E066b",
-                prior_head=str(prior_head),
-                version=vkey,
-                where=where,
-                logical_paths=", ".join(sorted(only_in_current)),
-                only_in=where,
-            )
-
-        # E066c: same logical path must map to same digest (skip if alg differs)
-        same_alg = current.get("digestAlgorithm") == prior.get("digestAlgorithm")
-        if not same_alg:
-            continue
-        pri_path_dig: dict[str, str] = {}
-        for digest, paths in pri_state.items():
-            if isinstance(paths, list):
-                for p in paths:
-                    if isinstance(p, str):
-                        pri_path_dig[p] = str(digest)
-        cur_path_dig: dict[str, str] = {}
-        for digest, paths in cur_state.items():
-            if isinstance(paths, list):
-                for p in paths:
-                    if isinstance(p, str):
-                        cur_path_dig[p] = str(digest)
-
-        for lpath in pri_path_dig:
-            if lpath in cur_path_dig:
-                pd = pri_path_dig[lpath]
-                cd = cur_path_dig[lpath]
-                if pd.lower() != cd.lower():
-                    result.error(
-                        "E066c",
-                        prior_head=str(prior_head),
-                        version=vkey,
-                        logical_path=lpath,
-                        prior_content=pd,
-                        where=where,
-                        current_content=cd,
-                    )

@@ -8,7 +8,12 @@ Also declares filesystem-safety bounds beyond spec: ``validate_path_component``
 defensively rejects object-id components that would be unsafe on disk.
 """
 
+from typing import TYPE_CHECKING
+
 from ocfl_lib._errors import InvalidPath
+
+if TYPE_CHECKING:
+    from ocfl_lib.validation._report import FindingCollector
 
 MAX_OBJECT_ID = 1024
 MAX_PATH = 4096
@@ -16,8 +21,20 @@ MAX_MESSAGE = 65536
 MAX_USER_NAME = 1024
 
 
-def contains_null(s: str) -> bool:
-    return "\x00" in s
+def note_limits(
+    result: FindingCollector, value: str, *, where: str, field: str, limit: int
+) -> None:
+    """L001 if `value` holds a null byte, then L002 if it is longer than `limit`."""
+    if "\x00" in value:
+        result.info("L001", where=where, field=field)
+    note_overlong(result, value, where=where, field=field, limit=limit)
+
+
+def note_overlong(
+    result: FindingCollector, value: str, *, where: str, field: str, limit: int
+) -> None:
+    if len(value) > limit:
+        result.info("L002", where=where, field=field, limit=limit, actual=len(value))
 
 
 def validate_path_component(s: str, *, what: str = "object id") -> None:
