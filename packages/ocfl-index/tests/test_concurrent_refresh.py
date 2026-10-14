@@ -26,7 +26,10 @@ def test_second_refresh_raises_busy_error(
         try:
             with (
                 caplog.at_level(logging.WARNING, logger=_SCANNER_LOGGER),
-                pytest.raises(RefreshInProgress),
+                pytest.raises(
+                    RefreshInProgress,
+                    match=r"^another refresh is holding the write lock$",
+                ),
             ):
                 idx.refresh()
         finally:

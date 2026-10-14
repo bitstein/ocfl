@@ -432,63 +432,56 @@ def scan(
     walked: set[str] = set()
     size_cache: dict[str, int] = {}
     start = time.perf_counter()
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-    except sqlite3.OperationalError as err:
-        if db.is_lock_error(err):
-            raise RefreshInProgress(
-                "another refresh is holding the write lock"
-            ) from err
-        raise
     current_relpath: str | None = None
-    current_phase = "object walk"
+    current_phase = "write lock"
     try:
-        if full:
-            current_phase = "cache reset"
-            db.reset_cache(conn)
-        current_phase = "blob digest load"
-        blob_seen = _existing_blob_digests(conn)
-        current_phase = "object walk"
-        for relpath in storage_root.object_paths(strict=True):
-            current_relpath = relpath
-            _scan_object(
-                conn,
-                fs,
-                relpath,
-                counters,
-                walked=walked,
-                blob_seen=blob_seen,
-                size_cache=size_cache,
-            )
-        current_relpath = None
-        current_phase = "purge sweep"
-        counters.objects_purged = sweep_objects(conn, walked)
-        current_phase = "media type sniff"
-        sniff_pass(conn, fs)
-        current_phase = "metadata update"
-        now = db.now_iso()
-        db.meta_set(conn, "last_scan_at", now)
-        if full:
-            db.meta_set(conn, "last_full_scan_at", now)
-        # Under autocommit=True, Connection.commit/rollback are no-ops, so the
-        # explicit refresh tx is driven with raw SQL.
-        conn.execute("COMMIT")
-    except BaseException as exc:
-        if isinstance(exc, Exception):
-            failure_at = (
-                f"{current_phase} at {current_relpath}"
-                if current_relpath is not None
-                else current_phase
-            )
-            _log.warning(
-                "scan failed during %s: %s; rolled back refresh transaction",
-                failure_at,
-                exc,
-                extra={"phase": current_phase, "relpath": current_relpath},
-                exc_info=True,
-            )
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
+        with db.immediate_transaction(conn) as tx:
+            if full:
+                current_phase = "cache reset"
+                db.reset_cache(tx)
+            current_phase = "blob digest load"
+            blob_seen = _existing_blob_digests(tx)
+            current_phase = "object walk"
+            for relpath in storage_root.object_paths(strict=True):
+                current_relpath = relpath
+                _scan_object(
+                    tx,
+                    fs,
+                    relpath,
+                    counters,
+                    walked=walked,
+                    blob_seen=blob_seen,
+                    size_cache=size_cache,
+                )
+            current_relpath = None
+            current_phase = "purge sweep"
+            counters.objects_purged = sweep_objects(tx, walked)
+            current_phase = "media type sniff"
+            sniff_pass(tx, fs)
+            current_phase = "metadata update"
+            now = db.now_iso()
+            db.meta_set(tx, "last_scan_at", now)
+            if full:
+                db.meta_set(tx, "last_full_scan_at", now)
+    except Exception as exc:
+        if current_phase == "write lock":
+            if isinstance(exc, sqlite3.OperationalError) and db.is_lock_error(exc):
+                raise RefreshInProgress(
+                    "another refresh is holding the write lock"
+                ) from exc
+            raise
+        failure_at = (
+            f"{current_phase} at {current_relpath}"
+            if current_relpath is not None
+            else current_phase
+        )
+        _log.warning(
+            "scan failed during %s: %s; rolled back refresh transaction",
+            failure_at,
+            exc,
+            extra={"phase": current_phase, "relpath": current_relpath},
+            exc_info=True,
+        )
         raise
     elapsed = time.perf_counter() - start
     return ScanReport(**vars(counters), elapsed_seconds=elapsed)
