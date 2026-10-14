@@ -61,10 +61,35 @@ def inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
     runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
 
 
-def grow_chain_to(rpc: FakeBitcoinRPC, height: int) -> None:
+def _grow_chain_to(rpc: FakeBitcoinRPC, height: int) -> None:
     needed = height - rpc.tip_height
     if needed > 0:
         rpc.extend(needed)
+
+
+def bury(
+    rpc: FakeBitcoinRPC, confs: int = MIN_CONFS, height: int = DIGEST_BLOCK_HEIGHT
+) -> None:
+    _grow_chain_to(rpc, height + confs - 1)
+
+
+def end_chain_below(
+    rpc: FakeBitcoinRPC, blocks: int, height: int = DIGEST_BLOCK_HEIGHT
+) -> None:
+    _grow_chain_to(rpc, height - blocks)
+
+
+def replace_attested_block(
+    rpc: FakeBitcoinRPC, *, confs: int, height: int = DIGEST_BLOCK_HEIGHT
+) -> None:
+    rpc.reorg_at(height)
+    bury(rpc, confs, height)
+
+
+def register_mismatched_merkle_root(
+    rpc: FakeBitcoinRPC, height: int = DIGEST_BLOCK_HEIGHT
+) -> None:
+    rpc.register_merkle_root(height, "00" * 32)
 
 
 def register_attested(
@@ -202,7 +227,7 @@ def setup_at_inventory_upgraded(
     )
     ots_bytes = ots_for(inv_digest)
     seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-    grow_chain_to(btc_rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+    bury(btc_rpc)
     register_attested(btc_rpc, inv_digest)
 
     r = runner.invoke(

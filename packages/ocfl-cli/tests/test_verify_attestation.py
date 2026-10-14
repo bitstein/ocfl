@@ -2,7 +2,13 @@ import hashlib
 
 import pytest
 from fakes import FakeBitcoinRPC
-from ots_helpers import MIN_CONFS, grow_chain_to
+from ots_helpers import (
+    DIGEST_BLOCK_HEIGHT,
+    MIN_CONFS,
+    bury,
+    end_chain_below,
+    register_mismatched_merkle_root,
+)
 
 from ocfl_cli.errors import (
     AttestationMismatchError,
@@ -18,7 +24,6 @@ from ocfl_lib import BitcoinNoBlockError
 from tests.helpers.ots import build_attestation, build_committed_attestation
 
 DIGEST = hashlib.sha256(b"file-bytes").digest()
-HEIGHT = 800_000
 # bitcoind's RPC returns ``merkleroot`` in display (reversed) hex; the OTS
 # attested digest is the raw block-header field in internal byte order. Tests
 # register display hex to mirror real bitcoind output.
@@ -29,25 +34,25 @@ class TestSuccess:
     def test_returns_verified_attestation_when_merkle_matches_and_deep(
         self,
     ) -> None:
-        ots = build_attestation(DIGEST, block_height=HEIGHT)
+        ots = build_attestation(DIGEST, block_height=DIGEST_BLOCK_HEIGHT)
         rpc = FakeBitcoinRPC()
-        grow_chain_to(rpc, HEIGHT + MIN_CONFS)
-        rpc.register_merkle_root(HEIGHT, DIGEST_DISPLAY_HEX)
+        bury(rpc)
+        rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, DIGEST_DISPLAY_HEX)
 
         result = verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
 
         assert isinstance(result, VerifiedAttestation)
-        assert result.block_height == HEIGHT
-        assert result.block_hash == rpc.getblockhash(HEIGHT)
+        assert result.block_height == DIGEST_BLOCK_HEIGHT
+        assert result.block_hash == rpc.getblockhash(DIGEST_BLOCK_HEIGHT)
         assert result.confirmations >= MIN_CONFS
 
 
 class TestMismatch:
     def test_wrong_block_merkle_root_raises_attestation_mismatch(self) -> None:
-        ots = build_attestation(DIGEST, block_height=HEIGHT)
+        ots = build_attestation(DIGEST, block_height=DIGEST_BLOCK_HEIGHT)
         rpc = FakeBitcoinRPC()
-        grow_chain_to(rpc, HEIGHT + MIN_CONFS)
-        rpc.register_merkle_root(HEIGHT, "00" * 32)
+        bury(rpc)
+        register_mismatched_merkle_root(rpc)
 
         with pytest.raises(AttestationMismatchError):
             verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
@@ -55,10 +60,10 @@ class TestMismatch:
     def test_commitment_digest_mismatch_raises_attestation_mismatch(
         self,
     ) -> None:
-        ots = build_attestation(DIGEST, block_height=HEIGHT)
+        ots = build_attestation(DIGEST, block_height=DIGEST_BLOCK_HEIGHT)
         rpc = FakeBitcoinRPC()
-        grow_chain_to(rpc, HEIGHT + MIN_CONFS)
-        rpc.register_merkle_root(HEIGHT, DIGEST_DISPLAY_HEX)
+        bury(rpc)
+        rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, DIGEST_DISPLAY_HEX)
 
         wrong_expected = hashlib.sha256(b"some other bytes").digest()
         assert wrong_expected != DIGEST
@@ -76,10 +81,10 @@ class TestConfirmationsBeforeMerkle:
         shallow fork/reorg), not a HALT-worthy AttestationMismatchError. Only a
         mismatch at trusted depth is a genuine, alarm-worthy divergence.
         """
-        ots = build_attestation(DIGEST, block_height=HEIGHT)
+        ots = build_attestation(DIGEST, block_height=DIGEST_BLOCK_HEIGHT)
         rpc = FakeBitcoinRPC()
-        grow_chain_to(rpc, HEIGHT)  # tip == HEIGHT -> 1 confirmation (< MIN_CONFS)
-        rpc.register_merkle_root(HEIGHT, "00" * 32)
+        bury(rpc, 1)
+        register_mismatched_merkle_root(rpc)
 
         result = verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
 
@@ -97,23 +102,27 @@ class TestAttestedDistinctFromCommitment:
     """
 
     def test_chain_merkle_matching_attested_verifies(self) -> None:
-        ots, attested = build_committed_attestation(DIGEST, block_height=HEIGHT)
+        ots, attested = build_committed_attestation(
+            DIGEST, block_height=DIGEST_BLOCK_HEIGHT
+        )
         assert attested != DIGEST
         rpc = FakeBitcoinRPC()
-        grow_chain_to(rpc, HEIGHT + MIN_CONFS)
-        rpc.register_merkle_root(HEIGHT, attested[::-1].hex())
+        bury(rpc)
+        rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, attested[::-1].hex())
 
         result = verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
 
         assert isinstance(result, VerifiedAttestation)
-        assert result.block_height == HEIGHT
+        assert result.block_height == DIGEST_BLOCK_HEIGHT
 
     def test_chain_merkle_matching_commitment_not_attested_raises(self) -> None:
-        ots, attested = build_committed_attestation(DIGEST, block_height=HEIGHT)
+        ots, attested = build_committed_attestation(
+            DIGEST, block_height=DIGEST_BLOCK_HEIGHT
+        )
         assert attested != DIGEST
         rpc = FakeBitcoinRPC()
-        grow_chain_to(rpc, HEIGHT + MIN_CONFS)
-        rpc.register_merkle_root(HEIGHT, DIGEST_DISPLAY_HEX)
+        bury(rpc)
+        rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, DIGEST_DISPLAY_HEX)
 
         with pytest.raises(AttestationMismatchError):
             verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
@@ -123,7 +132,7 @@ class TestPending:
     def test_pending_attestation_only_returns_pending(self) -> None:
         ots = build_attestation(DIGEST, pending_uri="https://a.pool.opentimestamps.org")
         rpc = FakeBitcoinRPC()
-        grow_chain_to(rpc, HEIGHT + MIN_CONFS)
+        bury(rpc)
 
         result = verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
 
@@ -131,10 +140,10 @@ class TestPending:
         assert result.reason == "pending_attestation"
 
     def test_insufficient_confirmations_returns_pending(self) -> None:
-        ots = build_attestation(DIGEST, block_height=HEIGHT)
+        ots = build_attestation(DIGEST, block_height=DIGEST_BLOCK_HEIGHT)
         rpc = FakeBitcoinRPC()
-        grow_chain_to(rpc, HEIGHT)  # tip == HEIGHT → 1 confirmation
-        rpc.register_merkle_root(HEIGHT, DIGEST_DISPLAY_HEX)
+        bury(rpc, 1)
+        rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, DIGEST_DISPLAY_HEX)
 
         result = verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
 
@@ -142,9 +151,9 @@ class TestPending:
         assert result.reason == "insufficient_confirmations"
 
     def test_block_missing_within_reorg_window_returns_pending(self) -> None:
-        ots = build_attestation(DIGEST, block_height=HEIGHT)
+        ots = build_attestation(DIGEST, block_height=DIGEST_BLOCK_HEIGHT)
         rpc = FakeBitcoinRPC()
-        grow_chain_to(rpc, HEIGHT - 1)
+        end_chain_below(rpc, 1)
 
         result = verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
 
@@ -158,9 +167,9 @@ class TestPending:
             def getblockhash(self, height: int) -> str:
                 raise BitcoinNoBlockError(f"height {height} out of range")
 
-        ots = build_attestation(DIGEST, block_height=HEIGHT)
+        ots = build_attestation(DIGEST, block_height=DIGEST_BLOCK_HEIGHT)
         rpc = MissingBlockRPC()
-        grow_chain_to(rpc, HEIGHT - 1)
+        end_chain_below(rpc, 1)
 
         result = verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
 
@@ -170,9 +179,9 @@ class TestPending:
 
 class TestReorg:
     def test_chain_far_behind_attestation_raises_reorg_detected(self) -> None:
-        ots = build_attestation(DIGEST, block_height=HEIGHT)
+        ots = build_attestation(DIGEST, block_height=DIGEST_BLOCK_HEIGHT)
         rpc = FakeBitcoinRPC()
-        grow_chain_to(rpc, HEIGHT - MIN_CONFS - 10)
+        end_chain_below(rpc, MIN_CONFS + 10)
 
         with pytest.raises(ReorgDetectedError):
             verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)

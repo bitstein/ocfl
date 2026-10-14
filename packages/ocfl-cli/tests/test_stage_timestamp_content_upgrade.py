@@ -11,12 +11,15 @@ from ots_helpers import (
     DIGEST_BLOCK_HEIGHT,
     MIN_CONFS,
     SP_OK,
-    grow_chain_to,
+    bury,
+    end_chain_below,
     inject_fake_btc,
     inject_fake_sp,
     new_ots_staging,
     ots_for,
     register_attested,
+    register_mismatched_merkle_root,
+    replace_attested_block,
     write_config,
 )
 from runner_helpers import stage_args
@@ -452,8 +455,8 @@ class TestMidflightProgressSnapshots:
         cache_file = ots_cache_path(sd, digest)
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         cache_file.write_bytes(ots_for(digest))
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        btc_fake.rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, "00" * 32)
+        bury(btc_fake.rpc)
+        register_mismatched_merkle_root(btc_fake.rpc)
         state = load_ots(sd)
         state = replace(
             state,
@@ -543,7 +546,7 @@ class TestMidflightProgressSnapshots:
             ),
         )
         save_ots(sd, state)
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, digest)
 
         downloads = sp_fake.download_results(f"results://{job_id}", {digest})
@@ -586,8 +589,7 @@ class TestUpgradeHappyPath:
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
-        # Tip exactly N confirmations deep past attested height.
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(
@@ -661,7 +663,7 @@ class TestUpgradeHappyPath:
         ots_b = _ots_pending(db)
         _seed_completed_verify_job(sp_fake, sd, (da, db), {da: ots_a, db: ots_b})
 
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, da)
 
         r = runner.invoke(
@@ -694,12 +696,12 @@ class TestUpgradeHappyPath:
 
 class TestThreeConfGate:
     @pytest.mark.parametrize(
-        ("confs_to_grow", "expect_advance"),
+        ("confs", "expect_advance"),
         [
-            (1, False),  # 1 confirmation: held
-            (2, False),  # 2 confirmations: held
-            (3, True),  # 3 confirmations: verifies + advances
-            (4, True),  # deeper than gate: still verifies
+            (MIN_CONFS - 2, False),
+            (MIN_CONFS - 1, False),
+            (MIN_CONFS, True),
+            (MIN_CONFS + 1, True),
         ],
     )
     def test_advance_only_at_or_above_min_confirmations(
@@ -710,7 +712,7 @@ class TestThreeConfGate:
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        confs_to_grow: int,
+        confs: int,
         expect_advance: bool,
     ) -> None:
         write_config(tmp_path, monkeypatch)
@@ -731,8 +733,7 @@ class TestThreeConfGate:
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
-        # confirmations_at_height = tip - height + 1.
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + confs_to_grow - 1)
+        bury(btc_fake.rpc, confs)
         register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(
@@ -787,7 +788,7 @@ class TestPendingHeld:
 
         pending_bytes = _ots_pending(d)
         job_id = _seed_completed_verify_job(sp_fake, sd, (d,), {d: pending_bytes})
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
 
         r = runner.invoke(
             app,
@@ -864,7 +865,7 @@ class TestReorgShallow:
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(
@@ -881,11 +882,7 @@ class TestReorgShallow:
         assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).proofs[d].verified is True
 
-        # Reorg the attested height: block_hash changes, height still in chain
-        # (within N). The cached .ots's embedded merkle path is now stale.
-        btc_fake.rpc.reorg_at(DIGEST_BLOCK_HEIGHT)
-        # Chain now ends at the attested height: confs == 1 < MIN_CONFS, so
-        # re-verify returns insufficient-confirmations and resets the proof.
+        replace_attested_block(btc_fake.rpc, confs=1)
 
         r = runner.invoke(
             app,
@@ -932,8 +929,7 @@ class TestReorgDeep:
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
-        # Tip well behind attested height (more than MIN_CONFS short).
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT - MIN_CONFS - 5)
+        end_chain_below(btc_fake.rpc, MIN_CONFS + 5)
 
         r = runner.invoke(
             app,
@@ -979,9 +975,8 @@ class TestMerkleMismatch:
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        # Register a WRONG merkle root at the attested height.
-        btc_fake.rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, "00" * 32)
+        bury(btc_fake.rpc)
+        register_mismatched_merkle_root(btc_fake.rpc)
 
         r = runner.invoke(
             app,
@@ -1040,7 +1035,7 @@ class TestReorgMerkleMismatch:
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(
@@ -1057,12 +1052,7 @@ class TestReorgMerkleMismatch:
         assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).proofs[d].verified is True
 
-        # Reorg the attested height to different content, then re-bury it to
-        # MIN_CONFS. The replacement block reports a deterministic non-stale
-        # merkle root, so re-verify hits a genuine merkle mismatch at
-        # sufficient confirmations.
-        btc_fake.rpc.reorg_at(DIGEST_BLOCK_HEIGHT)
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        replace_attested_block(btc_fake.rpc, confs=MIN_CONFS)
 
         r = runner.invoke(
             app,
@@ -1166,8 +1156,8 @@ class TestConfirmationsBeforeMerkleCli:
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT)
-        btc_fake.rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, "00" * 32)
+        bury(btc_fake.rpc, 1)
+        register_mismatched_merkle_root(btc_fake.rpc)
 
         r = runner.invoke(
             app,
@@ -1186,7 +1176,7 @@ class TestConfirmationsBeforeMerkleCli:
         assert state.phase is Phase.CONTENT_PENDING
         assert state.proofs[d].verified is False
 
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         r = runner.invoke(
             app,
             stage_args(
@@ -1247,7 +1237,7 @@ class TestCrashRecovery:
 
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
 
         _install_crash_fault(monkeypatch, fault_at, sd, d)
@@ -1403,7 +1393,7 @@ class TestOrphanGuard:
 
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
 
         new_src = tmp_path / "b.txt"
@@ -1468,7 +1458,7 @@ class TestPhaseAdvanceInvariant:
 
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(
@@ -1511,7 +1501,7 @@ class TestPhaseAdvanceInvariant:
         _force_content_pending(sd, (d,))
 
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_for(d)})
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT)  # 1 conf only
+        bury(btc_fake.rpc, 1)
         register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(
@@ -1559,7 +1549,7 @@ class TestPhaseAdvanceInvariant:
 
         ots_a = ots_for(da)
         _seed_completed_verify_job(sp_fake, sd, (da,), {da: ots_a})
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, da)
 
         r = runner.invoke(
@@ -1606,7 +1596,7 @@ class TestReverifyIdempotent:
 
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(
@@ -1692,12 +1682,6 @@ class TestRegtestEndToEnd:
         bitcoind_regtest.rpc("invalidateblock", [attest_hash])
         addr = bitcoind_regtest.wallet_rpc("ocfltest", "getnewaddress")
         bitcoind_regtest.rpc("generatetoaddress", [MIN_CONFS + 2, addr])
-
-        # SP re-fetch path: the upgrade pass calls verify-batches again
-        # for the affected digest. Pre-seed a fresh COMPLETED job so the
-        # call resolves; for this assertion we need only that the proof
-        # gets reset to verified=False (not that it re-converges).
-        sp_fake.advance_to_completed(sp_fake.verify_batch([d]).job_id, {d: ots_bytes})
 
         r = runner.invoke(
             app,

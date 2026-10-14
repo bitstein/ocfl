@@ -14,7 +14,7 @@ from ots_helpers import (
     DIGEST_BLOCK_HEIGHT,
     MIN_CONFS,
     SP_OK,
-    grow_chain_to,
+    bury,
     inject_fake_btc,
     ots_for,
     register_attested,
@@ -135,7 +135,7 @@ class TestInventoryUpgradePrimitives:
         assert cfg.simpleproof is not None
         assert cfg.bitcoin is not None
 
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, inv_digest)
 
         run = wf_timestamp.TimestampRun(
@@ -190,7 +190,7 @@ class TestInventoryUpgradeHappyPath:
 
         ots_bytes = ots_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, inv_digest)
 
         store = StagingStore(staging)
@@ -325,7 +325,7 @@ class TestInventoryCrashRecovery:
 
         ots_bytes = ots_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, inv_digest)
 
         _install_inv_crash_fault(monkeypatch, fault_at, sd, inv_digest)
@@ -460,7 +460,7 @@ class TestInventoryPhaseAdvance:
 
         ots_bytes = ots_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, inv_digest)
 
         r = runner.invoke(
@@ -500,7 +500,7 @@ class TestInventoryPhaseAdvance:
 
         pending_bytes = _ots_pending(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, pending_bytes)
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
 
         r = runner.invoke(
             app,
@@ -540,8 +540,7 @@ class TestInventoryPhaseAdvance:
 
         ots_bytes = ots_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-        # Tip only 1 confirmation past attested height.
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT)
+        bury(btc_fake.rpc, 1)
         register_attested(btc_fake.rpc, inv_digest)
 
         r = runner.invoke(
@@ -583,9 +582,7 @@ class TestInventoryWatchLoop:
 
         ots_bytes = ots_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-        # One confirmation short: the watch's first pass leaves the proof
-        # pending, and the block below confirms it.
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
+        bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, inv_digest)
 
         class _OneBlockStream:
@@ -644,9 +641,7 @@ class TestInventoryWatchLoop:
 
         ots_bytes = ots_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-        # One confirmation short: the watch's first pass leaves the proof
-        # pending, and the block below confirms it.
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
+        bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, inv_digest)
 
         class _OneBlockStream:
@@ -708,9 +703,7 @@ class TestInventoryWatchLoop:
 
         ots_bytes = ots_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-        # One confirmation short: the watch's first pass leaves the proof
-        # pending, and the block below confirms it.
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
+        bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, inv_digest)
 
         class _SigintStream:
@@ -756,7 +749,7 @@ class TestInventoryWatchLoop:
 
         ots_bytes = ots_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, inv_digest)
 
         sibling = ExitStack()

@@ -18,7 +18,7 @@ from ots_helpers import (
     DIGEST_BLOCK_HEIGHT,
     MIN_CONFS,
     SP_OK,
-    grow_chain_to,
+    bury,
     inject_fake_btc,
     inject_fake_sp,
     new_ots_staging,
@@ -137,7 +137,7 @@ class TestWatchLoopAdvancesOnBlock:
         _force_content_pending(sd, (d,))
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(
@@ -204,7 +204,7 @@ class TestWatchLoopAdvancesOnBlock:
 
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
+        bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(
@@ -247,7 +247,7 @@ class TestWatchLoopAdvancesOnBlock:
 
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
+        bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(
@@ -311,7 +311,7 @@ class TestWatchHeightJumpTriggersReverify:
         ots_b = ots_for(db, block_height=DIGEST_BLOCK_HEIGHT + 1)
         _seed_completed_verify_job(sp_fake, sd, (da, db), {da: ots_a, db: ots_b})
 
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, da)
         register_attested(btc_fake.rpc, db, height=DIGEST_BLOCK_HEIGHT + 1)
 
@@ -382,9 +382,7 @@ class TestWatchTipChangeAtStableHeightTriggersReverify:
 
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        # One confirmation short: wake 1 cannot advance the phase, so only
-        # the tip change on wake 2 can make the loop recheck its proofs.
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
+        bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, d)
 
         class _ReorgStream:
@@ -452,7 +450,7 @@ class TestWatchSigintExits130WithoutTornCheckpoint:
 
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 2)
+        bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, d)
 
         class _SigintStream:
@@ -503,7 +501,7 @@ class TestWatchLockTimeoutWarningAndContinue:
 
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
 
         sibling = ExitStack()
@@ -578,7 +576,7 @@ class TestTwoWatchersSerializeSafely:
 
         ots_bytes = ots_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
 
         from ocfl_cli.config import load_config
@@ -676,7 +674,7 @@ class TestRegtestRealZmqHashblockDelivery:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from tests.helpers.ots import build_regtest_attestation
-        from tests.helpers.regtest import bitcoin_config_toml
+        from tests.helpers.regtest import bitcoin_config_toml, bury_to_confs
 
         cfg_body = SP_OK + bitcoin_config_toml(bitcoind_regtest, confirmations=3)
         monkeypatch.setenv("BITCOIN_RPC_USER", bitcoind_regtest.rpc_user)
@@ -696,15 +694,7 @@ class TestRegtestRealZmqHashblockDelivery:
         )
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
-        # Bring the chain to MIN_CONFS - 1 confirmations: not enough to
-        # verify yet. The watch loop's first pass will record
-        # verified=False; the next mined block (delivered via real ZMQ)
-        # tips us to MIN_CONFS and lets the pass advance the phase.
-        addr = bitcoind_regtest.wallet_rpc("ocfltest", "getnewaddress")
-        info = bitcoind_regtest.rpc("getblockchaininfo")
-        confs = int(info["blocks"]) - attest_height + 1
-        if confs < MIN_CONFS - 1:
-            bitcoind_regtest.rpc("generatetoaddress", [MIN_CONFS - 1 - confs, addr])
+        bury_to_confs(bitcoind_regtest, attest_height, MIN_CONFS - 1, "ocfltest")
 
         result: dict[str, Any] = {}
 
@@ -738,6 +728,7 @@ class TestRegtestRealZmqHashblockDelivery:
         import time as _time
 
         _time.sleep(1.0)
+        addr = bitcoind_regtest.wallet_rpc("ocfltest", "getnewaddress")
         bitcoind_regtest.rpc("generatetoaddress", [1, addr])
 
         thread.join(timeout=30.0)
@@ -777,7 +768,7 @@ class TestWatchFirstPass:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_for(d)})
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(

@@ -8,9 +8,11 @@ from ots_helpers import (
     DIGEST_BLOCK_HEIGHT,
     MIN_CONFS,
     SP_OK,
-    grow_chain_to,
+    bury,
+    end_chain_below,
     inject_fake_btc,
     register_attested,
+    register_mismatched_merkle_root,
     write_config,
 )
 from typer.testing import CliRunner
@@ -33,7 +35,7 @@ CONTENT_BLOCK_HEIGHT = DIGEST_BLOCK_HEIGHT - 10
 
 
 def _anchor_content(rpc: FakeBitcoinRPC) -> None:
-    grow_chain_to(rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+    bury(rpc)
     digest_hex = hashlib.sha256(b"hello world").hexdigest()
     register_attested(rpc, digest_hex, CONTENT_BLOCK_HEIGHT)
 
@@ -90,7 +92,7 @@ class TestDefaultOnVerifyOts:
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
 
         digest_hex = hashlib.sha256(b"hello world").hexdigest()
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, digest_hex, CONTENT_BLOCK_HEIGHT)
         inv_path = root / "obj-test" / "inventory.json"
         inv_digest_hex = hashlib.sha256(inv_path.read_bytes()).hexdigest()
@@ -175,7 +177,7 @@ class TestVerifyOtsProgress:
         inject_fake_btc(runner, btc_fake.rpc)
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         digest_hex = hashlib.sha256(b"hello world").hexdigest()
         register_attested(btc_fake.rpc, digest_hex, CONTENT_BLOCK_HEIGHT)
         inv_path = root / "obj-test" / "inventory.json"
@@ -271,8 +273,8 @@ class TestVerifyTimeMismatchE906:
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
 
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        btc_fake.rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, "00" * 32)
+        bury(btc_fake.rpc)
+        register_mismatched_merkle_root(btc_fake.rpc)
 
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
         assert r.exit_code == ExitCode.GENERIC, r.output
@@ -425,7 +427,7 @@ class TestVerifyPendingW903:
         inject_fake_btc(runner, btc_fake.rpc)
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         digest_hex = hashlib.sha256(b"hello world").hexdigest()
         register_attested(btc_fake.rpc, digest_hex, CONTENT_BLOCK_HEIGHT)
         inv_path = root / "obj-test" / "inventory.json"
@@ -458,7 +460,7 @@ class TestVerifyPendingW903:
         inject_fake_btc(runner, btc_fake.rpc)
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT)
+        bury(btc_fake.rpc, 1)
         content_hex = hashlib.sha256(b"hello world").hexdigest()
         register_attested(btc_fake.rpc, content_hex, CONTENT_BLOCK_HEIGHT)
         inv_path = root / "obj-test" / "inventory.json"
@@ -485,7 +487,7 @@ class TestVerifyPendingW903:
         inject_fake_btc(runner, btc_fake.rpc)
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT - 1)
+        end_chain_below(btc_fake.rpc, 1)
         content_hex = hashlib.sha256(b"hello world").hexdigest()
         register_attested(btc_fake.rpc, content_hex, CONTENT_BLOCK_HEIGHT)
 
@@ -604,8 +606,8 @@ class TestRootLevelChain:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, btc_fake.rpc)
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        btc_fake.rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, "00" * 32)
+        bury(btc_fake.rpc)
+        register_mismatched_merkle_root(btc_fake.rpc)
         return root
 
     @pytest.mark.parametrize("flag", [[], ["--ots=auto"], ["--ots=chain"]])
@@ -648,8 +650,8 @@ class TestRootLevelChain:
         from ocfl_lib import LocalFS, ots, validate_root
 
         root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
-        grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        btc_fake.rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, "00" * 32)
+        bury(btc_fake.rpc)
+        register_mismatched_merkle_root(btc_fake.rpc)
         chain = ots.ChainCheck(chain_source(btc_fake.rpc), MIN_CONFS)
 
         fs = LocalFS(root)

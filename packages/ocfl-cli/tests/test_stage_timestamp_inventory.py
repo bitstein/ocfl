@@ -5,13 +5,15 @@ import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof
 from msgspec.structs import replace
 from ots_helpers import (
+    MIN_CONFS,
     VERSION_METADATA,
-    grow_chain_to,
+    bury,
     inject_fake_btc,
     inject_fake_sp,
     new_ots_staging,
     ots_for,
     register_attested,
+    replace_attested_block,
     write_config,
 )
 from pydantic import SecretStr
@@ -344,7 +346,7 @@ class TestUnverifiedContentGate:
         cache = ots_cache_path(sd, d)
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_bytes(ots_bytes)
-        grow_chain_to(btc_fake.rpc, 800_000 + 3 - 1)
+        bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
         state = replace(
             load_ots(sd),
@@ -366,8 +368,7 @@ class TestUnverifiedContentGate:
         )
         save_ots(sd, state)
 
-        btc_fake.rpc.reorg_at(800_000)
-        grow_chain_to(btc_fake.rpc, 800_000 + 3 - 1)
+        replace_attested_block(btc_fake.rpc, confs=MIN_CONFS)
         r = runner.invoke(
             app,
             stage_args(

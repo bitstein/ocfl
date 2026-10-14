@@ -18,9 +18,7 @@ from fakes import (
 from fakes.locks import held_flock
 from msgspec.structs import replace
 from ots_helpers import (
-    DIGEST_BLOCK_HEIGHT,
-    MIN_CONFS,
-    grow_chain_to,
+    bury,
     inject_fake_btc,
     inject_fake_sp,
     ots_for,
@@ -2434,7 +2432,7 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
 
     ots_bytes = ots_for(digest)
     sp_fake.advance_to_completed(batch.verify_jobs[0].job_id, {digest: ots_bytes})
-    grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+    bury(btc)
     register_attested(btc, digest)
 
     second = _invoke_json(
@@ -2525,7 +2523,7 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
     sp_fake.advance_to_completed(
         batch.verify_jobs[0].job_id, {returned_digest: ots_for(returned_digest)}
     )
-    grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+    bury(btc)
     register_attested(btc, returned_digest)
 
     partial = _invoke_json(
@@ -2728,7 +2726,7 @@ def test_batch_watch_polls_during_quiet_periods(
                 sp_fake.advance_to_completed(
                     batch.verify_jobs[0].job_id, {digest: ots_for(digest)}
                 )
-                grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+                bury(btc)
                 register_attested(btc, digest)
             if self.timeouts > 3:
                 raise KeyboardInterrupt
@@ -3891,7 +3889,7 @@ def test_batch_inventory_upgrade_rejects_stale_plan_digest(
     batch = batch_state.load_batch(staging, batch_id)
     ots_bytes = ots_for(inv_digest)
     sp_fake.advance_to_completed(batch.verify_jobs[0].job_id, {inv_digest: ots_bytes})
-    grow_chain_to(btc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+    bury(btc)
     register_attested(btc, inv_digest)
 
     upgraded = _invoke(

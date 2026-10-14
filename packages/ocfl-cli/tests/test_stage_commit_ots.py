@@ -11,7 +11,7 @@ from ots_helpers import (
     DIGEST_BLOCK_HEIGHT,
     MIN_CONFS,
     VERSION_METADATA,
-    grow_chain_to,
+    bury,
     inject_fake_btc,
     inject_fake_sp,
     new_ots_staging,
@@ -119,7 +119,7 @@ def _setup_missing_metadata_inventory_upgraded(
     inv_digest = state.inventory.digest
     ots_bytes = ots_for(inv_digest)
     seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
-    grow_chain_to(btc_rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+    bury(btc_rpc)
     register_attested(btc_rpc, inv_digest)
 
     r = runner.invoke(
