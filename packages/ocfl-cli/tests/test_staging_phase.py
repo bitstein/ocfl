@@ -10,7 +10,7 @@ IP = Phase.INVENTORY_PENDING
 IU = Phase.INVENTORY_UPGRADED
 COMM = Phase.COMMITTED
 
-ERR = "err"  # sentinel for parametrize: command raises PhaseError
+RAISES_PHASE_ERROR = "raises PhaseError"
 
 MATRIX: dict[tuple[Phase, str], Phase | str] = {
     (D, "add"): D,
@@ -31,37 +31,37 @@ MATRIX: dict[tuple[Phase, str], Phase | str] = {
     (D, "timestamp content"): CP,
     (CP, "timestamp content"): CP,
     (CU, "timestamp content"): CU,
-    (IP, "timestamp content"): ERR,
-    (IU, "timestamp content"): ERR,
-    (D, "upgrade content"): ERR,
+    (IP, "timestamp content"): RAISES_PHASE_ERROR,
+    (IU, "timestamp content"): RAISES_PHASE_ERROR,
+    (D, "upgrade content"): RAISES_PHASE_ERROR,
     (CP, "upgrade content"): CP,
     (CU, "upgrade content"): CU,
-    (IP, "upgrade content"): ERR,
-    (IU, "upgrade content"): ERR,
-    (D, "retry content"): ERR,
+    (IP, "upgrade content"): RAISES_PHASE_ERROR,
+    (IU, "upgrade content"): RAISES_PHASE_ERROR,
+    (D, "retry content"): RAISES_PHASE_ERROR,
     (CP, "retry content"): CP,
-    (CU, "retry content"): ERR,
-    (IP, "retry content"): ERR,
-    (IU, "retry content"): ERR,
-    (D, "timestamp inventory"): ERR,
-    (CP, "timestamp inventory"): ERR,
+    (CU, "retry content"): RAISES_PHASE_ERROR,
+    (IP, "retry content"): RAISES_PHASE_ERROR,
+    (IU, "retry content"): RAISES_PHASE_ERROR,
+    (D, "timestamp inventory"): RAISES_PHASE_ERROR,
+    (CP, "timestamp inventory"): RAISES_PHASE_ERROR,
     (CU, "timestamp inventory"): IP,
     (IP, "timestamp inventory"): IP,
     (IU, "timestamp inventory"): IU,
-    (D, "upgrade inventory"): ERR,
-    (CP, "upgrade inventory"): ERR,
-    (CU, "upgrade inventory"): ERR,
+    (D, "upgrade inventory"): RAISES_PHASE_ERROR,
+    (CP, "upgrade inventory"): RAISES_PHASE_ERROR,
+    (CU, "upgrade inventory"): RAISES_PHASE_ERROR,
     (IP, "upgrade inventory"): IU,
     (IU, "upgrade inventory"): IU,
-    (D, "retry inventory"): ERR,
-    (CP, "retry inventory"): ERR,
-    (CU, "retry inventory"): ERR,
+    (D, "retry inventory"): RAISES_PHASE_ERROR,
+    (CP, "retry inventory"): RAISES_PHASE_ERROR,
+    (CU, "retry inventory"): RAISES_PHASE_ERROR,
     (IP, "retry inventory"): IP,
-    (IU, "retry inventory"): ERR,
-    (D, "commit (ots path)"): ERR,
-    (CP, "commit (ots path)"): ERR,
-    (CU, "commit (ots path)"): ERR,
-    (IP, "commit (ots path)"): ERR,
+    (IU, "retry inventory"): RAISES_PHASE_ERROR,
+    (D, "commit (ots path)"): RAISES_PHASE_ERROR,
+    (CP, "commit (ots path)"): RAISES_PHASE_ERROR,
+    (CU, "commit (ots path)"): RAISES_PHASE_ERROR,
+    (IP, "commit (ots path)"): RAISES_PHASE_ERROR,
     (IU, "commit (ots path)"): COMM,
     (D, "discard"): D,
     (CP, "discard"): CP,
@@ -109,7 +109,7 @@ class TestPhaseEnum:
     ("phase", "command", "expected"), [(p, c, e) for (p, c), e in MATRIX.items()]
 )
 def test_check_transition_matrix(phase: Phase, command: str, expected: Phase | str):
-    if expected == ERR:
+    if expected == RAISES_PHASE_ERROR:
         with pytest.raises(PhaseError):
             check_transition(phase, command)
     else:

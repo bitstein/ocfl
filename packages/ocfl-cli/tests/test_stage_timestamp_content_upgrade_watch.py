@@ -277,7 +277,7 @@ class TestWatchLoopAdvancesOnBlock:
 
 
 class TestWatchHeightJumpTriggersReverify:
-    def test_watch_height_jump_triggers_reverify(
+    def test_watch_reverifies_when_dropped_notifications_jump_height(
         self,
         runner: CliRunner,
         empty_sha256_root: Path,
@@ -286,11 +286,6 @@ class TestWatchHeightJumpTriggersReverify:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Two-digest staging: first digest verified before --watch starts.
-        Between the two pushed block hashes, the chain jumps by >1
-        (simulating dropped ZMQ notifications). The loop's per-wake
-        ``getblockchaininfo`` notices and runs ``reverify_content_proofs``,
-        which the progress output reports."""
         write_config(tmp_path, monkeypatch)
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)
@@ -332,8 +327,6 @@ class TestWatchHeightJumpTriggersReverify:
                     return bytes.fromhex(
                         btc_fake.rpc.getblockchaininfo().best_block_hash
                     )
-                # Loop should have exited on phase advance — but defensively
-                # raise so a stuck loop fails fast.
                 raise KeyboardInterrupt("loop did not exit after phase advance")
 
         _inject_fake_zmq(runner, _JumpStream())
@@ -431,12 +424,6 @@ class TestWatchSigintExits130WithoutTornCheckpoint:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Inject a stream whose first ``wait_for_block`` raises
-        ``KeyboardInterrupt``. This is the deterministic substitute for
-        sending a real SIGINT — the caller-owned cancel pattern means
-        the loop catches the interrupt OR the loop body installs a
-        signal handler that flips the cancel flag. Either way, the CLI
-        must exit 130 and ``ots.json`` must parse cleanly afterwards."""
         write_config(tmp_path, monkeypatch)
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)

@@ -1,5 +1,5 @@
 from hypothesis import settings
-from hypothesis.stateful import RuleBasedStateMachine, invariant, rule
+from hypothesis.stateful import RuleBasedStateMachine, invariant, precondition, rule
 from hypothesis.strategies import sampled_from
 
 from ocfl_cli.errors import PhaseError
@@ -26,6 +26,7 @@ REGRESS_FROM = {
     Phase.INVENTORY_UPGRADED,
 }
 MUTATING = {"add", "rm", "mv"}
+TERMINAL = Phase.COMMITTED
 
 
 class PhaseFSM(RuleBasedStateMachine):
@@ -33,13 +34,10 @@ class PhaseFSM(RuleBasedStateMachine):
         super().__init__()
         self.phase: Phase = Phase.DRAFTING
 
+    @precondition(lambda self: self.phase is not TERMINAL)
     @rule(cmd=sampled_from(COMMANDS))
     def step(self, cmd: str) -> None:
         before = self.phase
-        # COMMITTED is terminal; staging is purged upstream and check_transition
-        # is not called again. The model stops feeding commands into COMMITTED.
-        if before is Phase.COMMITTED:
-            return
         try:
             after = check_transition(before, cmd)
         except PhaseError:

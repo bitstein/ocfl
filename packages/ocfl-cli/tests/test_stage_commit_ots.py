@@ -1,4 +1,3 @@
-import hashlib
 import json
 from pathlib import Path
 
@@ -10,6 +9,7 @@ from msgspec.structs import replace
 from ots_helpers import (
     DIGEST_BLOCK_HEIGHT,
     MIN_CONFS,
+    UNRELATED_DIGEST,
     VERSION_METADATA,
     bury,
     inject_fake_btc,
@@ -38,7 +38,23 @@ from ocfl_cli.store.ots_state import (
 )
 from ocfl_cli.store.staging import StagingStore
 from ocfl_lib import LocalFS, StorageRoot
-from tests.helpers.ots import build_attestation
+
+
+def _stage_final_content_proof(
+    runner: CliRunner,
+    root: Path,
+    staging: Path,
+    object_id: str,
+    logical_path: str,
+    digest_hex: str,
+) -> None:
+    proof = (
+        staging.parent / f"{object_id.replace(':', '_')}-ots" / f"{logical_path}.ots"
+    )
+    proof.parent.mkdir()
+    proof.write_bytes(ots_for(digest_hex))
+    r = runner.invoke(app, stage_args(root, staging, "add", object_id, str(proof)))
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
 
 def _setup_missing_metadata_inventory_upgraded(
@@ -69,18 +85,7 @@ def _setup_missing_metadata_inventory_upgraded(
     )
     da = digests["a.txt"]
 
-    # Staged as the content proof `a.txt.ots`: the commit refuses E902.
-    ots_dir = staging.parent / f"{object_id.replace(':', '_')}-ots"
-    ots_dir.mkdir()
-    ots_src = ots_dir / "a.txt.ots"
-    # A final proof of a.txt: the commit refuses an invalid or pending one.
-    ots_src.write_bytes(
-        build_attestation(
-            hashlib.sha256(b"alpha").digest(), block_height=DIGEST_BLOCK_HEIGHT
-        )
-    )
-    r = runner.invoke(app, stage_args(root, staging, "add", object_id, str(ots_src)))
-    assert r.exit_code == ExitCode.SUCCESS, r.output
+    _stage_final_content_proof(runner, root, staging, object_id, "a.txt", da)
 
     state = load_ots(sd)
     state = replace(
@@ -129,11 +134,6 @@ def _setup_missing_metadata_inventory_upgraded(
     assert r.exit_code == ExitCode.SUCCESS, r.output
     assert load_ots(sd).phase is Phase.INVENTORY_UPGRADED
     return sd, ots_bytes
-
-
-# An arbitrary 32-byte SHA-256-shaped hex digest, distinct from anything
-# the helpers produce, used to construct a "wrong-commitment" cache file.
-_OTHER_64HEX = "a" * 64
 
 
 class TestStageCommitOtsHappyPath:
@@ -457,9 +457,7 @@ class TestStageCommitOtsCorruptedCache:
             btc_fake.rpc,
         )
 
-        bad_bytes = build_attestation(
-            bytes.fromhex(_OTHER_64HEX), block_height=DIGEST_BLOCK_HEIGHT
-        )
+        bad_bytes = ots_for(UNRELATED_DIGEST)
         ots_cache_path(sd, inv_digest).write_bytes(bad_bytes)
 
         r = runner.invoke(

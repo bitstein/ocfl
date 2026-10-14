@@ -1,5 +1,6 @@
 import hashlib
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 from msgspec.structs import replace
@@ -95,7 +96,9 @@ class TestStageMv:
     ) -> None:
         write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        _sd, _digests = _setup_ots_pair(runner, storage_root, staging, "obj:mv-ots")
+        _sd, _digests = _new_drafting_ots_staging(
+            runner, storage_root, staging, "obj:mv-ots"
+        )
 
         src = tmp_path / "b.txt.ots"
         src.write_bytes(b"existing companion")
@@ -181,19 +184,19 @@ def _add_file(
     return _digest(data)
 
 
-def _setup_ots_pair(
+class DraftingOtsStaging(NamedTuple):
+    staging_dir: Path
+    sha256_by_path: dict[str, str]
+
+
+def _new_drafting_ots_staging(
     runner: CliRunner,
     storage_root: Path,
     staging: Path,
     object_id: str,
     *,
     with_b: bool = False,
-) -> tuple[Path, dict[str, str]]:
-    """Create OTS staging with `a.txt` + `a.txt.ots` (optionally `b.txt` + `b.txt.ots`).
-
-    Returns (staging_dir, digests) where digests maps logical path -> sha256.
-    Phase is left at DRAFTING (the default after `stage new --ots`).
-    """
+) -> DraftingOtsStaging:
     src_dir = staging.parent / f"src-{object_id.replace(':', '_')}"
     src_dir.mkdir(parents=True, exist_ok=True)
 
@@ -227,7 +230,7 @@ def _setup_ots_pair(
             "b.txt.ots",
             _OTS_BYTES_B,
         )
-    return staging_dir(storage_root, staging, object_id), digests
+    return DraftingOtsStaging(staging_dir(storage_root, staging, object_id), digests)
 
 
 def _state_paths(store: StagingStore, root_path: str, object_id: str) -> set[str]:
@@ -266,7 +269,9 @@ class TestRmCompanionPairing:
     ) -> None:
         write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, _digests = _setup_ots_pair(runner, storage_root, staging, "obj:rm-pair")
+        sd, _digests = _new_drafting_ots_staging(
+            runner, storage_root, staging, "obj:rm-pair"
+        )
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -296,7 +301,9 @@ class TestMvCompanionPairing:
     ) -> None:
         write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(runner, storage_root, staging, "obj:mv-pair")
+        sd, digests = _new_drafting_ots_staging(
+            runner, storage_root, staging, "obj:mv-pair"
+        )
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -352,7 +359,7 @@ class TestRegressionFromContentUpgraded:
     ) -> None:
         write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:rm-cu", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]
@@ -381,7 +388,7 @@ class TestRegressionFromContentUpgraded:
     ) -> None:
         write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:mv-cu", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]
@@ -407,7 +414,7 @@ class TestRegressionFromContentUpgraded:
     ) -> None:
         write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:add-cu", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]
@@ -454,7 +461,7 @@ class TestRegressionFromInventoryPending:
     ) -> None:
         write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:rm-ip", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]
@@ -487,7 +494,7 @@ class TestRegressionFromInventoryPending:
     ) -> None:
         write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:add-ip", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]
@@ -520,7 +527,7 @@ class TestRegressionFromInventoryUpgraded:
     ) -> None:
         write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:mv-iu", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]
@@ -549,7 +556,7 @@ class TestRegressionFromInventoryUpgraded:
     ) -> None:
         write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:add-iu", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]
@@ -582,7 +589,7 @@ class TestOtsCacheNotPurgedOnRegression:
     ) -> None:
         write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:rm-cache", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]

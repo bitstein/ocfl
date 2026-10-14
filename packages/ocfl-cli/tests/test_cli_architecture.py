@@ -668,8 +668,7 @@ class TestDiscardAndConfig:
 
 
 class TestLocks:
-    def test_one_lock_primitive(self):
-        """Only `store/locks.py` touches `fcntl`; nothing imports `filelock`."""
+    def test_only_store_locks_imports_fcntl_and_nothing_imports_filelock(self):
         homes = set()
         for p in _py_files(CLI_SRC):
             for node in ast.walk(_tree(p)):

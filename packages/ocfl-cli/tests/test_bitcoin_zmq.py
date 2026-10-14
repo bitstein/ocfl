@@ -8,6 +8,7 @@ on PUB; our ``recv_multipart`` -> ``msg[1]`` logic is identical for PAIR.
 
 import time
 from collections.abc import Iterator
+from typing import NamedTuple
 from uuid import uuid4
 
 import pytest
@@ -16,9 +17,13 @@ import zmq
 from ocfl_cli.ots.bitcoin import BitcoinZmqSubscriber
 
 
+class ZmqPair(NamedTuple):
+    sender: zmq.Socket
+    sub: BitcoinZmqSubscriber
+
+
 @pytest.fixture
-def zmq_pair() -> Iterator[tuple[zmq.Socket, BitcoinZmqSubscriber]]:
-    """Yield (sender PAIR socket, subscriber wrapping the receiving PAIR)."""
+def zmq_pair() -> Iterator[ZmqPair]:
     ctx = zmq.Context()
     endpoint = f"inproc://btc-zmq-{uuid4().hex}"
 
@@ -30,7 +35,7 @@ def zmq_pair() -> Iterator[tuple[zmq.Socket, BitcoinZmqSubscriber]]:
 
     sub = BitcoinZmqSubscriber(endpoint, ctx=ctx, socket=receiver)
     try:
-        yield sender, sub
+        yield ZmqPair(sender, sub)
     finally:
         sub.close()
         sender.close(linger=0)
@@ -65,9 +70,7 @@ class TestWaitForBlock:
             sender.close(linger=0)
             ctx.term()
 
-    def test_returns_block_hash_bytes_on_delivery(
-        self, zmq_pair: tuple[zmq.Socket, BitcoinZmqSubscriber]
-    ) -> None:
+    def test_returns_block_hash_bytes_on_delivery(self, zmq_pair: ZmqPair) -> None:
         sender, sub = zmq_pair
         block_hash = bytes.fromhex("ab" * 32)
         sequence = (1).to_bytes(4, "little")
@@ -78,18 +81,14 @@ class TestWaitForBlock:
 
         assert got == block_hash
 
-    def test_returns_none_on_timeout(
-        self, zmq_pair: tuple[zmq.Socket, BitcoinZmqSubscriber]
-    ) -> None:
+    def test_returns_none_on_timeout(self, zmq_pair: ZmqPair) -> None:
         _sender, sub = zmq_pair
 
         got = sub.wait_for_block(timeout_ms=50)
 
         assert got is None
 
-    def test_returns_none_after_close(
-        self, zmq_pair: tuple[zmq.Socket, BitcoinZmqSubscriber]
-    ) -> None:
+    def test_returns_none_after_close(self, zmq_pair: ZmqPair) -> None:
         _sender, sub = zmq_pair
         sub.close()
 
@@ -97,9 +96,7 @@ class TestWaitForBlock:
 
         assert got is None
 
-    def test_short_multipart_frame_returns_none(
-        self, zmq_pair: tuple[zmq.Socket, BitcoinZmqSubscriber]
-    ) -> None:
+    def test_short_multipart_frame_returns_none(self, zmq_pair: ZmqPair) -> None:
         sender, sub = zmq_pair
         sender.send_multipart([b"hashblock"])
 
@@ -107,9 +104,7 @@ class TestWaitForBlock:
 
         assert got is None
 
-    def test_close_is_idempotent(
-        self, zmq_pair: tuple[zmq.Socket, BitcoinZmqSubscriber]
-    ) -> None:
+    def test_close_is_idempotent(self, zmq_pair: ZmqPair) -> None:
         _sender, sub = zmq_pair
 
         sub.close()
@@ -131,9 +126,7 @@ class TestWaitForBlock:
             sub.close()
             ctx.term()
 
-    def test_consecutive_blocks_drained_in_order(
-        self, zmq_pair: tuple[zmq.Socket, BitcoinZmqSubscriber]
-    ) -> None:
+    def test_consecutive_blocks_drained_in_order(self, zmq_pair: ZmqPair) -> None:
         sender, sub = zmq_pair
         h1 = bytes.fromhex("11" * 32)
         h2 = bytes.fromhex("22" * 32)

@@ -52,18 +52,12 @@ class TestStageDiscard:
         assert "no staging" in result.output.lower() or "warn" in result.output.lower()
 
 
-def _mk_ots_staging(
+def _plain_staging_plus_drafting_ots_json(
     runner: CliRunner,
     storage_root: Path,
     staging: Path,
     object_id: str,
 ) -> Path:
-    """Create a basic staging area + write `ots.json` at fresh drafting.
-
-    Side-steps the [simpleproof]/[bitcoin] preflight that `stage new --ots`
-    runs by creating a non-OTS staging then dropping `ots.json` directly.
-    Sufficient because the discard command only inspects `ots.json` shape.
-    """
     r = _invoke(runner, storage_root, staging, "new", object_id)
     assert r.exit_code == ExitCode.SUCCESS, r.output
     sd = staging_dir(storage_root, staging, object_id)
@@ -169,7 +163,9 @@ class TestForceRequiredAtNonDraftingPhase:
         fields: dict[str, object],
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:gated")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:gated"
+        )
         _pin_state(sd, phase, **fields)
 
         store = StagingStore(staging)
@@ -221,7 +217,9 @@ class TestForceRequiredAtNonDraftingPhase:
         fields: dict[str, object],
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:gated-force")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:gated-force"
+        )
         _pin_state(sd, phase, **fields)
 
         store = StagingStore(staging)
@@ -244,7 +242,9 @@ class TestForceRequiredAtDraftingAfterRegression:
         tmp_path: Path,
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:regressed")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:regressed"
+        )
 
         da = "a" * 64
         _pin_state(
@@ -280,7 +280,9 @@ class TestForceNotRequiredAtFreshDrafting:
         tmp_path: Path,
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:fresh")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:fresh"
+        )
         s = load_ots(sd)
         assert s.phase is Phase.DRAFTING
         assert s.submissions == ()
@@ -306,7 +308,9 @@ class TestDiscardPurgesOtsCache:
         tmp_path: Path,
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:cache")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:cache"
+        )
 
         da = "a" * 64
         _pin_state(
@@ -345,7 +349,9 @@ class TestDiscardWarnMessage:
         tmp_path: Path,
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:batch")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:batch"
+        )
 
         batch_id = "018f1f7e-7b4a-7c6a-8a2b-4a7f4c2e9d10"
         _pin_state(
@@ -368,7 +374,9 @@ class TestDiscardWarnMessage:
         tmp_path: Path,
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:inventory-batch")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:inventory-batch"
+        )
 
         batch_id = "018f1f7e-7b4a-7c6a-8a2b-4a7f4c2e9d10"
         _pin_state(
@@ -396,7 +404,9 @@ class TestDiscardWarnMessage:
         tmp_path: Path,
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:warn")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:warn"
+        )
 
         da, db = "a" * 64, "b" * 64
         _pin_state(

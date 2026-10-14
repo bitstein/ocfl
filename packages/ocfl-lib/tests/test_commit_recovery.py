@@ -6,7 +6,7 @@ from pathlib import Path
 
 import boto3
 import pytest
-from builders import Died
+from builders import ProcessDied
 from moto import mock_aws
 
 from ocfl_lib import (
@@ -34,17 +34,17 @@ def _local_dies(root: Path, when):
     class Dies(LocalFS):
         def write(self, name, data):
             if when("write", name):
-                raise Died(name)
+                raise ProcessDied(name)
             return super().write(name, data)
 
         def remove(self, name):
             if when("remove", name):
-                raise Died(name)
+                raise ProcessDied(name)
             return super().remove(name)
 
         def rename_noreplace(self, src, dst):
             if when("rename", dst):
-                raise Died(dst)
+                raise ProcessDied(dst)
             return super().rename_noreplace(src, dst)
 
     return Dies(root)
@@ -56,22 +56,22 @@ def _s3_dies(client, when):
     class Dies(S3FS):
         def write(self, name, data):
             if when("write", name):
-                raise Died(name)
+                raise ProcessDied(name)
             return super().write(name, data)
 
         def write_new(self, name, data):
             if when("write", name):
-                raise Died(name)
+                raise ProcessDied(name)
             return super().write_new(name, data)
 
         def write_if_match(self, name, data, tag):
             if when("write", name):
-                raise Died(name)
+                raise ProcessDied(name)
             return super().write_if_match(name, data, tag)
 
         def remove(self, name):
             if when("remove", name):
-                raise Died(name)
+                raise ProcessDied(name)
             return super().remove(name)
 
     return Dies(BUCKET, client=client)
@@ -125,7 +125,7 @@ def _clean(fs, root):
 def _claimed(fs, die, tmp_path):
     root, plan, content = _setup(fs, tmp_path)
     obj = root.object_path(OID)
-    with pytest.raises(Died):
+    with pytest.raises(ProcessDied):
         root.commit(
             die(lambda o, n: o == "write" and n == f"{obj}/inventory.json"),
             OID,
@@ -144,7 +144,7 @@ class TestStates:
         obj = root.object_path(OID)
         before = {r.path for r in fs.walk_files(obj)}
         target = f"{obj}/v2/inventory.json"
-        with pytest.raises(Died):
+        with pytest.raises(ProcessDied):
             root.commit(
                 die(lambda o, n: o == "write" and n.endswith("/build/content/a.txt"))
                 if kind == "local"
@@ -179,7 +179,7 @@ class TestStates:
             pytest.skip("a local claim is complete")
         root, plan, content = _setup(fs, tmp_path)
         obj = root.object_path(OID)
-        with pytest.raises(Died):
+        with pytest.raises(ProcessDied):
             root.commit(
                 die(lambda o, n: o == "write" and n.startswith(f"{obj}/v2/content")),
                 OID,
@@ -199,7 +199,7 @@ class TestStates:
         _kind, fs, die = backend
         root, plan, content = _setup(fs, tmp_path)
         obj = root.object_path(OID)
-        with pytest.raises(Died):
+        with pytest.raises(ProcessDied):
             root.commit(
                 die(lambda o, n: o == "write" and n == f"{obj}/inventory.json.sha512"),
                 OID,
@@ -217,7 +217,7 @@ class TestStates:
     def test_published_leftover_plan(self, backend, tmp_path):
         _kind, fs, die = backend
         root, plan, content = _setup(fs, tmp_path)
-        with pytest.raises(Died):
+        with pytest.raises(ProcessDied):
             root.commit(
                 die(lambda o, n: o == "remove" and n.endswith("/plan.json")),
                 OID,
@@ -265,7 +265,7 @@ class TestStates:
         fs = LocalFS(d)
         root, plan, content = _setup(fs, tmp_path, existing=False)
         obj = root.object_path(OID)
-        with pytest.raises(Died):
+        with pytest.raises(ProcessDied):
             root.commit(
                 _local_dies(d, lambda o, n: o == "rename" and n == obj),
                 OID,

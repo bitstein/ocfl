@@ -30,12 +30,7 @@ def _write(path: Path, body: str) -> Path:
     return path
 
 
-def _load_strict(path: Path | None = None) -> Config:
-    """Load, then require both OTS sections, as a command that needs them does.
-
-    A section that does not load no longer fails `load_config` itself
-    (roadmap §7, issue 32): `Config.require` raises its error.
-    """
+def _load_requiring_ots_sections(path: Path | None = None) -> Config:
     cfg = load_config(path)
     cfg.require("simpleproof")
     cfg.require("bitcoin")
@@ -117,7 +112,7 @@ class TestUrlSchemes:
         body = SP_OK.replace("https://stage.example", bad_url) + BTC_OK
         path = _write(tmp_path / "c.toml", body)
         with pytest.raises(ConfigError):
-            _load_strict(path)
+            _load_requiring_ots_sections(path)
 
     @pytest.mark.parametrize(
         "url",
@@ -153,7 +148,7 @@ class TestUrlSchemes:
         body = SP_OK + BTC_OK.replace("http://127.0.0.1:8332", bad_url)
         path = _write(tmp_path / "c.toml", body)
         with pytest.raises(ConfigError):
-            _load_strict(path)
+            _load_requiring_ots_sections(path)
 
     @pytest.mark.parametrize(
         "endpoint",
@@ -174,7 +169,7 @@ class TestUrlSchemes:
         body = SP_OK + BTC_OK.replace("tcp://127.0.0.1:28332", bad)
         path = _write(tmp_path / "c.toml", body)
         with pytest.raises(ConfigError):
-            _load_strict(path)
+            _load_requiring_ots_sections(path)
 
 
 class TestRpcAuth:
@@ -203,7 +198,7 @@ class TestRpcAuth:
         )
         path = _write(tmp_path / "c.toml", body)
         with pytest.raises(ConfigError, match=r"bitcoin\.rpc_user"):
-            _load_strict(path)
+            _load_requiring_ots_sections(path)
 
     def test_missing_password_rejected(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -223,7 +218,7 @@ class TestRpcAuth:
         )
         path = _write(tmp_path / "c.toml", body)
         with pytest.raises(ConfigError, match=r"bitcoin\.rpc_password"):
-            _load_strict(path)
+            _load_requiring_ots_sections(path)
 
     def test_missing_both_rejected(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -241,7 +236,7 @@ class TestRpcAuth:
         )
         path = _write(tmp_path / "c.toml", body)
         with pytest.raises(ConfigError):
-            _load_strict(path)
+            _load_requiring_ots_sections(path)
 
 
 def _btc_with_conf(n: int) -> str:
@@ -253,7 +248,7 @@ class TestConfirmationsRange:
     def test_out_of_range_errors(self, n: int, tmp_path: Path) -> None:
         path = _write(tmp_path / "c.toml", SP_OK + _btc_with_conf(n))
         with pytest.raises(ConfigError):
-            _load_strict(path)
+            _load_requiring_ots_sections(path)
 
     @pytest.mark.parametrize("n", [1, 2])
     def test_below_three_warns(
@@ -323,7 +318,7 @@ class TestEnvOverride:
         monkeypatch.setenv("SIMPLEPROOF_BASE_URL", "ftp://bad")
         path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         with pytest.raises(ConfigError):
-            _load_strict(path)
+            _load_requiring_ots_sections(path)
 
 
 class TestDotenv:
@@ -395,7 +390,7 @@ class TestDotenv:
         os.chmod(env_file, 0o600)
         monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
         with pytest.raises(ConfigError, match="Extra"):
-            _load_strict(_write(tmp_path / "c.toml", SP_OK + BTC_OK))
+            _load_requiring_ots_sections(_write(tmp_path / "c.toml", SP_OK + BTC_OK))
 
     def test_explicit_missing_dotenv_errors(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -403,7 +398,7 @@ class TestDotenv:
         missing = tmp_path / "missing.env"
         monkeypatch.setenv("OCFL_ENV_FILE", str(missing))
         with pytest.raises(ConfigError, match="OCFL_ENV_FILE does not exist"):
-            _load_strict(_write(tmp_path / "c.toml", SP_OK + BTC_OK))
+            _load_requiring_ots_sections(_write(tmp_path / "c.toml", SP_OK + BTC_OK))
 
 
 class TestBitcoinEnvOverride:
@@ -450,7 +445,7 @@ class TestBitcoinEnvOverride:
         monkeypatch.setenv("BITCOIN_RPC_URL", "ftp://bad")
         path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         with pytest.raises(ConfigError):
-            _load_strict(path)
+            _load_requiring_ots_sections(path)
 
 
 class TestSecretStrAPI:
@@ -492,7 +487,7 @@ class TestConfigErrorNotValueError:
             SP_OK.replace("https://stage.example", "ftp://bad") + BTC_OK,
         )
         try:
-            _load_strict(path)
+            _load_requiring_ots_sections(path)
         except ConfigError:
             pass
         except ValueError as e:  # pragma: no cover - failure path
@@ -566,7 +561,7 @@ class TestLooseEnvPerms:
         monkeypatch.setenv("OCFL_ENV_FILE", str(env_file))
         path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         with pytest.raises(ConfigError, match=r"chmod 600"):
-            _load_strict(path)
+            _load_requiring_ots_sections(path)
 
     def test_tight_dotenv_perms_load(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -604,7 +599,7 @@ class TestTomlSecretsRejected:
             body = SP_OK + BTC_OK + extra
         path = _write(tmp_path / "c.toml", body)
         with pytest.raises(ConfigError, match=env_name):
-            _load_strict(path)
+            _load_requiring_ots_sections(path)
 
 
 class TestSectionAbsent:

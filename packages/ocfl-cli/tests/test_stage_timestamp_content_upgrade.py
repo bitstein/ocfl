@@ -1426,7 +1426,7 @@ class TestOrphanGuard:
 
 
 class TestPhaseAdvanceInvariant:
-    def test_advance_when_both_conditions_hold(
+    def test_advance_when_all_pending_verified_and_no_unpending_content(
         self,
         runner: CliRunner,
         empty_sha256_root: Path,
@@ -1435,7 +1435,6 @@ class TestPhaseAdvanceInvariant:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Both conditions hold: pending fully verified + no orphans."""
         write_config(tmp_path, monkeypatch)
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)
@@ -1470,7 +1469,7 @@ class TestPhaseAdvanceInvariant:
         assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
 
-    def test_no_advance_when_condition1_fails_pending_unverified(
+    def test_no_advance_while_a_pending_digest_is_unverified(
         self,
         runner: CliRunner,
         empty_sha256_root: Path,
@@ -1479,7 +1478,6 @@ class TestPhaseAdvanceInvariant:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Cond (1) fails: at least one pending digest unverified → no advance."""
         write_config(tmp_path, monkeypatch)
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)
@@ -1515,7 +1513,7 @@ class TestPhaseAdvanceInvariant:
         assert state.phase is Phase.CONTENT_PENDING
         assert state.proofs[d].verified is False
 
-    def test_no_advance_when_condition2_fails_orphan_present(
+    def test_no_advance_while_staged_content_digest_is_not_pending(
         self,
         runner: CliRunner,
         empty_sha256_root: Path,
@@ -1524,8 +1522,6 @@ class TestPhaseAdvanceInvariant:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Cond (2) fails: stage state has a non-.ots digest not in
-        pending_digests → no advance even if all pending verified."""
         write_config(tmp_path, monkeypatch)
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)

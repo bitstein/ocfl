@@ -38,7 +38,7 @@ def _anchor_content(rpc: FakeBitcoinRPC) -> None:
     register_attested(rpc, digest_hex, CONTENT_BLOCK_HEIGHT)
 
 
-def _make_root_with_ots_object(
+def _flat_direct_root_with_ots_object(
     tmp_path: Path,
     *,
     obj_id: str = "obj-test",
@@ -46,17 +46,12 @@ def _make_root_with_ots_object(
     include_extension_dir: bool = True,
     include_inventory_v1_ots: bool = True,
 ) -> Path:
-    """Init a flat-direct SHA-256 storage root with one OTS-extended object.
-
-    ``flat_direct`` requires the id to be a valid single path component
-    (no colon, no slash), so callers should use e.g. ``"obj-test"``.
-    """
     root = tmp_path / "root"
     root.mkdir()
     fs = LocalFS(root)
     layout = get_layout("0002-flat-direct-storage-layout")
     StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
-    obj_dir = root / obj_id  # flat-direct: id == single path component
+    obj_dir = root / layout.resolve(obj_id)
     build_ots_object(
         obj_dir,
         obj_id=obj_id,
@@ -87,7 +82,7 @@ class TestDefaultOnVerifyOts:
 
         inject_fake_btc(runner, _SpyRPC())  # ty: ignore[invalid-argument-type]
 
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
 
         digest_hex = hashlib.sha256(b"hello world").hexdigest()
         bury(btc_fake.rpc)
@@ -118,7 +113,7 @@ class TestOtsLocalSkipsWalk:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
 
         r = runner.invoke(
             app,
@@ -147,7 +142,7 @@ class TestOtsLocalSkipsWalk:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
 
         r = runner.invoke(
             app,
@@ -174,7 +169,7 @@ class TestVerifyOtsProgress:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
         bury(btc_fake.rpc)
         digest_hex = hashlib.sha256(b"hello world").hexdigest()
         register_attested(btc_fake.rpc, digest_hex, CONTENT_BLOCK_HEIGHT)
@@ -200,7 +195,7 @@ class TestMissingBitcoinConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         write_config(tmp_path, monkeypatch, body=SP_OK)
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
 
         r = runner.invoke(app, ["--root", str(root), "validate", "obj-test"])
 
@@ -214,7 +209,7 @@ class TestMissingBitcoinConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         write_config(tmp_path, monkeypatch, body=SP_OK)
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
 
         r = runner.invoke(
             app, ["--root", str(root), "validate", "obj-test", "--ots=chain"]
@@ -233,7 +228,7 @@ class TestStructuralAlwaysRuns:
     ) -> None:
         write_config(tmp_path, monkeypatch)
 
-        root = _make_root_with_ots_object(
+        root = _flat_direct_root_with_ots_object(
             tmp_path,
             obj_id="obj-test",
             include_companions=False,
@@ -269,7 +264,7 @@ class TestVerifyTimeMismatchE906:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
 
         bury(btc_fake.rpc)
         register_mismatched_merkle_root(btc_fake.rpc)
@@ -292,7 +287,7 @@ class TestVerifyTimeMismatchE906:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
         (
             root / "obj-test" / "extensions" / EXTENSION_NAME / "inventory.json.v1.ots"
         ).write_bytes(b"not an ots file")
@@ -320,7 +315,7 @@ class TestVerifyTimeMismatchE906:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, DownRPC())
 
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
 
         r = runner.invoke(app, ["--root", str(root), "--json", "validate", "obj-test"])
 
@@ -343,7 +338,7 @@ class TestVerifyTimeMismatchE906:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, DownRPC())
 
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
 
         r = runner.invoke(app, ["--root", str(root), "validate", "obj-test"])
 
@@ -367,7 +362,7 @@ class TestVerifyPendingW903:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        root = _make_root_with_ots_object(
+        root = _flat_direct_root_with_ots_object(
             tmp_path,
             obj_id="obj-test",
             include_inventory_v1_ots=False,
@@ -396,7 +391,7 @@ class TestVerifyPendingW903:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
         (root / "obj-test" / "v1" / "inventory.json").unlink()
 
         _anchor_content(btc_fake.rpc)
@@ -424,7 +419,7 @@ class TestVerifyPendingW903:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
         bury(btc_fake.rpc)
         digest_hex = hashlib.sha256(b"hello world").hexdigest()
         register_attested(btc_fake.rpc, digest_hex, CONTENT_BLOCK_HEIGHT)
@@ -457,7 +452,7 @@ class TestVerifyPendingW903:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
         bury(btc_fake.rpc, 1)
         content_hex = hashlib.sha256(b"hello world").hexdigest()
         register_attested(btc_fake.rpc, content_hex, CONTENT_BLOCK_HEIGHT)
@@ -484,7 +479,7 @@ class TestVerifyPendingW903:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
         end_chain_below(btc_fake.rpc, 1)
         content_hex = hashlib.sha256(b"hello world").hexdigest()
         register_attested(btc_fake.rpc, content_hex, CONTENT_BLOCK_HEIGHT)
@@ -603,7 +598,7 @@ class TestRootLevelChain:
     def _bad_chain_root(self, runner, btc_fake, tmp_path, monkeypatch) -> Path:
         write_config(tmp_path, monkeypatch)
         inject_fake_btc(runner, btc_fake.rpc)
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
         bury(btc_fake.rpc)
         register_mismatched_merkle_root(btc_fake.rpc)
         return root
@@ -647,7 +642,7 @@ class TestRootLevelChain:
         from ocfl_cli.workflow.validation import chain_source
         from ocfl_lib import LocalFS, ots, validate_root
 
-        root = _make_root_with_ots_object(tmp_path, obj_id="obj-test")
+        root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
         bury(btc_fake.rpc)
         register_mismatched_merkle_root(btc_fake.rpc)
         chain = ots.ChainCheck(chain_source(btc_fake.rpc), MIN_CONFS)

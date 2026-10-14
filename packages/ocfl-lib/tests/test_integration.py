@@ -27,8 +27,7 @@ if TYPE_CHECKING:
     from ocfl_lib._layout.types import Layout
 
 
-# Object ID templates per layout (base used for single, suffixed for multi)
-_LAYOUT_ID_BASE = {
+_OBJECT_ID_BY_LAYOUT = {
     "flat-direct": "obj",
     "hashed-n-tuple": "http://example.org/obj",
     "hash-and-id-n-tuple": "http://example.org/obj",
@@ -66,7 +65,7 @@ class TestRoundTripAllLayouts:
     @pytest.mark.parametrize("layout_name", ALL_LAYOUTS)
     def test_create_commit_validate_read(self, tmp_path: Path, layout_name: str):
         layout = _make_layout(layout_name)
-        obj_id = _LAYOUT_ID_BASE[layout_name]
+        obj_id = _OBJECT_ID_BY_LAYOUT[layout_name]
 
         root_dir = tmp_path / "root"
         root_dir.mkdir()
@@ -141,7 +140,7 @@ class TestRoundTripAllLayouts:
         fsys = LocalFS(root_dir)
         root = StorageRoot.init(fsys, fsys, layout=layout)
 
-        base = _LAYOUT_ID_BASE[layout_name]
+        base = _OBJECT_ID_BY_LAYOUT[layout_name]
         ids = [f"{base}-{i}" for i in range(3)]
 
         for i, oid in enumerate(ids):

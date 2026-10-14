@@ -269,10 +269,10 @@ def _seed_inventory_with_digests(staging_dir: Path, digests: list[str]) -> None:
 
 class TestChunkingBoundary:
     @pytest.mark.parametrize(
-        ("n", "expected_chunk_count"),
+        ("n", "expected_submit_hashes_calls"),
         [(999, 1), (1000, 1), (1001, 2)],
     )
-    def test_submit_chunks_at_1000(
+    def test_command_splits_submit_hashes_calls_at_1000(
         self,
         runner: CliRunner,
         empty_sha256_root: Path,
@@ -280,7 +280,7 @@ class TestChunkingBoundary:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         n: int,
-        expected_chunk_count: int,
+        expected_submit_hashes_calls: int,
     ) -> None:
         write_config(tmp_path, monkeypatch)
         inject_fake_sp(runner, sp_fake)
@@ -309,14 +309,7 @@ class TestChunkingBoundary:
         )
         assert r.exit_code == ExitCode.SUCCESS, r.output
 
-        # FakeSimpleProof.submit_hashes records ONE _Submission per chunked
-        # call. The real client chunks at 1000 internally; the fake records
-        # whatever it was handed. So if the production code calls
-        # `submit_hashes(all_digests)` once (and the fake records once even
-        # for a 1001-element list), this test will fail. The team-lead's
-        # spec bullet "FakeSimpleProof recorded the chunked calls" expects
-        # the production path to invoke the fake once per chunk.
-        assert len(sp_fake._submissions) == expected_chunk_count
+        assert len(sp_fake._submissions) == expected_submit_hashes_calls
         assert sum(len(s.digests) for s in sp_fake._submissions) == n
 
         state = load_ots(sd)

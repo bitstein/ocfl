@@ -32,7 +32,7 @@ class TestBoundedMap:
 
         assert max(called) < fail_at + cap
 
-    def test_bounded_memory(self):
+    def test_peak_in_flight_stays_within_outstanding_cap(self):
         peak = [0]
         current = [0]
         lock = threading.Lock()

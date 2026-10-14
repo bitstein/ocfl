@@ -60,8 +60,7 @@ def _root(fs) -> StorageRoot:
     return StorageRoot.open(fs)
 
 
-def _ots_object(fs, src: Path):
-    """An OTS object at v1 and the plan (with proof) for its v2."""
+def _ots_v1_and_proved_v2_plan(fs, src: Path):
     root = _root(fs)
     vs1 = _stage(src, "s1", _ots({"a.txt": b"a"}))
     p1 = _with_proof(root.plan(OID, vs1, created="2026-01-01T00:00:00Z"))
@@ -101,7 +100,7 @@ class TestLocal:
     def test_existing_object_claims_then_proof_inventory_sidecar(self, tmp_path):
         d = tmp_path / "root"
         d.mkdir()
-        root, plan, content = _ots_object(LocalFS(d), tmp_path)
+        root, plan, content = _ots_v1_and_proved_v2_plan(LocalFS(d), tmp_path)
         obj = root.object_path(OID)
         rec = Recorder(d)
         root.commit(rec, OID, plan, content=content)
@@ -201,7 +200,7 @@ class TestLocal:
         d = tmp_path / "root"
         d.mkdir()
         fs = LocalFS(d)
-        root, plan, content = _ots_object(fs, tmp_path)
+        root, plan, content = _ots_v1_and_proved_v2_plan(fs, tmp_path)
         stale = d / root.object_path(OID) / OTS / "inventory.json.v2.ots"
         stale.write_bytes(b"stale")
         root.commit(fs, OID, plan, content=content)
@@ -272,7 +271,7 @@ class TestS3:
         from ocfl_lib.fs.s3 import S3FS
 
         fs = S3FS(BUCKET, client=s3)
-        root, plan, content = _ots_object(fs, tmp_path)
+        root, plan, content = _ots_v1_and_proved_v2_plan(fs, tmp_path)
         obj = root.object_path(OID)
         log: list = []
         rec = _record(s3, log)

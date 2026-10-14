@@ -51,8 +51,7 @@ def _create_v1(
 
 
 class TestAlgorithmMigration:
-    def test_sha256_to_sha512(self, tmp_path: Path):
-        """Create v1 sha256, v2 sha512 — fixity has sha256 digests."""
+    def test_sha256_to_sha512_keeps_sha256_in_fixity(self, tmp_path: Path):
         obj, obj_fs = _create_v1(tmp_path, {"file.txt": "hello"})
         assert obj.inventory.inventory.digest_algorithm == "sha256"
 

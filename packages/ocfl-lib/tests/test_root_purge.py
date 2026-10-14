@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING
 
 import pytest
-from builders import Died, stage_files
+from builders import ProcessDied, stage_files
 
 from ocfl_lib._errors import (
     LayoutNotConfigured,
@@ -114,7 +114,7 @@ class _Recorder(LocalFS):
     def _op(self, name: str) -> None:
         self.ops.append(name)
         if self.die_at is not None and len(self.ops) >= self.die_at:
-            raise Died(name)
+            raise ProcessDied(name)
 
     def remove(self, name):
         self._op(name)
@@ -171,7 +171,7 @@ class TestPurgeOrder:
             base = tmp_path / f"p{n}"
             base.mkdir()
             fsys, root, d, obj = _three_versions(base)
-            with pytest.raises(Died):
+            with pytest.raises(ProcessDied):
                 root.purge(_Recorder(d, die_at=n), "obj:p")
             errors = {f.code[:4] for f in validate_root(fsys, "").errors}
             assert "E072" not in errors

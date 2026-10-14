@@ -332,15 +332,13 @@ class TestNonOtsRegression:
         staging_dir = store.staging_path(root_path, "obj:new")
         assert not has_ots(staging_dir)
 
-    def test_no_ots_no_config_required(
+    @pytest.mark.usefixtures("_isolate_user_config")
+    def test_no_ots_succeeds_with_no_config_file(
         self,
         runner: CliRunner,
         storage_root: Path,
         tmp_path: Path,
     ) -> None:
-        """Plain `stage new` succeeds with no OTS config at all — autouse
-        `_isolate_user_config` already points OCFL_CONFIG at a nonexistent
-        sentinel, so this is the default."""
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,

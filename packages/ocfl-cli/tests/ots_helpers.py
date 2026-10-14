@@ -18,6 +18,7 @@ from tests.helpers.ots import build_attestation
 DIGEST_BLOCK_HEIGHT = 800_000
 MIN_CONFS = 3
 CATEGORY_ID = 641
+UNRELATED_DIGEST = "de" * 32
 
 SP_OK = f"""\
 [simpleproof]

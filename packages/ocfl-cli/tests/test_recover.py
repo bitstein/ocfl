@@ -21,8 +21,8 @@ from ocfl_lib.validation import validate_root
 OID = "obj:rec"
 
 
-class Died(BaseException):
-    """The committing process died: no undo ran."""
+class ProcessDied(BaseException):
+    pass
 
 
 def _root(tmp_path: Path) -> tuple[Path, LocalFS, StorageRoot]:
@@ -43,18 +43,17 @@ def _stage(tmp_path: Path, name: str, files: dict[str, bytes]):
     return scan_dir(LocalFS(tmp_path), name, DigestAlgorithm.SHA512)
 
 
-def _claimed(tmp_path: Path) -> tuple[Path, LocalFS, StorageRoot]:
-    """v1 published; v2 claimed, then the writer died before publishing."""
+def _v2_claimed_by_dead_writer(tmp_path: Path) -> tuple[Path, LocalFS, StorageRoot]:
     d, fs, root = _root(tmp_path)
     root.commit(fs, OID, _stage(tmp_path, "s1", {"a.txt": b"a"}))
 
     class DiesAtRootInventory(LocalFS):
         def write(self, name, data):
             if name == f"{OID}/inventory.json":
-                raise Died
+                raise ProcessDied
             return super().write(name, data)
 
-    with pytest.raises(Died):
+    with pytest.raises(ProcessDied):
         root.commit(DiesAtRootInventory(d), OID, _stage(tmp_path, "s2", {"b": b"b"}))
     assert root.commit_status(OID).state is CommitState.CLAIMED
     return d, fs, root
@@ -98,7 +97,7 @@ class TestRecover:
         assert _run(d, "recover", OID, *args).exit_code == ExitCode.USAGE
 
     def test_revert(self, tmp_path):
-        d, fs, root = _claimed(tmp_path)
+        d, fs, root = _v2_claimed_by_dead_writer(tmp_path)
         r = _run(d, "recover", OID, "--revert")
         assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "claimed v2" in r.output
@@ -106,7 +105,7 @@ class TestRecover:
         _clean(fs, root)
 
     def test_resume(self, tmp_path):
-        d, fs, root = _claimed(tmp_path)
+        d, fs, root = _v2_claimed_by_dead_writer(tmp_path)
         r = _run(d, "recover", OID, "--resume")
         assert r.exit_code == ExitCode.SUCCESS, r.output
         assert _head(root) == "v2"
@@ -136,7 +135,7 @@ class TestRecover:
         assert "no unfinished commit" in r.output
 
     def test_json(self, tmp_path):
-        d, _fs, _r = _claimed(tmp_path)
+        d, _fs, _r = _v2_claimed_by_dead_writer(tmp_path)
         r = _run(d, "--json", "recover", OID, "--revert")
         assert r.exit_code == ExitCode.SUCCESS, r.output
         assert json.loads(r.stdout) == {
@@ -146,9 +145,8 @@ class TestRecover:
             "version": "v2",
         }
 
-    def test_stage_commit_then_recover(self, tmp_path):
-        """A commit blocked by an unfinished one names the fix."""
-        d, fs, root = _claimed(tmp_path)
+    def test_commit_blocked_by_unfinished_commit_names_recover(self, tmp_path):
+        d, fs, root = _v2_claimed_by_dead_writer(tmp_path)
         with pytest.raises(Exception, match="recover"):
             root.commit(fs, OID, _stage(tmp_path, "s3", {"c": b"c"}))
         assert _run(d, "recover", OID, "--revert").exit_code == ExitCode.SUCCESS

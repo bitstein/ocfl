@@ -7,7 +7,7 @@ from ocfl_lib import DigestAlgorithm, LocalFS, VersionState, scan_dir
 FIXTURES_ROOT = Path(__file__).resolve().parents[3] / "tests" / "fixtures"
 
 
-class Died(BaseException):
+class ProcessDied(BaseException):
     pass
 
 

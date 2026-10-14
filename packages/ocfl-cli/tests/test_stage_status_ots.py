@@ -41,15 +41,7 @@ def _stage_args_json(root: Path, staging: Path, *args: str) -> list[str]:
     ]
 
 
-# --------------------------------------------------------------------------- #
-# Setup helpers: bring an OTS staging into each phase by mutating ots.json
-# directly. The status command READS ots.json without enforcing the FSM
-# (status itself is `_STAY` in the transition matrix), so direct mutation
-# is sufficient and avoids dragging in unrelated workflow scaffolding.
-# --------------------------------------------------------------------------- #
-
-
-def _set_phase(
+def _write_phase_bypassing_fsm(
     sd: Path,
     phase: Phase,
     *,
@@ -241,7 +233,7 @@ class TestStageStatusOts:
             ("a.txt", b"alpha"),
         )
         da = digests["a.txt"]
-        _set_phase(
+        _write_phase_bypassing_fsm(
             sd,
             Phase.CONTENT_PENDING,
             pending_digests=(da,),
@@ -299,7 +291,7 @@ class TestStageStatusOts:
             ("a.txt", b"alpha"),
         )
         da = digests["a.txt"]
-        _set_phase(
+        _write_phase_bypassing_fsm(
             sd,
             Phase.CONTENT_PENDING,
             pending_digests=(da,),
@@ -346,7 +338,7 @@ class TestStageStatusOts:
             ("a.txt", b"alpha"),
         )
         da = digests["a.txt"]
-        _set_phase(
+        _write_phase_bypassing_fsm(
             sd,
             Phase.CONTENT_UPGRADED,
             pending_digests=(da,),
@@ -390,7 +382,7 @@ class TestStageStatusOts:
             digest=inv_d,
             job_id="job-inv",
         )
-        _set_phase(
+        _write_phase_bypassing_fsm(
             sd,
             Phase.INVENTORY_PENDING,
             pending_digests=(da,),
@@ -436,7 +428,7 @@ class TestStageStatusOts:
             digest=inv_d,
             job_id="job-inv-fail",
         )
-        _set_phase(
+        _write_phase_bypassing_fsm(
             sd,
             Phase.INVENTORY_PENDING,
             pending_digests=(da,),
@@ -478,7 +470,7 @@ class TestStageStatusOts:
         )
         da = digests["a.txt"]
         inv_d = "d" * 64
-        _set_phase(
+        _write_phase_bypassing_fsm(
             sd,
             Phase.INVENTORY_UPGRADED,
             pending_digests=(da,),
@@ -516,7 +508,7 @@ class TestStageStatusOts:
         )
         da = digests["a.txt"]
         inv_d = "c" * 64
-        _set_phase(
+        _write_phase_bypassing_fsm(
             sd,
             Phase.COMMITTED,
             pending_digests=(da,),
@@ -635,7 +627,7 @@ class TestStageStatusOts:
         data = json.loads(r.output)
         assert data["cache_bytes"] == 0
 
-    def test_status_no_lock_acquired(
+    def test_status_answers_while_another_process_holds_lock(
         self,
         runner: CliRunner,
         empty_sha256_root: Path,
@@ -644,11 +636,6 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``stage status`` is documented as lock-free (bounded staleness is
-        correct semantics for an inspector): it answers while another
-        process holds the staging ``.lock``, with a lock timeout that would
-        fail any command that waits for the lock.
-        """
         write_config(tmp_path, monkeypatch)
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)
@@ -692,7 +679,7 @@ class TestStageStatusOts:
             ("a.txt", b"alpha"),
         )
         da = digests["a.txt"]
-        _set_phase(
+        _write_phase_bypassing_fsm(
             sd,
             Phase.CONTENT_PENDING,
             pending_digests=(da,),
@@ -761,7 +748,7 @@ class TestStageStatusOts:
 
         runner_obj(runner)["clock"] = FakeClock(fake_now)
 
-        _set_phase(
+        _write_phase_bypassing_fsm(
             sd,
             Phase.CONTENT_PENDING,
             pending_digests=(da,),
@@ -894,7 +881,7 @@ class TestStageStatusOts:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        write_config(tmp_path, monkeypatch)  # full config to enable `stage new --ots`
+        write_config(tmp_path, monkeypatch)
         inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
@@ -906,7 +893,6 @@ class TestStageStatusOts:
             ("a.txt", b"alpha"),
         )
 
-        # Now drop [bitcoin] from config; [simpleproof] stays.
         write_config(tmp_path, monkeypatch, body=SP_OK)
 
         r = runner.invoke(

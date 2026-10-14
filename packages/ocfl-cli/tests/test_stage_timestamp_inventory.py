@@ -1,5 +1,6 @@
 import hashlib
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof
@@ -34,23 +35,18 @@ from ocfl_cli.workflow import timestamp as wf_timestamp
 from ocfl_lib import CommitPlan, LocalFS, StorageRoot
 
 
+class ContentUpgradedStaging(NamedTuple):
+    staging_dir: Path
+    content_digest: str
+    ots_companion_digest: str
+
+
 def _setup_content_upgraded(
     runner: CliRunner,
     root: Path,
     staging: Path,
     object_id: str,
-) -> tuple[Path, str, str]:
-    """Build a staging at phase=content-upgraded with `a.txt` + `a.txt.ots`.
-
-    Returns ``(staging_dir, content_digest, ots_companion_digest)``.
-
-    Strategy: ingest both files via ``stage add`` (the `.ots` is opaque
-    bytes — ``timestamp inventory`` doesn't parse it). After ingest,
-    mutate ``ots.json`` to record the post-``--upgrade`` shape (phase +
-    pending_digests + verified content_proof) so the FSM legality check
-    at ``timestamp inventory`` passes. Phase mutation is the LAST write;
-    ``stage add`` regresses phase to drafting per the FSM.
-    """
+) -> ContentUpgradedStaging:
     sd, digests = new_ots_staging(
         runner, root, staging, object_id, ("a.txt", b"alpha"), new_args=VERSION_METADATA
     )
@@ -69,7 +65,9 @@ def _setup_content_upgraded(
         proofs={da: verified_content_proof(da)},
     )
     save_ots(sd, state)
-    return sd, da, hashlib.sha256(ots_src.read_bytes()).hexdigest()
+    return ContentUpgradedStaging(
+        sd, da, hashlib.sha256(ots_src.read_bytes()).hexdigest()
+    )
 
 
 class TestInventoryBuild:

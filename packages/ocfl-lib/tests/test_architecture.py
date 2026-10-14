@@ -944,8 +944,7 @@ def _names(node: ast.AST) -> set[str]:
 
 
 class TestCommitRefusesUnproved:
-    def test_check_base_checks_the_extension(self):
-        """Before the plan is written, so a refusal writes nothing."""
+    def test_extension_checked_before_plan_is_written(self):
         names = _names(_func(LIB_SRC / "_commit.py", "check_base"))
         assert {"read_config", "check_extension"} <= names
 
@@ -963,8 +962,7 @@ class TestCommitRefusesUnproved:
         for code in ("E901", "E902", "E904"):
             assert code in text, code
 
-    def test_refusal_leaves_no_work_dir(self):
-        """The object lock makes the work dir; a refused commit removes it."""
+    def test_refusal_removes_the_work_dir_the_object_lock_made(self):
         body = ast.unparse(_func(LIB_SRC / "_commit.py", "_commit_local"))
         assert "tidy_work_dir" in body.split("write_bytes(fsys, t.plan_file")[0]
 
@@ -1010,12 +1008,8 @@ class TestStartTimestamping:
         assert "LocalStartTimestamping" in text and "S3StartTimestamping" in text
 
 
-# --- 4.6 a commit checks its content proofs (E905, E907)
-
-
 class TestCommitChecksContentProofs:
-    def test_check_base_checks_content_proofs(self):
-        """Before the plan is written, on both backends."""
+    def test_content_proofs_checked_before_plan_on_both_backends(self):
         assert "_check_content_proofs" in _names(
             _func(LIB_SRC / "_commit.py", "check_base")
         )

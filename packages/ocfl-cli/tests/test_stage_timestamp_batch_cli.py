@@ -19,6 +19,7 @@ from fakes.locks import held_flock
 from msgspec.structs import replace
 from ots_helpers import (
     MIN_CONFS,
+    UNRELATED_DIGEST,
     bury,
     end_chain_below,
     inject_fake_btc,
@@ -71,7 +72,6 @@ from ocfl_lib import (
     BitcoinRpcTransientError,
 )
 
-_UNRELATED_DIGEST = "de" * 32
 _HEIGHT_JUMP = 5
 
 
@@ -2938,7 +2938,7 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
         ),
     )
     ots_cache_path(staging_dir, verified_digest).parent.mkdir(parents=True)
-    ots_cache_path(staging_dir, verified_digest).write_bytes(ots_for(_UNRELATED_DIGEST))
+    ots_cache_path(staging_dir, verified_digest).write_bytes(ots_for(UNRELATED_DIGEST))
     save_batch(
         staging,
         BatchFile(
@@ -3055,9 +3055,7 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
         ),
     )
     ots_cache_path(upgraded_dir, upgraded_digest).parent.mkdir(parents=True)
-    ots_cache_path(upgraded_dir, upgraded_digest).write_bytes(
-        ots_for(_UNRELATED_DIGEST)
-    )
+    ots_cache_path(upgraded_dir, upgraded_digest).write_bytes(ots_for(UNRELATED_DIGEST))
     save_batch(
         staging,
         BatchFile(
@@ -3171,9 +3169,7 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
         ),
     )
     ots_cache_path(upgraded_dir, upgraded_digest).parent.mkdir(parents=True)
-    ots_cache_path(upgraded_dir, upgraded_digest).write_bytes(
-        ots_for(_UNRELATED_DIGEST)
-    )
+    ots_cache_path(upgraded_dir, upgraded_digest).write_bytes(ots_for(UNRELATED_DIGEST))
     save_batch(
         staging,
         BatchFile(
