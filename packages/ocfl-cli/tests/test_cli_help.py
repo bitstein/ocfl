@@ -1,9 +1,14 @@
 """CLI help contract."""
 
 import importlib.metadata
+import inspect
 import logging
 import re
 
+import click
+import pytest
+import typer
+from rich.text import Text
 from typer.testing import CliRunner
 
 from ocfl_cli._common import installed_cli_version
@@ -39,6 +44,39 @@ def test_timestamp_help_uses_ots_panel(runner: CliRunner) -> None:
     assert result.exit_code == 0, result.output
     assert "OTS" in result.output
     assert "timestamp" in result.output
+
+
+def test_validate_help_names_the_bitcoin_section(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["validate", "--help"])
+
+    assert result.exit_code == 0, result.output
+    unboxed = re.sub(r"[\s│]+", " ", result.output)
+    assert "auto (chain when [bitcoin] is configured" in unboxed
+
+
+def _help_strings(cmd: click.Command, path: str):
+    yield path, cmd.help
+    yield path, cmd.epilog
+    for param in cmd.params:
+        yield f"{path} {param.name}", getattr(param, "help", None)
+    if isinstance(cmd, click.Group):
+        for name, sub in cmd.commands.items():
+            yield from _help_strings(sub, f"{path} {name}")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param(inspect.cleandoc(text), id=where)
+        for where, text in _help_strings(typer.main.get_command(app), "ocfl")
+        if text
+    ],
+)
+def test_help_text_survives_rich_markup(text: str) -> None:
+    rendered = Text.from_markup(text).plain
+    assert rendered == text.replace("\\[", "["), (
+        "Rich markup ate part of the help; wrap the string in rich.markup.escape()"
+    )
 
 
 def test_exit_code_help_is_generated_from_canonical_values() -> None:

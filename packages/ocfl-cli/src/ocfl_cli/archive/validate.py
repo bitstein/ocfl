@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
+from rich.markup import escape
 
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
@@ -56,7 +57,7 @@ def validate(
         OtsMode,
         typer.Option(
             "--ots",
-            help=(
+            help=escape(
                 f"Checks of the {ots.EXTENSION_NAME} proofs: auto (chain when "
                 "[bitcoin] is configured, else local), local (no Bitcoin node), "
                 "or chain (against Bitcoin). Default: auto."
