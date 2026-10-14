@@ -19,6 +19,7 @@ from runner_helpers import ObjRunner
 
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
+from ocfl_cli.ots.bitcoin import BlockchainInfo, BlockHeader
 from ocfl_lib import (
     BitcoinRpcTransientError,
     LocalFS,
@@ -76,11 +77,19 @@ class TestDefaultOnVerifyOts:
         calls: list[str] = []
 
         class _SpyRPC:
-            def __getattr__(self, name: str) -> object:
-                calls.append(name)
-                return getattr(btc_fake.rpc, name)
+            def getblockchaininfo(self) -> BlockchainInfo:
+                calls.append("getblockchaininfo")
+                return btc_fake.rpc.getblockchaininfo()
 
-        inject_fake_btc(runner, _SpyRPC())  # ty: ignore[invalid-argument-type]
+            def getblockheader(self, block_hash: str) -> BlockHeader:
+                calls.append("getblockheader")
+                return btc_fake.rpc.getblockheader(block_hash)
+
+            def getblockhash(self, height: int) -> str:
+                calls.append("getblockhash")
+                return btc_fake.rpc.getblockhash(height)
+
+        inject_fake_btc(runner, _SpyRPC())
 
         root = _flat_direct_root_with_ots_object(tmp_path, obj_id="obj-test")
 

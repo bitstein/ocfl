@@ -1,10 +1,13 @@
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol
 
 from ocfl_lib.fs import open_fs
 
-# hook(name, args, call) -> result; `call()` runs the real method.
-type Hook = Callable[[str, tuple[Any, ...], Callable[[], Any]], Any]
+
+class Hook(Protocol):
+    def __call__(
+        self, name: str, args: tuple[Any, ...], call_real_method: Callable[[], Any]
+    ) -> Any: ...
 
 
 def hooked_fs(location: str, hook: Hook):
@@ -32,21 +35,21 @@ def hooked_fs(location: str, hook: Hook):
 def raise_on_content_write(exc: BaseException) -> Callable[[str], Any]:
     fired = False
 
-    def hook(name, args, call):
+    def hook(name, args, call_real_method):
         nonlocal fired
         if name == "write" and "/content/" in str(args[0]) and not fired:
             fired = True
             raise exc
-        return call()
+        return call_real_method()
 
     return lambda location: hooked_fs(location, hook)
 
 
 def before_claim(action: Callable[[], None]) -> Callable[[str], Any]:
 
-    def hook(name, args, call):
+    def hook(name, args, call_real_method):
         if name == "rename_noreplace":
             action()
-        return call()
+        return call_real_method()
 
     return lambda location: hooked_fs(location, hook)

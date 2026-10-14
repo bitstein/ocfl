@@ -311,11 +311,11 @@ class TestEnvOverride:
         assert cfg.simpleproof is not None
         assert cfg.simpleproof.api_key.get_secret_value() == "ENVKEY"
 
-    def test_env_validates_scheme_too(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize("var", ["SIMPLEPROOF_BASE_URL", "BITCOIN_RPC_URL"])
+    def test_env_url_is_scheme_validated(
+        self, var: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Env override participates in validation — bad scheme in env still fails."""
-        monkeypatch.setenv("SIMPLEPROOF_BASE_URL", "ftp://bad")
+        monkeypatch.setenv(var, "ftp://bad")
         path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
         with pytest.raises(ConfigError):
             _load_requiring_ots_sections(path)
@@ -438,15 +438,6 @@ class TestBitcoinEnvOverride:
         assert cfg.bitcoin is not None
         assert cfg.bitcoin.zmq_endpoint == "tcp://10.0.0.1:28332"
 
-    def test_env_validates_scheme_too(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Env override participates in validation — bad scheme in env still fails."""
-        monkeypatch.setenv("BITCOIN_RPC_URL", "ftp://bad")
-        path = _write(tmp_path / "c.toml", SP_OK + BTC_OK)
-        with pytest.raises(ConfigError):
-            _load_requiring_ots_sections(path)
-
 
 class TestSecretStrAPI:
     def test_simpleproof_secrets_are_secret_str(self, tmp_path: Path) -> None:
@@ -486,14 +477,8 @@ class TestConfigErrorNotValueError:
             tmp_path / "c.toml",
             SP_OK.replace("https://stage.example", "ftp://bad") + BTC_OK,
         )
-        try:
+        with pytest.raises(ConfigError):
             _load_requiring_ots_sections(path)
-        except ConfigError:
-            pass
-        except ValueError as e:  # pragma: no cover - failure path
-            pytest.fail(f"ValueError leaked from load_config: {e!r}")
-        else:  # pragma: no cover - failure path
-            pytest.fail("expected ConfigError")
 
 
 class TestBrokenSectionIsDeferred:

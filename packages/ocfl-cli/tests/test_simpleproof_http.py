@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 import httpx2 as httpx
 import pytest
+from exc_chain import exc_chain_request_headers, exc_chain_text
 
 from ocfl_cli.errors import (
     AttestationMismatchError,
@@ -99,31 +100,6 @@ def test_simpleproof_http_client_closes_injected_http_client() -> None:
 
 def _ok_submit(hashes: list[str]) -> httpx.Response:
     return httpx.Response(200, json={"ok": True, "files": hashes})
-
-
-def _exc_chain_text(exc: BaseException) -> str:
-    parts: list[str] = []
-    seen: set[int] = set()
-    cur: BaseException | None = exc
-    while cur is not None and id(cur) not in seen:
-        seen.add(id(cur))
-        parts.append(repr(cur))
-        parts.append(str(cur))
-        cur = cur.__cause__ or cur.__context__
-    return "\n".join(parts)
-
-
-def _exc_chain_request_headers(exc: BaseException) -> list[httpx.Headers]:
-    headers: list[httpx.Headers] = []
-    seen: set[int] = set()
-    cur: BaseException | None = exc
-    while cur is not None and id(cur) not in seen:
-        seen.add(id(cur))
-        req = getattr(cur, "request", None)
-        if req is not None:
-            headers.append(req.headers)
-        cur = cur.__cause__ or cur.__context__
-    return headers
 
 
 class TestSubmitHashesChunking:
@@ -841,11 +817,11 @@ class TestDownloadResults:
 
 class TestAuthHeaderScrubbing:
     def _assert_no_plaintext_creds(self, exc: BaseException) -> None:
-        chain_text = _exc_chain_text(exc)
+        chain_text = exc_chain_text(exc)
         assert ACCESS_TOKEN not in chain_text
         assert API_KEY not in chain_text
 
-        for headers in _exc_chain_request_headers(exc):
+        for headers in exc_chain_request_headers(exc):
             for name in ("x-access-token", "x-api-key"):
                 value = headers.get(name)
                 if value is None:
@@ -965,7 +941,7 @@ class TestCheckAccess:
         with pytest.raises(SimpleProofAuthError) as exc_info:
             client.check_access()
 
-        assert ACCESS_TOKEN not in _exc_chain_text(exc_info.value)
+        assert ACCESS_TOKEN not in exc_chain_text(exc_info.value)
 
     def test_5xx_is_retried_then_transient(self) -> None:
         attempts: list[int] = []

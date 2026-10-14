@@ -11,6 +11,7 @@ from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Proof, VerifyJob
 from ocfl_cli.model.phase import Phase, TimestampTarget
+from ocfl_cli.ports import BitcoinRPC
 from ocfl_cli.store.ots_state import load_ots, ots_cache_path, save_ots
 from tests.helpers.ots import build_attestation
 
@@ -58,7 +59,7 @@ def inject_fake_sp(runner: ObjRunner, fake: FakeSimpleProof) -> None:
     runner.obj["sp_client_factory"] = lambda cfg: fake
 
 
-def inject_fake_btc(runner: ObjRunner, fake: FakeBitcoinRPC) -> None:
+def inject_fake_btc(runner: ObjRunner, fake: BitcoinRPC) -> None:
     runner.obj["btc_rpc_factory"] = lambda cfg: fake
 
 

@@ -38,10 +38,9 @@ class FakeBitcoinRPC:
         self._salt = self._salt + b"r"
         del self._chain[height:]
         self._chain.append(_hash_at(height, self._salt))
-        # The replacement block (and anything above it) is new content. Drop
-        # stale explicit roots so getblockheader falls back to the replacement
-        # block's deterministic root, matching real reorg semantics without
-        # preserving orphaned merkle data.
+        self._forget_merkle_roots_from(height)
+
+    def _forget_merkle_roots_from(self, height: int) -> None:
         for h in [h for h in self._merkle_roots if h >= height]:
             del self._merkle_roots[h]
 

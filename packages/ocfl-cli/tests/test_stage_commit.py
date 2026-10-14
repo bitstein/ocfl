@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 from types import SimpleNamespace
@@ -95,8 +96,9 @@ class TestStageCommit:
         _new_with_metadata(runner, storage_root, staging, "obj:stale")
         _invoke(runner, storage_root, staging, "add", "obj:stale", str(src))
 
-        time.sleep(0.05)  # ensure mtime changes
+        added_mtime = src.stat().st_mtime
         src.write_text("modified content")
+        os.utime(src, (added_mtime + 1, added_mtime + 1))
 
         result = _invoke(runner, storage_root, staging, "commit", "obj:stale")
         assert result.exit_code == ExitCode.GENERIC

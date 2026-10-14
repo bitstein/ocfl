@@ -8,9 +8,15 @@ import pkgutil
 import re
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING, BinaryIO
 
 import pytest
 from builders import FIXTURES_ROOT
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from ocfl_lib.fs import FileRef, FsEntry
 
 REPO = Path(__file__).resolve().parents[3]
 LIB_SRC = REPO / "packages/ocfl-lib/src/ocfl_lib"
@@ -196,8 +202,17 @@ class TestPublicApi:
 
 
 class _BoomFS:
-    def __getattr__(self, name):
-        raise AssertionError(f"I/O in constructor: {name}")
+    def open_file(self, name: str) -> BinaryIO:
+        raise AssertionError(f"I/O in constructor: open_file {name}")
+
+    def read_dir(self, name: str) -> Iterator[FsEntry]:
+        raise AssertionError(f"I/O in constructor: read_dir {name}")
+
+    def exists(self, name: str) -> bool:
+        raise AssertionError(f"I/O in constructor: exists {name}")
+
+    def walk_files(self, name: str) -> Iterator[FileRef]:
+        raise AssertionError(f"I/O in constructor: walk_files {name}")
 
 
 class TestReadOnlyObjectAndOpen:
@@ -213,8 +228,8 @@ class TestReadOnlyObjectAndOpen:
     def test_constructors_do_no_io(self):
         from ocfl_lib import Object, StorageRoot
 
-        StorageRoot(_BoomFS())  # ty: ignore[invalid-argument-type]
-        Object(_BoomFS(), "x")  # ty: ignore[invalid-argument-type]
+        StorageRoot(_BoomFS())
+        Object(_BoomFS(), "x")
 
     def test_open(self, tmp_path):
         from ocfl_lib import LocalFS, NotAnOcflRoot, Spec, StorageRoot
@@ -640,16 +655,16 @@ class TestRecoveryTables:
         inner = LocalFS(tmp_path)
 
         class ReadOnly:
-            def open_file(self, n):
-                return inner.open_file(n)
+            def open_file(self, name: str) -> BinaryIO:
+                return inner.open_file(name)
 
-            def read_dir(self, n):
-                return inner.read_dir(n)
+            def read_dir(self, name: str) -> Iterator[FsEntry]:
+                return inner.read_dir(name)
 
-            def exists(self, n):
-                return inner.exists(n)
+            def exists(self, name: str) -> bool:
+                return inner.exists(name)
 
-        status, plan = detect(ReadOnly(), "", "obj", "x:1")  # ty: ignore[invalid-argument-type]
+        status, plan = detect(ReadOnly(), "", "obj", "x:1")
         assert plan is None and status.state.value == "clean"
 
     def test_recovery_reads_progress_from_storage_only(self):

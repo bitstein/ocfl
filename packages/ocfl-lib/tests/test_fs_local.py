@@ -102,12 +102,12 @@ class TestWrite:
     def test_write_atomic_no_partial_on_error(self, fs: LocalFS, fs_dir: Path):
         (fs_dir / "existing.txt").write_text("original")
 
-        class BadStream:
-            def read(self, n: int = -1) -> bytes:
+        class BadStream(BytesIO):
+            def read(self, size: int | None = -1, /) -> bytes:
                 raise OSError("read failed")
 
         with pytest.raises(OSError, match="read failed"):
-            fs.write("existing.txt", BadStream())  # ty: ignore[invalid-argument-type]
+            fs.write("existing.txt", BadStream())
         assert (fs_dir / "existing.txt").read_text() == "original"
 
 

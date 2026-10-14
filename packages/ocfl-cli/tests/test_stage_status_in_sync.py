@@ -1,6 +1,7 @@
 import pytest
 
 from ocfl_cli.ots.bitcoin import BlockchainInfo
+from ocfl_cli.workflow.status import compute_in_sync
 
 
 def _info(*, ibd: bool, vp: float) -> BlockchainInfo:
@@ -24,10 +25,4 @@ class TestComputeInSyncBoundary:
         ],
     )
     def test_boundary(self, ibd: bool, vp: float, expected: bool) -> None:
-        # Imported lazily so collection succeeds even before
-        # ``compute_in_sync`` lands; failure at red is a clear
-        # ImportError-shaped diagnostic in the test body, not a
-        # collection abort.
-        from ocfl_cli.workflow.status import compute_in_sync
-
         assert compute_in_sync(_info(ibd=ibd, vp=vp)) is expected

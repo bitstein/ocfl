@@ -1,5 +1,8 @@
+import dataclasses
 from io import BytesIO
 from typing import TYPE_CHECKING, BinaryIO
+
+import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -19,11 +22,8 @@ class TestFileRef:
 
     def test_frozen(self):
         ref = FileRef(path="a.txt", size=0)
-        try:
+        with pytest.raises(dataclasses.FrozenInstanceError):
             ref.path = "b.txt"  # ty: ignore[invalid-assignment]
-            raise AssertionError("should be frozen")
-        except AttributeError:
-            pass
 
     def test_equality(self):
         a = FileRef(path="f.txt", size=10)
@@ -52,11 +52,8 @@ class TestFsEntry:
 
     def test_frozen(self):
         entry = FsEntry(name="x", is_dir=False, is_file=True, size=0)
-        try:
+        with pytest.raises(dataclasses.FrozenInstanceError):
             entry.name = "y"  # ty: ignore[invalid-assignment]
-            raise AssertionError("should be frozen")
-        except AttributeError:
-            pass
 
     def test_equality(self):
         a = FsEntry(name="a", is_dir=True, is_file=False, size=None)

@@ -3,6 +3,7 @@ from collections.abc import Callable
 
 import httpx2 as httpx
 import pytest
+from exc_chain import exc_chain_request_headers, exc_chain_text
 
 from ocfl_lib import BitcoinNoBlockError, BitcoinRpcAuthError, BitcoinRpcTransientError
 from ocfl_lib.bitcoin import BitcoinRpcClient, BlockchainInfo, BlockHeader
@@ -43,33 +44,6 @@ def test_bitcoin_rpc_client_closes_injected_http_client() -> None:
     client.close()
 
     assert http.is_closed
-
-
-def _exc_chain_text(exc: BaseException) -> str:
-    """Concatenate str(exc) across the full __cause__/__context__ chain."""
-    parts: list[str] = []
-    seen: set[int] = set()
-    cur: BaseException | None = exc
-    while cur is not None and id(cur) not in seen:
-        seen.add(id(cur))
-        parts.append(repr(cur))
-        parts.append(str(cur))
-        cur = cur.__cause__ or cur.__context__
-    return "\n".join(parts)
-
-
-def _exc_chain_request_headers(exc: BaseException) -> list[httpx.Headers]:
-    """Collect every ``request.headers`` reachable through the chain."""
-    headers: list[httpx.Headers] = []
-    seen: set[int] = set()
-    cur: BaseException | None = exc
-    while cur is not None and id(cur) not in seen:
-        seen.add(id(cur))
-        req = getattr(cur, "request", None)
-        if req is not None:
-            headers.append(req.headers)
-        cur = cur.__cause__ or cur.__context__
-    return headers
 
 
 class TestGetBlockchainInfo:
@@ -355,14 +329,14 @@ class TestAuthHeaderScrubbing:
     _PASSWORD = "super-secret-password"
 
     def _assert_no_plaintext(self, exc: BaseException) -> None:
-        chain_text = _exc_chain_text(exc)
+        chain_text = exc_chain_text(exc)
         assert self._PASSWORD not in chain_text
         import base64
 
         token = base64.b64encode(f"{self._USER}:{self._PASSWORD}".encode()).decode()
         assert token not in chain_text
 
-        for headers in _exc_chain_request_headers(exc):
+        for headers in exc_chain_request_headers(exc):
             auth_value = headers.get("Authorization")
             if auth_value is None:
                 continue
