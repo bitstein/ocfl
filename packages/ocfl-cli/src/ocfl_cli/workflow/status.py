@@ -13,7 +13,6 @@ from ocfl_cli.store.ots_state import (
 )
 from ocfl_cli.workflow import hints
 from ocfl_cli.workflow.common import (
-    StateMap,
     ordinary_digests,
 )
 from ocfl_lib import (
@@ -36,6 +35,7 @@ if TYPE_CHECKING:
         Runtime,
     )
     from ocfl_cli.store.staging import StagingStore
+    from ocfl_lib import DigestMap
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +48,14 @@ class _OutstandingJobJson(TypedDict):
     age_seconds: int
 
 
+IN_SYNC_MIN_PROGRESS = 0.9999
+
+
 def compute_in_sync(info: BlockchainInfo) -> bool:
-    """Bitcoin-in-sync derivation pinned by `OTS workflow contract`."""
-    return (not info.initial_block_download) and info.verification_progress >= 0.9999
+    return (
+        not info.initial_block_download
+        and info.verification_progress >= IN_SYNC_MIN_PROGRESS
+    )
 
 
 def humanize_age(seconds: int) -> str:
@@ -293,7 +298,7 @@ def status_diff_dict(
         elif prior_pm[p] != staged_pm[p]:
             changes.append({"path": p, "action": "modified"})
 
-    removed_by_digest: StateMap = {}
+    removed_by_digest: DigestMap = {}
     for p, d in removed.items():
         removed_by_digest.setdefault(d, []).append(p)
 

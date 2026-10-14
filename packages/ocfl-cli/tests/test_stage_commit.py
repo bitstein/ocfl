@@ -392,7 +392,9 @@ class TestCommitLocking:
         ):
             pytest.fail("second lock acquire should time out")
 
-    def test_bare_commits_for_same_object_are_serialized(self, tmp_path):
+    def test_bare_commits_for_same_object_are_serialized_across_staging_areas(
+        self, tmp_path
+    ):
         current = 0
         peak = 0
         commits = 0
@@ -412,7 +414,7 @@ class TestCommitLocking:
             def purge(self, root_path: str, object_id: str) -> None:
                 return None
 
-        store = _KeepStaging(tmp_path / "staging")
+        stores = [_KeepStaging(tmp_path / f"staging{i}") for i in range(2)]
         root_path = str(tmp_path / "root")
         object_id = "obj:locked"
         empty = (
@@ -422,8 +424,8 @@ class TestCommitLocking:
             .add_version({}, created="1970-01-01T00:00:00Z")
             .build()
         )
-        store.create(root_path, object_id, empty)
-        staging_dir = store.staging_path(root_path, object_id)
+        for store in stores:
+            store.create(root_path, object_id, empty)
         sr = SimpleNamespace(
             plan=lambda *_a, **_kw: SimpleNamespace(object_id=object_id),
             commit=fake_commit,
@@ -438,13 +440,13 @@ class TestCommitLocking:
                     "fs": object(),
                     "root_path": root_path,
                     "object_id": object_id,
-                    "staging_dir": staging_dir,
+                    "staging_dir": store.staging_path(root_path, object_id),
                     "allow_missing_metadata": True,
                     "runtime": lock_runtime(5),
                 },
                 daemon=True,
             )
-            for _ in range(2)
+            for store in stores
         ]
         for thread in threads:
             thread.start()

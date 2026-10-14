@@ -1,5 +1,4 @@
-import contextlib
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol
 
 from ocfl_cli.errors import (
     AttestationMismatchError,
@@ -49,7 +48,7 @@ if TYPE_CHECKING:
 
     from ocfl_cli.config import Config
     from ocfl_cli.model.phase import TimestampTarget
-    from ocfl_cli.ports import BlockStream, BtcRpcFactory, Runtime, SpClientFactory
+    from ocfl_cli.ports import BtcRpcFactory, Runtime, SpClientFactory
     from ocfl_cli.store.staging import StagingStore
     from ocfl_lib import StorageRoot
     from ocfl_lib.fs import WriteFS
@@ -360,16 +359,9 @@ def watch(
 
             events.waiting(batch)
             btc = btc_factory(cfg)
-            stream = runtime.block_streams(cfg)
-            stream_cm = cast(
-                "contextlib.AbstractContextManager[BlockStream]",
-                stream
-                if hasattr(stream, "__enter__")
-                else contextlib.nullcontext(stream),
-            )
             last_height: int | None = None
             last_tip_hash: str | None = None
-            with stream_cm as zmq_sub:
+            with runtime.block_streams(cfg) as zmq_sub:
                 while True:
                     block = zmq_sub.wait_for_block(timeout_ms=5000)
                     if block is None:

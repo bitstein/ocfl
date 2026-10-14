@@ -20,7 +20,6 @@ from ocfl_cli.store.ots_state import (
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow import hints
 from ocfl_cli.workflow.common import (
-    StateMap,
     ordinary_digests,
     ordinary_paths,
     update_head_state,
@@ -33,7 +32,7 @@ if TYPE_CHECKING:
 
     from ocfl_cli.ports import Runtime
     from ocfl_cli.store.ots_state import LockedStaging
-    from ocfl_lib import StorageRoot
+    from ocfl_lib import DigestMap, StorageRoot
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +150,7 @@ def update_metadata(
     return updated
 
 
-def pair_ots_companion_remove(state: StateMap, removed: dict[str, str]) -> None:
+def pair_ots_companion_remove(state: DigestMap, removed: dict[str, str]) -> None:
     for p, kind in removed.items():
         if kind != "ordinary":
             continue
@@ -164,7 +163,7 @@ def pair_ots_companion_remove(state: StateMap, removed: dict[str, str]) -> None:
                 break
 
 
-def pair_ots_companion_rename(state: StateMap, src: str, dst: str) -> None:
+def pair_ots_companion_rename(state: DigestMap, src: str, dst: str) -> None:
     src_ots = f"{src}{ots.PROOF_SUFFIX}"
     dst_ots = f"{dst}{ots.PROOF_SUFFIX}"
     for d in state:
@@ -174,14 +173,14 @@ def pair_ots_companion_rename(state: StateMap, src: str, dst: str) -> None:
             return
 
 
-def path_kinds(state: StateMap, paths: list[str]) -> dict[str, str]:
+def path_kinds(state: DigestMap, paths: list[str]) -> dict[str, str]:
     ordinary = ordinary_paths(state)
     return {p: "ordinary" if p in ordinary else "proof" for p in paths}
 
 
 def apply_rm_mv_regression(
     staging: LockedStaging,
-    new_inv_state: StateMap,
+    new_inv_state: DigestMap,
     command: Literal[PhaseCommand.ADD, PhaseCommand.RM, PhaseCommand.MV],
     cause: str,
 ) -> None:

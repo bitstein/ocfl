@@ -48,13 +48,16 @@ class _JsonFormatter(logging.Formatter):
         return json.dumps(payload)
 
 
+class _OcflHandler(logging.StreamHandler):
+    pass
+
+
 def configure_logging(json_mode: bool, verbose: bool, quiet: bool) -> None:
     root = logging.getLogger()
     for h in list(root.handlers):
-        if getattr(h, "_ocfl_handler", False):
+        if isinstance(h, _OcflHandler):
             root.removeHandler(h)
-    handler = logging.StreamHandler(sys.stderr)
-    handler._ocfl_handler = True  # ty: ignore[unresolved-attribute]
+    handler = _OcflHandler(sys.stderr)
     if json_mode:
         handler.setFormatter(_JsonFormatter())
     else:

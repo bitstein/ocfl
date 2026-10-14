@@ -69,8 +69,7 @@ class _CliBatchEvents:
         self._json = stage.json
         self._staging_root = stage.store.root
         self._resumed_by_id = resumed_by_id
-        # The batch as the last watch left it.
-        self.final: BatchFile | None = None
+        self.last_watch_batch: BatchFile | None = None
 
     def _emit(self, data: BatchEventOutput) -> None:
         if self._json:
@@ -167,7 +166,7 @@ class _CliBatchEvents:
             typer.echo(f"  {transition}")
 
     def watch_done(self, batch: BatchFile) -> None:
-        self.final = batch
+        self.last_watch_batch = batch
         if self._json:
             self.summary(batch)
         elif self._resumed_by_id:
@@ -263,7 +262,7 @@ def _watch(
     )
     if exit_code:
         raise typer.Exit(exit_code)
-    _require_staged(events.final)
+    _require_staged(events.last_watch_batch)
 
 
 def _submit(

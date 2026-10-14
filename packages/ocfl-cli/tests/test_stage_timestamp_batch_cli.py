@@ -11,6 +11,7 @@ from typing import cast, get_args, get_origin, get_type_hints, is_typeddict
 import pytest
 from fakes import (
     FakeBitcoinRPC,
+    FakeBlockStream,
     FakeSimpleProof,
     InMemoryHashBlockStream,
     RecordingSleeper,
@@ -2603,7 +2604,7 @@ def test_batch_watch_subscribes_once_after_initial_upgrade_pass(
     runner.ports.sleeper = RecordingSleeper()
     subscribers = 0
 
-    class _InterruptingStream:
+    class _InterruptingStream(FakeBlockStream):
         def wait_for_block(self, timeout_ms: int) -> bytes | None:
             raise KeyboardInterrupt
 
@@ -2657,7 +2658,7 @@ def test_batch_watch_human_output_reports_observed_blocks(
 
     runner.ports.sleeper = RecordingSleeper()
 
-    class _OneBlockStream:
+    class _OneBlockStream(FakeBlockStream):
         seen = False
 
         def wait_for_block(self, timeout_ms: int) -> bytes | None:
@@ -2718,7 +2719,7 @@ def test_batch_watch_polls_during_quiet_periods(
         ("a.txt", b"alpha"),
     )
 
-    class _QuietCompletingStream:
+    class _QuietCompletingStream(FakeBlockStream):
         timeouts = 0
 
         def wait_for_block(self, timeout_ms: int) -> bytes | None:
@@ -2853,7 +2854,7 @@ def test_batch_watch_enters_upgrade_for_submitted_subset_after_submit_failure(
     sp.submit_chunk_size = 1
     runner.ports.sleeper = RecordingSleeper()
 
-    class _InterruptingStream:
+    class _InterruptingStream(FakeBlockStream):
         def wait_for_block(self, timeout_ms: int) -> bytes | None:
             raise KeyboardInterrupt
 
@@ -2960,7 +2961,7 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
         ),
     )
 
-    class _JumpStream:
+    class _JumpStream(FakeBlockStream):
         def __init__(self) -> None:
             self.calls = 0
 
@@ -3082,7 +3083,7 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
         ),
     )
 
-    class _JumpStream:
+    class _JumpStream(FakeBlockStream):
         def __init__(self) -> None:
             self.calls = 0
 
@@ -3196,7 +3197,7 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
         ),
     )
 
-    class _JumpStream:
+    class _JumpStream(FakeBlockStream):
         def __init__(self) -> None:
             self.calls = 0
 
@@ -3326,7 +3327,7 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
         ),
     )
 
-    class _JumpStream:
+    class _JumpStream(FakeBlockStream):
         calls = 0
 
         def wait_for_block(self, timeout_ms: int) -> bytes | None:
@@ -3442,7 +3443,7 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
         ),
     )
 
-    class _JumpStream:
+    class _JumpStream(FakeBlockStream):
         calls = 0
 
         def wait_for_block(self, timeout_ms: int) -> bytes | None:

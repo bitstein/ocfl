@@ -55,16 +55,16 @@ def _ls_object(
     v: VNum = parse_version(version_str) if version_str else obj.head
     state = obj.version_info(v).state
 
-    path_map = to_path_map(state)  # path → digest
+    digest_by_path = to_path_map(state)
 
     if app.json:
         entries = [
             {"path": p, "digest": d} if digests else {"path": p}
-            for p, d in sorted(path_map.items())
+            for p, d in sorted(digest_by_path.items())
         ]
         output_json(entries)
     else:
-        for path, digest in sorted(path_map.items()):
+        for path, digest in sorted(digest_by_path.items()):
             if digests:
                 app.console.print(Text.assemble(_style.digest(digest), "  ", path))
             else:

@@ -6,7 +6,7 @@ Adapters implement them (``ocfl_cli.system``, ``ocfl_cli.ots``, the lib's
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -36,6 +36,10 @@ class Sleeper(Protocol):
 
 @runtime_checkable
 class BlockStream(Protocol):
+    def __enter__(self) -> Self: ...
+
+    def __exit__(self, *exc_info: object) -> None: ...
+
     def wait_for_block(self, timeout_ms: int) -> bytes | None: ...
 
 

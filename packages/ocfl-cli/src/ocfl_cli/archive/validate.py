@@ -1,4 +1,5 @@
 import json
+from contextlib import contextmanager
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, cast
 
@@ -23,6 +24,8 @@ from ocfl_lib import (
 from ocfl_lib import fs as fs_utils
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from rich.console import Console
 
     from ocfl_cli._appctx import AppCtx
@@ -109,11 +112,8 @@ def _validate_root(
         )
     else:
         _emit(app, "OTS proofs: local checks only (no Bitcoin node)")
-    try:
+    with _fail_if_chain_unavailable():
         report = validate_root(fs, "", check_digests=check_digests, chain=chain)
-    except OcflError as e:
-        # The chain could not be checked: a failure, not a finding (no E906).
-        raise ErrorContext(e, prefix="cannot verify OTS attestations: ") from e
     emit_root_object_results(app.err_console, emit_progress, fs, object_ids, report)
     _output_result(
         app.console,
@@ -151,15 +151,12 @@ def _validate_object(
         )
     else:
         _emit(app, "OTS proofs: local checks only (no Bitcoin node)")
-    try:
+    with _fail_if_chain_unavailable():
         report = validate_object(fs, obj_path, check_digests=check_digests, chain=chain)
         if chain is not None and _should_emit_progress(app):
             _emit_chain_results(
                 app.err_console, ots.check_object_chain(fs, obj_path, chain)
             )
-    except OcflError as e:
-        # The chain could not be checked: a failure, not a finding (no E906).
-        raise ErrorContext(e, prefix="cannot verify OTS attestations: ") from e
 
     _output_result(
         app.console,
@@ -171,6 +168,14 @@ def _validate_object(
     )
     if not report.is_valid:
         raise typer.Exit(1)
+
+
+@contextmanager
+def _fail_if_chain_unavailable() -> Generator[None]:
+    try:
+        yield
+    except OcflError as e:
+        raise ErrorContext(e, prefix="cannot verify OTS attestations: ") from e
 
 
 def _ots_extension_present(fs: FS, obj_path: str) -> bool:

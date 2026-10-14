@@ -4,7 +4,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
-from fakes import FakeSimpleProof, RecordingSleeper
+from fakes import FakeBlockStream, FakeSimpleProof, RecordingSleeper
 from fakes.locks import held_flock
 from msgspec.structs import replace
 from ots_helpers import (
@@ -495,7 +495,7 @@ class TestInventoryWatchLoop:
         bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, inv_digest)
 
-        class _OneBlockStream:
+        class _OneBlockStream(FakeBlockStream):
             def __init__(self) -> None:
                 self._n = 0
 
@@ -551,7 +551,7 @@ class TestInventoryWatchLoop:
         bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, inv_digest)
 
-        class _OneBlockStream:
+        class _OneBlockStream(FakeBlockStream):
             def __init__(self) -> None:
                 self._n = 0
 
@@ -613,7 +613,7 @@ class TestInventoryWatchLoop:
         bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, inv_digest)
 
-        class _SigintStream:
+        class _SigintStream(FakeBlockStream):
             def wait_for_block(self, timeout_ms: int) -> bytes | None:
                 raise KeyboardInterrupt("simulated SIGINT before first block")
 
@@ -662,7 +662,7 @@ class TestInventoryWatchLoop:
         sibling = ExitStack()
         sibling.enter_context(held_flock(sd / ".lock"))
 
-        class _ContendedStream:
+        class _ContendedStream(FakeBlockStream):
             def __init__(self) -> None:
                 self._n = 0
 

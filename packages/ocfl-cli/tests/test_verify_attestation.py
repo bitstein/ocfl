@@ -21,7 +21,7 @@ from ocfl_cli.ots.bitcoin import (
     verify_attestation,
 )
 from ocfl_lib import BitcoinNoBlockError
-from tests.helpers.ots import build_attestation, build_committed_attestation
+from tests.helpers.ots import build_attestation
 
 DIGEST = hashlib.sha256(b"file-bytes").digest()
 # bitcoind's RPC returns ``merkleroot`` in display (reversed) hex; the OTS
@@ -102,9 +102,10 @@ class TestAttestedDistinctFromCommitment:
     """
 
     def test_chain_merkle_matching_attested_verifies(self) -> None:
-        ots, attested = build_committed_attestation(
-            DIGEST, block_height=DIGEST_BLOCK_HEIGHT
+        ots = build_attestation(
+            DIGEST, block_height=DIGEST_BLOCK_HEIGHT, merkle_step=True
         )
+        attested = hashlib.sha256(DIGEST).digest()
         assert attested != DIGEST
         rpc = FakeBitcoinRPC()
         bury(rpc)
@@ -116,9 +117,10 @@ class TestAttestedDistinctFromCommitment:
         assert result.block_height == DIGEST_BLOCK_HEIGHT
 
     def test_chain_merkle_matching_commitment_not_attested_raises(self) -> None:
-        ots, attested = build_committed_attestation(
-            DIGEST, block_height=DIGEST_BLOCK_HEIGHT
+        ots = build_attestation(
+            DIGEST, block_height=DIGEST_BLOCK_HEIGHT, merkle_step=True
         )
+        attested = hashlib.sha256(DIGEST).digest()
         assert attested != DIGEST
         rpc = FakeBitcoinRPC()
         bury(rpc)

@@ -40,13 +40,9 @@ if TYPE_CHECKING:
         Runtime,
         SimpleProofClient,
     )
-    from ocfl_lib import DigestAlgorithm, Inventory, StorageRoot
+    from ocfl_lib import DigestAlgorithm, DigestMap, Inventory, StorageRoot
 
 logger = logging.getLogger(__name__)
-
-
-# Inventory head-state shape: digest -> logical paths.
-type StateMap = dict[str, list[str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,13 +64,13 @@ def log_phase(prev: Phase, new: Phase) -> None:
         logger.info("phase: %s -> %s", prev.value, new.value)
 
 
-def ordinary_paths(state: StateMap) -> dict[str, str]:
+def ordinary_paths(state: DigestMap) -> dict[str, str]:
     digest_of = {p: d for d, paths in state.items() for p in paths}
     ordinary, _proofs = ots.split_state(digest_of)
     return {p: digest_of[p] for p in sorted(ordinary)}
 
 
-def ordinary_digests(state: StateMap) -> set[str]:
+def ordinary_digests(state: DigestMap) -> set[str]:
     return set(ordinary_paths(state).values())
 
 
@@ -98,7 +94,7 @@ def carried_proofs(sr: StorageRoot, object_id: str) -> CarriedProofs:
     return carried
 
 
-def required_content(state: StateMap) -> dict[str, list[str]]:
+def required_content(state: DigestMap) -> dict[str, list[str]]:
     need: dict[str, list[str]] = {}
     for p, d in ordinary_paths(state).items():
         need.setdefault(d, []).append(p)
@@ -116,7 +112,7 @@ def proof_ready(
 
 
 def place_companions(
-    state: StateMap,
+    state: DigestMap,
     need: dict[str, list[str]],
     ots_state: OtsState,
     carried: CarriedProofs,
@@ -186,7 +182,7 @@ def require_verified_content_before_inventory(state: OtsState) -> None:
         )
 
 
-def update_head_state(inv: Inventory, state: StateMap) -> Inventory:
+def update_head_state(inv: Inventory, state: DigestMap) -> Inventory:
     from ocfl_lib import Inventory
 
     head = inv.head

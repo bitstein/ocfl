@@ -36,8 +36,7 @@ def test_pending_proof_stores_null_height_no_error(tmp_path: Path) -> None:
     proof = build_proof(b"pending", height=None)
     conn = _open_db(tmp_path)
     result = ots.upsert_attestation(conn, proof)
-    assert result.was_inserted is True
-    assert result.parse_error is None
+    assert isinstance(result, ots.ParsedOts)
     row = conn.execute(
         "SELECT block_height, parse_error FROM ots_attestations WHERE proof_digest = ?",
         (result.proof_digest,),
@@ -48,8 +47,8 @@ def test_pending_proof_stores_null_height_no_error(tmp_path: Path) -> None:
 def test_unparseable_stores_parse_error_no_crash(tmp_path: Path) -> None:
     conn = _open_db(tmp_path)
     result = ots.upsert_attestation(conn, b"\x00garbage-not-an-ots-proof")
-    assert result.was_inserted is True
-    assert result.parse_error
+    assert isinstance(result, ots.ParseFailure)
+    assert result.error
     row = conn.execute(
         "SELECT block_height, parse_error FROM ots_attestations WHERE proof_digest = ?",
         (result.proof_digest,),
@@ -62,13 +61,12 @@ def test_parse_once_per_proof_digest(tmp_path: Path) -> None:
     proof = build_proof(b"once", height=800_000)
     conn = _open_db(tmp_path)
     first = ots.upsert_attestation(conn, proof)
-    assert first.was_inserted is True
+    assert isinstance(first, ots.ParsedOts)
 
     with patch.object(ots, "parse", wraps=ots.parse) as mock_parse:
         second = ots.upsert_attestation(conn, proof)
         assert mock_parse.call_count == 0
-    assert second.was_inserted is False
-    assert second.parse_error is None
+    assert second == ots.AlreadyIndexed(proof_digest=first.proof_digest)
 
 
 def test_content_companion_populates_attestations(tmp_path: Path) -> None:

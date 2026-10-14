@@ -16,7 +16,6 @@ from ocfl_cli.workflow.commit import (
 )
 from ocfl_cli.workflow.common import (
     CarriedProofs,
-    StateMap,
     carried_proofs,
     place_companions,
     proof_cache_ready,
@@ -32,7 +31,7 @@ if TYPE_CHECKING:
     from ocfl_cli.model.metadata import StagedMetadata
     from ocfl_cli.store.staging import StagingStore
     from ocfl_cli.workflow.batch.reasons import FixedBatchReason
-    from ocfl_lib import CommitPlan, StorageRoot
+    from ocfl_lib import CommitPlan, DigestMap, StorageRoot
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +217,7 @@ def place_content_companions(
     from ocfl_lib import DigestAlgorithm
 
     inv = area.store.load_inventory(area.root_path, area.object_id)
-    head_state: StateMap = {
+    head_state: DigestMap = {
         d: list(ps) for d, ps in inv.versions[inv.head].state.items()
     }
     need = required_content(head_state)

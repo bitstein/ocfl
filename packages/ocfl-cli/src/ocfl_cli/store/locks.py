@@ -64,13 +64,6 @@ def object_lock_path(root_path: str, object_id: str) -> Path:
 def object_commit_lock(
     root_path: str, object_id: str, runtime: Runtime
 ) -> Generator[None]:
-    """Serialize local CLI commits for one storage-root/object pair.
-
-    This is an operator-ergonomics lock: it prevents ordinary same-machine CLI
-    commits from racing into retryable stale-head failures. The library still
-    enforces optimistic stale-head checks because S3 and non-CLI callers need a
-    backend-independent correctness guard.
-    """
     with flock(
         object_lock_path(root_path, object_id),
         runtime,

@@ -95,14 +95,7 @@ def with_lock(staging: Path, runtime: Runtime) -> Generator[LockedStaging]:
         yield LockedStaging(staging)
 
 
-def apply_category_id(state: OtsState, cfg_category_id: int) -> int:
-    """Reconcile config's `proof_category_id` against the persisted one.
-
-    All in-flight jobs in a single `ots.json` must share a category so
-    `stage retry` / `stage upgrade` address the right SP records. On drift, log
-    WARNING and keep the persisted value for the rest of this staging
-    session; the new config value takes effect on the next fresh staging.
-    """
+def persisted_category_id(state: OtsState, cfg_category_id: int) -> int:
     if state.category_id != cfg_category_id:
         logger.warning(
             "category_id drift: persisted=%d, config=%d; using persisted "

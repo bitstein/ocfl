@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from fakes import (
     FakeBitcoinRPC,
+    FakeBlockStream,
     FakeSimpleProof,
     RecordingSleeper,
 )
@@ -53,7 +54,7 @@ def no_block_processing_delay(runner: ObjRunner) -> None:
 RECHECKED = "Rechecking cached proofs after chain movement"
 
 
-class _ConfirmingStream:
+class _ConfirmingStream(FakeBlockStream):
     """Each wait mines one block (one more confirmation), then reports it.
 
     A watch runs one pass before the first block, so these tests start one
@@ -309,7 +310,7 @@ class TestWatchHeightJumpTriggersReverify:
 
         dropped_notifications = 5
 
-        class _JumpStream:
+        class _JumpStream(FakeBlockStream):
             def __init__(self) -> None:
                 self._n = 0
 
@@ -375,7 +376,7 @@ class TestWatchTipChangeAtStableHeightTriggersReverify:
         bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, d)
 
-        class _ReorgStream:
+        class _ReorgStream(FakeBlockStream):
             def __init__(self) -> None:
                 self._n = 0
 
@@ -437,7 +438,7 @@ class TestWatchSigintExits130WithoutTornCheckpoint:
         bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, d)
 
-        class _SigintStream:
+        class _SigintStream(FakeBlockStream):
             def wait_for_block(self, timeout_ms: int) -> bytes | None:
                 raise KeyboardInterrupt("simulated SIGINT before first block")
 
@@ -491,7 +492,7 @@ class TestWatchLockTimeoutWarningAndContinue:
         sibling = ExitStack()
         sibling.enter_context(held_flock(sd / ".lock"))
 
-        class _ContendedStream:
+        class _ContendedStream(FakeBlockStream):
             def __init__(self) -> None:
                 self._n = 0
 
@@ -569,7 +570,7 @@ class TestTwoWatchersSerializeSafely:
         from ocfl_cli.workflow.watch import watch
 
         def _make_stream() -> object:
-            class _S:
+            class _S(FakeBlockStream):
                 def __init__(self) -> None:
                     self._n = 0
 
@@ -732,7 +733,7 @@ class TestWatchFirstPass:
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        class _NoBlocks:
+        class _NoBlocks(FakeBlockStream):
             waits = 0
 
             def wait_for_block(self, timeout_ms: int) -> bytes | None:
@@ -772,7 +773,7 @@ class TestWatchFirstPass:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        class _Subscription:
+        class _Subscription(FakeBlockStream):
             def __init__(self) -> None:
                 self.feed: list[bytes] = []
 

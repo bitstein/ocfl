@@ -19,10 +19,10 @@ from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.model.simpleproof import JobStatus
 from ocfl_cli.ports import SimpleProofClient
 from ocfl_cli.store.ots_state import (
-    apply_category_id,
     has_ots,
     load_ots,
     ots_cache_path,
+    persisted_category_id,
     plan_path,
     remove_ots,
     save_ots,
@@ -649,7 +649,7 @@ class TestHelpers:
 class TestCategoryIdDrift:
     def test_no_drift_returns_persisted(self, caplog, empty_state: OtsState):
         with caplog.at_level(logging.WARNING):
-            result = apply_category_id(empty_state, empty_state.category_id)
+            result = persisted_category_id(empty_state, empty_state.category_id)
         assert result == empty_state.category_id
         warns = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert warns == []
@@ -658,7 +658,7 @@ class TestCategoryIdDrift:
         self, caplog, empty_state: OtsState
     ):
         with caplog.at_level(logging.WARNING):
-            result = apply_category_id(empty_state, empty_state.category_id + 1)
+            result = persisted_category_id(empty_state, empty_state.category_id + 1)
         assert result == empty_state.category_id
         warns = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert warns, "expected a WARNING log on category_id drift"

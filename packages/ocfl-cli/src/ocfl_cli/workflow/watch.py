@@ -1,15 +1,18 @@
-import contextlib
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from ocfl_cli.errors import LockTimeoutError
-from ocfl_cli.store.ots_state import apply_category_id, load_ots, save_ots, with_lock
+from ocfl_cli.store.ots_state import (
+    load_ots,
+    persisted_category_id,
+    save_ots,
+    with_lock,
+)
 from ocfl_cli.workflow import timestamp
 
 if TYPE_CHECKING:
     from ocfl_cli.model.phase import TimestampTarget
-    from ocfl_cli.ports import BlockStream
 
 
 logger = logging.getLogger(__name__)
@@ -43,16 +46,8 @@ def watch(
     last_height: int | None = None
     last_tip_hash: str | None = None
     prior_jobs: tuple[timestamp.JobProgress, ...] = ()
-    stream = runtime.block_streams(run.cfg)
-    # Real BitcoinZmqSubscriber is a context manager (closes the socket on
-    # exit); test fakes implement only `wait_for_block`. nullcontext bridges
-    # both with one `with` site.
-    stream_cm = cast(
-        "contextlib.AbstractContextManager[BlockStream]",
-        stream if hasattr(stream, "__enter__") else contextlib.nullcontext(stream),
-    )
     try:
-        with stream_cm as blocks:
+        with runtime.block_streams(run.cfg) as blocks:
             try:
                 with with_lock(run.staging_dir, runtime) as staging:
                     before = load_ots(staging)
@@ -96,7 +91,7 @@ def watch(
                                 sp=run.sp_factory(run.cfg),
                                 staging_dir=staging,
                                 min_confirmations=min_confs,
-                                category_id=apply_category_id(
+                                category_id=persisted_category_id(
                                     state, run.category_config
                                 ),
                             )

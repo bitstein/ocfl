@@ -24,46 +24,22 @@ def build_attestation(
     *,
     block_height: int | None = None,
     pending_uri: str | None = None,
+    merkle_step: bool = False,
 ) -> bytes:
     if block_height is None and pending_uri is None:
         raise ValueError("must provide block_height or pending_uri")
 
     timestamp = Timestamp(file_digest)
+    attested = timestamp.ops.add(OpSHA256()) if merkle_step else timestamp
     if pending_uri is not None:
-        timestamp.attestations.add(PendingAttestation(pending_uri))
+        attested.attestations.add(PendingAttestation(pending_uri))
     if block_height is not None:
-        timestamp.attestations.add(BitcoinBlockHeaderAttestation(block_height))
+        attested.attestations.add(BitcoinBlockHeaderAttestation(block_height))
 
     detached = DetachedTimestampFile(OpSHA256(), timestamp)
     ctx = BytesSerializationContext()
     detached.serialize(ctx)
     return ctx.getbytes()
-
-
-def build_committed_attestation(
-    file_digest: bytes,
-    *,
-    block_height: int,
-) -> tuple[bytes, bytes]:
-    """Build ``.ots`` bytes with one operation between the leaf and the
-    Bitcoin attestation, so the *attested* merkle root differs from the file's
-    *commitment* digest.
-
-    ``build_attestation`` attaches the attestation directly to the leaf, which
-    collapses commitment_digest == attested_digest and makes the two distinct
-    checks in ``verify_attestation`` indistinguishable. Here the attestation
-    sits one OpSHA256 below the leaf, mirroring a real merkle path.
-
-    Returns ``(ots_bytes, attested_digest)``. Register ``attested_digest``
-    (reversed, display hex) as the block's merkle root for a match.
-    """
-    timestamp = Timestamp(file_digest)
-    attested_node = timestamp.ops.add(OpSHA256())
-    attested_node.attestations.add(BitcoinBlockHeaderAttestation(block_height))
-    detached = DetachedTimestampFile(OpSHA256(), timestamp)
-    ctx = BytesSerializationContext()
-    detached.serialize(ctx)
-    return ctx.getbytes(), attested_node.msg
 
 
 def build_regtest_attestation(

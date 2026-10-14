@@ -23,9 +23,9 @@ from ocfl_cli.ots.bitcoin import (
 )
 from ocfl_cli.store import staging as _store_mod
 from ocfl_cli.store.ots_state import (
-    apply_category_id,
     load_ots,
     ots_cache_path,
+    persisted_category_id,
     save_ots,
     utc_iso,
     with_lock,
@@ -229,7 +229,7 @@ def prepare_submission_locked(
     target_phase = check_transition(
         state.phase, PhaseCommand.targeted("timestamp", rules.target)
     )
-    category_id = apply_category_id(state, category_config)
+    category_id = persisted_category_id(state, category_config)
     previous = state.phase
     if previous is rules.upgraded_phase:
         return PreparedSubmission(
@@ -508,7 +508,7 @@ def upgrade_locked(
     rules = resolve(state, expect)
     previous = state.phase
     check_transition(state.phase, PhaseCommand.targeted("upgrade", rules.target))
-    category_id = apply_category_id(state, run.category_config)
+    category_id = persisted_category_id(state, run.category_config)
     rules.check_upgradable(state)
     min_confs = run.min_confirmations
 
@@ -576,7 +576,7 @@ def retry_locked(
     target_phase = check_transition(
         state.phase, PhaseCommand.targeted("retry", rules.target)
     )
-    category_id = apply_category_id(state, run.category_config)
+    category_id = persisted_category_id(state, run.category_config)
     failed = [
         i
         for i, s in enumerate(state.submissions)

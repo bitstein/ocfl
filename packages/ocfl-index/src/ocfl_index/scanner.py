@@ -278,13 +278,13 @@ def _ingest_ots_companions(
                 result = ots.upsert_attestation(conn, proof_bytes)
                 pdigest = result.proof_digest
                 proof_digest_by_content_digest[digest] = pdigest
-                if result.was_inserted and result.parse_error is not None:
+                if isinstance(result, ots.ParseFailure):
                     first_path = ots_paths[0]
                     _log.warning(
                         "ots proof parse failed for %s: proof_digest=%s error=%s",
                         first_path,
                         pdigest,
-                        result.parse_error,
+                        result.error,
                         extra={
                             "object_id": inv.id,
                             "version_num": vnum.number,
@@ -316,13 +316,13 @@ def _ingest_ots_inventory_proofs(
             continue
         result = ots.upsert_attestation(conn, proof_bytes)
         pdigest = result.proof_digest
-        if result.was_inserted and result.parse_error is not None:
+        if isinstance(result, ots.ParseFailure):
             _log.warning(
                 "ots inventory proof parse failed for proof_path=%s: "
                 "proof_digest=%s error=%s",
                 proof_path,
                 pdigest,
-                result.parse_error,
+                result.error,
                 extra={
                     "object_id": object_id,
                     "version_num": vnum,

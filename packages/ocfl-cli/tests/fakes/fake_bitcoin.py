@@ -1,6 +1,7 @@
 from collections import deque
 from dataclasses import dataclass, field
 from hashlib import sha256
+from typing import Self
 
 from ocfl_cli.ots.bitcoin import BlockchainInfo, BlockHeader
 from ocfl_lib import BitcoinNoBlockError
@@ -76,8 +77,16 @@ class FakeBitcoinRPC:
         return self._chain[height]
 
 
+class FakeBlockStream:
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+
 @dataclass
-class InMemoryHashBlockStream:
+class InMemoryHashBlockStream(FakeBlockStream):
     _feed: deque[bytes] = field(default_factory=deque)
 
     def push(self, block_hash: bytes) -> None:
