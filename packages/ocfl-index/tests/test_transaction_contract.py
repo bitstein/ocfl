@@ -5,6 +5,7 @@ The autocommit contract says only ``db.immediate_transaction`` and
 else risks half-committed schema rebuilds or stranded writer locks.
 """
 
+import ast
 import re
 from pathlib import Path
 
@@ -29,4 +30,26 @@ def test_no_raw_transaction_ops_outside_db_or_scanner() -> None:
     assert offenders == [], (
         "Raw BEGIN/COMMIT/ROLLBACK outside db.py or scanner.py — "
         "use db.immediate_transaction instead:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_only_immediate_transaction_mints_tx() -> None:
+    forged: list[str] = []
+    for path in [*_SRC_DIR.rglob("*.py"), *Path(__file__).parent.rglob("*.py")]:
+        if path == _SRC_DIR / "db.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call):
+                continue
+            func = ast.unparse(node.func)
+            is_cast = func in {"cast", "typing.cast"} and any(
+                "Tx" in ast.unparse(a) for a in node.args[:1]
+            )
+            if func in {"Tx", "db.Tx"} or is_cast:
+                forged.append(f"{path.name}:{node.lineno}")
+
+    assert forged == [], (
+        "Tx proves an open BEGIN IMMEDIATE; take it from "
+        "`with db.immediate_transaction(conn) as tx:` instead:\n  "
+        + "\n  ".join(forged)
     )

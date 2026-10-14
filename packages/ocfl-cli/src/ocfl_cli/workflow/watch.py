@@ -57,10 +57,10 @@ def watch(
             # need not wait for the next one. Subscribed first, so no block
             # is missed meanwhile.
             try:
-                with with_lock(run.staging_dir, runtime):
-                    before = load_ots(run.staging_dir)
-                    timestamp.upgrade_locked(run, expect=rules.target)
-                    state = load_ots(run.staging_dir)
+                with with_lock(run.staging_dir, runtime) as staging:
+                    before = load_ots(staging)
+                    timestamp.upgrade_locked(run, staging, expect=rules.target)
+                    state = load_ots(staging)
             except LockTimeoutError as e:
                 logger.warning("staging lock contended (%s); waiting for a block", e)
             else:
@@ -80,7 +80,7 @@ def watch(
                     continue
                 runtime.sleeper.sleep(BLOCK_PROCESSING_DELAY_SECONDS)
                 try:
-                    with with_lock(run.staging_dir, runtime):
+                    with with_lock(run.staging_dir, runtime) as staging:
                         info = btc.getblockchaininfo()
                         moved = last_height is not None and (
                             info.height - last_height > 1
@@ -91,24 +91,24 @@ def watch(
                             )
                         )
                         if moved:
-                            state = load_ots(run.staging_dir)
+                            state = load_ots(staging)
                             state = timestamp.reverify(
                                 state,
                                 rules.reverify_digests(state),
                                 btc=btc,
                                 sp=run.sp_factory(run.cfg),
-                                staging_dir=run.staging_dir,
+                                staging_dir=staging,
                                 min_confirmations=min_confs,
                                 category_id=apply_category_id(
                                     state, run.category_config
                                 ),
                             )
-                            save_ots(run.staging_dir, state)
-                        before = load_ots(run.staging_dir)
+                            save_ots(staging, state)
+                        before = load_ots(staging)
                         last_height = info.height
                         last_tip_hash = info.best_block_hash
-                        timestamp.upgrade_locked(run, expect=rules.target)
-                        state = load_ots(run.staging_dir)
+                        timestamp.upgrade_locked(run, staging, expect=rules.target)
+                        state = load_ots(staging)
                         jobs = timestamp.target_jobs(state, rules, runtime=runtime)
                         if progress is not None:
                             progress(

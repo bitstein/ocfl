@@ -48,7 +48,6 @@ def _open_root_path(
     db_path: Path | str,
     root: Path | str | None,
 ) -> str:
-    """Resolve and validate the root path. Caller owns ``conn`` lifecycle."""
     stored = _stored_root_path(conn)
     if root is None:
         if not stored:

@@ -4,8 +4,11 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
+from typing import NewType
 
 SCHEMA_VERSION = 1
+
+Tx = NewType("Tx", sqlite3.Connection)
 
 _TABLES = (
     "ots_inventory",
@@ -57,7 +60,7 @@ def connect(path: Path | str) -> sqlite3.Connection:
 
 
 @contextmanager
-def immediate_transaction(conn: sqlite3.Connection) -> Generator[None]:
+def immediate_transaction(conn: sqlite3.Connection) -> Generator[Tx]:
     """Run a multi-statement write inside a single ``BEGIN IMMEDIATE`` tx.
 
     The only sanctioned grouping primitive outside ``scanner.scan``. Rejects
@@ -72,7 +75,7 @@ def immediate_transaction(conn: sqlite3.Connection) -> Generator[None]:
     # drive the explicit transaction with raw SQL.
     conn.execute("BEGIN IMMEDIATE")
     try:
-        yield
+        yield Tx(conn)
         conn.execute("COMMIT")
     except BaseException:
         if conn.in_transaction:
@@ -83,12 +86,12 @@ def immediate_transaction(conn: sqlite3.Connection) -> Generator[None]:
 def ensure_schema(conn: sqlite3.Connection, root_path: str) -> None:
     stored = _stored_schema_version(conn)
     if stored is None:
-        with immediate_transaction(conn):
-            _create_schema_uncommitted(conn, root_path)
+        with immediate_transaction(conn) as tx:
+            _create_schema(tx, root_path)
     elif stored != SCHEMA_VERSION:
-        with immediate_transaction(conn):
-            _drop_schema_uncommitted(conn)
-            _create_schema_uncommitted(conn, root_path)
+        with immediate_transaction(conn) as tx:
+            _drop_schema(tx)
+            _create_schema(tx, root_path)
 
 
 def meta_get(conn: sqlite3.Connection, key: str) -> str | None:
@@ -119,13 +122,12 @@ def _stored_schema_version(conn: sqlite3.Connection) -> int | None:
     return int(raw) if raw is not None else None
 
 
-def _drop_schema_uncommitted(conn: sqlite3.Connection) -> None:
-    """Drop all index tables. Caller owns the surrounding transaction."""
+def _drop_schema(tx: Tx) -> None:
     for table in _TABLES:
-        conn.execute(f"DROP TABLE IF EXISTS {table}")
+        tx.execute(f"DROP TABLE IF EXISTS {table}")
 
 
-def _execute_schema_sql_uncommitted(conn: sqlite3.Connection, sql: str) -> None:
+def _execute_schema_sql(tx: Tx, sql: str) -> None:
     """Run schema DDL one statement at a time on the existing connection.
 
     ``conn.executescript`` issues an implicit ``COMMIT`` before its body, which
@@ -137,20 +139,19 @@ def _execute_schema_sql_uncommitted(conn: sqlite3.Connection, sql: str) -> None:
         buf.append(line)
         text = "\n".join(buf).strip()
         if text and sqlite3.complete_statement(text):
-            conn.execute(text)
+            tx.execute(text)
             buf = []
     if "\n".join(buf).strip():
         raise sqlite3.OperationalError("incomplete schema SQL")
 
 
-def _create_schema_uncommitted(conn: sqlite3.Connection, root_path: str) -> None:
-    """Create schema and seed meta rows. Caller owns the surrounding transaction."""
+def _create_schema(tx: Tx, root_path: str) -> None:
     sql = resources.files("ocfl_index").joinpath("schema.sql").read_text()
-    _execute_schema_sql_uncommitted(conn, sql)
+    _execute_schema_sql(tx, sql)
     now = now_iso()
     for key, value in (
         ("schema_version", str(SCHEMA_VERSION)),
         ("root_path", root_path),
         ("created_at", now),
     ):
-        meta_set(conn, key, value)
+        meta_set(tx, key, value)

@@ -57,6 +57,7 @@ if TYPE_CHECKING:
         SimpleProofClient,
         SpClientFactory,
     )
+    from ocfl_cli.store.ots_state import LockedStaging
     from ocfl_cli.store.staging import StagingStore
     from ocfl_lib import StorageRoot
 
@@ -212,6 +213,7 @@ def target_jobs(
 
 def prepare_submission_locked(
     area: Area,
+    staging: LockedStaging,
     *,
     category_config: int,
     runtime: Runtime,
@@ -224,7 +226,7 @@ def prepare_submission_locked(
     none to send the phase moves on at once when every proof is final. The
     batch engine calls this per object and sends the digests itself.
     """
-    state = load_ots(area.staging_dir)
+    state = load_ots(staging)
     rules = resolve(state, expect)
     target_phase = check_transition(
         state.phase, PhaseCommand.targeted("timestamp", rules.target)
@@ -256,7 +258,7 @@ def prepare_submission_locked(
     if not to_send:
         done = rules.progress(area, state).done
         phase = rules.upgraded_phase if done else target_phase
-        save_ots(area.staging_dir, replace(state, category_id=category_id, phase=phase))
+        save_ots(staging, replace(state, category_id=category_id, phase=phase))
         log_phase(previous, phase)
         return PreparedSubmission(
             target=rules.target,
@@ -277,7 +279,7 @@ def prepare_submission_locked(
     )
     kept = tuple(s for s in state.submissions if s not in in_flight)
     save_ots(
-        area.staging_dir,
+        staging,
         replace(
             request_proofs(state, ordered, rules.target),
             category_id=category_id,
@@ -295,7 +297,7 @@ def prepare_submission_locked(
 
 
 def submit_prepared_locked(
-    run: TimestampRun, prepared: PreparedSubmission
+    run: TimestampRun, staging: LockedStaging, prepared: PreparedSubmission
 ) -> SubmitResult:
     if not prepared.digests:
         return SubmitResult(
@@ -313,13 +315,13 @@ def submit_prepared_locked(
     for i in range(0, len(prepared.digests), size):
         sp.submit_hashes(list(prepared.digests[i : i + size]), prepared.category_id)
 
-    state = load_ots(run.staging_dir)
+    state = load_ots(staging)
     submitted = replace(prepared.submission, status="submitted")
     subs = tuple(
         submitted if s == prepared.submission else s for s in state.submissions
     )
     save_ots(
-        run.staging_dir,
+        staging,
         replace(
             state,
             category_id=prepared.category_id,
@@ -348,15 +350,16 @@ def submit(
     expect: TimestampTarget | None = None,
     allow_missing_metadata: bool = False,
 ) -> SubmitResult:
-    with with_lock(run.staging_dir, run.runtime):
+    with with_lock(run.staging_dir, run.runtime) as staging:
         prepared = prepare_submission_locked(
             run.area,
+            staging,
             category_config=run.category_config,
             runtime=run.runtime,
             expect=expect,
             allow_missing_metadata=allow_missing_metadata,
         )
-        return submit_prepared_locked(run, prepared)
+        return submit_prepared_locked(run, staging, prepared)
 
 
 def verify_digest(
@@ -474,6 +477,7 @@ def _queue_verify_jobs(
 
 def _ingest_completed_jobs(
     run: TimestampRun,
+    staging: LockedStaging,
     state: OtsState,
     rules: TargetRules,
     *,
@@ -500,7 +504,7 @@ def _ingest_completed_jobs(
                 state,
                 rules.target,
                 btc=btc,
-                staging_dir=run.staging_dir,
+                staging_dir=staging,
                 min_confirmations=run.min_confirmations,
                 runtime=run.runtime,
             )
@@ -508,10 +512,9 @@ def _ingest_completed_jobs(
 
 
 def upgrade_locked(
-    run: TimestampRun, *, expect: TimestampTarget | None = None
+    run: TimestampRun, staging: LockedStaging, *, expect: TimestampTarget | None = None
 ) -> UpgradeResult:
-    """One upgrade pass. Caller MUST hold the staging lock."""
-    state = load_ots(run.staging_dir)
+    state = load_ots(staging)
     rules = resolve(state, expect)
     previous = state.phase
     check_transition(state.phase, PhaseCommand.targeted("upgrade", rules.target))
@@ -527,22 +530,22 @@ def upgrade_locked(
         rules.reverify_digests(state),
         btc=btc,
         sp=sp,
-        staging_dir=run.staging_dir,
+        staging_dir=staging,
         min_confirmations=min_confs,
         category_id=category_id,
     )
-    save_ots(run.staging_dir, state)
+    save_ots(staging, state)
     state = _queue_verify_jobs(state, rules, sp, category_id)
-    save_ots(run.staging_dir, state)
+    save_ots(staging, state)
     state = poll_outstanding_jobs(state, sp)
-    save_ots(run.staging_dir, state)
-    state = snapshot_results(state, run.staging_dir, sp)
-    state = _ingest_completed_jobs(run, state, rules, sp=sp, btc=btc)
+    save_ots(staging, state)
+    state = snapshot_results(state, staging, sp)
+    state = _ingest_completed_jobs(run, staging, state, rules, sp=sp, btc=btc)
 
     progress = rules.progress(run.area, state)
     if progress.done and state.phase is not rules.upgraded_phase:
         state = replace(state, phase=rules.upgraded_phase)
-        save_ots(run.staging_dir, state)
+        save_ots(staging, state)
         log_phase(previous, state.phase)
     if progress.unverified:
         logger.debug(
@@ -567,21 +570,21 @@ def upgrade_locked(
 def upgrade(
     run: TimestampRun, *, expect: TimestampTarget | None = None
 ) -> UpgradeResult:
-    with with_lock(run.staging_dir, run.runtime):
-        return upgrade_locked(run, expect=expect)
+    with with_lock(run.staging_dir, run.runtime) as staging:
+        return upgrade_locked(run, staging, expect=expect)
 
 
 def retry_locked(
-    run: TimestampRun, *, expect: TimestampTarget | None = None
+    run: TimestampRun, staging: LockedStaging, *, expect: TimestampTarget | None = None
 ) -> RetryResult:
-    """Re-send the target's `failed` submissions. Caller MUST hold the lock.
+    """Re-send the target's `failed` submissions.
 
     With none failed it sends nothing (`retried == 0`).
 
     Crash-safe: intent (`submitting`, attempts + 1), POST, then `submitted`.
     Index-based so two submissions with the same digests stay apart.
     """
-    state = load_ots(run.staging_dir)
+    state = load_ots(staging)
     rules = resolve(state, expect)
     target_phase = check_transition(
         state.phase, PhaseCommand.targeted("retry", rules.target)
@@ -604,7 +607,7 @@ def retry_locked(
             attempts=subs[i].attempts + 1,
         )
     save_ots(
-        run.staging_dir,
+        staging,
         replace(state, category_id=category_id, submissions=tuple(subs)),
     )
     sp = run.sp_factory(run.cfg)
@@ -616,7 +619,7 @@ def retry_locked(
     for i in failed:
         subs[i] = replace(subs[i], status="submitted")
     save_ots(
-        run.staging_dir,
+        staging,
         replace(
             state,
             category_id=category_id,
@@ -629,5 +632,5 @@ def retry_locked(
 
 
 def retry(run: TimestampRun, *, expect: TimestampTarget | None = None) -> RetryResult:
-    with with_lock(run.staging_dir, run.runtime):
-        return retry_locked(run, expect=expect)
+    with with_lock(run.staging_dir, run.runtime) as staging:
+        return retry_locked(run, staging, expect=expect)

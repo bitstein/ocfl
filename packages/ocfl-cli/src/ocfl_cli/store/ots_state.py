@@ -6,7 +6,8 @@ The model lives in `ocfl_cli.model.ots_state`.
 import logging
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, NewType
 
 import msgspec
 
@@ -21,12 +22,13 @@ from ocfl_cli.store.locks import flock
 
 if TYPE_CHECKING:
     from collections.abc import Generator
-    from pathlib import Path
 
     from ocfl_cli.ports import Runtime
 
 
 logger = logging.getLogger(__name__)
+
+LockedStaging = NewType("LockedStaging", Path)
 
 
 def _ots_path(staging: Path) -> Path:
@@ -88,9 +90,9 @@ def save_ots(staging: Path, state: OtsState) -> None:
 
 
 @contextmanager
-def with_lock(staging: Path, runtime: Runtime) -> Generator[None]:
+def with_lock(staging: Path, runtime: Runtime) -> Generator[LockedStaging]:
     with flock(staging / ".lock", runtime, what=f"{staging}/.lock"):
-        yield
+        yield LockedStaging(staging)
 
 
 def apply_category_id(state: OtsState, cfg_category_id: int) -> int:

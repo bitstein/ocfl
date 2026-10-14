@@ -124,10 +124,10 @@ def test_rebuild_atomic_when_create_fails_before_ddl(
     path = tmp_path / "i.db"
     _seed_stale_schema(path)
 
-    def boom(conn: sqlite3.Connection, root_path: str) -> None:
+    def boom(tx: db.Tx, root_path: str) -> None:
         raise RuntimeError("kaboom")
 
-    monkeypatch.setattr(db, "_create_schema_uncommitted", boom)
+    monkeypatch.setattr(db, "_create_schema", boom)
 
     conn = db.connect(path)
     with pytest.raises(RuntimeError):
@@ -145,15 +145,15 @@ def test_rebuild_atomic_when_partial_ddl_fails(
     path = tmp_path / "i.db"
     _seed_stale_schema(path)
 
-    def partial(conn: sqlite3.Connection, sql: str) -> None:
+    def partial(tx: db.Tx, sql: str) -> None:
         first_stmt, _, _ = sql.partition(";")
         first_stmt = first_stmt.strip()
         if not first_stmt:
             raise sqlite3.OperationalError("empty schema sql")
-        conn.execute(first_stmt)
+        tx.execute(first_stmt)
         raise RuntimeError("ddl fail mid-rebuild")
 
-    monkeypatch.setattr(db, "_execute_schema_sql_uncommitted", partial)
+    monkeypatch.setattr(db, "_execute_schema_sql", partial)
 
     conn = db.connect(path)
     with pytest.raises(RuntimeError):

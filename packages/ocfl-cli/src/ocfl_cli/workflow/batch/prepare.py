@@ -93,8 +93,8 @@ def prepare_batch_object(
             skipped_reason=fixed_batch_reason(reason),
         )
     try:
-        with with_lock(staging_dir, runtime):
-            state = load_ots(staging_dir)
+        with with_lock(staging_dir, runtime) as staging:
+            state = load_ots(staging)
             if state.category_id != batch.category_id:
                 return batch_model.BatchObject(
                     object_id=object_id,
@@ -117,6 +117,7 @@ def prepare_batch_object(
                     object_id=object_id,
                     staging_dir=staging_dir,
                 ),
+                staging,
                 category_config=cfg.simpleproof.proof_category_id,
                 runtime=runtime,
                 expect=target,
@@ -132,7 +133,7 @@ def prepare_batch_object(
                         else fixed_batch_reason("no_new_digests")
                     ),
                 )
-            state = load_ots(staging_dir)
+            state = load_ots(staging)
             submissions = tuple(
                 msgspec.structs.replace(
                     s,
@@ -143,9 +144,7 @@ def prepare_batch_object(
                 else s
                 for s in state.submissions
             )
-            save_ots(
-                staging_dir, msgspec.structs.replace(state, submissions=submissions)
-            )
+            save_ots(staging, msgspec.structs.replace(state, submissions=submissions))
             return batch_model.BatchObject(
                 object_id=object_id, status="prepared", digests=prepared.digests
             )

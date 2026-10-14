@@ -28,7 +28,13 @@ from ocfl_cli.main import app
 from ocfl_cli.model.metadata import StagedMetadata, StagedUser
 from ocfl_cli.model.ots_state import VerifyJob
 from ocfl_cli.model.phase import Phase
-from ocfl_cli.store.ots_state import load_ots, ots_cache_path, plan_path, save_ots
+from ocfl_cli.store.ots_state import (
+    load_ots,
+    ots_cache_path,
+    plan_path,
+    save_ots,
+    with_lock,
+)
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow import timestamp as wf_timestamp
 from ocfl_lib import CommitPlan, LocalFS, StorageRoot
@@ -179,9 +185,10 @@ class TestInventorySubmissionPrimitives:
         sr = StorageRoot.open(LocalFS(empty_sha256_root))
 
         run = _run(cfg, store, sr, empty_sha256_root, "obj:inv-primitive", sd, sp_fake)
-        prepared = wf_timestamp.prepare_submission_locked(
-            run.area, category_config=641, runtime=run.runtime
-        )
+        with with_lock(sd, run.runtime) as locked:
+            prepared = wf_timestamp.prepare_submission_locked(
+                run.area, locked, category_config=641, runtime=run.runtime
+            )
 
         (digest,) = prepared.digests
         state = load_ots(sd)
@@ -193,7 +200,8 @@ class TestInventorySubmissionPrimitives:
         assert not sp_fake._submissions
         assert plan_path(sd).is_file(), "plan.json is durable before the POST"
 
-        result = wf_timestamp.submit_prepared_locked(run, prepared)
+        with with_lock(sd, run.runtime) as locked:
+            result = wf_timestamp.submit_prepared_locked(run, locked, prepared)
 
         assert result.submitted_count == 1
         assert len(sp_fake._submissions) == 1
@@ -231,10 +239,11 @@ class TestInventorySubmissionPrimitives:
         run = _run(
             cfg, store, sr, empty_sha256_root, "obj:inv-primitive-noop", sd, sp_fake
         )
-        prepared = wf_timestamp.prepare_submission_locked(
-            run.area, category_config=641, runtime=run.runtime
-        )
-        result = wf_timestamp.submit_prepared_locked(run, prepared)
+        with with_lock(sd, run.runtime) as locked:
+            prepared = wf_timestamp.prepare_submission_locked(
+                run.area, locked, category_config=641, runtime=run.runtime
+            )
+            result = wf_timestamp.submit_prepared_locked(run, locked, prepared)
 
         assert prepared.digests == ()
         assert result.submitted_count == 0

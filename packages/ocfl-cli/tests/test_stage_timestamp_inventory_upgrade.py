@@ -31,7 +31,7 @@ from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import VerifyJob
 from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.ports import BlockStream
-from ocfl_cli.store.ots_state import load_ots, ots_cache_path, save_ots
+from ocfl_cli.store.ots_state import load_ots, ots_cache_path, save_ots, with_lock
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow import timestamp as wf_timestamp
 from ocfl_cli.workflow.common import (
@@ -148,7 +148,8 @@ class TestInventoryUpgradePrimitives:
             runtime=runtime,
         )
 
-        first = wf_timestamp.upgrade_locked(run)
+        with with_lock(sd, runtime) as locked:
+            first = wf_timestamp.upgrade_locked(run, locked)
         assert first.target is TimestampTarget.INVENTORY
         assert first.phase is Phase.INVENTORY_PENDING
         state = load_ots(sd)
@@ -156,7 +157,8 @@ class TestInventoryUpgradePrimitives:
         job_id = state.verify_jobs[0].job_id
 
         sp_fake.advance_to_completed(job_id, {inv_digest: ots_for(inv_digest)})
-        second = wf_timestamp.upgrade_locked(run)
+        with with_lock(sd, runtime) as locked:
+            second = wf_timestamp.upgrade_locked(run, locked)
         assert second.phase is Phase.INVENTORY_UPGRADED
         state = load_ots(sd)
         assert state.verify_jobs[0].status == "COMPLETED"

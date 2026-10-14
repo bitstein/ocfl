@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from typing import TypeIs
 
 from ocfl_cli.exit_codes import ExitCode
 
@@ -764,6 +765,33 @@ class TestLocks:
         assert not bad, (
             f"driver holds the batch lock; a second flock self-blocks: {bad}"
         )
+
+    def test_only_with_lock_mints_locked_staging(self):
+        mint = CLI_SRC / "store/ots_state.py"
+        forged = [
+            f"{p.relative_to(REPO)}:{n.lineno}"
+            for p in [*_py_files(CLI_SRC), *_py_files(CLI_TESTS)]
+            if p != mint
+            for n in ast.walk(_tree(p))
+            if _mints(n, "LockedStaging")
+        ]
+        assert not forged, (
+            "LockedStaging proves the staging flock is held; take it from "
+            f"`with with_lock(staging_dir, runtime) as staging:` instead: {forged}"
+        )
+
+
+def _mints(node: ast.AST, token: str) -> TypeIs[ast.Call]:
+    if not isinstance(node, ast.Call):
+        return False
+    func = ast.unparse(node.func)
+    if func == token or func.endswith(f".{token}"):
+        return True
+    return (
+        func in {"cast", "typing.cast"}
+        and bool(node.args)
+        and token in ast.unparse(node.args[0])
+    )
 
 
 class TestSurfaceReview:

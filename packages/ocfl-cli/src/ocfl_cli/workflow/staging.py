@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ocfl_cli.ports import Runtime
+    from ocfl_cli.store.ots_state import LockedStaging
     from ocfl_lib import StorageRoot
 
 logger = logging.getLogger(__name__)
@@ -179,18 +180,18 @@ def path_kinds(state: StateMap, paths: list[str]) -> dict[str, str]:
 
 
 def apply_rm_mv_regression(
-    staging_dir: Path,
+    staging: LockedStaging,
     new_inv_state: StateMap,
     command: Literal[PhaseCommand.ADD, PhaseCommand.RM, PhaseCommand.MV],
     cause: str,
 ) -> None:
-    """Update `ots.json` for stage add/rm/mv regressions. Caller holds the lock.
+    """Update `ots.json` for stage add/rm/mv regressions.
 
     Proofs stay (ADR-0004): a path whose digest has one reuses it. The staged
     inventory is dropped; `plan.json` stays so a rebuilt inventory with the
     same bytes keeps its proof.
     """
-    state = load_ots(staging_dir)
+    state = load_ots(staging)
     new_phase = check_transition(state.phase, command)
     new_pending = tuple(
         d for d in state.pending_digests if d in ordinary_digests(new_inv_state)
@@ -199,7 +200,7 @@ def apply_rm_mv_regression(
     if state.phase in (Phase.INVENTORY_PENDING, Phase.INVENTORY_UPGRADED):
         inventory = None
     save_ots(
-        staging_dir,
+        staging,
         replace(
             state,
             phase=new_phase,
@@ -216,12 +217,12 @@ def apply_rm_mv_regression(
         )
 
 
-def apply_metadata_ots_regression(staging_dir: Path) -> None:
-    state = load_ots(staging_dir)
+def apply_metadata_ots_regression(staging: LockedStaging) -> None:
+    state = load_ots(staging)
     if state.phase not in (Phase.INVENTORY_PENDING, Phase.INVENTORY_UPGRADED):
         return
     save_ots(
-        staging_dir,
+        staging,
         replace(state, phase=Phase.CONTENT_UPGRADED, inventory=None),
     )
     logger.info(
@@ -360,13 +361,13 @@ def edit_metadata(
         clear_name=clear_name,
         clear_address=clear_address,
     )
-    with with_lock(resolved.staging_dir, runtime):
+    with with_lock(resolved.staging_dir, runtime) as staging:
 
         def invalidate_ots_if_needed(
             current: StagedMetadata, updated: StagedMetadata
         ) -> None:
-            if has_ots(resolved.staging_dir) and updated != current:
-                apply_metadata_ots_regression(resolved.staging_dir)
+            if has_ots(staging) and updated != current:
+                apply_metadata_ots_regression(staging)
 
         update_metadata(
             resolved.store,
@@ -461,9 +462,9 @@ def add_sources(
         store.save_content_map(root_path, object_id, content_map)
 
     if has_ots(staging_dir):
-        with with_lock(staging_dir, runtime):
+        with with_lock(staging_dir, runtime) as staging:
             _finalize()
-            apply_rm_mv_regression(staging_dir, state, PhaseCommand.ADD, command)
+            apply_rm_mv_regression(staging, state, PhaseCommand.ADD, command)
     else:
         _finalize()
 
@@ -513,12 +514,12 @@ def move_path(
     state[found_digest].append(dst_path)
 
     if has_ots(staging_dir):
-        with with_lock(staging_dir, runtime):
+        with with_lock(staging_dir, runtime) as staging:
             if moves_companion:
                 pair_ots_companion_rename(state, src_path, dst_path)
             store.save_inventory(root_path, object_id, update_head_state(inv, state))
             apply_rm_mv_regression(
-                staging_dir, state, PhaseCommand.MV, f"stage mv {src_path} {dst_path}"
+                staging, state, PhaseCommand.MV, f"stage mv {src_path} {dst_path}"
             )
     else:
         store.save_inventory(root_path, object_id, update_head_state(inv, state))
@@ -579,11 +580,11 @@ def remove_paths(
         store.save_content_map(root_path, object_id, content_map)
 
     if has_ots(staging_dir):
-        with with_lock(staging_dir, runtime):
+        with with_lock(staging_dir, runtime) as staging:
             pair_ots_companion_remove(state, path_kinds(before, removed_paths))
             _finalize()
             apply_rm_mv_regression(
-                staging_dir, state, PhaseCommand.RM, f"stage rm {' '.join(paths)}"
+                staging, state, PhaseCommand.RM, f"stage rm {' '.join(paths)}"
             )
     else:
         _finalize()

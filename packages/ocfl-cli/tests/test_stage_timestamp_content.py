@@ -20,7 +20,7 @@ from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Submission
 from ocfl_cli.model.phase import Phase, TimestampTarget
-from ocfl_cli.store.ots_state import load_ots, save_ots, utc_iso
+from ocfl_cli.store.ots_state import load_ots, save_ots, utc_iso, with_lock
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.system import SYSTEM_CLOCK
 from ocfl_cli.workflow import timestamp as wf_timestamp
@@ -365,9 +365,10 @@ class TestContentSubmissionPrimitives:
             btc_factory=lambda cfg: FakeBitcoinRPC(),
             runtime=runtime,
         )
-        prepared = wf_timestamp.prepare_submission_locked(
-            run.area, category_config=641, runtime=runtime
-        )
+        with with_lock(sd, runtime) as locked:
+            prepared = wf_timestamp.prepare_submission_locked(
+                run.area, locked, category_config=641, runtime=runtime
+            )
 
         assert prepared.digests == (hashlib.sha256(b"primitive").hexdigest(),)
         assert sp_fake._submissions == []
@@ -377,7 +378,8 @@ class TestContentSubmissionPrimitives:
         assert len(state.submissions) == 1
         assert state.submissions[0].status == "submitting"
 
-        result = wf_timestamp.submit_prepared_locked(run, prepared)
+        with with_lock(sd, runtime) as locked:
+            result = wf_timestamp.submit_prepared_locked(run, locked, prepared)
 
         assert result.submitted_count == 1
         assert len(sp_fake._submissions) == 1
