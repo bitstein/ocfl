@@ -614,7 +614,7 @@ class TestStageCommitOtsMissingCache:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Unlink ``ots-cache/<inv_digest>.ots`` ⇒ HALT (exit 5) with hint."""
+        """Unlink ``ots-cache/<inv_digest>.ots`` ⇒ HALT (exit 3) with hint."""
         _write_config(tmp_path, monkeypatch)
         _inject_fake_sp(runner, sp_fake)
         _inject_fake_btc(runner, btc_fake.rpc)

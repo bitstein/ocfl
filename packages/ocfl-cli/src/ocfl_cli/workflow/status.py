@@ -143,10 +143,7 @@ def _cache_bytes(staging_dir: Path) -> int:
 def _submission_submitted_at(state: OtsState, digests: tuple[str, ...]) -> str:
     """Earliest submitted_at among submissions overlapping *digests*.
 
-    Production never back-fills Submission.job_id (see make_content_submission),
-    so a verify job is matched to its originating submission by digest overlap
-    rather than job_id; joining on job_id always missed, rendering every
-    outstanding job '0s ago'. ISO-8601 UTC strings sort chronologically.
+    ISO-8601 UTC strings sort chronologically.
     """
     target = set(digests)
     times = [
@@ -238,7 +235,6 @@ def status_ots_dict(
     btc_factory: BtcRpcFactory,
     runtime: Runtime,
 ) -> dict[str, Any]:
-    """Build the JSON-shaped OTS status payload (commands.py renders human form)."""
     state = load_ots(staging_dir)
     inv = store.load_inventory(root_path, object_id)
     head_state = inv.versions[inv.head].state

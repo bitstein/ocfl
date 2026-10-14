@@ -22,11 +22,9 @@ def contains_null(s: str) -> bool:
 
 
 def validate_path_component(s: str, *, what: str = "object id") -> None:
-    """Defensively reject path components unsafe to write to disk.
+    """Reject path components unsafe to write to disk.
 
-    Stricter than the OCFL/extension specs. Raises plain ``ValueError``
-    (not an ``OcflError`` subclass) because this is a filesystem-safety
-    bound, not OCFL-semantic validation.
+    A filesystem-safety bound, stricter than the OCFL/extension specs.
     """
     if s == "":
         raise InvalidPath(f"{what} must not be empty")

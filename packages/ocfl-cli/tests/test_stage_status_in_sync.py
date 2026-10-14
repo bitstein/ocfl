@@ -1,4 +1,4 @@
-"""Layer-1 unit tests for ``ocfl_cli.commands.stage.compute_in_sync``.
+"""Layer-1 unit tests for ``ocfl_cli.workflow.status.compute_in_sync``.
 
 Pins the Bitcoin-in-sync derivation from `OTS workflow contract`
 (``stage_status.bitcoin_in_sync``):

@@ -64,11 +64,7 @@ def _sort_path_lists(obj: dict) -> None:
 
 
 def _encode_inventory(inv: Inventory) -> bytes:
-    """Canonical compact JSON encoding for an Inventory.
-
-    Single source of truth for byte serialization; from_inventory and the
-    StoredInventory drift self-check must agree byte-for-byte.
-    """
+    """Canonical compact JSON encoding for an Inventory."""
     obj = msgspec.to_builtins(inv)
     _sort_path_lists(obj)
     return json.dumps(
