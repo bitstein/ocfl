@@ -567,10 +567,6 @@ def upgrade(
 def retry_locked(
     run: TimestampRun, staging: LockedStaging, *, expect: TimestampTarget | None = None
 ) -> RetryResult:
-    """Re-send the target's `failed` submissions.
-
-    With none failed it sends nothing (`retried == 0`).
-    """
     state = load_ots(staging)
     rules = resolve(state, expect)
     target_phase = check_transition(

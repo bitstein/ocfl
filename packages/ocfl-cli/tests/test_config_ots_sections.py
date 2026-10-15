@@ -33,8 +33,8 @@ def _write(path: Path, body: str) -> Path:
 
 def _load_requiring_ots_sections(path: Path | None = None) -> Config:
     cfg = load_config(path)
-    cfg.require("simpleproof")
-    cfg.require("bitcoin")
+    cfg.raise_if_broken("simpleproof")
+    cfg.raise_if_broken("bitcoin")
     return cfg
 
 
@@ -483,7 +483,7 @@ class TestConfigErrorNotValueError:
 
 
 class TestBrokenSectionIsDeferred:
-    def test_load_records_the_error_and_require_raises_it(
+    def test_load_records_the_error_and_raise_if_broken_raises_it(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         path = _write(
@@ -495,9 +495,9 @@ class TestBrokenSectionIsDeferred:
         errors = redacted(cfg)["errors"]
         assert list(errors) == ["bitcoin"]
         assert errors["bitcoin"].startswith(f"{path}: bitcoin.confirmations: ")
-        cfg.require("simpleproof")
+        cfg.raise_if_broken("simpleproof")
         with pytest.raises(ConfigError, match=r"bitcoin\.confirmations"):
-            cfg.require("bitcoin")
+            cfg.raise_if_broken("bitcoin")
 
     def test_a_broken_toml_still_fails_load(self, tmp_path: Path) -> None:
         path = _write(tmp_path / "c.toml", "[bitcoin\n")

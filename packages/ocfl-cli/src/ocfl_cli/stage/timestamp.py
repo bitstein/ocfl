@@ -1,11 +1,3 @@
-"""stage timestamp, upgrade and retry: one verb each, the target from the Phase.
-
-Each verb works on the Timestamp Target the Phase is at; `--expect` asserts
-which one (a mismatch is exit 3). A verb with nothing to do says what to run
-next and exits 0. Under `--json` a one-shot verb prints one document and
-`--watch` prints NDJSON events ending in a `summary` event.
-"""
-
 import json
 from typing import TYPE_CHECKING, Annotated, Any
 

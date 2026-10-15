@@ -37,7 +37,7 @@ No release is published yet, so every entry below is unreleased and may still ch
   - `stage new --digest` offers sha512 and sha256 only (the other choices were refused anyway).
   - `stage ls OBJ --json` is always `[{"path"[, "digest"]}]`; `stage ls` with no object lists the root's Staging Areas (`[{"object_id", "phase"}]`, phase null for a plain one).
   - At `stage commit`, a missing, unverified or uncached inventory proof or a stale plan is exit 3 (`inventory_proof_missing`, was 5); exit 5 is left for a cached proof that does not parse or commits to other bytes, and its help reads "operator review". A missing batch is exit 1 (`batch_file_missing`, was 2); committing a content batch or another root's batch is exit 3 (`batch_mismatch`, was 2).
-  - A `[simpleproof]` or `[bitcoin]` section that does not load (e.g. a missing secret) fails only the commands that need it (`Config.require`); `ocfl ls` and the other read commands run. `config show` lists the section errors and `config check` fails them (exit 6).
+  - A `[simpleproof]` or `[bitcoin]` section that does not load (e.g. a missing secret) fails only the commands that need it (`Config.raise_if_broken`); `ocfl ls` and the other read commands run. `config show` lists the section errors and `config check` fails them (exit 6).
   - `ocfl export --to -` with more than one matching path is a usage error (exit 2); it wrote only the first.
 
 ### Merged timestamp workflow (docs/roadmap.md §6)

@@ -144,16 +144,13 @@ def _cache_bytes(staging_dir: Path) -> int:
 
 
 def _submission_submitted_at(state: OtsState, digests: tuple[str, ...]) -> str:
-    """Earliest submitted_at among submissions overlapping *digests*.
-
-    ISO-8601 UTC strings sort chronologically.
-    """
     target = set(digests)
     times = [
         s.submitted_at
         for s in state.submissions
         if s.submitted_at and target & set(s.digests)
     ]
+    # ISO-8601 UTC strings sort chronologically.
     return min(times) if times else ""
 
 

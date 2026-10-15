@@ -1,4 +1,5 @@
 import dataclasses
+import json
 import logging
 import threading
 from contextlib import ExitStack
@@ -272,6 +273,56 @@ class TestWatchLoopAdvancesOnBlock:
         assert "Phase: content-pending -> content-upgraded" in r.output
         assert "Next: ocfl stage timestamp obj:watch-ok" in r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
+
+    def test_json_watch_ends_in_summary_and_noop_verb_exits_0(
+        self,
+        runner: ObjRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        btc_fake,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
+        _inject_fake_zmq(runner, _ConfirmingStream(btc_fake.rpc))
+
+        staging = tmp_path / "staging"
+        sd, digests = new_ots_staging(
+            runner, empty_sha256_root, staging, "obj:watch-json", ("a.txt", b"alpha")
+        )
+        d = digests["a.txt"]
+        _force_content_pending(sd, (d,))
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_for(d)})
+        bury(btc_fake.rpc, MIN_CONFS - 1)
+        register_attested(btc_fake.rpc, d)
+
+        upgrade = [
+            "--json",
+            *stage_args(empty_sha256_root, staging, "upgrade", "obj:watch-json"),
+        ]
+        r = runner.invoke(app, [*upgrade, "--watch"])
+
+        assert r.exit_code == ExitCode.SUCCESS, r.output
+        events = [json.loads(line) for line in r.stdout.splitlines()]
+        assert len(events) > 1
+        assert [e["event"] for e in events].count("summary") == 1
+        assert events[-1] == {
+            "event": "summary",
+            "object_id": "obj:watch-json",
+            "verb": "upgrade",
+            "target": "content",
+            "phase_before": "content-pending",
+            "phase_after": "content-upgraded",
+            "done": True,
+            "next": "ocfl stage timestamp obj:watch-json",
+        }
+
+        r = runner.invoke(app, upgrade)
+
+        assert r.exit_code == ExitCode.SUCCESS, r.output
+        assert isinstance(json.loads(r.stdout), dict)
 
 
 class TestWatchHeightJumpTriggersReverify:

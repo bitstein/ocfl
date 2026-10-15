@@ -68,9 +68,7 @@ def _validate_zmq_endpoint(value: str) -> str:
     return value
 
 
-class _EnvOverInitSettings:
-    """Mixin: rank env_settings above init kwargs so env beats TOML."""
-
+class _EnvOverTomlSettings:
     @classmethod
     def settings_customise_sources(
         cls,
@@ -89,7 +87,7 @@ class _EnvOverInitSettings:
         return (env_settings, dotenv_settings, init_settings, file_secret_settings)
 
 
-class SimpleProofConfig(_EnvOverInitSettings, BaseSettings):
+class SimpleProofConfig(_EnvOverTomlSettings, BaseSettings):
     model_config = SettingsConfigDict(
         frozen=True,
         extra="forbid",
@@ -108,7 +106,7 @@ class SimpleProofConfig(_EnvOverInitSettings, BaseSettings):
         return _validate_http_url(v)
 
 
-class BitcoinConfig(_EnvOverInitSettings, BaseSettings):
+class BitcoinConfig(_EnvOverTomlSettings, BaseSettings):
     model_config = SettingsConfigDict(
         frozen=True,
         extra="forbid",

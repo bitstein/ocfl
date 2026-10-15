@@ -72,7 +72,7 @@ def resolve_root_path(root: str | None) -> str:
 
 
 def require_simpleproof(ctx: typer.Context, cfg: Config) -> None:
-    cfg.require("simpleproof")
+    cfg.raise_if_broken("simpleproof")
     if cfg.simpleproof is None:
         raise ConfigError(
             f"{appctx.command_path(ctx)!r} requires [simpleproof] config section"
@@ -80,7 +80,7 @@ def require_simpleproof(ctx: typer.Context, cfg: Config) -> None:
 
 
 def require_bitcoin(ctx: typer.Context, cfg: Config) -> None:
-    cfg.require("bitcoin")
+    cfg.raise_if_broken("bitcoin")
     if cfg.bitcoin is None:
         raise ConfigError(
             f"{appctx.command_path(ctx)!r} requires [bitcoin] config section"
@@ -128,8 +128,8 @@ def require_ots_config(
         else "in your ocfl config"
     )
     if cfg is not None:
-        cfg.require("simpleproof")
-        cfg.require("bitcoin")
+        cfg.raise_if_broken("simpleproof")
+        cfg.raise_if_broken("bitcoin")
     if cfg is None or cfg.simpleproof is None:
         raise ConfigError(f"--ots requires [simpleproof] section {where}")
     if cfg.bitcoin is None:
@@ -149,7 +149,6 @@ def stage_callback(
         ),
     ] = None,
 ) -> None:
-    """Stage changes for OCFL objects."""
     app = appctx.of(ctx)
     root = Path(staging_root) if staging_root else wf_staging.default_staging_root()
     ctx.obj = StageCtx.extend(app, wf_staging.open_store(root))

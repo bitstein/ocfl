@@ -168,12 +168,6 @@ def _retry_after_seconds(value: str | None, clock: Clock) -> float | None:
 
 
 class SimpleProofHttpClient:
-    """Real HTTP implementation.
-
-    ``sleep`` is forwarded to ``ocfl_cli.ots._retry.retry`` and ``clock``
-    reads HTTP-date ``Retry-After`` values, so tests bypass wall-clock time.
-    """
-
     submit_chunk_size = SUBMIT_CHUNK_SIZE
 
     def __init__(

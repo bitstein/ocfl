@@ -120,14 +120,9 @@ def place_companions(
     staging_dir: Path,
     content_map: ContentMap,
     alg: DigestAlgorithm,
-) -> bool:
-    """Give every path of a proved digest its companion `P.ots`; True if any changed.
-
-    The companion is the object's committed proof of the digest, or else the
-    cached verified one. A path keeps the proof of its digest wherever it
-    moves, so a renamed or re-added file needs no new submission.
-    """
-    changed = False
+) -> list[str]:
+    """A path reuses its digest's proof wherever it moves (ADR-0004)."""
+    placed: list[str] = []
     for d, paths in need.items():
         if d in carried:
             ots_digest = carried[d]
@@ -151,8 +146,8 @@ def place_companions(
                     if not state[other]:
                         del state[other]
             state.setdefault(ots_digest, []).append(companion)
-            changed = True
-    return changed
+            placed.append(companion)
+    return placed
 
 
 def verify_job_from_ack(

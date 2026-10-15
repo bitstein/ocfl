@@ -68,8 +68,7 @@ class Config:
             "bitcoin": self.bitcoin_section,
         }
 
-    def require(self, section: SectionName) -> None:
-        """Raise the error that kept `[section]` from loading, if one did."""
+    def raise_if_broken(self, section: SectionName) -> None:
         if isinstance(state := self.sections()[section], ConfigError):
             raise state
 
@@ -255,11 +254,10 @@ def _format_validation_error(e: ValidationError, path: Path, label: str) -> str:
     return f"{path}: " + "; ".join(parts)
 
 
+_PYDANTIC_VALUE_ERROR_PREFIX = "Value error, "
+
+
 def _clean_msg(err: Mapping[str, Any]) -> str:
-    # Map pydantic error types to phrasing that reads as a continuation of
-    # the "<section>.<field>: " label. Fall through to the raw `msg` for
-    # anything we haven't tuned, after stripping the "Value error, " prefix
-    # pydantic adds to ValueErrors raised inside validators.
     match err["type"]:
         case "missing":
             return "is required"
@@ -268,7 +266,7 @@ def _clean_msg(err: Mapping[str, Any]) -> str:
         ):
             return "must not be empty"
         case _:
-            return err["msg"].removeprefix("Value error, ")
+            return err["msg"].removeprefix(_PYDANTIC_VALUE_ERROR_PREFIX)
 
 
 def _require_table(value: Any, path: Path, label: str) -> dict[str, Any]:

@@ -155,7 +155,7 @@ def bitcoind_regtest(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Regte
     node = start_regtest(binary, datadir)
     try:
         ensure_wallet(node)
-        fund_wallet(node, "ocfltest", blocks=101)
+        fund_wallet(node, "ocfltest")
         yield node
     finally:
         stop_regtest(node)

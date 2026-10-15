@@ -1,9 +1,3 @@
-"""Ports: what the use cases need from the outside world, as Protocols.
-
-Adapters implement them (``ocfl_cli.system``, ``ocfl_cli.ots``, the lib's
-``BitcoinRpcClient``).
-"""
-
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable

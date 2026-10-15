@@ -1,8 +1,3 @@
-"""`<staging>/ots.json` persistence: load/save and the lock.
-
-The model lives in `ocfl_cli.model.ots_state`.
-"""
-
 import logging
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -56,11 +51,6 @@ def utc_iso(now: datetime) -> str:
 
 
 def load_ots(staging: Path) -> OtsState:
-    """Load `<staging>/ots.json`.
-
-    Raises `StagingError` when the file's `schema_version` is not
-    `OTS_STATE_VERSION` or its shape can't be parsed.
-    """
     path = _ots_path(staging)
     try:
         raw = msgspec.json.decode(path.read_bytes())

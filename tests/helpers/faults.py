@@ -52,12 +52,6 @@ _ABSENT = object()
 
 @dataclass
 class CrashBoundary:
-    """Within the block, `owner.name(...)` raises Crash where `when` holds.
-
-    Crash is a BaseException: no `except Exception` handler runs, so the disk
-    is left as a killed process leaves it.
-    """
-
     owner: object
     name: str
     when: Callable[..., bool] = lambda *args, **kwargs: True

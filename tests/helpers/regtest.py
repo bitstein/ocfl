@@ -184,14 +184,12 @@ def ensure_wallet(node: RegtestNode, name: str = "ocfltest") -> str:
     return name
 
 
-def fund_wallet(node: RegtestNode, wallet: str, blocks: int = 101) -> None:
-    """Mine *blocks* to *wallet* so coinbase outputs become spendable.
+COINBASE_MATURITY = 100
 
-    Regtest needs 100 confirmations before coinbase is spendable; mining
-    101 fresh blocks gives one mature output for tx funding.
-    """
+
+def fund_wallet(node: RegtestNode, wallet: str) -> None:
     addr = node.wallet_rpc(wallet, "getnewaddress")
-    node.rpc("generatetoaddress", [blocks, addr])
+    node.rpc("generatetoaddress", [COINBASE_MATURITY + 1, addr])
 
 
 def serialized_block(node: RegtestNode, block_hash: str) -> bytes:

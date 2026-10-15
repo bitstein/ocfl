@@ -81,7 +81,7 @@ def _chain_for(app: AppCtx, mode: OtsMode) -> ots.ChainCheck | None:
         case OtsMode.CHAIN:
             return _chain_check(cfg, app.btc_rpc_factory)
         case OtsMode.AUTO:
-            cfg.require("bitcoin")
+            cfg.raise_if_broken("bitcoin")
             if cfg.bitcoin is None:
                 return None
             return _chain_check(cfg, app.btc_rpc_factory)
@@ -184,7 +184,7 @@ def _ots_extension_present(fs: FS, obj_path: str) -> bool:
 
 def _chain_check(cfg: Config | None, btc_factory: BtcRpcFactory) -> ots.ChainCheck:
     if cfg is not None:
-        cfg.require("bitcoin")
+        cfg.raise_if_broken("bitcoin")
     if cfg is None or cfg.bitcoin is None:
         where = (
             f"in {cfg.path}"

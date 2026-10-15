@@ -85,13 +85,6 @@ def block_source(rpc: BitcoinRPC) -> BlockHeaderSource:
 
 
 class BitcoinZmqSubscriber:
-    """ZMQ SUB subscriber for Bitcoin Core's ``hashblock`` topic.
-
-    Uses ``zmq.Poller.poll(timeout_ms)`` so Python signal handlers fire
-    while waiting for blocks. Tests inject a pre-bound ``socket`` to avoid
-    real network sockets.
-    """
-
     def __init__(
         self,
         endpoint: str,

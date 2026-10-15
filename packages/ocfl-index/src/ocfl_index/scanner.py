@@ -413,20 +413,6 @@ def scan(
     *,
     full: bool,
 ) -> ScanReport:
-    """Walk the storage root and update the index cache.
-
-    Single ``BEGIN IMMEDIATE`` tx by design: walk, sweep, sniff, and
-    ``meta.last_scan_at`` advance together. Readers see one consistent snapshot;
-    a crash rolls back the whole refresh.
-
-    Tradeoff: lock-hold scales with ``sniff_pass`` (per-blob file I/O), so a
-    very large root can stall other writers for minutes. Acceptable while
-    refresh is the only writer.
-
-    ``sniff_pass`` is idempotent and resumable via ``WHERE media_type IS NULL``;
-    splitting it into batched short txs is a clean refactor the day a second
-    writer exists.
-    """
     fs: FS = storage_root.fs
     counters = _Counters()
     walked: set[str] = set()

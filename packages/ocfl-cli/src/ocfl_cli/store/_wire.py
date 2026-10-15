@@ -1,10 +1,3 @@
-"""ots.json wire-shape conversion.
-
-Schema 2 is the msgspec shape of `OtsState` with absent optional fields
-omitted. Keep that boundary here so future schema migrations have one
-serialization file to update.
-"""
-
 import copy
 import logging
 from typing import TYPE_CHECKING, Any

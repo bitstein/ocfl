@@ -170,7 +170,6 @@ def main(
         ),
     ] = False,
 ) -> None:
-    """CLI for managing an OCFL archive."""
     configure_logging(
         json_mode=log_json or os.environ.get("OCFL_LOG_JSON") == "1",
         verbose=verbose,
