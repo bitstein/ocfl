@@ -146,6 +146,23 @@ class TestObjectReadExisting:
         assert exc_info.value.expected == ""
         assert exc_info.value.actual == hashlib.sha512(inv.encode()).hexdigest()
 
+    def test_uppercase_sidecar_digest_loads(self, tmp_path: Path):
+        obj_dir = tmp_path / "obj"
+        obj_dir.mkdir()
+        (obj_dir / "0=ocfl_object_1.1").write_text("ocfl_object_1.1\n")
+        inv = (
+            '{"id":"test:1","type":"https://ocfl.io/1.1/spec/#inventory",'
+            '"digestAlgorithm":"sha512","head":"v1",'
+            '"manifest":{},"versions":{"v1":{"created":"2024-01-01T00:00:00Z","state":{}}}}'
+        )
+        (obj_dir / "inventory.json").write_text(inv)
+        digest = hashlib.sha512(inv.encode()).hexdigest().upper()
+        (obj_dir / "inventory.json.sha512").write_text(f"{digest}  inventory.json\n")
+
+        obj = Object.load(LocalFS(obj_dir), "")
+
+        assert obj.inventory.inventory.id == "test:1"
+
     @pytest.mark.parametrize(
         ("inv", "message"),
         [

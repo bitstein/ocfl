@@ -59,6 +59,7 @@ No release is published yet, so every entry below is unreleased and may still ch
 - `read_layout_config` returns `None` when the config is absent.
 - Reading a malformed `inventory.json` raises `InvalidInventory`. A malformed `ocfl_layout.json` or layout `config.json` raises `InvalidLayoutConfig`. Before, raw msgspec and JSON errors escaped.
 - Reading an inventory whose sidecar is empty or whitespace raises `InventorySidecarMismatch` with `expected=""`. Before, an `IndexError` escaped.
+- A sidecar digest in uppercase hex matches (digests compare case-insensitively, as the validator already did); it raised `InventorySidecarMismatch`.
 
 ### Removed
 

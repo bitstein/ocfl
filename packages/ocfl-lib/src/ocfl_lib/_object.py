@@ -223,7 +223,7 @@ class Object:
         sidecar_text = fs_utils.read_text(self._fsys, sidecar_path)
         expected_digest = next(iter(sidecar_text.split()), "")
 
-        if stored.digest != expected_digest:
+        if stored.digest != expected_digest.lower():
             raise InventorySidecarMismatch(
                 path=sidecar_path,
                 expected=expected_digest,
