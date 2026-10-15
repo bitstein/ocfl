@@ -693,3 +693,90 @@ def test_highest_declaration_is_used_whatever_the_listing_order(names):
     _unparsed, decls = split_declarations(entries, "object")
 
     assert [str(d.spec) for d in decls] == ["1.1", "1.0"]
+
+
+def _write_inventory(vdir: Path, inv: dict, sidecar_alg: str) -> bytes:
+    inv_bytes = json.dumps(inv, sort_keys=True, separators=(",", ":")).encode()
+    (vdir / "inventory.json").write_bytes(inv_bytes)
+    digest = hashlib.new(sidecar_alg, inv_bytes).hexdigest()
+    (vdir / f"inventory.json.{sidecar_alg}").write_text(f"{digest} inventory.json\n")
+    return inv_bytes
+
+
+def _two_version_object(tmp_path: Path, *, v1_alg: str, v1_sidecar_alg: str) -> None:
+    """v1 inventory written under `v1_alg`, v2 (head) under sha512."""
+    content = b"data"
+    (tmp_path / "0=ocfl_object_1.1").write_text("ocfl_object_1.1\n")
+    v1_digest = hashlib.new(v1_alg, content).hexdigest()
+    meta = {"message": "m", "user": {"name": "n", "address": "mailto:n@example.org"}}
+    v1_inv = {
+        "id": "http://example.org/obj1",
+        "type": "https://ocfl.io/1.1/spec/#inventory",
+        "digestAlgorithm": v1_alg,
+        "head": "v1",
+        "manifest": {v1_digest: ["v1/content/file.txt"]},
+        "versions": {
+            "v1": {"created": "2024-01-01T00:00:00Z", "state": {v1_digest: ["f"]}}
+            | meta,
+        },
+    }
+    digest = hashlib.sha512(content).hexdigest()
+    root_inv = {
+        **v1_inv,
+        "digestAlgorithm": "sha512",
+        "head": "v2",
+        "manifest": {digest: ["v1/content/file.txt"]},
+        "versions": {
+            "v1": {"created": "2024-01-01T00:00:00Z", "state": {digest: ["f"]}} | meta,
+            "v2": {"created": "2024-01-02T00:00:00Z", "state": {digest: ["f"]}} | meta,
+        },
+    }
+    (tmp_path / "v1" / "content").mkdir(parents=True)
+    (tmp_path / "v2").mkdir()
+    (tmp_path / "v1" / "content" / "file.txt").write_bytes(content)
+    _write_inventory(tmp_path / "v1", v1_inv, v1_sidecar_alg)
+    _write_inventory(tmp_path / "v2", root_inv, "sha512")
+    _write_inventory(tmp_path, root_inv, "sha512")
+
+
+class TestVersionSidecarAlgorithm:
+    def test_sidecar_in_other_algorithm_fires_e058a(self, tmp_path: Path):
+        obj = tmp_path / "o"
+        shutil.copytree(
+            FIXTURES_ROOT / "1.1/good-objects/minimal_one_version_one_file", obj
+        )
+        v1 = obj / "v1"
+        (v1 / "inventory.json.sha512").unlink()
+        md5 = hashlib.md5((v1 / "inventory.json").read_bytes(), usedforsecurity=False)
+        (v1 / "inventory.json.md5").write_text(f"{md5.hexdigest()} inventory.json\n")
+
+        r = validate_object(LocalFS(tmp_path), "o")
+
+        assert sorted(
+            ((f.code, dict(f.detail)) for f in r.findings), key=lambda t: t[0]
+        ) == [
+            ("E015", {"where": "v1", "entry": "inventory.json.md5"}),
+            ("E058a", {"where": "v1", "path": "o/v1/inventory.json.sha512"}),
+        ]
+
+    def test_sidecar_follows_its_own_inventory_algorithm(self, tmp_path: Path):
+        _two_version_object(tmp_path, v1_alg="sha256", v1_sidecar_alg="sha256")
+
+        r = validate_object(LocalFS(tmp_path), "")
+
+        assert [f.code for f in r.findings] == ["W004"]
+
+    def test_sidecar_in_root_algorithm_for_older_inventory_fires_e058a(
+        self, tmp_path: Path
+    ):
+        _two_version_object(tmp_path, v1_alg="sha256", v1_sidecar_alg="sha512")
+
+        r = validate_object(LocalFS(tmp_path), "")
+
+        assert sorted(
+            ((f.code, dict(f.detail)) for f in r.findings), key=lambda t: t[0]
+        ) == [
+            ("E015", {"where": "v1", "entry": "inventory.json.sha512"}),
+            ("E058a", {"where": "v1", "path": "v1/inventory.json.sha256"}),
+            ("W004", {"where": "v1"}),
+        ]
