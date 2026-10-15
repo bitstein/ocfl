@@ -15,6 +15,7 @@ from ocfl_lib.validation._inventory import (
     validate_inventory_against_prior,
 )
 from ocfl_lib.validation._report import FindingCollector
+from ocfl_lib.validation._unsupported import RegularEntries
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -62,11 +63,13 @@ def validate_object(
     Bitcoin (E906, W903); errors from its source propagate.
     """
     result = FindingCollector(path=path)
+    regular = RegularEntries(fsys)
     _validate_object(
-        fsys, path, result, check_digests=check_digests, lax_digests=lax_digests
+        regular, path, result, check_digests=check_digests, lax_digests=lax_digests
     )
     if chain is not None:
-        check_chain(fsys, path, chain, result)
+        check_chain(regular, path, chain, result)
+    regular.report(result)
     return result.report()
 
 

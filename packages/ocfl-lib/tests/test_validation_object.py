@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -779,4 +780,54 @@ class TestVersionSidecarAlgorithm:
             ("E015", {"where": "v1", "entry": "inventory.json.sha512"}),
             ("E058a", {"where": "v1", "path": "v1/inventory.json.sha256"}),
             ("W004", {"where": "v1"}),
+        ]
+
+
+def _findings(r: ValidationReport) -> list[tuple[str, dict[str, str]]]:
+    return sorted(((f.code, dict(f.detail)) for f in r.findings), key=lambda t: t[0])
+
+
+class TestUnsupportedFileTypes:
+    @pytest.fixture
+    def obj(self, tmp_path: Path) -> Path:
+        obj = tmp_path / "o"
+        shutil.copytree(
+            FIXTURES_ROOT / "1.1/good-objects/minimal_one_version_one_file", obj
+        )
+        return obj
+
+    @pytest.mark.parametrize(
+        "link",
+        ["link", "v1/link", "v1/content/link"],
+    )
+    def test_file_symlink_fires_E090(self, obj: Path, link: str):
+        (obj / link).symlink_to(obj / "v1/content/a_file.txt")
+
+        r = validate_object(LocalFS(obj.parent), "o")
+
+        assert _findings(r) == [("E090", {"path": f"o/{link}"})]
+
+    def test_dir_symlink_in_content_fires_E090(self, obj: Path):
+        (obj / "v1/content/dirlink").symlink_to(obj / "v1", target_is_directory=True)
+
+        r = validate_object(LocalFS(obj.parent), "o")
+
+        assert _findings(r) == [("E090", {"path": "o/v1/content/dirlink"})]
+
+    def test_fifo_in_content_fires_L003(self, obj: Path):
+        os.mkfifo(obj / "v1/content/pipe")
+
+        r = validate_object(LocalFS(obj.parent), "o")
+
+        assert _findings(r) == [("L003", {"path": "o/v1/content/pipe", "kind": "fifo"})]
+
+    def test_other_findings_survive(self, obj: Path):
+        (obj / "link").symlink_to(obj / "inventory.json")
+        (obj / "stray.txt").write_text("x")
+
+        r = validate_object(LocalFS(obj.parent), "o")
+
+        assert _findings(r) == [
+            ("E001a", {"file": "stray.txt"}),
+            ("E090", {"path": "o/link"}),
         ]

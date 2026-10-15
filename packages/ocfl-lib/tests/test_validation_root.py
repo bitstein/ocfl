@@ -1,8 +1,10 @@
 import hashlib
 import json
+import shutil
 from typing import TYPE_CHECKING
 
 import pytest
+from builders import FIXTURES_ROOT
 
 from ocfl_lib.fs._local import LocalFS
 
@@ -268,3 +270,29 @@ class TestRootSummary:
         summary = validate_root(fsys, "", max_errors=2)
         assert summary.truncated is True
         assert len({f.path for f in summary.errors}) == 2
+
+
+class TestUnsupportedFileTypes:
+    @pytest.fixture
+    def root(self, tmp_path: Path) -> Path:
+        (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
+        shutil.copytree(
+            FIXTURES_ROOT / "1.1/good-objects/minimal_one_version_one_file",
+            tmp_path / "a/obj",
+        )
+        return tmp_path
+
+    def _findings(self, root: Path) -> list[tuple[str, str, dict[str, str]]]:
+        r = validate_root(LocalFS(root), "")
+        return sorted((f.code, f.path, dict(f.detail)) for f in r.findings)
+
+    @pytest.mark.parametrize("link", ["link", "a/link"])
+    def test_symlink_in_hierarchy_fires_E090(self, root: Path, link: str):
+        (root / link).symlink_to(root / "0=ocfl_1.1")
+
+        assert self._findings(root) == [("E090", "", {"path": link})]
+
+    def test_symlink_in_object_reported_once_by_the_object(self, root: Path):
+        (root / "a/obj/link").symlink_to(root / "0=ocfl_1.1")
+
+        assert self._findings(root) == [("E090", "a/obj", {"path": "a/obj/link"})]

@@ -654,6 +654,12 @@
     ],
     "description": "OCFL Object {path} conforms to specification version {object_spec_version} which is later than the OCFL Storage Root specification version {root_spec_version}"
   },
+  "E090": {
+    "params": [
+      "path"
+    ],
+    "description": "OCFL Storage hierarchy contains a link at {path}. Hard and soft (symbolic) links MUST NOT be used"
+  },
   "E091": {
     "params": [
       "where",
