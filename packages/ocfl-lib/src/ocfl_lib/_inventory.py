@@ -60,8 +60,7 @@ def _sort_path_lists(obj: dict) -> None:
                 alg[digest].sort()
 
 
-def _encode_inventory(inv: Inventory) -> bytes:
-    """Canonical compact JSON encoding for an Inventory."""
+def _canonical_json(inv: Inventory) -> bytes:
     obj = msgspec.to_builtins(inv)
     _sort_path_lists(obj)
     return json.dumps(
@@ -91,7 +90,7 @@ class StoredInventory:
     @classmethod
     def from_inventory(cls, inv: Inventory, alg: DigestAlgorithm) -> StoredInventory:
         """Encode inventory to canonical compact JSON bytes."""
-        raw = _encode_inventory(inv)
+        raw = _canonical_json(inv)
         digest = bytes_digest(raw, alg)
         return cls(inventory=inv, raw_bytes=raw, digest=digest, digest_algorithm=alg)
 

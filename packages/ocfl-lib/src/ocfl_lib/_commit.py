@@ -19,7 +19,7 @@ import errno
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, BinaryIO, TypeGuard
+from typing import TYPE_CHECKING, BinaryIO, NamedTuple, TypeGuard
 
 from ocfl_lib import ots
 from ocfl_lib._concurrent import bounded_map
@@ -96,7 +96,6 @@ class Target:
 
     @property
     def claim(self) -> str:
-        """The local claim (`vN/` or the new object) or the S3 claim key."""
         if claims_by_conditional_write(self.fsys):
             return self.obj(self.vn, INVENTORY_FILENAME)
         return self.obj_path if self.plan.is_new_object else self.obj(self.vn)
@@ -109,12 +108,6 @@ def commit(
     plan: CommitPlan,
     content: ContentSource,
 ) -> None:
-    """Write `plan` into the object at `obj_path`.
-
-    On an Exception or KeyboardInterrupt the commit undoes its own writes,
-    unless the root inventory is already published. A process that dies
-    leaves the partial state for `recover`.
-    """
     t = Target(fsys, root_path, obj_path, plan)
     if isinstance(fsys, ClaimFS):
         _commit_local(t, fsys, content)
@@ -132,7 +125,8 @@ def _commit_local(t: Target, fsys: ClaimFS, content: ContentSource) -> None:
         if fsys.exists(t.plan_file):
             raise RecoveryRequiredError(_unfinished(t))
         raw = read_or_none(fsys, t.obj(INVENTORY_FILENAME))
-        base = require_base_unchanged(fsys, t, raw, content)
+        base = require_base_unchanged(fsys, t, raw)
+        _require_ots_admissible(fsys, t, base, content)
         fs_utils.write_bytes(fsys, t.plan_file, t.plan.to_json())
         claimed = False
         try:
@@ -152,11 +146,6 @@ def _commit_local(t: Target, fsys: ClaimFS, content: ContentSource) -> None:
 def object_lock(
     fsys: ClaimFS, root_path: str, object_id: str, *, timeout: float
 ) -> Generator[None]:
-    """Hold the object's commit lock. ObjectLockedError if it is busy.
-
-    The lock lives on the object's work dir. On release, that dir and the
-    work-dir extension are removed while still locked, if empty.
-    """
     wd = work_dir(root_path, object_id)
     with contextlib.ExitStack() as stack:
         try:
@@ -172,7 +161,6 @@ def object_lock(
 
 
 def _build(t: Target, fsys: ClaimFS, content: ContentSource) -> None:
-    """Build the complete `vN/`, or the whole new object, in the work dir."""
     plan = t.plan
     if fsys.exists(t.build):
         fsys.remove_all(t.build)
@@ -182,7 +170,7 @@ def _build(t: Target, fsys: ClaimFS, content: ContentSource) -> None:
             return join_path(t.build, rel)
         return join_path(t.build, rel.removeprefix(f"{t.vn}/"))
 
-    items = [(d, dest(p)) for d, p in content_items(plan)]
+    items = [ContentFile(c.digest, dest(c.path)) for c in content_items(plan)]
     copy_content(fsys, content, items, plan.inventory.digest_algorithm)
     files = version_files(plan)
     if plan.is_new_object:
@@ -192,7 +180,6 @@ def _build(t: Target, fsys: ClaimFS, content: ContentSource) -> None:
 
 
 def _claim_local(t: Target, fsys: ClaimFS) -> None:
-    """Rename the build into the object; the loser has written nothing there."""
     try:
         if t.plan.is_new_object:
             _mkdir_parent_and_rename(t, fsys)
@@ -231,7 +218,8 @@ def _commit_s3(t: Target, fsys: ConditionalFS, content: ContentSource) -> None:
         raw, tag = fsys.read_tagged(t.obj(INVENTORY_FILENAME))
     except FileNotFoundError:
         raw, tag = None, None
-    base = require_base_unchanged(fsys, t, raw, content)
+    base = require_base_unchanged(fsys, t, raw)
+    _require_ots_admissible(fsys, t, base, content)
     fsys.check_conditional_writes(join_path(t.wd, "probe"))
     try:
         fsys.write_new(t.plan_file, t.plan.to_json())
@@ -246,7 +234,7 @@ def _commit_s3(t: Target, fsys: ConditionalFS, content: ContentSource) -> None:
                 f"{t.plan.object_id} {t.vn} was claimed by another writer"
             ) from e
         claimed = True
-        fill_claim(t, content)
+        write_missing_claim_files(t, fsys, content)
         write_proof(t)
         publish(t, base, tag=tag)
         finish(t)
@@ -255,14 +243,16 @@ def _commit_s3(t: Target, fsys: ConditionalFS, content: ContentSource) -> None:
         raise
 
 
-def fill_claim(t: Target, content: ContentSource) -> None:
-    """S3: write what a claimed version still lacks (idempotent)."""
-    fsys = t.fsys
+def write_missing_claim_files(
+    t: Target, fsys: ConditionalFS, content: ContentSource
+) -> None:
     plan = t.plan
     if plan.is_new_object:
         _write_missing(t, new_object_files(plan))
     missing = [
-        (d, t.obj(p)) for d, p in content_items(plan) if not fsys.exists(t.obj(p))
+        ContentFile(c.digest, t.obj(c.path))
+        for c in content_items(plan)
+        if not fsys.exists(t.obj(c.path))
     ]
     copy_content(fsys, content, missing, plan.inventory.digest_algorithm)
     _write_missing(t, version_files(plan))
@@ -276,14 +266,8 @@ def _write_missing(t: Target, files: dict[str, bytes]) -> None:
 
 
 def require_base_unchanged(
-    fsys: FS, t: Target, raw: bytes | None, content: ContentSource | None = None
+    fsys: FS, t: Target, raw: bytes | None
 ) -> StoredInventory | None:
-    """Check the object is still at the plan's base. Return the base inventory.
-
-    Refuses a stray claim (RecoveryRequiredError), an inventory proof the
-    object cannot hold, and a version its OTS extension would reject. With
-    `content`, the content proofs of the version are checked too.
-    """
     plan = t.plan
     if plan.base_digest is None or plan.base_digest_algorithm is None:
         if raw is not None:
@@ -296,9 +280,6 @@ def require_base_unchanged(
             raise RecoveryRequiredError(
                 f"{t.obj_path} holds files but no object; run recover"
             )
-        if plan.inventory_proof is not None:
-            check_extension(plan, start_config(plan))
-            _check_content_proofs(t, start_config(plan), content)
         return None
 
     alg = DigestAlgorithm.from_ocfl_name(plan.base_digest_algorithm)
@@ -313,19 +294,26 @@ def require_base_unchanged(
         raise RecoveryRequiredError(
             f"{t.obj_path} has a stray claim on {t.vn}; run recover"
         )
-    base = StoredInventory.from_bytes(raw, alg)
-    cfg = ots.read_config(fsys, t.obj_path)
-    if cfg is None and plan.inventory_proof is not None:
-        _check_all_sha256(fsys, t, base)
-        cfg = start_config(plan)
+    return StoredInventory.from_bytes(raw, alg)
+
+
+def _require_ots_admissible(
+    fsys: FS, t: Target, base: StoredInventory | None, content: ContentSource
+) -> None:
+    plan = t.plan
+    if base is None:
+        cfg = start_config(plan) if plan.inventory_proof is not None else None
+    else:
+        cfg = ots.read_config(fsys, t.obj_path)
+        if cfg is None and plan.inventory_proof is not None:
+            _check_all_sha256(fsys, t, base)
+            cfg = start_config(plan)
     if cfg is not None:
         check_extension(plan, cfg)
         _check_content_proofs(t, cfg, content)
-    return base
 
 
 def start_config(plan: CommitPlan) -> ots.OtsConfig:
-    """The config a proof starts: from v1 for a new object, else from vN."""
     return ots.OtsConfig(timestamp_from=None if plan.is_new_object else plan.version)
 
 
@@ -347,11 +335,6 @@ def _check_all_sha256(fsys: FS, t: Target, base: StoredInventory) -> None:
 
 
 def check_extension(plan: CommitPlan, cfg: ots.OtsConfig) -> None:
-    """Refuse a version that the OTS extension rejects by its inventory alone.
-
-    The commit would otherwise publish an object that is invalid: E901 (not
-    sha256), E904 (no inventory proof) or E902 (a path without its proof).
-    """
     alg = plan.inventory.digest_algorithm.ocfl_name
     if alg != "sha256" or cfg.proof_digest_algorithm != "sha256":
         raise PlanMismatchError(
@@ -373,14 +356,9 @@ def check_extension(plan: CommitPlan, cfg: ots.OtsConfig) -> None:
 
 
 def _check_content_proofs(
-    t: Target, cfg: ots.OtsConfig, content: ContentSource | None
+    t: Target, cfg: ots.OtsConfig, content: ContentSource
 ) -> None:
-    """Refuse a content proof that is invalid (E905) or pending (E907).
-
-    A proof must be final before its version is committed. New proofs are
-    read from `content`, carried-forward ones from the object.
-    """
-    if content is None or not cfg.timestamp_content:
+    if not cfg.timestamp_content:
         return
     plan = t.plan
     inv = plan.inventory.inventory
@@ -406,7 +384,6 @@ def _check_content_proofs(
 
 
 def _content_bytes(t: Target, content: ContentSource, digest: str) -> bytes:
-    """The bytes of `digest`: new in vN from `content`, else from the object."""
     path = t.plan.inventory.inventory.manifest[digest][0]
     if path.startswith(f"{t.vn}/"):
         src_fs, src_path = content.get_content(digest)
@@ -420,29 +397,22 @@ def _content_bytes(t: Target, content: ContentSource, digest: str) -> bytes:
 
 
 def write_proof(t: Target) -> None:
-    """Write the plan's inventory proof, or remove a stale one for vN.
-
-    A proof for an existing object without the extension starts it: the
-    config, with `timestampFrom` set to vN, is written just before the proof.
-    """
     path = t.obj(ots.inventory_proof_path(t.vn))
-    if t.plan.inventory_proof is not None:
-        config = t.obj(ots.CONFIG_PATH)
-        if not t.plan.is_new_object and read_or_none(t.fsys, config) is None:
-            fs_utils.write_bytes(t.fsys, config, start_config(t.plan).to_json())
-        if read_or_none(t.fsys, path) != t.plan.inventory_proof:
-            fs_utils.write_bytes(t.fsys, path, t.plan.inventory_proof)
-    else:
+    if t.plan.inventory_proof is None:
         remove_if_exists(t.fsys, path)
+        return
+    _start_extension_config(t)
+    if read_or_none(t.fsys, path) != t.plan.inventory_proof:
+        fs_utils.write_bytes(t.fsys, path, t.plan.inventory_proof)
+
+
+def _start_extension_config(t: Target) -> None:
+    config = t.obj(ots.CONFIG_PATH)
+    if not t.plan.is_new_object and read_or_none(t.fsys, config) is None:
+        fs_utils.write_bytes(t.fsys, config, start_config(t.plan).to_json())
 
 
 def publish(t: Target, base: StoredInventory | None, *, tag: str | None = None) -> None:
-    """Replace the root inventory, then write the root sidecar last.
-
-    A spec upgrade swaps the NAMASTE just before. On S3 the root inventory
-    is written with If-Match on the base ETag (`tag`), or create-only for
-    a new object.
-    """
     fsys = t.fsys
     plan = t.plan
     swap = namaste_swap(base, plan)
@@ -483,7 +453,6 @@ def finish_sidecar(
     inv: StoredInventory,
     old_algorithm: str | None,
 ) -> None:
-    """Make the root sidecar certify `inv`; an old-algorithm one goes first."""
     if old_algorithm and old_algorithm != inv.digest_algorithm.ocfl_name:
         remove_if_exists(fsys, join_path(obj_path, f"inventory.json.{old_algorithm}"))
     fs_utils.write_bytes(
@@ -505,12 +474,10 @@ def _check_still_base(t: Target, base: StoredInventory | None) -> None:
 
 
 def finish(t: Target) -> None:
-    """The version is published: drop the plan."""
     remove_if_exists(t.fsys, t.plan_file)
 
 
-def discard(t: Target) -> None:
-    """Undo an unclaimed commit: nothing of it is in the object."""
+def discard_unclaimed(t: Target) -> None:
     if not claims_by_conditional_write(t.fsys) and t.fsys.exists(t.build):
         t.fsys.remove_all(t.build)
     remove_if_exists(t.fsys, join_path(t.wd, "probe"))
@@ -519,7 +486,6 @@ def discard(t: Target) -> None:
 
 
 def revert_claimed(t: Target, base: StoredInventory | None) -> None:
-    """Remove a claimed, unpublished version. The plan goes last."""
     fsys = t.fsys
     if read_or_none(fsys, t.obj(INVENTORY_FILENAME)) == t.plan.inventory.raw_bytes:
         raise RevertCompletedError(
@@ -535,30 +501,14 @@ def revert_claimed(t: Target, base: StoredInventory | None) -> None:
     unstart_extension(fsys, t.obj_path, t.vn)
     if claims_by_conditional_write(fsys):
         prefix = t.obj_path if t.plan.is_new_object else t.obj(t.vn)
-        for ref in list(fsys.walk_files(prefix)):
-            if ref.path != t.claim:
-                remove_if_exists(fsys, ref.path)
-        remove_if_exists(fsys, t.claim)
+        remove_keys_claim_last(fsys, prefix, t.claim)
     elif fsys.exists(t.claim):
         fsys.remove_all(t.claim)
-    discard(t)
+    discard_unclaimed(t)
 
 
 def unstart_extension(fsys: WriteFS, obj_path: str, version: str) -> None:
-    """Remove the extension that unpublished `version` started, if it did.
-
-    Only a config whose `timestampFrom` is `version` was written by the
-    commit of `version`; its proof goes first, then the config, then the
-    empty directories.
-    """
-    raw = read_or_none(fsys, join_path(obj_path, ots.CONFIG_PATH))
-    if raw is None:
-        return
-    try:
-        cfg = ots.OtsConfig.from_json(raw)
-    except OtsConfigError:
-        return
-    if cfg.timestamp_from != version:
+    if not _extension_started_by(fsys, obj_path, version):
         return
     remove_if_exists(fsys, join_path(obj_path, ots.inventory_proof_path(version)))
     remove_if_exists(fsys, join_path(obj_path, ots.CONFIG_PATH))
@@ -566,6 +516,24 @@ def unstart_extension(fsys: WriteFS, obj_path: str, version: str) -> None:
         for d in (ots.EXTENSION_DIR, "extensions"):
             if not fsys.remove_empty_dir(join_path(obj_path, d)):
                 return
+
+
+def _extension_started_by(fsys: FS, obj_path: str, version: str) -> bool:
+    raw = read_or_none(fsys, join_path(obj_path, ots.CONFIG_PATH))
+    if raw is None:
+        return False
+    try:
+        cfg = ots.OtsConfig.from_json(raw)
+    except OtsConfigError:
+        return False
+    return cfg.timestamp_from == version
+
+
+def remove_keys_claim_last(fsys: ConditionalFS, prefix: str, claim: str) -> None:
+    for ref in list(fsys.walk_files(prefix)):
+        if ref.path != claim:
+            remove_if_exists(fsys, ref.path)
+    remove_if_exists(fsys, claim)
 
 
 def _undo(
@@ -579,7 +547,7 @@ def _undo(
         if claimed:
             revert_claimed(t, base)
         else:
-            discard(t)
+            discard_unclaimed(t)
     except RevertCompletedError:
         exc.add_note(f"{t.vn} is published; run recover --resume to finish it")
     except Exception as undo_exc:
@@ -594,11 +562,7 @@ def _tidy_work_dir(fsys: ClaimFS, root_path: str, wd: str) -> None:
 
 
 def prune_parents(fsys: WriteFS, root_path: str, obj_path: str) -> None:
-    """Remove the empty layout parents of `obj_path` (E073).
-
-    The object dir itself is left alone: a commit never makes it before its
-    claim, so an object dir there belongs to someone else.
-    """
+    """Remove the empty layout parents of `obj_path` (E073)."""
     if not isinstance(fsys, ClaimFS):
         return
     path = obj_path.rpartition("/")[0]
@@ -608,11 +572,15 @@ def prune_parents(fsys: WriteFS, root_path: str, obj_path: str) -> None:
         path = path.rpartition("/")[0]
 
 
-def content_items(plan: CommitPlan) -> list[tuple[str, str]]:
-    """(digest, content path) of every content file new in this version."""
+class ContentFile(NamedTuple):
+    digest: str
+    path: str
+
+
+def content_items(plan: CommitPlan) -> list[ContentFile]:
     prefix = f"{plan.version}/"
     return [
-        (digest, path)
+        ContentFile(digest, path)
         for digest, paths in plan.inventory.inventory.manifest.items()
         for path in paths
         if path.startswith(prefix)
@@ -650,32 +618,28 @@ def root_files(plan: CommitPlan) -> dict[str, bytes]:
     }
 
 
-def namaste_swap(
-    base: StoredInventory | None, plan: CommitPlan
-) -> tuple[Namaste, Namaste] | None:
-    """(old, new) object declarations if the plan upgrades the spec."""
+class NamasteSwap(NamedTuple):
+    old: Namaste
+    new: Namaste
+
+
+def namaste_swap(base: StoredInventory | None, plan: CommitPlan) -> NamasteSwap | None:
     if base is None:
         return None
     old = Spec.from_inventory_type(base.inventory.type)
     new = Spec.from_inventory_type(plan.inventory.inventory.type)
     if old == new:
         return None
-    return Namaste.for_object(old), Namaste.for_object(new)
+    return NamasteSwap(Namaste.for_object(old), Namaste.for_object(new))
 
 
 def copy_content(
     fsys: WriteFS,
     content: ContentSource,
-    items: list[tuple[str, str]],
+    items: list[ContentFile],
     alg: DigestAlgorithm,
 ) -> None:
-    """Copy each (digest, dst) from `content`, checking the bytes on the way.
-
-    A copy whose bytes do not match its manifest digest is removed and
-    raises ContentDigestMismatch, before anything is published.
-    """
-
-    def _copy(item: tuple[str, str]) -> None:
+    def _copy(item: ContentFile) -> None:
         digest, dst = item
         parent = dst.rpartition("/")[0]
         if parent:

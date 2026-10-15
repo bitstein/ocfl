@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from ocfl_lib import ots
 from ocfl_lib._errors import InvalidProofError, OtsConfigError
-from ocfl_lib._json_value import as_object, object_field, parse_json
+from ocfl_lib._json_value import as_object, object_field_or_empty, parse_json
 from ocfl_lib._path import join_path
 from ocfl_lib.fs import _utils as fs_utils
 
@@ -35,7 +35,6 @@ def validate_ots_extension(
     inv_versions: dict[str, int],
     result: FindingCollector,
 ) -> None:
-    """Run the extension's local checks on the object at `obj_path`."""
     ext_dir = join_path(obj_path, ots.EXTENSION_DIR)
     if not fsys.exists(ext_dir):
         return
@@ -99,13 +98,14 @@ def _check_content_proofs(
     covered: list[str],
     result: FindingCollector,
 ) -> None:
-    """Content-proof rules 1-3 for every covered version (E902, E905, E907)."""
-    versions = object_field(inv_data, "versions")
-    content_path = _content_paths(object_field(inv_data, "manifest"))
+    versions = object_field_or_empty(inv_data, "versions")
+    content_path = _first_content_path_by_digest(
+        object_field_or_empty(inv_data, "manifest")
+    )
     parsed_by_cpath: dict[str, ots.ParsedOts | None] = {}
 
     for v in covered:
-        state = object_field(as_object(versions.get(v)) or {}, "state")
+        state = object_field_or_empty(as_object(versions.get(v)) or {}, "state")
         digest_of = {
             p: d
             for d, plist in state.items()
@@ -139,7 +139,6 @@ def _check_inventory_proofs(
     readable_inventories: dict[str, _VersionInventory],
     result: FindingCollector,
 ) -> None:
-    """Inventory-proof rules (E904, E905, W902) and moved timestampFrom (W905)."""
     for v in ordered:
         proof = ots.inventory_proof_path(v)
         present = fsys.exists(join_path(obj_path, proof))
@@ -168,11 +167,6 @@ def _check_proof(
     expected_hex: str,
     result: FindingCollector,
 ) -> ots.ParsedOts | None:
-    """Parse the proof at object-relative `proof` and check what it commits to.
-
-    Reports E905 and returns None for a proof that does not parse, uses the
-    wrong file-hash operation, or commits to another digest.
-    """
     try:
         raw = fs_utils.read_all(fsys, join_path(obj_path, proof))
     except FileNotFoundError:
@@ -184,8 +178,7 @@ def _check_proof(
         return None
 
 
-def _content_paths(manifest: JsonObject) -> dict[str, str]:
-    """{digest: first content path} from the manifest."""
+def _first_content_path_by_digest(manifest: JsonObject) -> dict[str, str]:
     out: dict[str, str] = {}
     for digest, plist in manifest.items():
         if isinstance(plist, list) and plist and isinstance(plist[0], str):
@@ -196,16 +189,7 @@ def _content_paths(manifest: JsonObject) -> dict[str, str]:
 def check_chain(
     fsys: FS, obj_path: str, chain: ots.ChainCheck, result: FindingCollector
 ) -> None:
-    """Bitcoin checks of every proof of the covered versions (E906, W903).
-
-    A proof that the local checks reject (E905, E908) or a pending one gets
-    no finding here.
-    """
-    try:
-        results = ots.check_object_chain(fsys, obj_path, chain)
-    except OtsConfigError, OSError, ValueError:
-        return
-    for r in results:
+    for r in _chain_results_unless_locally_invalid(fsys, obj_path, chain):
         if r.status is ots.AttestationStatus.MISMATCH:
             heights = ", ".join(
                 str(c.height)
@@ -215,3 +199,12 @@ def check_chain(
             result.error("E906", proof=r.proof.path, reason=f"block {heights}")
         elif r.status is ots.AttestationStatus.SHALLOW:
             result.warning("W903", proof=r.proof.path)
+
+
+def _chain_results_unless_locally_invalid(
+    fsys: FS, obj_path: str, chain: ots.ChainCheck
+) -> tuple[ots.ProofChainResult, ...]:
+    try:
+        return ots.check_object_chain(fsys, obj_path, chain)
+    except OtsConfigError, OSError, ValueError:
+        return ()

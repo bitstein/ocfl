@@ -214,7 +214,6 @@ class Object:
         return self._load_inventory(vdir)
 
     def _load_inventory(self, dir_path: str) -> StoredInventory:
-        """Read inventory.json + sidecar, validate digest, return StoredInventory."""
         inv_path = join_path(dir_path, INVENTORY_FILENAME)
         inv_bytes = fs_utils.read_all(self._fsys, inv_path)
 
@@ -239,8 +238,6 @@ class Object:
 
 
 class _ObjectContentSource(ContentSource):
-    """ContentSource backed by an object's manifest."""
-
     def __init__(self, fsys: FS, obj_path: str, manifest: dict[str, list[str]]):
         self._fsys = fsys
         self._obj_path = obj_path
@@ -255,10 +252,6 @@ class _ObjectContentSource(ContentSource):
 
 
 def _pair_renames(added: PathMap, removed: PathMap) -> list[DiffEntry]:
-    """Pair added with removed paths of one digest, in sorted path order.
-
-    Paths a digest has more of on one side than the other stay unpaired.
-    """
     removed_by_digest = from_path_map(removed)
     return [
         DiffEntry(

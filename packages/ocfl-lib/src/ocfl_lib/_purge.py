@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 
 
 def purge(fsys: WriteFS, root_path: str, obj_path: str, object_id: str) -> None:
-    """Remove the object at `obj_path`. Re-running finishes a partial purge."""
     with contextlib.ExitStack() as stack:
         if isinstance(fsys, ClaimFS):
             stack.enter_context(object_lock(fsys, root_path, object_id, timeout=0))
@@ -42,7 +41,7 @@ def purge(fsys: WriteFS, root_path: str, obj_path: str, object_id: str) -> None:
             )
         entries = _entries(fsys, obj_path)
         if entries is None:
-            if not _has_empty_parent(fsys, root_path, obj_path):
+            if not _partial_purge_left_parents(fsys, root_path, obj_path):
                 raise ObjectNotFound(object_id)
         else:
             _delete_in_order(fsys, obj_path, entries)
@@ -94,8 +93,7 @@ def _delete_in_order(fsys: WriteFS, obj_path: str, entries: list[FsEntry]) -> No
         remove_if_exists(fsys, path(name))
 
 
-def _has_empty_parent(fsys: WriteFS, root_path: str, obj_path: str) -> bool:
-    """A purge died after the object dir went but before its parents did."""
+def _partial_purge_left_parents(fsys: WriteFS, root_path: str, obj_path: str) -> bool:
     if not isinstance(fsys, ClaimFS):
         return False
     p = obj_path.rpartition("/")[0]

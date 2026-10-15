@@ -4,7 +4,7 @@ from ocfl_lib._json_value import (
     JsonObject,
     as_object,
     as_str,
-    object_field,
+    object_field_or_empty,
     parse_json,
 )
 
@@ -36,6 +36,6 @@ def test_as_str_accepts_string():
 
 def test_object_field():
     data: JsonObject = {"m": {"d": ["p"]}, "bad": [1]}
-    assert object_field(data, "m") == {"d": ["p"]}
-    assert object_field(data, "bad") == {}
-    assert object_field(data, "missing") == {}
+    assert object_field_or_empty(data, "m") == {"d": ["p"]}
+    assert object_field_or_empty(data, "bad") == {}
+    assert object_field_or_empty(data, "missing") == {}

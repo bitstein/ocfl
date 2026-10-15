@@ -18,18 +18,18 @@ from ocfl_lib import ots
 from ocfl_lib._commit import (
     Target,
     claims_by_conditional_write,
-    discard,
-    fill_claim,
+    discard_unclaimed,
     finish,
     finish_sidecar,
     object_lock,
     prune_parents,
     read_or_none,
     remove_if_exists,
-    require_base_unchanged,
+    remove_keys_claim_last,
     revert_claimed,
     unstart_extension,
     work_dir,
+    write_missing_claim_files,
     write_proof,
 )
 from ocfl_lib._commit import publish as publish_root
@@ -39,6 +39,7 @@ from ocfl_lib._errors import (
     PlanMismatchError,
     RecoveryActionError,
     RevertCompletedError,
+    StaleHeadError,
     UnsupportedBackendError,
 )
 from ocfl_lib._inventory import Inventory, StoredInventory
@@ -113,7 +114,6 @@ class _Ctx:
 def detect(
     fsys: FS, root_path: str, obj_path: str, object_id: str
 ) -> tuple[CommitStatus, CommitPlan | None]:
-    """Name the partial state of the object's last commit. Reads only."""
     wd = work_dir(root_path, object_id)
     plan_raw = read_or_none(fsys, join_path(wd, "plan.json"))
     plan = None
@@ -179,11 +179,6 @@ def recover(
     version: str | None = None,
     content: ContentSource | None = None,
 ) -> CommitStatus:
-    """Finish or undo the object's last commit. Returns the state found.
-
-    Every step is idempotent: recovering again, after a crash or not, picks
-    up from what is on storage.
-    """
     if isinstance(fsys, ClaimFS):
         with object_lock(fsys, root_path, object_id, timeout=0):
             return _run(
@@ -212,7 +207,6 @@ def _run(
 
 
 def _tidy(ctx: _Ctx) -> None:
-    """Drop work-dir leftovers that hold no plan (a build, a probe)."""
     wd = work_dir(ctx.root_path, ctx.object_id)
     if not ctx.fsys.exists(join_path(wd, "plan.json")):
         if not claims_by_conditional_write(ctx.fsys) and ctx.fsys.exists(
@@ -228,18 +222,21 @@ def _nothing(ctx: _Ctx) -> None:
 
 
 def _discard(ctx: _Ctx) -> None:
-    discard(ctx.target)
+    discard_unclaimed(ctx.target)
 
 
 def _base(ctx: _Ctx, raw: bytes | None) -> StoredInventory | None:
-    """The base inventory, which a claimed version leaves at the root."""
     plan = ctx.target.plan
     if plan.base_digest is None or plan.base_digest_algorithm is None:
         return None
     alg = DigestAlgorithm.from_ocfl_name(plan.base_digest_algorithm)
     base = StoredInventory.from_bytes(raw, alg) if raw is not None else None
     if base is None or base.digest != plan.base_digest:
-        require_base_unchanged(ctx.fsys, ctx.target, raw)
+        raise StaleHeadError(
+            object_path=ctx.obj_path,
+            expected_digest=plan.base_digest,
+            actual_digest=None if base is None else base.digest,
+        )
     return base
 
 
@@ -258,7 +255,6 @@ def _s3_base(ctx: _Ctx) -> tuple[StoredInventory | None, str | None]:
 
 
 def _resume_claimed_local(ctx: _Ctx) -> None:
-    """The claimed `vN/` is complete: write the proof, then publish."""
     t = ctx.target
     base = _local_base(ctx)
     write_proof(t)
@@ -267,10 +263,10 @@ def _resume_claimed_local(ctx: _Ctx) -> None:
 
 
 def _resume_claimed_s3(ctx: _Ctx) -> None:
-    """Write what the claim lacks (content may need the source), then publish."""
     t = ctx.target
     base, tag = _s3_base(ctx)
-    fill_claim(t, ctx.content or _NoContent())
+    assert isinstance(ctx.fsys, ConditionalFS)
+    write_missing_claim_files(t, ctx.fsys, ctx.content or _NoContent())
     write_proof(t)
     publish_root(t, base, tag=tag)
     finish(t)
@@ -304,7 +300,6 @@ def _finish_sidecar(ctx: _Ctx) -> None:
 
 
 def _drop_plan(ctx: _Ctx) -> None:
-    """Discard a plan that cannot be read; the object is read on its own next."""
     remove_if_exists(
         ctx.fsys, join_path(work_dir(ctx.root_path, ctx.object_id), "plan.json")
     )
@@ -331,7 +326,6 @@ def _stray_version(ctx: _Ctx) -> str:
 
 
 def _remove_stray_local(ctx: _Ctx) -> None:
-    """Remove the stray `vN/` and its inventory proof."""
     v = _stray_version(ctx)
     remove_if_exists(ctx.fsys, ctx.obj(ots.inventory_proof_path(v)))
     unstart_extension(ctx.fsys, ctx.obj_path, v)
@@ -340,17 +334,12 @@ def _remove_stray_local(ctx: _Ctx) -> None:
 
 
 def _remove_stray_s3(ctx: _Ctx) -> None:
-    """Remove the stray proof and keys; the claim key `vN/inventory.json` last."""
     v = _stray_version(ctx)
     fsys = ctx.fsys
     assert isinstance(fsys, ConditionalFS)
     remove_if_exists(fsys, ctx.obj(ots.inventory_proof_path(v)))
     unstart_extension(fsys, ctx.obj_path, v)
-    claim = ctx.obj(v, INVENTORY_FILENAME)
-    for ref in list(fsys.walk_files(ctx.obj(v))):
-        if ref.path != claim:
-            remove_if_exists(fsys, ref.path)
-    remove_if_exists(fsys, claim)
+    remove_keys_claim_last(fsys, ctx.obj(v), ctx.obj(v, INVENTORY_FILENAME))
 
 
 def _refuse(why: str) -> Callable[[_Ctx], None]:
@@ -396,8 +385,6 @@ _LOCAL: _Table = {
     CommitState.STRAY: {_R: _NO_PLAN, _V: _NO_PLAN, _S: _remove_stray_local},
     CommitState.UNREADABLE_PLAN: {_R: _drop_plan, _V: _drop_plan, _S: _DROP_FIRST},
 }
-"""Local: a claim moves a complete `vN/` (or a whole new object), so a claimed
-version never lacks content and a new object is published by its claim."""
 
 _S3: _Table = {
     CommitState.CLEAN: {_R: _nothing, _V: _nothing, _S: _NOT_STRAY},
@@ -416,8 +403,5 @@ _S3: _Table = {
     CommitState.STRAY: {_R: _NO_PLAN, _V: _NO_PLAN, _S: _remove_stray_s3},
     CommitState.UNREADABLE_PLAN: {_R: _drop_plan, _V: _drop_plan, _S: _DROP_FIRST},
 }
-"""S3: the claim is the one key `vN/inventory.json`; content, the version
-sidecar and the proof follow it, so resuming a claim may need the content
-source. A revert deletes the claim key last."""
 
 TABLES: dict[str, _Table] = {"local": _LOCAL, "s3": _S3}

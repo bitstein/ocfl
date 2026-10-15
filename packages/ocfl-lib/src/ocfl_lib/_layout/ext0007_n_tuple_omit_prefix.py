@@ -4,8 +4,8 @@ import msgspec
 
 from ocfl_lib._errors import InvalidLayoutConfig
 from ocfl_lib._layout._casefold import rfind_casefold_span
+from ocfl_lib._layout._component import require_disk_safe_component
 from ocfl_lib._layout.types import Layout
-from ocfl_lib.validation._limits import validate_path_component
 
 EXTENSION_NAME = "0007-n-tuple-omit-prefix-storage-layout"
 
@@ -76,7 +76,7 @@ class NTupleOmitPrefixLayout(Layout):
     def resolve(self, object_id: str) -> str:
         match = rfind_casefold_span(object_id, self._delimiter)
         remainder = object_id[match[1] :] if match is not None else object_id
-        validate_path_component(remainder)
+        require_disk_safe_component(remainder)
 
         total_len = self._tuple_size * self._n_tuples
 

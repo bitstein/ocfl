@@ -29,13 +29,11 @@ if TYPE_CHECKING:
 
 
 def _not_found(e: ClientError) -> bool:
-    """Return True if the ClientError indicates a missing object or bucket."""
     code = e.response["Error"]["Code"]
     return code in ("404", "NoSuchKey", "NoSuchBucket")
 
 
 def _precondition_failed(e: ClientError) -> bool:
-    """Return True if a conditional write was refused (412 / 409)."""
     code = e.response["Error"]["Code"]
     return code in ("412", "PreconditionFailed", "ConditionalRequestConflict")
 
@@ -98,7 +96,6 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
         return name
 
     def _resolve(self, name: str) -> str:
-        """Validate path safety and return the S3 key."""
         if name and posixpath.isabs(name):
             raise ValueError(f"absolute path not allowed: {name!r}")
         normed = posixpath.normpath(name) if name else "."

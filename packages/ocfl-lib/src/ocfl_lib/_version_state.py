@@ -35,7 +35,7 @@ class VersionState:
         share the same digest_algorithm. Content and fixity sources
         are chained: tries each in order.
         """
-        from ocfl_lib._digest_map import merge
+        from ocfl_lib._digest_map import overlay_paths
 
         for other in others:
             if other.digest_algorithm != self.digest_algorithm:
@@ -47,7 +47,7 @@ class VersionState:
 
         merged_state = dict(self.state)
         for other in others:
-            merged_state = merge(merged_state, other.state, replace=True)
+            merged_state = overlay_paths(merged_state, other.state)
 
         all_sources = [self.content_source, *(o.content_source for o in others)]
         content_source = _ChainContentSource(all_sources)

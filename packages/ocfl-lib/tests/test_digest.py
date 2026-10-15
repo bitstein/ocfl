@@ -11,11 +11,9 @@ from ocfl_lib._digest import (
     _CHUNK_SIZE,
     DigestAlgorithm,
     bytes_digest,
-    digest_files,
-    digest_files_multi,
     file_digest,
-    multi_digest,
     stream_digest,
+    stream_multi_digest,
 )
 
 
@@ -184,128 +182,32 @@ class TestBytesDigest:
         assert bytes_digest(b"", alg) == EMPTY_DIGESTS[alg]
 
 
-class TestMultiDigest:
-    def test_two_algorithms(self, tmp_path: Path):
-        f = tmp_path / "test.txt"
-        f.write_bytes(HELLO_WORLD)
-        result = multi_digest(f, [DigestAlgorithm.SHA256, DigestAlgorithm.SHA512])
+class TestStreamMultiDigest:
+    def test_two_algorithms(self):
+        result = stream_multi_digest(
+            io.BytesIO(HELLO_WORLD), [DigestAlgorithm.SHA256, DigestAlgorithm.SHA512]
+        )
         assert result[DigestAlgorithm.SHA256] == HELLO_SHA256
         assert result[DigestAlgorithm.SHA512] == HELLO_SHA512
 
-    def test_matches_individual(self, tmp_path: Path):
+    def test_matches_individual(self):
         data = b"test data for multi digest"
-        f = tmp_path / "test.bin"
-        f.write_bytes(data)
         algs = [DigestAlgorithm.SHA512, DigestAlgorithm.SHA256, DigestAlgorithm.MD5]
-        result = multi_digest(f, algs)
+        result = stream_multi_digest(io.BytesIO(data), algs)
         for alg in algs:
-            assert result[alg] == file_digest(f, alg)
+            assert result[alg] == bytes_digest(data, alg)
 
-    def test_single_algorithm(self, tmp_path: Path):
-        f = tmp_path / "test.txt"
-        f.write_bytes(HELLO_WORLD)
-        result = multi_digest(f, [DigestAlgorithm.SHA256])
-        assert result[DigestAlgorithm.SHA256] == HELLO_SHA256
-
-    def test_empty_file(self, tmp_path: Path):
-        f = tmp_path / "empty.txt"
-        f.write_bytes(b"")
-        result = multi_digest(f, [DigestAlgorithm.SHA256, DigestAlgorithm.SHA512])
+    def test_empty_stream(self):
+        result = stream_multi_digest(
+            io.BytesIO(b""), [DigestAlgorithm.SHA256, DigestAlgorithm.SHA512]
+        )
         assert result[DigestAlgorithm.SHA256] == EMPTY_DIGESTS[DigestAlgorithm.SHA256]
         assert result[DigestAlgorithm.SHA512] == EMPTY_DIGESTS[DigestAlgorithm.SHA512]
 
-    def test_large_file(self, tmp_path: Path):
+    def test_large_stream(self):
         data = b"z" * (3 * _CHUNK_SIZE + 1)
-        f = tmp_path / "large.bin"
-        f.write_bytes(data)
-        result = multi_digest(f, [DigestAlgorithm.SHA256, DigestAlgorithm.MD5])
+        result = stream_multi_digest(
+            io.BytesIO(data), [DigestAlgorithm.SHA256, DigestAlgorithm.MD5]
+        )
         assert result[DigestAlgorithm.SHA256] == hashlib.sha256(data).hexdigest()
         assert result[DigestAlgorithm.MD5] == hashlib.md5(data).hexdigest()
-
-
-def _make_files(tmp_path: Path, count: int = 5) -> list[Path]:
-    paths = []
-    for i in range(count):
-        f = tmp_path / f"file_{i}.bin"
-        f.write_bytes(f"content {i}".encode())
-        paths.append(f)
-    return paths
-
-
-class TestDigestFiles:
-    def test_matches_serial(self, tmp_path: Path):
-        paths = _make_files(tmp_path)
-        result = digest_files(paths, DigestAlgorithm.SHA256)
-        for p in paths:
-            assert result[p] == file_digest(p, DigestAlgorithm.SHA256)
-
-    def test_single_file(self, tmp_path: Path):
-        f = tmp_path / "single.txt"
-        f.write_bytes(HELLO_WORLD)
-        result = digest_files([f], DigestAlgorithm.SHA256)
-        assert result[f] == HELLO_SHA256
-
-    def test_empty_list(self):
-        result = digest_files([], DigestAlgorithm.SHA256)
-        assert result == {}
-
-    def test_max_workers(self, tmp_path: Path):
-        paths = _make_files(tmp_path)
-        result = digest_files(paths, DigestAlgorithm.SHA256, max_workers=2)
-        for p in paths:
-            assert result[p] == file_digest(p, DigestAlgorithm.SHA256)
-
-
-class TestDigestFilesMulti:
-    def test_matches_serial(self, tmp_path: Path):
-        paths = _make_files(tmp_path)
-        algs = [DigestAlgorithm.SHA256, DigestAlgorithm.MD5]
-        result = digest_files_multi(paths, algs)
-        for p in paths:
-            for alg in algs:
-                assert result[p][alg] == file_digest(p, alg)
-
-    def test_single_algorithm(self, tmp_path: Path):
-        paths = _make_files(tmp_path, count=3)
-        result = digest_files_multi(paths, [DigestAlgorithm.SHA512])
-        for p in paths:
-            assert result[p][DigestAlgorithm.SHA512] == file_digest(
-                p, DigestAlgorithm.SHA512
-            )
-
-    def test_empty_list(self):
-        result = digest_files_multi([], [DigestAlgorithm.SHA256])
-        assert result == {}
-
-
-class TestDigestFilesErrors:
-    def test_two_missing_files_raises_exception_group(self, tmp_path: Path):
-        missing1 = tmp_path / "nope1"
-        missing2 = tmp_path / "nope2"
-        with pytest.raises(ExceptionGroup) as exc_info:
-            digest_files([missing1, missing2], DigestAlgorithm.SHA256)
-        assert len(exc_info.value.exceptions) == 2
-        assert all(isinstance(e, FileNotFoundError) for e in exc_info.value.exceptions)
-        for exc in exc_info.value.exceptions:
-            assert any("while digesting" in n for n in exc.__notes__)
-
-    def test_single_missing_file_raises_exception_group(self, tmp_path: Path):
-        missing = tmp_path / "nope"
-        with pytest.raises(ExceptionGroup):
-            digest_files([missing], DigestAlgorithm.SHA256)
-
-    def test_mixed_good_and_bad_raises_exception_group(self, tmp_path: Path):
-        good = tmp_path / "good.txt"
-        good.write_bytes(b"ok")
-        missing = tmp_path / "nope"
-        with pytest.raises(ExceptionGroup) as exc_info:
-            digest_files([good, missing], DigestAlgorithm.SHA256)
-        assert len(exc_info.value.exceptions) == 1
-
-    def test_multi_two_missing_raises_exception_group(self, tmp_path: Path):
-        missing1 = tmp_path / "nope1"
-        missing2 = tmp_path / "nope2"
-        algs = [DigestAlgorithm.SHA256, DigestAlgorithm.SHA512]
-        with pytest.raises(ExceptionGroup) as exc_info:
-            digest_files_multi([missing1, missing2], algs)
-        assert len(exc_info.value.exceptions) == 2

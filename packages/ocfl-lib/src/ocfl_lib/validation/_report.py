@@ -1,9 +1,3 @@
-"""Validation findings and the report that holds them.
-
-A Finding carries data only. Its message is rendered from the code's
-description template only for display (`Finding.render`).
-"""
-
 import enum
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
@@ -115,12 +109,6 @@ class ValidationReport:
 
 
 class FindingCollector:
-    """Mutable accumulator that validators write to; `report()` freezes it.
-
-    `object_id` may be set once the inventory is read; it is stamped on
-    every finding this collector made.
-    """
-
     def __init__(self, path: str = "", object_id: str | None = None) -> None:
         self.path = path
         self.object_id = object_id
@@ -142,7 +130,6 @@ class FindingCollector:
         self._add(code, Severity.INFO, params)
 
     def extend(self, findings: Iterable[Finding]) -> None:
-        """Add findings made elsewhere (e.g. a contained object's report)."""
         self._other.extend(findings)
 
     @property

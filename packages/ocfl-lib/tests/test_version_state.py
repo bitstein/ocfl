@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ocfl_lib._digest import DigestAlgorithm, file_digest, multi_digest
+from ocfl_lib._digest import DigestAlgorithm, file_digest
 from ocfl_lib.fs._protocols import FS
 
 if TYPE_CHECKING:
@@ -186,11 +186,9 @@ class TestStageDir:
         fixity = stage.fixity_source.get_fixity(digest)
         assert DigestAlgorithm.SHA256 in fixity
         assert DigestAlgorithm.MD5 in fixity
-        expected = multi_digest(
-            tmp_path / "f.txt", [DigestAlgorithm.SHA256, DigestAlgorithm.MD5]
-        )
-        assert fixity[DigestAlgorithm.SHA256] == expected[DigestAlgorithm.SHA256]
-        assert fixity[DigestAlgorithm.MD5] == expected[DigestAlgorithm.MD5]
+        f = tmp_path / "f.txt"
+        assert fixity[DigestAlgorithm.SHA256] == file_digest(f, DigestAlgorithm.SHA256)
+        assert fixity[DigestAlgorithm.MD5] == file_digest(f, DigestAlgorithm.MD5)
 
     def test_no_fixity_by_default(self, tmp_path: Path):
         (tmp_path / "f.txt").write_text("no fixity")

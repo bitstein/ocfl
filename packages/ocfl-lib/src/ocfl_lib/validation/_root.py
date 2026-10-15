@@ -10,7 +10,7 @@ from ocfl_lib.fs import _utils as fs_utils
 from ocfl_lib.validation._object import (
     REGISTERED_EXTENSIONS,
     check_extensions_dir,
-    declaration_mismatch,
+    declaration_reads_wrong,
     split_declarations,
     validate_object,
 )
@@ -109,9 +109,6 @@ def _validate_root(
 def _check_root_declaration(
     fsys: FS, path: str, entries: list[FsEntry], result: FindingCollector
 ) -> Spec | None:
-    """E069d, E069a/E069b/E069c, E069e. The spec is known only when exactly one
-    declaration exists.
-    """
     unparsed, decls = split_declarations(entries, "root")
     for name in unparsed:
         result.error("E069d", filename=name)
@@ -126,7 +123,7 @@ def _check_root_declaration(
         )
         return None
     decl = decls[0]
-    if declaration_mismatch(fsys, path, decl):
+    if declaration_reads_wrong(fsys, path, decl):
         result.error("E069e", filename=decl.filename)
     return decl.spec
 
@@ -182,9 +179,6 @@ def _walk_hierarchy(
     result: FindingCollector,
     root_spec: Spec | None,
 ) -> list[str]:
-    """Walk root hierarchy via read_dir. Emit E073 (empty dirs) and E072
-    (non-object dirs with files). Return discovered object root paths.
-    """
     obj_paths: list[str] = []
     root_skip_dirs = {"extensions"}
     queue = [root_path]

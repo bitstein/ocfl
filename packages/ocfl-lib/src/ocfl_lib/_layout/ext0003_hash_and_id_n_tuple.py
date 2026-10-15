@@ -11,7 +11,6 @@ _MAX_ENCODED_LENGTH = 100
 
 
 def _percent_encode(s: str) -> str:
-    """Percent-encode a string. Safe chars: [A-Za-z0-9-_]."""
     out: list[str] = []
     for byte in s.encode("utf-8"):
         if byte in _SAFE:

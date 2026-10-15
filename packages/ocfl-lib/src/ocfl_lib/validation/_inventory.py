@@ -5,7 +5,7 @@ import msgspec
 
 from ocfl_lib._digest import DigestAlgorithm
 from ocfl_lib._inventory import Inventory
-from ocfl_lib._json_value import object_field
+from ocfl_lib._json_value import object_field_or_empty
 from ocfl_lib._spec import VERSION_DIR_RE, Spec
 from ocfl_lib.validation._limits import (
     MAX_MESSAGE,
@@ -62,14 +62,7 @@ def validate_inventory(
     lax_digests: bool = False,
     where: str = "root",
 ) -> Inventory | None:
-    """Validate an inventory from a raw dict.
-
-    Phase 1: structural/type checks on the raw dict.
-    Phase 2: decode to Inventory struct, semantic checks.
-
-    Returns parsed Inventory on success, None on fatal structural error.
-    """
-    if not _validate_structure(data, result, where=where, lax_digests=lax_digests):
+    if not _structure_is_decodable(data, result, where=where, lax_digests=lax_digests):
         return None
 
     try:
@@ -81,14 +74,13 @@ def validate_inventory(
     return inv
 
 
-def _validate_structure(
+def _structure_is_decodable(
     data: JsonObject,
     result: FindingCollector,
     *,
     where: str,
     lax_digests: bool,
 ) -> bool:
-    """Phase 1: raw dict structural validation. Returns False on fatal error."""
     missing = [code for key, code in _REQUIRED_KEYS if key not in data]
     for code in missing:
         result.error(code, where=where)
@@ -252,8 +244,8 @@ def _validate_versions(
     *,
     where: str,
 ) -> None:
-    versions = object_field(data, "versions")
-    manifest = object_field(data, "manifest")
+    versions = object_field_or_empty(data, "versions")
+    manifest = object_field_or_empty(data, "manifest")
     head = data["head"]
 
     vnums: list[_VersionKey] = []
@@ -361,7 +353,6 @@ def _validate_created(
     where: str,
     version: str,
 ) -> None:
-    """Validate created datetime string per OCFL: ISO 8601, with tz, ≥seconds."""
     from datetime import datetime
 
     try:
@@ -378,7 +369,6 @@ def _validate_created(
 
 
 def _created_has_seconds(created: str) -> bool:
-    """Return true when an ISO datetime string includes HH:MM:SS."""
     if "T" not in created:
         return False
 
@@ -448,7 +438,6 @@ def _validate_version_state(
 
 
 def _path_prefix_conflicts(paths: set[str]) -> list[str]:
-    """Find paths that are used as both a file path and a directory prefix."""
     conflicts: set[str] = set()
     for path in paths:
         parts = path.split("/")
@@ -467,9 +456,6 @@ def _path_segments(
     segment_code: str,
     **params: object,
 ) -> list[str] | None:
-    """`path` split on "/", or None after reporting `slash_code` for a leading or
-    trailing slash, else `segment_code` for an empty, "." or ".." segment.
-    """
     if path.startswith("/") or path.endswith("/"):
         result.error(slash_code, **params, path=path)
         return None
@@ -605,7 +591,6 @@ def validate_inventory_against_prior(
     *,
     where: str = "root",
 ) -> None:
-    """Validate current inventory against a prior version's inventory."""
     cur_id = current.get("id", "")
     pri_id = prior.get("id", "")
     if cur_id != pri_id:
@@ -644,7 +629,6 @@ def _check_prior_manifest_covers(
     *,
     where: str,
 ) -> None:
-    """E023b: current content paths under a prior version must be in its manifest."""
     cur_manifest = current.get("manifest", {})
     pri_manifest = prior.get("manifest", {})
     if not isinstance(cur_manifest, dict) or not isinstance(pri_manifest, dict):

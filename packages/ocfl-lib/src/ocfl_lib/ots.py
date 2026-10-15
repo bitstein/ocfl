@@ -18,7 +18,7 @@ from opentimestamps.core.serialize import (
 from opentimestamps.core.timestamp import DetachedTimestampFile
 
 from ocfl_lib._errors import InvalidProofError, OtsConfigError, OtsParseError
-from ocfl_lib._json_value import as_object, object_field, parse_json
+from ocfl_lib._json_value import as_object, object_field_or_empty, parse_json
 from ocfl_lib._path import join_path
 from ocfl_lib.fs import _utils as fs_utils
 
@@ -335,18 +335,18 @@ def object_proofs(fsys: FS, obj_path: str) -> tuple[ProofRef, ...]:
     )
     if inv is None:
         return ()
-    versions = object_field(inv, "versions")
+    versions = object_field_or_empty(inv, "versions")
     covered = covered_versions(cfg, versions)
     refs: list[ProofRef] = []
     if cfg.timestamp_content:
         first_path = {
             d: ps[0]
-            for d, ps in object_field(inv, "manifest").items()
+            for d, ps in object_field_or_empty(inv, "manifest").items()
             if isinstance(ps, list) and ps and isinstance(ps[0], str)
         }
         seen: set[str] = set()
         for v in covered:
-            state = object_field(as_object(versions.get(v)) or {}, "state")
+            state = object_field_or_empty(as_object(versions.get(v)) or {}, "state")
             digest_of = {
                 p: d
                 for d, ps in state.items()

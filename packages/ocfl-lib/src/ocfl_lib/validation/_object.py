@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from ocfl_lib import ots
 from ocfl_lib._digest import DigestAlgorithm, bytes_digest, stream_digest
-from ocfl_lib._json_value import as_str, object_field, parse_json
+from ocfl_lib._json_value import as_str, object_field_or_empty, parse_json
 from ocfl_lib._path import join_path
 from ocfl_lib._spec import VERSION_DIR_RE, Namaste
 from ocfl_lib.fs import _utils as fs_utils
@@ -140,7 +140,7 @@ def _validate_object(
         prev_spec = _check_spec_sequence(prev_spec, vkey, vspec, result)
     _check_spec_sequence(prev_spec, "root", _inventory_spec(inv_data), result)
 
-    manifest = object_field(inv_data, "manifest")
+    manifest = object_field_or_empty(inv_data, "manifest")
     _check_content_files(fsys, path, manifest, content_dir, inv_versions, result)
 
     if check_digests:
@@ -150,12 +150,14 @@ def _validate_object(
             _verify_fixity_digests(fsys, path, fixity, result, where="root")
 
 
+class Declarations(NamedTuple):
+    unparsed: list[str]
+    decls: list[Namaste]
+
+
 def split_declarations(
     entries: list[FsEntry], kind: Literal["root", "object"]
-) -> tuple[list[str], list[Namaste]]:
-    """(names of "0=" entries that are not a `kind` declaration, the `kind`
-    declarations), both in entry order.
-    """
+) -> Declarations:
     decls = [
         n
         for entry in entries
@@ -167,13 +169,10 @@ def split_declarations(
         for e in entries
         if e.name.startswith("0=") and e.name not in parsed_names
     ]
-    return unparsed, decls
+    return Declarations(unparsed, decls)
 
 
-def declaration_mismatch(fsys: FS, path: str, decl: Namaste) -> bool:
-    """True when the declaration file reads with the wrong content; unreadable is
-    not a mismatch.
-    """
+def declaration_reads_wrong(fsys: FS, path: str, decl: Namaste) -> bool:
     try:
         content = fs_utils.read_text(fsys, join_path(path, decl.filename))
     except OSError:
@@ -204,9 +203,6 @@ def check_extensions_dir(
 def _check_object_declaration(
     fsys: FS, path: str, entries: list[FsEntry], result: FindingCollector
 ) -> Namaste | None:
-    """E006, E003a/E003b/E003c, E007. With several declarations the first is
-    used.
-    """
     unparsed, decls = split_declarations(entries, "object")
     for name in unparsed:
         result.error("E006", filename=name)
@@ -220,7 +216,7 @@ def _check_object_declaration(
             using_version=str(decls[0].spec),
         )
     namaste = decls[0]
-    if declaration_mismatch(fsys, path, namaste):
+    if declaration_reads_wrong(fsys, path, namaste):
         result.error("E007", filename=namaste.filename)
     return namaste
 
@@ -471,9 +467,8 @@ def _check_version_metadata(
     *,
     vkey: str,
 ) -> None:
-    """W011: version metadata in prior inventory should match root."""
-    vinv_versions = object_field(vinv_data, "versions")
-    root_versions = object_field(root_inv_data, "versions")
+    vinv_versions = object_field_or_empty(vinv_data, "versions")
+    root_versions = object_field_or_empty(root_inv_data, "versions")
     prior_head = vinv_data.get("head", "")
 
     for ver_key in vinv_versions:
@@ -500,7 +495,6 @@ def _check_version_metadata(
 def _check_version_dir_sequence(
     entries: list[FsEntry], result: FindingCollector
 ) -> None:
-    """E010: version directories present on disk must be sequential."""
     vnums: list[int] = []
     for entry in entries:
         if not entry.is_dir:
@@ -525,7 +519,6 @@ def _check_first_version_content_dir(
     inv_versions: dict[str, int],
     result: FindingCollector,
 ) -> None:
-    """E019: contentDirectory must be set consistently from the first version."""
     if "contentDirectory" not in root_inv_data or not inv_versions:
         return
 
@@ -550,7 +543,6 @@ _SPEC_RE = re.compile(r"https://ocfl\.io/(\d+\.\d+)/spec/#inventory")
 
 
 def _inventory_spec(inv_data: JsonObject) -> str | None:
-    """Spec version ("1.1") from an inventory's type URI, or None."""
     itype = inv_data.get("type", "")
     m = _SPEC_RE.match(itype) if isinstance(itype, str) else None
     return m.group(1) if m else None
@@ -567,10 +559,6 @@ def _check_spec_sequence(
     spec: str | None,
     result: FindingCollector,
 ) -> _SpecAt | None:
-    """E103: `spec` must not be older than `prev`, the last version's spec.
-
-    Returns what the next version compares against.
-    """
     if spec is None:
         return prev
     if prev is not None and _spec_tuple(spec) < _spec_tuple(prev.spec):

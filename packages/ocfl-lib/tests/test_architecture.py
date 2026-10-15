@@ -960,7 +960,7 @@ def _names(node: ast.AST) -> set[str]:
 
 class TestCommitRefusesUnproved:
     def test_extension_checked_before_plan_is_written(self):
-        names = _names(_func(LIB_SRC / "_commit.py", "require_base_unchanged"))
+        names = _names(_func(LIB_SRC / "_commit.py", "_require_ots_admissible"))
         assert {"read_config", "check_extension"} <= names
 
     def test_refusals_name_the_spec_codes(self):
@@ -998,8 +998,9 @@ class TestStartTimestamping:
     def test_config_is_written_before_the_proof(self):
         """Order: claim -> config -> proof -> root inventory -> root sidecar."""
         body = ast.unparse(_func(LIB_SRC / "_commit.py", "write_proof"))
-        assert body.index("ots.CONFIG_PATH") < body.index("inventory_proof)")
-        assert "start_config" in body
+        assert body.index("_start_extension_config(t)") < body.index("inventory_proof)")
+        start = ast.unparse(_func(LIB_SRC / "_commit.py", "_start_extension_config"))
+        assert "ots.CONFIG_PATH" in start and "start_config" in start
 
     def test_start_sets_timestamp_from_to_the_new_version(self):
         body = ast.unparse(_func(LIB_SRC / "_commit.py", "start_config"))
@@ -1022,11 +1023,12 @@ class TestStartTimestamping:
 class TestCommitChecksContentProofs:
     def test_content_proofs_checked_before_plan_on_both_backends(self):
         assert "_check_content_proofs" in _names(
-            _func(LIB_SRC / "_commit.py", "require_base_unchanged")
+            _func(LIB_SRC / "_commit.py", "_require_ots_admissible")
         )
         for fn in ("_commit_local", "_commit_s3"):
             body = ast.unparse(_func(LIB_SRC / "_commit.py", fn))
-            assert "require_base_unchanged(fsys, t, raw, content)" in body, fn
+            check = body.index("_require_ots_admissible(fsys, t, base, content)")
+            assert check < body.index("t.plan_file, t.plan.to_json()"), fn
 
     def test_refusals_name_the_spec_codes(self):
         body = ast.unparse(_func(LIB_SRC / "_commit.py", "_check_content_proofs"))

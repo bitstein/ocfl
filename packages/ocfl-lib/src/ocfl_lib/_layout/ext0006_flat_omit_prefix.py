@@ -2,8 +2,8 @@ import msgspec
 
 from ocfl_lib._errors import InvalidLayoutConfig
 from ocfl_lib._layout._casefold import rfind_casefold_span
+from ocfl_lib._layout._component import require_disk_safe_component
 from ocfl_lib._layout.types import Layout
-from ocfl_lib.validation._limits import validate_path_component
 
 EXTENSION_NAME = "0006-flat-omit-prefix-storage-layout"
 
@@ -44,5 +44,5 @@ class FlatOmitPrefixLayout(Layout):
                 f"delimiter {self._delimiter!r} not found in object ID {object_id!r}"
             )
         remainder = object_id[match[1] :]
-        validate_path_component(remainder)
+        require_disk_safe_component(remainder)
         return remainder

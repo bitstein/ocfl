@@ -1,5 +1,4 @@
 def rfind_casefold_span(text: str, needle: str) -> tuple[int, int] | None:
-    """Return the original-string span for the rightmost casefolded match."""
     needle_cf = needle.casefold()
     last_match: tuple[int, int] | None = None
 

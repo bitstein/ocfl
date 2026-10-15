@@ -1,7 +1,7 @@
 import msgspec
 
+from ocfl_lib._layout._component import require_disk_safe_component
 from ocfl_lib._layout.types import Layout
-from ocfl_lib.validation._limits import validate_path_component
 
 EXTENSION_NAME = "0002-flat-direct-storage-layout"
 
@@ -28,5 +28,5 @@ class FlatDirectLayout(Layout):
         return cls()
 
     def resolve(self, object_id: str) -> str:
-        validate_path_component(object_id)
+        require_disk_safe_component(object_id)
         return object_id

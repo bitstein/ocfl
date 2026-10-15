@@ -37,21 +37,16 @@ def _classify(mode: int) -> str:
     return "unknown"
 
 
-def _check_entry_type(entry: os.DirEntry[str]) -> tuple[bool, bool]:
-    """Return (is_dir, is_file) for a scandir entry, refusing symlinks.
-
-    Raises OcflFileTypeError for symlinks, FIFOs, sockets, and devices.
-    """
+def _require_dir_or_file(entry: os.DirEntry[str]) -> bool:
     is_dir = entry.is_dir(follow_symlinks=False)
-    is_file = entry.is_file(follow_symlinks=False)
-    if not is_dir and not is_file:
+    if not is_dir and not entry.is_file(follow_symlinks=False):
         st = entry.stat(follow_symlinks=False)
         kind = _classify(st.st_mode)
         raise OcflFileTypeError(
             f"unsupported file type at {entry.path}: {kind}; "
             "only regular files and directories are allowed"
         )
-    return is_dir, is_file
+    return is_dir
 
 
 if TYPE_CHECKING:
@@ -118,8 +113,7 @@ def _fsync_file(path: Path) -> None:
         os.close(fd)
 
 
-def _makedirs(path: Path) -> None:
-    """`mkdir -p` that fsyncs the parent of every directory it creates."""
+def _makedirs_durable(path: Path) -> None:
     missing = []
     p = path
     while not p.is_dir():
@@ -151,7 +145,6 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
         self._root = root.resolve()
 
     def _resolve(self, name: str) -> Path:
-        """Resolve a relative path to an absolute path, validating safety."""
         if os.path.isabs(name):
             raise ValueError(f"absolute path not allowed: {name!r}")
         resolved = (self._root / name).resolve()
@@ -172,7 +165,8 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
         path = self._resolve(name)
         with os.scandir(path) as it:
             for entry in it:
-                is_dir, is_file = _check_entry_type(entry)
+                is_dir = _require_dir_or_file(entry)
+                is_file = not is_dir
                 yield FsEntry(
                     name=entry.name,
                     is_dir=is_dir,
@@ -187,7 +181,7 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
         so a power loss leaves the old file or the new one.
         """
         target = self._resolve(name)
-        _makedirs(target.parent)
+        _makedirs_durable(target.parent)
         fd = None
         tmp_path = None
         try:
@@ -233,7 +227,7 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
         Safe under concurrent invocation. Each new directory is made durable
         by an fsync of its parent.
         """
-        _makedirs(self._resolve(name))
+        _makedirs_durable(self._resolve(name))
 
     def copy(self, src: str, dst: str) -> int:
         """Copy a file within this filesystem."""
@@ -313,10 +307,9 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
     def _walk(self, path: Path) -> Iterator[FileRef]:
         with os.scandir(path) as it:
             for entry in it:
-                is_dir, is_file = _check_entry_type(entry)
-                if is_dir:
+                if _require_dir_or_file(entry):
                     yield from self._walk(Path(entry.path))
-                elif is_file:
+                else:
                     rel = Path(entry.path).relative_to(self._root)
                     yield FileRef(
                         path=rel.as_posix(),

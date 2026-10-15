@@ -17,13 +17,6 @@ def bounded_map[T, R](
     max_workers: int | None = None,
     max_outstanding: int | None = None,
 ) -> Generator[R]:
-    """Apply *fn* to each item, yielding results in submission order.
-
-    Limits in-flight futures to *max_outstanding* (default ``2 * workers``)
-    so memory stays bounded for large iterables.  On first exception or
-    consumer abandon (``GeneratorExit``), pending futures are cancelled
-    and the pool is shut down.
-    """
     workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
     cap = max_outstanding or 2 * workers
 
