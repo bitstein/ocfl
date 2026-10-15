@@ -56,8 +56,11 @@ class StagingStore:
         self._write_metadata(d, StagedMetadata())
 
     def load_inventory(self, root_path: str, object_id: str) -> Inventory:
-        d = self.staging_path(root_path, object_id)
-        return msgspec.json.decode((d / "inventory.json").read_bytes(), type=Inventory)
+        path = self.staging_path(root_path, object_id) / "inventory.json"
+        try:
+            return msgspec.json.decode(path.read_bytes(), type=Inventory)
+        except msgspec.DecodeError as e:
+            raise StagingError(f"{path}: {e}") from None
 
     def save_inventory(
         self, root_path: str, object_id: str, inventory: Inventory

@@ -285,3 +285,21 @@ class TestStageAdd:
         paths = [p for ps in inv.versions["v1"].state.values() for p in ps]
         assert "file.txt" in paths
         assert not any("empty" in p for p in paths)
+
+
+def test_add_with_corrupt_staged_inventory_reports_staging_error(
+    runner, storage_root, tmp_path
+):
+    staging = tmp_path / "staging"
+    assert _invoke_new(runner, storage_root, staging).exit_code == ExitCode.SUCCESS
+    store, root_path = _store_and_root(storage_root, staging)
+    inv = store.staging_path(root_path, "obj:new") / "inventory.json"
+    inv.write_text("{}")
+    src = tmp_path / "a.txt"
+    src.write_text("aaa")
+
+    result = _invoke_add(runner, storage_root, staging, "obj:new", src)
+
+    assert result.exit_code == ExitCode.GENERIC, result.output
+    assert result.stdout == ""
+    assert result.stderr == f"Error: {inv}: Object missing required field `id`\n"

@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
+from ocfl_cli.store.staging import StagingStore
 
 
 @pytest.fixture
@@ -206,3 +207,62 @@ class TestStageStatus:
         staging = tmp_path / "staging"
         result = _invoke(runner, storage_root, staging, "status", "obj:nope")
         assert result.exit_code == ExitCode.GENERIC
+
+
+class TestCorruptStagedInventory:
+    def _corrupt(self, runner, storage_root, tmp_path, raw):
+        staging = tmp_path / "staging"
+        assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
+        store = StagingStore(staging)
+        inv = (
+            store.staging_path(str(storage_root.resolve()), "obj:new")
+            / "inventory.json"
+        )
+        inv.write_text(raw)
+        return staging, inv
+
+    @pytest.mark.parametrize(
+        ("raw", "message"),
+        [
+            ("{}", "Object missing required field `id`"),
+            ('{"id":', "Input data was truncated"),
+            ("[1]", "Expected `object`, got `array`"),
+        ],
+    )
+    def test_status_reports_staging_error(
+        self, runner, storage_root, tmp_path, raw, message
+    ):
+        staging, inv = self._corrupt(runner, storage_root, tmp_path, raw)
+
+        result = _invoke(runner, storage_root, staging, "status", "obj:new")
+
+        assert result.exit_code == ExitCode.GENERIC, result.output
+        assert result.stdout == ""
+        assert result.stderr == f"Error: {inv}: {message}\n"
+
+    def test_status_json_error(self, runner, storage_root, tmp_path):
+        staging, inv = self._corrupt(runner, storage_root, tmp_path, "{}")
+
+        result = runner.invoke(
+            app,
+            [
+                "--root",
+                str(storage_root),
+                "--json",
+                "stage",
+                "--staging-root",
+                str(staging),
+                "status",
+                "obj:new",
+            ],
+        )
+
+        assert result.exit_code == ExitCode.GENERIC, result.output
+        assert result.stdout == ""
+        assert json.loads(result.stderr) == {
+            "error": {
+                "code": "staging_error",
+                "message": f"{inv}: Object missing required field `id`",
+                "exit": 1,
+            }
+        }
