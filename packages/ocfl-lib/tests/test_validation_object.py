@@ -623,6 +623,39 @@ class TestE103SpecNeverOlderThanPrevious:
         assert "the v1 inventory" in e103[0].render()
 
 
+class TestE038aRootTypeMatchesDeclaration:
+    @pytest.mark.parametrize(("decl", "inv_spec"), [("1.1", "1.0"), ("1.0", "1.1")])
+    def test_root_type_other_than_declaration(
+        self, tmp_path: Path, decl: str, inv_spec: str
+    ) -> None:
+        obj = tmp_path / "obj"
+        shutil.copytree(
+            FIXTURES_ROOT / decl / "good-objects/minimal_one_version_one_file", obj
+        )
+        _set_inventory_type(obj, inv_spec)
+        _set_inventory_type(obj / "v1", inv_spec)
+
+        r = validate_object(LocalFS(obj), "")
+
+        assert [e.render() for e in r.errors] == [
+            "OCFL Object root inventory type attribute has wrong value"
+            f" (expected https://ocfl.io/{decl}/spec/#inventory,"
+            f" got https://ocfl.io/{inv_spec}/spec/#inventory)"
+        ]
+
+    def test_unparseable_type_is_not_e038a(self, tmp_path: Path) -> None:
+        obj = tmp_path / "obj"
+        shutil.copytree(
+            FIXTURES_ROOT / "1.1/good-objects/minimal_one_version_one_file", obj
+        )
+        _set_inventory_type(obj, "x")
+        _set_inventory_type(obj / "v1", "x")
+
+        r = validate_object(LocalFS(obj), "")
+
+        assert [e.code for e in r.errors] == ["E038b", "E038b"]
+
+
 @pytest.mark.parametrize(
     "extension",
     [

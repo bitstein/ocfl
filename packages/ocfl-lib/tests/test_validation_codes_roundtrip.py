@@ -20,7 +20,6 @@ _KNOWN_UNREACHED: dict[str, str] = {
         "unknown digestAlgorithm reported via E025a; unknown fixity algorithm"
         " via E056b (ignored under lax_digests)"
     ),
-    "E038a": "not implemented (#2)",
     "E058b": "sidecar with an unknown algorithm suffix reported via E058a (see #3)",
     "E050a": "per-digest E050f fires instead of the aggregate",
     "E066d": (

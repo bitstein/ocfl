@@ -7,7 +7,7 @@ from ocfl_lib import ots
 from ocfl_lib._digest import DigestAlgorithm, bytes_digest, stream_digest
 from ocfl_lib._json_value import as_str, object_field_or_empty, parse_json
 from ocfl_lib._path import join_path
-from ocfl_lib._spec import VERSION_DIR_RE, Namaste
+from ocfl_lib._spec import VERSION_DIR_RE, Namaste, Spec
 from ocfl_lib.fs import _utils as fs_utils
 from ocfl_lib.validation._extension_ots import check_chain, validate_ots_extension
 from ocfl_lib.validation._inventory import (
@@ -94,6 +94,8 @@ def _validate_object(
     if loaded is None:
         return
     inv_bytes, inv_data, inv, alg = loaded
+    if namaste is not None:
+        _check_root_type_matches_declaration(inv_data, namaste.spec, result)
 
     sidecar_name = f"inventory.json.{alg.ocfl_name}"
     sidecar_path = join_path(path, sidecar_name)
@@ -557,6 +559,19 @@ def _inventory_spec(inv_data: JsonObject) -> str | None:
     itype = inv_data.get("type", "")
     m = _SPEC_RE.match(itype) if isinstance(itype, str) else None
     return m.group(1) if m else None
+
+
+def _check_root_type_matches_declaration(
+    inv_data: JsonObject, decl: Spec, result: FindingCollector
+) -> None:
+    spec = _inventory_spec(inv_data)
+    if spec in Spec and spec != decl:
+        result.error(
+            "E038a",
+            where="root",
+            expected=decl.inventory_type_url,
+            got=inv_data["type"],
+        )
 
 
 class _SpecAt(NamedTuple):
