@@ -2,7 +2,7 @@ import hashlib
 import json
 import os
 import shutil
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import msgspec
 
@@ -68,9 +68,12 @@ class StagingStore:
         d = self.staging_path(root_path, object_id)
         self._write_inventory(d, inventory)
 
-    def load_content_map(self, root_path: str, object_id: str) -> dict:
-        d = self.staging_path(root_path, object_id)
-        return json.loads((d / "content.json").read_bytes())
+    def load_content_map(self, root_path: str, object_id: str) -> dict[str, Any]:
+        path = self.staging_path(root_path, object_id) / "content.json"
+        try:
+            return msgspec.json.decode(path.read_bytes(), type=dict[str, Any])
+        except msgspec.DecodeError as e:
+            raise StagingError(f"{path}: {e}") from None
 
     def save_content_map(
         self, root_path: str, object_id: str, content_map: dict
