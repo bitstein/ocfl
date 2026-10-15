@@ -590,6 +590,70 @@ class TestE024EmptyDirInContent:
         ]
 
 
+def _empty_state_inventory(*version_ids: str) -> dict:
+    block = {
+        "created": "2024-01-01T00:00:00Z",
+        "state": {},
+        "message": "init",
+        "user": {"name": "test", "address": "mailto:t@e.org"},
+    }
+    return inventory(
+        manifest={},
+        head=version_ids[-1],
+        versions={v: block for v in version_ids},
+    )
+
+
+def _codes(r: ValidationReport) -> list[str]:
+    return sorted(f.code for f in r.findings)
+
+
+def _validate_on_s3(obj: Path) -> ValidationReport:
+    """Mirror obj to moto S3, each empty directory as a folder-marker key."""
+    with mock_aws():
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="test-bucket")
+        for p in obj.rglob("*"):
+            key = f"obj/{p.relative_to(obj).as_posix()}"
+            if p.is_file():
+                client.put_object(Bucket="test-bucket", Key=key, Body=p.read_bytes())
+            elif not any(p.iterdir()):
+                client.put_object(Bucket="test-bucket", Key=f"{key}/", Body=b"")
+        return validate_object(S3FS("test-bucket", client=client), "obj")
+
+
+class TestS3FolderMarkerParity:
+    def test_empty_content_dir_is_W003(self, tmp_path: Path):
+        _make_object(tmp_path, _empty_state_inventory("v1"), empty_content=True)
+
+        r = _validate_on_s3(tmp_path)
+
+        assert r.has_code("W003")
+        assert _codes(r) == _codes(validate_object(LocalFS(tmp_path), ""))
+
+    def test_empty_declared_version_dir_is_W010(self, tmp_path: Path):
+        _make_object(tmp_path, _empty_state_inventory("v1", "v2"), empty_content=True)
+        (tmp_path / "v2").mkdir()
+
+        r = _validate_on_s3(tmp_path)
+
+        assert r.has_code("W010")
+        assert not r.has_code("E046")
+        assert _codes(r) == _codes(validate_object(LocalFS(tmp_path), ""))
+
+    def test_nested_empty_dir_in_content_is_E024(self, tmp_path: Path):
+        shutil.copytree(
+            FIXTURES_ROOT / "1.1" / "good-objects" / "minimal_one_version_one_file",
+            tmp_path / "o",
+        )
+        (tmp_path / "o" / "v1" / "content" / "sub").mkdir()
+
+        r = _validate_on_s3(tmp_path / "o")
+
+        assert _codes(r) == ["E024"]
+        assert _codes(r) == _codes(validate_object(LocalFS(tmp_path / "o"), ""))
+
+
 def _set_inventory_type(vdir: Path, spec: str) -> None:
     inv_path = vdir / "inventory.json"
     raw = re.sub(

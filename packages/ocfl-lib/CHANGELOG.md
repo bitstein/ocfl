@@ -8,6 +8,7 @@ No release is published yet, so every entry below is unreleased and may still ch
 ### Validation
 
 - E024: an empty directory inside a version's content directory is an error. Before, the validator never saw it. On S3, a folder marker key (`.../empty/`) counts as an empty directory.
+- S3: a directory held only by its folder marker key (`.../v2/`) is an empty directory, as on LocalFS. `S3FS.read_dir` yields nothing for it instead of raising `FileNotFoundError`, so an empty content dir is W003 and an empty declared version dir is W010 (was nothing and E046a).
 - `validate_root` takes `chain: ots.ChainCheck | None` like `validate_object`: with it, every object's OTS proofs are also checked against Bitcoin (E906, W903). Without it, nothing changes.
 
 ### Public API

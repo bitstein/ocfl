@@ -94,6 +94,16 @@ class TestReadDir:
         with pytest.raises(FileNotFoundError):
             list(fs.read_dir("nope"))
 
+    def test_folder_marker_only_is_empty_dir(self, fs: S3FS, s3_client: S3Client):
+        s3_client.put_object(Bucket=BUCKET, Key="empty/", Body=b"")
+        assert list(fs.read_dir("empty")) == []
+        assert fs.exists("empty") is True
+        assert list(fs.walk_files("empty")) == []
+
+    def test_folder_marker_is_not_listed_as_child(self, fs: S3FS, s3_client: S3Client):
+        s3_client.put_object(Bucket=BUCKET, Key="sub/", Body=b"")
+        assert sorted(e.name for e in fs.read_dir("sub")) == ["b.txt", "deep"]
+
     def test_read_dir_spans_list_pages(self, s3_client: S3Client):
         from ocfl_lib.fs.s3 import S3FS
 
@@ -432,6 +442,10 @@ class TestPrefix:
         refs = sorted(prefixed_fs.walk_files("sub"), key=lambda r: r.path)
         paths = [r.path for r in refs]
         assert paths == ["sub/b.txt", "sub/deep/c.txt"]
+
+    def test_read_dir_folder_marker_only(self, prefixed_fs: S3FS, s3_client: S3Client):
+        s3_client.put_object(Bucket=BUCKET, Key="myprefix/empty/", Body=b"")
+        assert list(prefixed_fs.read_dir("empty")) == []
 
     def test_mkdir_noop(self, prefixed_fs: S3FS, s3_client: S3Client):
         prefixed_fs.mkdir("newdir")
