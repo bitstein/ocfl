@@ -3,7 +3,6 @@ from ocfl_lib._digest_map import (
     PathMap,
     from_path_map,
     overlay_paths,
-    rename_paths,
     to_path_map,
 )
 
@@ -78,38 +77,3 @@ class TestOverlayPaths:
         b: DigestMap = {"abc": ["a.txt"]}
         result = overlay_paths(a, b)
         assert result["abc"] == ["a.txt"]
-
-
-class TestRenamePaths:
-    def test_rename_prefix(self):
-        dm: DigestMap = {"abc": ["old/a.txt", "old/b.txt"], "def": ["other.txt"]}
-        result = rename_paths(dm, "old", "new")
-        pm = to_path_map(result)
-        assert "new/a.txt" in pm
-        assert "new/b.txt" in pm
-        assert "other.txt" in pm
-
-    def test_no_match(self):
-        dm: DigestMap = {"abc": ["a.txt"]}
-        result = rename_paths(dm, "old", "new")
-        assert result == dm
-
-    def test_does_not_rename_similar_prefix(self):
-        dm: DigestMap = {"abc": ["older/a.txt"]}
-        result = rename_paths(dm, "old", "new")
-        assert result == dm
-
-    def test_exact_path_match(self):
-        dm: DigestMap = {"abc": ["old"]}
-        result = rename_paths(dm, "old", "new")
-        assert result == {"abc": ["new"]}
-
-    def test_empty(self):
-        assert rename_paths({}, "a", "b") == {}
-
-    def test_collision_within_call_raises(self):
-        import pytest
-
-        dm: DigestMap = {"abc": ["x/a.txt"], "def": ["y/a.txt"]}
-        with pytest.raises(ValueError, match="collision"):
-            rename_paths(dm, "y", "x")

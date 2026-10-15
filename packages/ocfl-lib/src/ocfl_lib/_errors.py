@@ -164,13 +164,6 @@ class InvalidPath(OcflError, ValueError):
     error_class = ErrorClass.INVALID
 
 
-class PathCollision(OcflError, ValueError):
-    """Two entries map to the same logical path."""
-
-    code = "path_collision"
-    error_class = ErrorClass.INVALID
-
-
 class InvalidLayoutConfig(OcflError, ValueError):
     """Layout extension config is missing or out of range."""
 
