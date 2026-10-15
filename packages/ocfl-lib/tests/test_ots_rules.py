@@ -1,5 +1,3 @@
-"""The OTS extension rules in ocfl_lib.ots: config, proofs of an object, FS factory."""
-
 import hashlib
 import json
 from pathlib import Path
@@ -13,8 +11,9 @@ from tests.helpers.ots import build_attestation
 EXT = ots.EXTENSION_NAME
 
 
-def _object(root: Path, *, config: dict | None, timestamp_from: str | None = None):
-    """Two versions; v2 renames a.txt and adds b.txt, each with its proof."""
+def _proved_object_v2_renames_a_to_c_adds_b(
+    root: Path, *, config: dict | None, timestamp_from: str | None = None
+):
     a, b = b"alpha", b"beta"
     pa = build_attestation(hashlib.sha256(a).digest(), block_height=1)
     pb = build_attestation(hashlib.sha256(b).digest(), block_height=1)
@@ -94,9 +93,11 @@ def test_config_invalid(raw):
 
 def test_read_config_by_directory(tmp_path):
     fs = LocalFS(tmp_path)
-    _object(tmp_path / "off", config=None)
+    _proved_object_v2_renames_a_to_c_adds_b(tmp_path / "off", config=None)
     assert ots.read_config(fs, "off") is None
-    _object(tmp_path / "on", config={"extensionName": EXT})
+    _proved_object_v2_renames_a_to_c_adds_b(
+        tmp_path / "on", config={"extensionName": EXT}
+    )
     (tmp_path / "on" / ots.CONFIG_PATH).unlink()
     with pytest.raises(OtsConfigError):
         ots.read_config(fs, "on")
@@ -111,7 +112,9 @@ def test_covered_versions():
 
 
 def test_object_proofs_content_once_per_file(tmp_path):
-    _object(tmp_path / "o", config={"extensionName": EXT})
+    _proved_object_v2_renames_a_to_c_adds_b(
+        tmp_path / "o", config={"extensionName": EXT}
+    )
     refs = ots.object_proofs(LocalFS(tmp_path), "o")
     content = [(r.version, r.path) for r in refs if r.kind == "content"]
     assert content == [("v1", "v1/content/a.txt.ots"), ("v2", "v2/content/b.txt.ots")]
@@ -123,7 +126,7 @@ def test_object_proofs_content_once_per_file(tmp_path):
 
 def test_object_proofs_honor_flags(tmp_path):
     cfg = {"extensionName": EXT, "timestampContent": False, "timestampFrom": "v2"}
-    _object(tmp_path / "o", config=cfg)
+    _proved_object_v2_renames_a_to_c_adds_b(tmp_path / "o", config=cfg)
     refs = ots.object_proofs(LocalFS(tmp_path), "o")
     assert [(r.kind, r.version) for r in refs] == [("inventory", "v2")]
 

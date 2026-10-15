@@ -16,7 +16,7 @@ The 37 issues of `ocfl-rs/docs/port/python-cli-surface.md` §6, one decision eac
 | 10 | Short batch ids are shown but not accepted | adopt (7.4) | A unique prefix names a batch, like a git short hash; an ambiguous one is exit 2, an unknown one exit 1. |
 | 11 | A never-staged object is reported as `committed` | adopt (7.4) | New skip reasons `not_staged` and `not_ots`; `batch create`/`submit` then exit 1 and name the objects, so a typo no longer looks like success. |
 | 12 | `batch rm` leaves `.lock`, `.driver` and `.refresh-lock` behind | adopt (7.3) | The `.driver` files are gone with the lease; `rm` deletes the lock file while it holds it (ADR-0005). |
-| 13 | `--force` has three meanings | adopt (7.4) | `purge -y/--yes` skips the prompt (`--force` is kept there only as a hidden alias); elsewhere `--force` overrides a safety check (`discard`, `batch rm`). |
+| 13 | `--force` has three meanings | adopt (7.4) | `purge -y/--yes` skips the prompt; elsewhere `--force` overrides a safety check (`discard`, `batch rm`). |
 | 14 | Short-only flags (`log -n`, `stage rm -r`) | adopt (7.4) | `log -n/--limit`, `stage rm -R/--recursive`; `-r` is dropped because it clashed with the global `-r/--root`. |
 | 15 | `-V/--version` means the object version, and the program has no version flag | adopt (7.4) | `ls` and `export` take `-V/--object-version`; `ocfl --version` prints the program version (33). `show OBJ [VERSION]` stays positional, like git. |
 | 16 | `validate` flag styles clash; default-on `--verify-ots` needs a node | adopt (follow-up) | `--ots=auto\|local\|chain`, default `auto`: chain checks when `[bitcoin]` is configured, else local checks and a note. No `off` mode: the extension's own checks always run, so a validator never reports less. |

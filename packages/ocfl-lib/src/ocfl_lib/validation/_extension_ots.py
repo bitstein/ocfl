@@ -5,11 +5,11 @@ checks run without network access; Bitcoin checks are separate.
 """
 
 import hashlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from ocfl_lib import ots
 from ocfl_lib._errors import InvalidProofError, OtsConfigError
-from ocfl_lib._json_value import as_object, object_field, parse_json
+from ocfl_lib._json_value import as_object, object_field_or_empty, parse_json
 from ocfl_lib._path import join_path
 from ocfl_lib.fs import _utils as fs_utils
 
@@ -22,6 +22,11 @@ if TYPE_CHECKING:
 _SHA256 = "sha256"
 
 
+class _VersionInventory(NamedTuple):
+    raw: bytes
+    digest_algorithm: str | None
+
+
 def validate_ots_extension(
     fsys: FS,
     obj_path: str,
@@ -30,7 +35,6 @@ def validate_ots_extension(
     inv_versions: dict[str, int],
     result: FindingCollector,
 ) -> None:
-    """Run the extension's local checks on the object at `obj_path`."""
     ext_dir = join_path(obj_path, ots.EXTENSION_DIR)
     if not fsys.exists(ext_dir):
         return
@@ -46,31 +50,33 @@ def validate_ots_extension(
         result.warning("W904", properties=", ".join(cfg.unknown))
     ordered = sorted(inv_versions, key=inv_versions.__getitem__)
 
-    version_inventories = _read_version_inventories(fsys, obj_path, ordered)
+    readable_inventories = _read_readable_inventories(fsys, obj_path, ordered)
     if (
         cfg.proof_digest_algorithm != _SHA256
         or alg.ocfl_name != _SHA256
-        or any(a not in (None, _SHA256) for _raw, a in version_inventories.values())
+        or any(
+            vi.digest_algorithm not in (None, _SHA256)
+            for vi in readable_inventories.values()
+        )
     ):
         result.error("E901")
         return
 
     for v in covered:
-        if v not in version_inventories:
+        if v not in readable_inventories:
             result.error("E909", version=v)
 
     if cfg.timestamp_content:
         _check_content_proofs(fsys, obj_path, inv_data, covered, result)
     _check_inventory_proofs(
-        fsys, obj_path, cfg, ordered, covered, version_inventories, result
+        fsys, obj_path, cfg, ordered, covered, readable_inventories, result
     )
 
 
-def _read_version_inventories(
+def _read_readable_inventories(
     fsys: FS, obj_path: str, versions: list[str]
-) -> dict[str, tuple[bytes, str | None]]:
-    """{version: (inventory bytes, digestAlgorithm)} of each `vN/inventory.json`."""
-    found: dict[str, tuple[bytes, str | None]] = {}
+) -> dict[str, _VersionInventory]:
+    found: dict[str, _VersionInventory] = {}
     for v in versions:
         try:
             raw = fs_utils.read_all(fsys, join_path(obj_path, v, "inventory.json"))
@@ -81,7 +87,7 @@ def _read_version_inventories(
         except ValueError:
             data = None
         dalg = data.get("digestAlgorithm") if data is not None else None
-        found[v] = (raw, dalg if isinstance(dalg, str) else None)
+        found[v] = _VersionInventory(raw, dalg if isinstance(dalg, str) else None)
     return found
 
 
@@ -92,13 +98,14 @@ def _check_content_proofs(
     covered: list[str],
     result: FindingCollector,
 ) -> None:
-    """Content-proof rules 1-3 for every covered version (E902, E905, E907)."""
-    versions = object_field(inv_data, "versions")
-    content_path = _content_paths(object_field(inv_data, "manifest"))
-    checked: dict[str, ots.ParsedOts | None] = {}  # by content path
+    versions = object_field_or_empty(inv_data, "versions")
+    content_path = _first_content_path_by_digest(
+        object_field_or_empty(inv_data, "manifest")
+    )
+    parsed_by_cpath: dict[str, ots.ParsedOts | None] = {}
 
     for v in covered:
-        state = object_field(as_object(versions.get(v)) or {}, "state")
+        state = object_field_or_empty(as_object(versions.get(v)) or {}, "state")
         digest_of = {
             p: d
             for d, plist in state.items()
@@ -114,11 +121,11 @@ def _check_content_proofs(
             cpath = content_path.get(digest_of[proof])
             if cpath is None:
                 continue  # E050 is reported by the inventory checks
-            if cpath not in checked:
-                checked[cpath] = _check_proof(
+            if cpath not in parsed_by_cpath:
+                parsed_by_cpath[cpath] = _check_proof(
                     fsys, obj_path, cpath, digest_of[companion], result
                 )
-            parsed = checked[cpath]
+            parsed = parsed_by_cpath[cpath]
             if parsed is not None and not parsed.is_final:
                 result.error("E907", version=v, path=companion)
 
@@ -129,10 +136,9 @@ def _check_inventory_proofs(
     cfg: ots.OtsConfig,
     ordered: list[str],
     covered: list[str],
-    version_inventories: dict[str, tuple[bytes, str | None]],
+    readable_inventories: dict[str, _VersionInventory],
     result: FindingCollector,
 ) -> None:
-    """Inventory-proof rules (E904, E905, W902) and moved timestampFrom (W905)."""
     for v in ordered:
         proof = ots.inventory_proof_path(v)
         present = fsys.exists(join_path(obj_path, proof))
@@ -144,9 +150,9 @@ def _check_inventory_proofs(
             if cfg.timestamp_inventory:
                 result.error("E904", version=v)
             continue
-        if v not in version_inventories:
-            continue  # E909
-        raw, _alg = version_inventories[v]
+        if v not in readable_inventories:
+            continue
+        raw = readable_inventories[v].raw
         parsed = _check_proof(
             fsys, obj_path, proof, hashlib.sha256(raw).hexdigest(), result
         )
@@ -161,11 +167,6 @@ def _check_proof(
     expected_hex: str,
     result: FindingCollector,
 ) -> ots.ParsedOts | None:
-    """Parse the proof at object-relative `proof` and check what it commits to.
-
-    Reports E905 and returns None for a proof that does not parse, uses the
-    wrong file-hash operation, or commits to another digest.
-    """
     try:
         raw = fs_utils.read_all(fsys, join_path(obj_path, proof))
     except FileNotFoundError:
@@ -177,8 +178,7 @@ def _check_proof(
         return None
 
 
-def _content_paths(manifest: JsonObject) -> dict[str, str]:
-    """{digest: first content path} from the manifest."""
+def _first_content_path_by_digest(manifest: JsonObject) -> dict[str, str]:
     out: dict[str, str] = {}
     for digest, plist in manifest.items():
         if isinstance(plist, list) and plist and isinstance(plist[0], str):
@@ -189,16 +189,7 @@ def _content_paths(manifest: JsonObject) -> dict[str, str]:
 def check_chain(
     fsys: FS, obj_path: str, chain: ots.ChainCheck, result: FindingCollector
 ) -> None:
-    """Bitcoin checks of every proof of the covered versions (E906, W903).
-
-    A proof that the local checks reject (E905, E908) or a pending one gets
-    no finding here.
-    """
-    try:
-        results = ots.check_object_chain(fsys, obj_path, chain)
-    except OtsConfigError, OSError, ValueError:
-        return
-    for r in results:
+    for r in _chain_results_unless_locally_invalid(fsys, obj_path, chain):
         if r.status is ots.AttestationStatus.MISMATCH:
             heights = ", ".join(
                 str(c.height)
@@ -208,3 +199,12 @@ def check_chain(
             result.error("E906", proof=r.proof.path, reason=f"block {heights}")
         elif r.status is ots.AttestationStatus.SHALLOW:
             result.warning("W903", proof=r.proof.path)
+
+
+def _chain_results_unless_locally_invalid(
+    fsys: FS, obj_path: str, chain: ots.ChainCheck
+) -> tuple[ots.ProofChainResult, ...]:
+    try:
+        return ots.check_object_chain(fsys, obj_path, chain)
+    except OtsConfigError, OSError, ValueError:
+        return ()

@@ -1,5 +1,3 @@
-"""Builder for constructing OCFL Inventory instances."""
-
 from datetime import UTC
 from typing import TYPE_CHECKING, Self
 
@@ -21,7 +19,18 @@ if TYPE_CHECKING:
 
 
 class InventoryBuilder:
-    """Builder pattern for constructing Inventory instances."""
+    """Build an Inventory, optionally one that extends `prev` by new versions.
+
+    `prev` seeds the id, spec, content directory, digest algorithm,
+    manifest, versions and fixity; each `add_version` becomes the next
+    version after its head (v1 without `prev`). A digest new to the
+    manifest gets one content path, `<version>/<content dir>/<its first
+    logical path>`, mapped by `content_path_func` when one is set. A
+    builder is single-use. `build` raises
+    InventoryBuildError when called twice, when no id is set, when no
+    version was added, or when a state digest has no logical paths, and
+    InvalidPath for a bad logical path or content directory.
+    """
 
     def __init__(self, prev: Inventory | None = None):
         self._prev = prev
@@ -95,7 +104,6 @@ class InventoryBuilder:
             content_dir = self._content_dir
         prev = self._prev
 
-        # Start from previous inventory data or empty
         if prev:
             manifest: dict[str, list[str]] = {
                 d: list(ps) for d, ps in prev.manifest.items()
@@ -107,10 +115,8 @@ class InventoryBuilder:
             versions = {}
             next_vnum = VNum.first()
 
-        # Build existing manifest digest set for dedup (case-insensitive)
         existing_digests = {d.lower() for d in manifest}
 
-        # Collect fixity for new digests
         fixity: dict[str, dict[str, list[str]]] = {}
         if prev and prev.fixity:
             for alg_name, dm in prev.fixity.items():
@@ -132,10 +138,8 @@ class InventoryBuilder:
             head_vnum = vnum
             vnum_str = str(vnum)
 
-            # Add new content to manifest
             for digest, logical_paths in sorted(state.items()):
                 if digest.lower() not in existing_digests:
-                    # Use first logical path for content path
                     logical = logical_paths[0]
                     if self._content_path_func:
                         logical = self._content_path_func(logical)
@@ -143,7 +147,6 @@ class InventoryBuilder:
                     manifest[digest] = [content_path]
                     existing_digests.add(digest.lower())
 
-                    # Query fixity for new digest
                     if self._fixity_source is not None:
                         fixity_digests = self._fixity_source.get_fixity(digest)
                         for fix_alg, fix_digest in fixity_digests.items():
@@ -174,7 +177,6 @@ class InventoryBuilder:
 
 
 def _validate_relative_path(path: str, *, kind: str) -> None:
-    """Validate OCFL relative paths used in inventory state/manifest derivation."""
     if not path or path.startswith("/") or path.endswith("/"):
         raise InvalidPath(f"invalid {kind}: {path!r}")
     segments = path.split("/")

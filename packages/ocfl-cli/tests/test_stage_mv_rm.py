@@ -1,12 +1,14 @@
-"""Tests for ocfl stage mv and ocfl stage rm."""
-
 import hashlib
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 from msgspec.structs import replace
+from ots_helpers import write_config
+from runner_helpers import staging_dir
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Proof, StagedInventory
 from ocfl_cli.model.phase import Phase, TimestampTarget
@@ -33,7 +35,6 @@ def _invoke(runner, storage_root, staging, *args):
 
 
 def _setup_staged(runner, storage_root, tmp_path):
-    """Create staging with two files: a.txt and dir/b.txt."""
     staging = tmp_path / "staging"
     src_dir = tmp_path / "src"
     src_dir.mkdir()
@@ -57,7 +58,7 @@ class TestStageMv:
         result = _invoke(
             runner, storage_root, staging, "mv", "obj:new", "a.txt", "renamed.txt"
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         inv = store.load_inventory(root_path, "obj:new")
         paths = [p for ps in inv.versions["v1"].state.values() for p in ps]
@@ -69,7 +70,7 @@ class TestStageMv:
         result = _invoke(
             runner, storage_root, staging, "mv", "obj:new", "nope.txt", "dst.txt"
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
 
     def test_mv_to_existing_path_errors_without_duplicate_state(
         self, runner, storage_root, tmp_path
@@ -78,7 +79,7 @@ class TestStageMv:
         result = _invoke(
             runner, storage_root, staging, "mv", "obj:new", "a.txt", "dir/b.txt"
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "already exists" in result.output
 
         inv = store.load_inventory(root_path, "obj:new")
@@ -93,14 +94,16 @@ class TestStageMv:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        _sd, _digests = _setup_ots_pair(runner, storage_root, staging, "obj:mv-ots")
+        _sd, _digests = _new_drafting_ots_staging(
+            runner, storage_root, staging, "obj:mv-ots"
+        )
 
         src = tmp_path / "b.txt.ots"
         src.write_bytes(b"existing companion")
         r = _invoke(runner, storage_root, staging, "add", "obj:mv-ots", str(src))
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -108,7 +111,7 @@ class TestStageMv:
         assert {"a.txt", "a.txt.ots", "b.txt.ots"} <= before
 
         r = _invoke(runner, storage_root, staging, "mv", "obj:mv-ots", "a.txt", "b.txt")
-        assert r.exit_code == 1
+        assert r.exit_code == ExitCode.GENERIC
         assert "already exists" in r.output
 
         after = _state_paths(store, root_path, "obj:mv-ots")
@@ -119,7 +122,7 @@ class TestStageRm:
     def test_rm_exact_path(self, runner, storage_root, tmp_path):
         staging, store, root_path = _setup_staged(runner, storage_root, tmp_path)
         result = _invoke(runner, storage_root, staging, "rm", "obj:new", "a.txt")
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         inv = store.load_inventory(root_path, "obj:new")
         paths = [p for ps in inv.versions["v1"].state.values() for p in ps]
@@ -131,7 +134,7 @@ class TestStageRm:
         result = _invoke(
             runner, storage_root, staging, "rm", "obj:new", "dir", "--recursive"
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         inv = store.load_inventory(root_path, "obj:new")
         paths = [p for ps in inv.versions["v1"].state.values() for p in ps]
@@ -140,70 +143,19 @@ class TestStageRm:
         assert "a.txt" in paths
 
     def test_rm_cleans_unreferenced_content(self, runner, storage_root, tmp_path):
-        """Content.json entries for unreferenced digests are cleaned."""
         staging, store, root_path = _setup_staged(runner, storage_root, tmp_path)
-
-        # Get digest of a.txt before removing
         inv = store.load_inventory(root_path, "obj:new")
-        a_digest = None
-        for d, ps in inv.versions["v1"].state.items():
-            if "a.txt" in ps:
-                a_digest = d
-                break
-        assert a_digest is not None
-
-        cm_before = store.load_content_map(root_path, "obj:new")
-        assert a_digest in cm_before
+        [a_digest] = [d for d, ps in inv.versions["v1"].state.items() if "a.txt" in ps]
+        assert a_digest in store.load_content_map(root_path, "obj:new")
 
         _invoke(runner, storage_root, staging, "rm", "obj:new", "a.txt")
 
-        cm_after = store.load_content_map(root_path, "obj:new")
-        # Digest for a.txt should be cleaned from content map
-        # (unless it's still referenced by another logical path)
-        inv_after = store.load_inventory(root_path, "obj:new")
-        all_digests = set(inv_after.versions[inv_after.head].state.keys())
-        if a_digest not in all_digests:
-            assert a_digest not in cm_after
+        assert a_digest not in store.load_content_map(root_path, "obj:new")
 
     def test_rm_nonexistent_path_errors(self, runner, storage_root, tmp_path):
         staging, _store, _root_path = _setup_staged(runner, storage_root, tmp_path)
         result = _invoke(runner, storage_root, staging, "rm", "obj:new", "nope.txt")
-        assert result.exit_code == 1
-
-
-# =========================================================================== #
-# rm/mv pair `<path>.ots` companion in stage state when extension is active.
-# Phase regression rules per `OTS workflow contract` transition matrix:
-#   - drafting / content-pending  : stay
-#   - content-upgraded            : regress to drafting (preserve proofs;
-#                                   intersect pending_digests with new state)
-#   - inventory-pending/-upgraded : regress to drafting + drop the staged
-#                                   inventory; its proof and plan.json stay
-#                                   (ADR-0004)
-#   - ots-cache/ entries          : never purged on regression
-# =========================================================================== #
-
-
-_SP_OK = """\
-[simpleproof]
-base_url = "https://stage.example"
-proof_category_id = 641
-"""
-
-_BTC_OK_COOKIE = """\
-[bitcoin]
-rpc_url = "http://127.0.0.1:8332"
-zmq_endpoint = "tcp://127.0.0.1:28332"
-confirmations = 3
-"""
-
-
-def _write_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    cfg = tmp_path / "ocfl-config" / "config.toml"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(_SP_OK + _BTC_OK_COOKIE)
-    monkeypatch.setenv("OCFL_CONFIG", str(cfg))
-    return cfg
+        assert result.exit_code == ExitCode.GENERIC
 
 
 _CONTENT_A = b"alpha-content"
@@ -214,10 +166,6 @@ _OTS_BYTES_B = b"\x00fake-ots-bytes-B-opaque"
 
 def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
-
-
-def _staging_dir(storage_root: Path, staging: Path, object_id: str) -> Path:
-    return StagingStore(staging).staging_path(str(storage_root.resolve()), object_id)
 
 
 def _add_file(
@@ -232,28 +180,28 @@ def _add_file(
     src = src_dir / name
     src.write_bytes(data)
     r = _invoke(runner, storage_root, staging, "add", object_id, str(src))
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
     return _digest(data)
 
 
-def _setup_ots_pair(
+class DraftingOtsStaging(NamedTuple):
+    staging_dir: Path
+    sha256_by_path: dict[str, str]
+
+
+def _new_drafting_ots_staging(
     runner: CliRunner,
     storage_root: Path,
     staging: Path,
     object_id: str,
     *,
     with_b: bool = False,
-) -> tuple[Path, dict[str, str]]:
-    """Create OTS staging with `a.txt` + `a.txt.ots` (optionally `b.txt` + `b.txt.ots`).
-
-    Returns (staging_dir, digests) where digests maps logical path -> sha256.
-    Phase is left at DRAFTING (the default after `stage new --ots`).
-    """
+) -> DraftingOtsStaging:
     src_dir = staging.parent / f"src-{object_id.replace(':', '_')}"
     src_dir.mkdir(parents=True, exist_ok=True)
 
     r = _invoke(runner, storage_root, staging, "new", object_id, "--ots")
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == ExitCode.SUCCESS, r.output
 
     digests = {
         "a.txt": _add_file(
@@ -282,7 +230,7 @@ def _setup_ots_pair(
             "b.txt.ots",
             _OTS_BYTES_B,
         )
-    return _staging_dir(storage_root, staging, object_id), digests
+    return DraftingOtsStaging(staging_dir(storage_root, staging, object_id), digests)
 
 
 def _state_paths(store: StagingStore, root_path: str, object_id: str) -> set[str]:
@@ -311,11 +259,6 @@ def _verified_proof() -> Proof:
     )
 
 
-# --------------------------------------------------------------------------- #
-# 1. rm pairs .ots removal at DRAFTING (extension active)
-# --------------------------------------------------------------------------- #
-
-
 class TestRmCompanionPairing:
     def test_rm_pairs_ots_removal_when_extension_active(
         self,
@@ -324,33 +267,28 @@ class TestRmCompanionPairing:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, _digests = _setup_ots_pair(runner, storage_root, staging, "obj:rm-pair")
+        sd, _digests = _new_drafting_ots_staging(
+            runner, storage_root, staging, "obj:rm-pair"
+        )
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
 
-        # Pre: both files present at phase=drafting.
         before = _state_paths(store, root_path, "obj:rm-pair")
         assert {"a.txt", "a.txt.ots"} <= before
         assert load_ots(sd).phase is Phase.DRAFTING
 
         r = _invoke(runner, storage_root, staging, "rm", "obj:rm-pair", "a.txt")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         after = _state_paths(store, root_path, "obj:rm-pair")
         assert "a.txt" not in after
         assert "a.txt.ots" not in after, (
             "rm must pair `.ots` companion when OTS extension is active"
         )
-        # drafting + rm = stay (per transition matrix).
         assert load_ots(sd).phase is Phase.DRAFTING
-
-
-# --------------------------------------------------------------------------- #
-# 2. mv pairs .ots rename at DRAFTING (extension active)
-# --------------------------------------------------------------------------- #
 
 
 class TestMvCompanionPairing:
@@ -361,9 +299,11 @@ class TestMvCompanionPairing:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(runner, storage_root, staging, "obj:mv-pair")
+        sd, digests = _new_drafting_ots_staging(
+            runner, storage_root, staging, "obj:mv-pair"
+        )
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -371,7 +311,7 @@ class TestMvCompanionPairing:
         r = _invoke(
             runner, storage_root, staging, "mv", "obj:mv-pair", "a.txt", "b.txt"
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         after = _state_paths(store, root_path, "obj:mv-pair")
         assert "a.txt" not in after
@@ -383,7 +323,6 @@ class TestMvCompanionPairing:
             "mv must rename `.ots` companion alongside its data file"
         )
 
-        # `.ots` rename keeps content → digest unchanged.
         assert (
             _state_digest_for(store, root_path, "obj:mv-pair", "b.txt")
             == digests["a.txt"]
@@ -393,17 +332,10 @@ class TestMvCompanionPairing:
             == digests["a.txt.ots"]
         )
 
-        # drafting + mv = stay.
         assert load_ots(sd).phase is Phase.DRAFTING
 
 
-# --------------------------------------------------------------------------- #
-# 3 & 4. Regression from CONTENT_UPGRADED preserves proofs
-# --------------------------------------------------------------------------- #
-
-
 def _pin_content_upgraded(sd: Path, da: str, db: str) -> None:
-    """Mutate ots.json to phase=content-upgraded with verified proofs for da+db."""
     state = load_ots(sd)
     state = replace(
         state,
@@ -425,25 +357,23 @@ class TestRegressionFromContentUpgraded:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:rm-cu", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]
         _pin_content_upgraded(sd, da, db)
 
         r = _invoke(runner, storage_root, staging, "rm", "obj:rm-cu", "a.txt")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING, (
             "rm at content-upgraded must regress to drafting"
         )
-        # proofs preserved across regression (per regression_rules).
         assert da in post.proofs
         assert db in post.proofs
-        # pending_digests intersected with non_ots_digests of new state.
         assert set(post.pending_digests) == {db}, (
             f"pending_digests must be trimmed to digests still in state; "
             f"got {set(post.pending_digests)!r}"
@@ -456,20 +386,19 @@ class TestRegressionFromContentUpgraded:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:mv-cu", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]
         _pin_content_upgraded(sd, da, db)
 
         r = _invoke(runner, storage_root, staging, "mv", "obj:mv-cu", "a.txt", "c.txt")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
-        # mv keeps digests unchanged → both proofs and pending_digests carry.
         assert da in post.proofs
         assert db in post.proofs
         assert set(post.pending_digests) == {da, db}, (
@@ -483,9 +412,9 @@ class TestRegressionFromContentUpgraded:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:add-cu", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]
@@ -494,7 +423,7 @@ class TestRegressionFromContentUpgraded:
         src = tmp_path / "new-content.txt"
         src.write_text("new content")
         r = _invoke(runner, storage_root, staging, "add", "obj:add-cu", str(src))
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
@@ -503,17 +432,10 @@ class TestRegressionFromContentUpgraded:
         assert set(post.pending_digests) == {da, db}
 
 
-# --------------------------------------------------------------------------- #
-# 5 & 6. Regression from inventory-* drops the staged inventory, keeps proofs
-# --------------------------------------------------------------------------- #
-
-
 INV_DIGEST = "deadbeef" * 8
 
 
 def _pin_inventory_state(sd: Path, da: str, db: str, *, phase: Phase) -> None:
-    """Mutate ots.json to *phase* (inventory-pending or -upgraded) with an
-    staged inventory set and proofs/pending_digests populated."""
     state = load_ots(sd)
     state = replace(
         state,
@@ -537,20 +459,19 @@ class TestRegressionFromInventoryPending:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:rm-ip", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]
         _pin_inventory_state(sd, da, db, phase=Phase.INVENTORY_PENDING)
 
-        # Sentinel plan.json — content irrelevant, only existence matters here.
         plan_path(sd).write_bytes(b"sentinel-plan-json")
         assert plan_path(sd).is_file()
 
         r = _invoke(runner, storage_root, staging, "rm", "obj:rm-ip", "a.txt")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
@@ -560,10 +481,8 @@ class TestRegressionFromInventoryPending:
         assert INV_DIGEST in post.proofs, "the inventory proof stays (ADR-0004)"
         assert plan_path(sd).exists(), "plan.json stays for a byte-identical rebuild"
 
-        # proofs preserved (carry-forward).
         assert da in post.proofs
         assert db in post.proofs
-        # pending_digests trimmed to digests still in state (a.txt removed).
         assert set(post.pending_digests) == {db}
 
     def test_add_drops_staged_inventory_and_keeps_plan_json(
@@ -573,9 +492,9 @@ class TestRegressionFromInventoryPending:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:add-ip", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]
@@ -587,7 +506,7 @@ class TestRegressionFromInventoryPending:
         src = tmp_path / "new-content.txt"
         src.write_text("new content")
         r = _invoke(runner, storage_root, staging, "add", "obj:add-ip", str(src))
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
@@ -606,9 +525,9 @@ class TestRegressionFromInventoryUpgraded:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:mv-iu", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]
@@ -618,14 +537,13 @@ class TestRegressionFromInventoryUpgraded:
         assert plan_path(sd).is_file()
 
         r = _invoke(runner, storage_root, staging, "mv", "obj:mv-iu", "a.txt", "c.txt")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
         assert post.inventory is None
         assert INV_DIGEST in post.proofs
         assert plan_path(sd).exists()
-        # proofs preserved across regression.
         assert da in post.proofs
         assert db in post.proofs
 
@@ -636,9 +554,9 @@ class TestRegressionFromInventoryUpgraded:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:add-iu", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]
@@ -650,7 +568,7 @@ class TestRegressionFromInventoryUpgraded:
         src = tmp_path / "new-content.txt"
         src.write_text("new content")
         r = _invoke(runner, storage_root, staging, "add", "obj:add-iu", str(src))
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         post = load_ots(sd)
         assert post.phase is Phase.DRAFTING
@@ -661,11 +579,6 @@ class TestRegressionFromInventoryUpgraded:
         assert db in post.proofs
 
 
-# --------------------------------------------------------------------------- #
-# 7. ots-cache/ entries are NOT purged on regression
-# --------------------------------------------------------------------------- #
-
-
 class TestOtsCacheNotPurgedOnRegression:
     def test_rm_does_not_purge_ots_cache(
         self,
@@ -674,9 +587,9 @@ class TestOtsCacheNotPurgedOnRegression:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, digests = _setup_ots_pair(
+        sd, digests = _new_drafting_ots_staging(
             runner, storage_root, staging, "obj:rm-cache", with_b=True
         )
         da, db = digests["a.txt"], digests["b.txt"]
@@ -688,18 +601,13 @@ class TestOtsCacheNotPurgedOnRegression:
         assert cache.is_file()
 
         r = _invoke(runner, storage_root, staging, "rm", "obj:rm-cache", "a.txt")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         assert load_ots(sd).phase is Phase.DRAFTING
         assert cache.is_file(), (
             "ots-cache/ entries must NOT be purged on regression "
             "(content-addressed by digest; only purged on commit/discard)"
         )
-
-
-# --------------------------------------------------------------------------- #
-# 8 & 9. Non-OTS rm/mv unchanged
-# --------------------------------------------------------------------------- #
 
 
 class TestNonOtsRegression:
@@ -710,16 +618,15 @@ class TestNonOtsRegression:
         tmp_path: Path,
     ) -> None:
         staging, store, root_path = _setup_staged(runner, storage_root, tmp_path)
-        sd = _staging_dir(storage_root, staging, "obj:new")
+        sd = staging_dir(storage_root, staging, "obj:new")
         assert not has_ots(sd), "non-OTS staging must not have ots.json"
 
         r = _invoke(runner, storage_root, staging, "rm", "obj:new", "a.txt")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         paths = _state_paths(store, root_path, "obj:new")
         assert "a.txt" not in paths
         assert not has_ots(sd), "rm must not create ots.json on non-OTS staging"
-        # No phase-related noise on stderr.
         assert "phase" not in (r.output or "").lower()
 
     def test_mv_without_ots_extension_unchanged(
@@ -729,13 +636,13 @@ class TestNonOtsRegression:
         tmp_path: Path,
     ) -> None:
         staging, store, root_path = _setup_staged(runner, storage_root, tmp_path)
-        sd = _staging_dir(storage_root, staging, "obj:new")
+        sd = staging_dir(storage_root, staging, "obj:new")
         assert not has_ots(sd)
 
         r = _invoke(
             runner, storage_root, staging, "mv", "obj:new", "a.txt", "renamed.txt"
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         paths = _state_paths(store, root_path, "obj:new")
         assert "a.txt" not in paths

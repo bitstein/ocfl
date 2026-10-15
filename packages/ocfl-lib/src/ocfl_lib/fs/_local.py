@@ -1,5 +1,3 @@
-"""Local filesystem backend for OCFL."""
-
 import ctypes
 import ctypes.util
 import errno
@@ -39,25 +37,22 @@ def _classify(mode: int) -> str:
     return "unknown"
 
 
-def _check_entry_type(entry: os.DirEntry[str]) -> tuple[bool, bool]:
-    """Return (is_dir, is_file) for a scandir entry, refusing symlinks.
-
-    Raises OcflFileTypeError for symlinks, FIFOs, sockets, and devices.
-    """
+def _require_dir_or_file(entry: os.DirEntry[str]) -> bool:
     is_dir = entry.is_dir(follow_symlinks=False)
-    is_file = entry.is_file(follow_symlinks=False)
-    if not is_dir and not is_file:
+    if not is_dir and not entry.is_file(follow_symlinks=False):
         st = entry.stat(follow_symlinks=False)
         kind = _classify(st.st_mode)
         raise OcflFileTypeError(
             f"unsupported file type at {entry.path}: {kind}; "
             "only regular files and directories are allowed"
         )
-    return is_dir, is_file
+    return is_dir
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator, Iterator
+
+    from ocfl_lib.fs._protocols import Readable
 
 _CHUNK_SIZE = 32 * 1024
 
@@ -102,7 +97,6 @@ def _renameat2_noreplace(src: Path, dst: Path) -> None:
 
 
 def _fsync_dir(path: Path) -> None:
-    """Make the entries of directory `path` (creates, renames, removes) durable."""
     fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(fd)
@@ -118,8 +112,7 @@ def _fsync_file(path: Path) -> None:
         os.close(fd)
 
 
-def _makedirs(path: Path) -> None:
-    """`mkdir -p` that fsyncs the parent of every directory it creates."""
+def _makedirs_durable(path: Path) -> None:
     missing = []
     p = path
     while not p.is_dir():
@@ -151,15 +144,12 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
         self._root = root.resolve()
 
     def _resolve(self, name: str) -> Path:
-        """Resolve a relative path to an absolute path, validating safety."""
         if os.path.isabs(name):
             raise ValueError(f"absolute path not allowed: {name!r}")
         resolved = (self._root / name).resolve()
         if not resolved.is_relative_to(self._root):
             raise ValueError(f"path escapes outside root: {name!r}")
         return resolved
-
-    # -- FS --
 
     def open_file(self, name: str) -> BinaryIO:
         """Open a file for reading."""
@@ -174,7 +164,8 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
         path = self._resolve(name)
         with os.scandir(path) as it:
             for entry in it:
-                is_dir, is_file = _check_entry_type(entry)
+                is_dir = _require_dir_or_file(entry)
+                is_file = not is_dir
                 yield FsEntry(
                     name=entry.name,
                     is_dir=is_dir,
@@ -182,16 +173,14 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
                     size=entry.stat(follow_symlinks=False).st_size if is_file else None,
                 )
 
-    # -- WriteFS --
-
-    def write(self, name: str, data: BinaryIO) -> int:
+    def write(self, name: str, data: Readable) -> int:
         """Write data to a file atomically and durably.
 
         The bytes are fsynced before the rename, and the directory after it,
         so a power loss leaves the old file or the new one.
         """
         target = self._resolve(name)
-        _makedirs(target.parent)
+        _makedirs_durable(target.parent)
         fd = None
         tmp_path = None
         try:
@@ -237,9 +226,7 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
         Safe under concurrent invocation. Each new directory is made durable
         by an fsync of its parent.
         """
-        _makedirs(self._resolve(name))
-
-    # -- CopyFS --
+        _makedirs_durable(self._resolve(name))
 
     def copy(self, src: str, dst: str) -> int:
         """Copy a file within this filesystem."""
@@ -249,8 +236,6 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
         _fsync_file(dst_path)
         _fsync_dir(dst_path.parent)
         return dst_path.stat().st_size
-
-    # -- ClaimFS --
 
     def rename_noreplace(self, src: str, dst: str) -> None:
         """Rename atomically, failing with FileExistsError if `dst` exists.
@@ -265,7 +250,7 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
             _fsync_dir(src_path.parent)
 
     @contextmanager
-    def lock(self, name: str, *, timeout: float = 0.0) -> Iterator[None]:
+    def lock(self, name: str, *, timeout: float = 0.0) -> Generator[None]:
         """Hold an exclusive flock on directory `name`, creating it if missing.
 
         The directory may be removed while locked; a waiter that then gets the
@@ -279,7 +264,7 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
                 path.mkdir(parents=True, exist_ok=True)
                 fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
             except FileNotFoundError:
-                continue  # a parent was removed under us
+                continue
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
@@ -306,8 +291,6 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
         _fsync_dir(path.parent)
         return True
 
-    # -- FileWalker --
-
     def __repr__(self) -> str:
         return f"LocalFS({self._root})"
 
@@ -323,10 +306,9 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
     def _walk(self, path: Path) -> Iterator[FileRef]:
         with os.scandir(path) as it:
             for entry in it:
-                is_dir, is_file = _check_entry_type(entry)
-                if is_dir:
+                if _require_dir_or_file(entry):
                     yield from self._walk(Path(entry.path))
-                elif is_file:
+                else:
                     rel = Path(entry.path).relative_to(self._root)
                     yield FileRef(
                         path=rel.as_posix(),

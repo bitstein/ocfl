@@ -1,9 +1,3 @@
-"""Architecture guards for the CLI layers (docs/roadmap.md §5, ADR-0002).
-
-The lib's guards live in packages/ocfl-lib/tests/test_architecture.py; these
-cover ocfl-cli only.
-"""
-
 import ast
 import importlib.util
 import re
@@ -11,6 +5,9 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from typing import TypeIs
+
+from ocfl_cli.exit_codes import ExitCode
 
 REPO = Path(__file__).resolve().parents[3]
 CLI_SRC = REPO / "packages/ocfl-cli/src/ocfl_cli"
@@ -49,8 +46,6 @@ def _contracts() -> list[dict]:
     return proj["tool"]["importlinter"]["contracts"]
 
 
-# --- 5.1 layers: commands -> use cases -> adapters, enforced by import-linter
-
 COMMANDS = ("archive", "stage", "_appctx", "_common", "_exit", "_style", "exit_codes")
 ADAPTERS = ("ots", "store")
 BELOW_COMMANDS = ("workflow", *ADAPTERS, "model", "ports", "config", "errors")
@@ -81,7 +76,6 @@ class TestLayers:
         assert set(commands["forbidden_modules"]) == {f"ocfl_cli.{a}" for a in ADAPTERS}
 
     def test_no_private_names_cross_modules(self):
-        """A `_name` is private to its module, a `_module` to its package."""
         bad: list[str] = []
 
         def check_module(full: str, me: str, where: str) -> None:
@@ -129,11 +123,12 @@ class TestLayers:
                     bad.append(
                         f"{_rel(p)}:{node.lineno} {aliases[node.value.id]}.{node.attr}"
                     )
-        assert not bad, "\n".join(bad)
+        assert not bad, (
+            "a `_name` is private to its module, a `_module` to its package:\n"
+            + "\n".join(bad)
+        )
 
     def test_tests_use_no_private_names(self):
-        """Tests reach only public names. They may import a package's `_module`:
-        they are white-box tests of the CLI package."""
         bad: list[str] = []
         for p in _py_files(CLI_TESTS):
             tree = _tree(p)
@@ -161,7 +156,7 @@ class TestLayers:
                 ):
                     full = f"{aliases[node.value.id]}.{node.attr}"
                     bad.append(f"{p.name}:{node.lineno} {full}")
-        assert not bad, "\n".join(bad)
+        assert not bad, "tests use only public names or `_module`s:\n" + "\n".join(bad)
 
     def test_below_the_commands_there_is_no_ui(self):
         ui = {"typer", "click", "rich"}
@@ -187,16 +182,12 @@ class TestLayers:
             assert (CLI_SRC / "workflow" / f"{mod}.py").is_file(), mod
 
 
-# --- 5.2 the batch engine lives in the use cases
-
-
 class TestBatchEngine:
     def test_engine_is_a_use_case_package(self):
         engine = {p.stem for p in _py_files(CLI_SRC / "workflow/batch")}
         assert {"drive", "prepare", "submit", "retry", "upgrade", "watch"} <= engine
 
     def test_commands_hold_no_engine(self):
-        """Batch commands parse options and render events; nothing else."""
         bad = []
         for p in _py_files(CLI_SRC / "stage"):
             text = p.read_text()
@@ -225,9 +216,6 @@ class TestBatchEngine:
         assert not big, big
 
 
-# --- 5.3 ports for Clock, Sleeper and BlockStream; fakes, not patched internals
-
-
 class TestPorts:
     def test_time_ports_are_protocols(self):
         from fakes import FakeClock, InMemoryHashBlockStream, RecordingSleeper
@@ -242,16 +230,59 @@ class TestPorts:
         import dataclasses
 
         from ocfl_cli._appctx import AppCtx
+        from ocfl_cli.ports import Ports
 
-        names = {f.name for f in dataclasses.fields(AppCtx)}
-        ports = {
+        assert {f.name for f in dataclasses.fields(Ports)} == {
+            "sp_client_factory",
+            "btc_rpc_factory",
+            "block_stream_factory",
             "clock",
             "sleeper",
-            "block_stream_factory",
-            "lock_timeout",
             "fs_factory",
+            "lock_timeout",
         }
-        assert ports <= names
+        names = {f.name for f in dataclasses.fields(AppCtx)}
+        assert {
+            "runtime",
+            "fs_factory",
+            "sp_client_factory",
+            "btc_rpc_factory",
+        } <= names
+
+
+class TestAppCtx:
+    @staticmethod
+    def _entry_points():
+        from ocfl_cli.archive.config import config_app
+        from ocfl_cli.main import app
+        from ocfl_cli.stage._app import stage_callback
+
+        commands = (*app.registered_commands, *config_app.registered_commands)
+        return [*(c.callback for c in commands), stage_callback]
+
+    def test_every_entry_point_reads_the_run_state_first(self):
+        import inspect
+        import textwrap
+
+        bad = []
+        for fn in self._entry_points():
+            node = ast.parse(textwrap.dedent(inspect.getsource(fn))).body[0]
+            assert isinstance(node, ast.FunctionDef)
+            body = node.body[1:] if ast.get_docstring(node) is not None else node.body
+            first = ast.unparse(body[0])
+            if not re.fullmatch(
+                r"(\w+ = )?appctx\.(of|tolerating_broken_config)\(ctx\)", first
+            ):
+                bad.append(f"{fn.__module__}.{fn.__name__}: {first}")
+        assert not bad, bad
+
+    def test_only_the_config_commands_tolerate_a_broken_config(self):
+        homes = {
+            _rel(p)
+            for p in _py_files(CLI_SRC)
+            if "tolerating_broken_config(" in p.read_text()
+        }
+        assert homes == {"_appctx.py", "archive/config.py"}, homes
 
     def test_only_the_system_adapter_reads_time(self):
         homes = set()
@@ -273,10 +304,6 @@ class TestPorts:
         assert homes == {"system.py"}, homes
 
     def test_tests_patch_no_cli_module(self):
-        """Tests inject fakes through `ctx.obj` / `Runtime`, not module internals.
-
-        Covers `monkeypatch` and `unittest.mock.patch` / `patch.object`.
-        """
         bad = []
         for p in _py_files(CLI_TESTS):
             tree = _tree(p)
@@ -310,9 +337,6 @@ class TestPorts:
                 if isinstance(target, ast.Name) and target.id in modules:
                     bad.append(f"{p.name}:{node.lineno}")
         assert not bad, bad
-
-
-# --- 5.4 one error handler: ErrorClass -> ExitCode, JSON errors on stderr
 
 
 def _mapping(tree: ast.Module) -> ast.FunctionDef:
@@ -408,16 +432,12 @@ class TestOneErrorHandler:
             seen[c.code] = c
 
     def test_bitcoin_errors_are_the_libs(self):
-        """The phase-4 stopgap that re-raised lib Bitcoin errors as CLI ones is gone."""
         import ocfl_cli.errors as cli_errors
 
         assert not [n for n in vars(cli_errors) if n.startswith("Bitcoin")]
         text = (CLI_SRC / "ots/bitcoin.py").read_text()
         assert "_cli_errors" not in text and "class BitcoinRPCClient" not in text
         assert "return BitcoinRpcClient(" in text
-
-
-# --- 5.5 consoles per command run, in AppCtx, not _style globals
 
 
 class TestConsolesPerRun:
@@ -451,12 +471,9 @@ class TestConsolesPerRun:
         args = ["-r", str(tmp_path), "info"]
         plain = runner.invoke(app, ["--no-color", *args], env=env)
         coloured = runner.invoke(app, args, env=env)
-        assert plain.exit_code == coloured.exit_code == 0
+        assert plain.exit_code == coloured.exit_code == ExitCode.SUCCESS
         assert "\x1b[" not in plain.stdout
         assert "\x1b[" in coloured.stdout
-
-
-# --- 6.3 one execute/revert block for commit_bare and commit_ots
 
 
 class TestOneCommitBlock:
@@ -475,9 +492,6 @@ class TestOneCommitBlock:
                 if isinstance(n, ast.Call)
             }
             assert "_commit_staging" in calls, name
-
-
-# --- 6.2 proofs keyed by digest, kept when a Staging Area moves back (ADR-0004)
 
 
 class TestProofsByDigest:
@@ -507,16 +521,12 @@ class TestProofsByDigest:
         assert "ots.split_state(" in (CLI_SRC / "workflow/common.py").read_text()
 
     def test_moving_back_keeps_proofs_and_the_plan(self):
-        """Regressions clear the staged inventory only; no proof is dropped."""
         tree = _tree(CLI_SRC / "workflow/staging.py")
         fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
-        for name in ("apply_rm_mv_regression", "apply_metadata_ots_regression"):
+        for name in ("apply_edit_regression", "apply_metadata_ots_regression"):
             src = ast.unparse(fns[name])
             assert "unlink" not in src, name
             assert "proofs=" not in src and "verify_jobs=" not in src, name
-
-
-# --- 6.1 one timestamp workflow, parameterized by the Timestamp Target
 
 
 def _compares_a_target(node: ast.AST) -> bool:
@@ -588,9 +598,6 @@ class TestOneTimestampWorkflow:
                 assert rules_for(target).target is target
 
 
-# --- 7.1 verbs, not mode flags; batches are `stage batch ...`
-
-
 def _click(app):
     import typer.main
 
@@ -625,7 +632,6 @@ class TestCliSurface:
         }
 
     def test_no_mode_flag_options_anywhere(self):
-        """No command takes `--upgrade`, `--retry` or `--batch` any more."""
         from ocfl_cli.main import app
 
         bad = []
@@ -641,7 +647,6 @@ class TestCliSurface:
         assert not bad, bad
 
     def test_hints_come_from_one_module(self):
-        """Every `ocfl stage ...` hint is built by `workflow.hints`."""
         bad = [
             f"{_rel(p)}:{n.lineno}"
             for p in _py_files(CLI_SRC)
@@ -654,18 +659,17 @@ class TestCliSurface:
         assert not bad, bad
 
 
-# --- 7.2 `discard`; `config path|show|check`
-
-
 class TestDiscardAndConfig:
     def test_discard_replaces_reset(self):
-        from ocfl_cli.model.phase import Phase, is_legal
+        from ocfl_cli.model.phase import Phase, PhaseCommand, is_legal
         from ocfl_cli.stage import stage_app
 
         commands = _click(stage_app).commands
         assert "discard" in commands and "reset" not in commands
-        assert all(is_legal(p, "discard") for p in Phase if p is not Phase.COMMITTED)
-        assert not any(is_legal(p, "reset") for p in Phase)
+        assert all(
+            is_legal(p, PhaseCommand.DISCARD) for p in Phase if p is not Phase.COMMITTED
+        )
+        assert "reset" not in PhaseCommand
 
     def test_config_group(self):
         from ocfl_cli.main import app
@@ -674,7 +678,6 @@ class TestDiscardAndConfig:
         assert set(config.commands) == {"path", "show", "check"}
 
     def test_show_redacts_every_secret_field(self):
-        """Every SecretStr field, and the RPC user, is redacted by `config show`."""
         import json
 
         from pydantic import SecretStr
@@ -689,13 +692,13 @@ class TestDiscardAndConfig:
         }
         assert secret_fields == {"access_token", "api_key", "rpc_password"}
         cfg = Config(
-            simpleproof=SimpleProofConfig(
+            simpleproof_section=SimpleProofConfig(
                 base_url="https://sp.example",
                 proof_category_id=1,
                 access_token=SecretStr("s-1"),
                 api_key=SecretStr("s-2"),
             ),
-            bitcoin=BitcoinConfig(
+            bitcoin_section=BitcoinConfig(
                 rpc_url="http://127.0.0.1:8332",
                 zmq_endpoint="tcp://127.0.0.1:28332",
                 rpc_user="s-3",
@@ -705,17 +708,9 @@ class TestDiscardAndConfig:
         text = json.dumps(redacted(cfg))
         assert not [s for s in ("s-1", "s-2", "s-3", "s-4") if s in text]
 
-    def test_only_the_config_group_runs_on_a_broken_config(self):
-        text = (CLI_SRC / "main.py").read_text()
-        assert 'ctx.invoked_subcommand != "config"' in text
-
-
-# --- 7.3 locks: flock, a 5 s wait, then exit 4; the batch flock is the lease
-
 
 class TestLocks:
-    def test_one_lock_primitive(self):
-        """Only `store/locks.py` touches `fcntl`; nothing imports `filelock`."""
+    def test_only_store_locks_imports_fcntl_and_nothing_imports_filelock(self):
         homes = set()
         for p in _py_files(CLI_SRC):
             for node in ast.walk(_tree(p)):
@@ -760,8 +755,6 @@ class TestLocks:
             assert "batch_state.batch_lock" in calls, name
 
     def test_the_engine_takes_no_other_batch_lock(self):
-        """Inside a run the driver already holds the batch lock (a second flock
-        on the same file from the same process would block itself)."""
         bad = [
             f"{_rel(p)}:{n.lineno}"
             for p in _py_files(CLI_SRC / "workflow/batch")
@@ -769,10 +762,36 @@ class TestLocks:
             for n in ast.walk(_tree(p))
             if isinstance(n, ast.Call) and ast.unparse(n.func).endswith("batch_lock")
         ]
-        assert not bad, bad
+        assert not bad, (
+            f"driver holds the batch lock; a second flock self-blocks: {bad}"
+        )
+
+    def test_only_with_lock_mints_locked_staging(self):
+        mint = CLI_SRC / "store/ots_state.py"
+        forged = [
+            f"{p.relative_to(REPO)}:{n.lineno}"
+            for p in [*_py_files(CLI_SRC), *_py_files(CLI_TESTS)]
+            if p != mint
+            for n in ast.walk(_tree(p))
+            if _mints(n, "LockedStaging")
+        ]
+        assert not forged, (
+            "LockedStaging proves the staging flock is held; take it from "
+            f"`with with_lock(staging_dir, runtime) as staging:` instead: {forged}"
+        )
 
 
-# --- 7.4 the 37-issue review: decisions recorded, adopted ones kept
+def _mints(node: ast.AST, token: str) -> TypeIs[ast.Call]:
+    if not isinstance(node, ast.Call):
+        return False
+    func = ast.unparse(node.func)
+    if func == token or func.endswith(f".{token}"):
+        return True
+    return (
+        func in {"cast", "typing.cast"}
+        and bool(node.args)
+        and token in ast.unparse(node.args[0])
+    )
 
 
 class TestSurfaceReview:
@@ -813,7 +832,6 @@ class TestSurfaceReview:
         assert not bad, bad
 
     def test_no_short_only_or_clashing_flags(self):
-        """Every option has a long form; no subcommand reuses `-r` (`--root`)."""
         from ocfl_cli.main import app
 
         bad = []
@@ -842,13 +860,9 @@ class TestSurfaceReview:
         assert {o.value for o in DigestOption} == {"sha512", "sha256"}
 
     def test_batch_ids_resolve_in_one_place(self):
-        """Commands take a batch id or prefix; only `resolve_batch_id` reads one."""
         text = (CLI_SRC / "workflow/batch/report.py").read_text()
         assert "def resolve_batch_id(" in text
         assert "resolve_batch_id(staging_root, batch_id)" in text
-
-
-# --- ADR-0006: exit 75 "still pending", only from a one-shot upgrade
 
 
 class TestStillPending:

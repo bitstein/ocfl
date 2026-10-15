@@ -1,15 +1,3 @@
-"""ots.json checkpoint: load_ots / save_ots / migrations / helpers / drift.
-
-Pins:
-- atomic write-temp + fsync + os.replace
-- schema_version=2 round-trip; v1 refused (no migration); >current =>
-  StagingError; migrations chain
-- bare-hex digest convention (no `sha256:` prefix on disk)
-- crash-safe submit intent durability ("submitting" entry persisted before POST)
-- helpers: ots_cache_path, plan_path, has_ots, remove_ots
-- category_id drift: WARN log + return persisted value
-"""
-
 import json
 import logging
 import os
@@ -30,12 +18,11 @@ from ocfl_cli.model.ots_state import (
 from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.model.simpleproof import JobStatus
 from ocfl_cli.ports import SimpleProofClient
-from ocfl_cli.store import ots_state as st_mod
 from ocfl_cli.store.ots_state import (
-    apply_category_id,
     has_ots,
     load_ots,
     ots_cache_path,
+    persisted_category_id,
     plan_path,
     remove_ots,
     save_ots,
@@ -45,7 +32,6 @@ from ocfl_cli.workflow.common import poll_outstanding_jobs
 
 
 def _bare_hex(prefix: str) -> str:
-    """Return a 64-char lowercase hex digest derived from a prefix."""
     return (prefix * 64)[:64].lower()
 
 
@@ -78,7 +64,6 @@ def populated_state() -> OtsState:
                 digests=(d1, d2),
                 status="submitted",
                 target=TimestampTarget.CONTENT,
-                job_id="job-1",
                 attempts=1,
             ),
         ),
@@ -335,7 +320,6 @@ class TestTypedDecoding:
                             "digests": "abc",
                             "status": "submitted",
                             "target": "content",
-                            "job_id": "job-1",
                             "attempts": 1,
                         }
                     ],
@@ -444,7 +428,6 @@ class TestAtomicWrites:
         with pytest.raises(OSError, match="simulated crash"):
             save_ots(tmp_path, populated_state)
 
-        # Reader still sees the old, intact state.
         assert load_ots(tmp_path) == empty_state
         leftover = [p for p in tmp_path.iterdir() if ".tmp" in p.name]
         assert leftover == []
@@ -452,19 +435,13 @@ class TestAtomicWrites:
     def test_load_never_torn(
         self, tmp_path: Path, empty_state: OtsState, populated_state: OtsState
     ):
-        """Whatever load_ots returns must be a fully-formed OtsState (or raise)
-        — never a half-empty / mixed shape."""
         save_ots(tmp_path, empty_state)
         save_ots(tmp_path, populated_state)
         loaded = load_ots(tmp_path)
         assert loaded == populated_state
 
 
-class TestSchemaMigration:
-    def test_constants(self):
-        assert st_mod.OTS_STATE_VERSION == 2
-        assert st_mod.MIGRATIONS == {}
-
+class TestSchemaVersion:
     def test_v2_loads_cleanly(self, tmp_path: Path):
         (tmp_path / "ots.json").write_text(
             json.dumps(
@@ -484,7 +461,7 @@ class TestSchemaMigration:
         assert state.schema_version == 2
         assert state.phase is Phase.DRAFTING
 
-    def test_v1_is_refused_without_migration(self, tmp_path: Path):
+    def test_older_version_rejected(self, tmp_path: Path):
         (tmp_path / "ots.json").write_text(
             json.dumps(
                 {
@@ -499,7 +476,7 @@ class TestSchemaMigration:
                 }
             )
         )
-        with pytest.raises(StagingError, match="no migration registered"):
+        with pytest.raises(StagingError, match="predates CLI schema 2"):
             load_ots(tmp_path)
 
     def test_submission_batch_fields_default_absent(self, tmp_path: Path):
@@ -517,7 +494,6 @@ class TestSchemaMigration:
                             "digests": [digest],
                             "status": "submitted",
                             "target": "content",
-                            "job_id": "job-1",
                             "attempts": 1,
                         }
                     ],
@@ -565,41 +541,8 @@ class TestSchemaMigration:
         with pytest.raises(StagingError):
             load_ots(tmp_path)
 
-    def test_migration_chain_walks_old_forward(self, tmp_path: Path, monkeypatch):
-        """Future-bump pattern: register a fake MIGRATIONS[1] to walk v1 → v2."""
-
-        def v1_to_v2(raw: dict) -> dict:
-            new = dict(raw)
-            new.pop("content_proofs", None)
-            new.pop("inventory_proof", None)
-            new.setdefault("verify_jobs", [])
-            return new
-
-        monkeypatch.setitem(st_mod.MIGRATIONS, 1, v1_to_v2)
-
-        (tmp_path / "ots.json").write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "phase": "drafting",
-                    "category_id": 641,
-                    "pending_digests": [],
-                    "submissions": [],
-                    # verify_jobs missing — migration adds it
-                    "content_proofs": {},
-                    "inventory_proof": None,
-                }
-            )
-        )
-
-        state = load_ots(tmp_path)
-        assert state.schema_version == 2
-        assert state.verify_jobs == ()
-
 
 class TestSubmitIntentDurability:
-    """Crash-safe submit protocol: 'submitting' status durable on disk before POST."""
-
     def test_submitting_entry_persists(self, tmp_path: Path):
         d1 = _bare_hex("a")
         intent = OtsState(
@@ -613,7 +556,6 @@ class TestSubmitIntentDurability:
                     digests=(d1,),
                     status="submitting",
                     target=TimestampTarget.CONTENT,
-                    job_id=None,
                     attempts=0,
                 ),
             ),
@@ -624,11 +566,8 @@ class TestSubmitIntentDurability:
         save_ots(tmp_path, intent)
         loaded = load_ots(tmp_path)
         assert loaded.submissions[0].status == "submitting"
-        assert loaded.submissions[0].job_id is None
 
     def test_intent_to_finalize_two_step(self, tmp_path: Path):
-        """Step 1: write intent. Step 2: finalize. Reader at any moment sees one
-        valid OtsState — never a torn file."""
         d1 = _bare_hex("a")
         intent = OtsState(
             schema_version=2,
@@ -641,7 +580,6 @@ class TestSubmitIntentDurability:
                     digests=(d1,),
                     status="submitting",
                     target=TimestampTarget.CONTENT,
-                    job_id=None,
                     attempts=0,
                 ),
             ),
@@ -664,7 +602,6 @@ class TestSubmitIntentDurability:
                     digests=(d1,),
                     status="submitted",
                     target=TimestampTarget.CONTENT,
-                    job_id="job-x",
                     attempts=1,
                 ),
             ),
@@ -675,10 +612,8 @@ class TestSubmitIntentDurability:
         save_ots(tmp_path, finalized)
         loaded_b = load_ots(tmp_path)
         assert loaded_b == finalized
-        # Disk shape post-finalize is consistent — never half-old / half-new.
         raw = json.loads((tmp_path / "ots.json").read_bytes())
         assert raw["submissions"][0]["status"] == "submitted"
-        assert raw["submissions"][0]["job_id"] == "job-x"
 
 
 class TestHelpers:
@@ -696,7 +631,6 @@ class TestHelpers:
         assert not has_ots(tmp_path)
 
     def test_remove_ots_idempotent(self, tmp_path: Path):
-        # Should not raise on missing file.
         remove_ots(tmp_path)
         assert not has_ots(tmp_path)
 
@@ -709,25 +643,23 @@ class TestHelpers:
 
     def test_utc_iso_format(self):
         s = utc_iso(datetime(2030, 1, 2, 3, 4, 5, 678, tzinfo=UTC))
-        # No microseconds (timespec="seconds"): "YYYY-MM-DDTHH:MM:SS+00:00"
         assert s == "2030-01-02T03:04:05+00:00"
 
 
 class TestCategoryIdDrift:
     def test_no_drift_returns_persisted(self, caplog, empty_state: OtsState):
         with caplog.at_level(logging.WARNING):
-            result = apply_category_id(empty_state, 641)
-        assert result == 641
+            result = persisted_category_id(empty_state, empty_state.category_id)
+        assert result == empty_state.category_id
         warns = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert warns == []
 
     def test_drift_logs_warning_and_returns_persisted(
         self, caplog, empty_state: OtsState
     ):
-        # empty_state has category_id=641; pass a divergent config value.
         with caplog.at_level(logging.WARNING):
-            result = apply_category_id(empty_state, 999)
-        assert result == 641
+            result = persisted_category_id(empty_state, empty_state.category_id + 1)
+        assert result == empty_state.category_id
         warns = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert warns, "expected a WARNING log on category_id drift"
         msg = " ".join(r.getMessage() for r in warns).lower()
@@ -735,10 +667,6 @@ class TestCategoryIdDrift:
 
 
 class TestSubmissionShape:
-    """Submissions / VerifyJobs / Proof / StagedInventory are frozen
-    sub-records. Their `digests` field is always a tuple — submission rounds
-    are immutable once recorded."""
-
     def test_submission_frozen(self):
         s = Submission(
             submitted_at="2026-04-23T16:30:00+00:00",
@@ -768,7 +696,6 @@ class TestSubmissionShape:
             digests=(_bare_hex("a"),),
             status="submitted",
             target=TimestampTarget.CONTENT,
-            job_id="j",
             attempts=1,
         )
         assert isinstance(s.digests, tuple)

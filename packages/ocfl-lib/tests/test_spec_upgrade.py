@@ -1,5 +1,3 @@
-"""Spec version rules on write: E081 (root), E103 (no downgrade), E003/E038."""
-
 from typing import TYPE_CHECKING
 
 import pytest

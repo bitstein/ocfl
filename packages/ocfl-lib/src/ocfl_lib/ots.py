@@ -8,7 +8,7 @@ import enum
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, NamedTuple, Protocol, runtime_checkable
 
 from opentimestamps.core.notary import BitcoinBlockHeaderAttestation
 from opentimestamps.core.serialize import (
@@ -18,7 +18,7 @@ from opentimestamps.core.serialize import (
 from opentimestamps.core.timestamp import DetachedTimestampFile
 
 from ocfl_lib._errors import InvalidProofError, OtsConfigError, OtsParseError
-from ocfl_lib._json_value import as_object, object_field, parse_json
+from ocfl_lib._json_value import as_object, object_field_or_empty, parse_json
 from ocfl_lib._path import join_path
 from ocfl_lib.fs import _utils as fs_utils
 
@@ -29,7 +29,6 @@ if TYPE_CHECKING:
 
 EXTENSION_NAME = "NNNN-ots-timestamps"
 EXTENSION_DIR = f"extensions/{EXTENSION_NAME}"
-"""The extension's directory, relative to the object root."""
 CONFIG_PATH = f"{EXTENSION_DIR}/config.json"
 PROOF_SUFFIX = ".ots"
 
@@ -37,9 +36,6 @@ PROOF_SUFFIX = ".ots"
 def inventory_proof_path(version: str) -> str:
     """Object-relative path of the inventory proof of `version`."""
     return f"{EXTENSION_DIR}/inventory.json.{version}{PROOF_SUFFIX}"
-
-
-# --- proofs
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -123,9 +119,6 @@ def verify_proof(raw: bytes, expected_hex: str) -> ParsedOts:
     return parsed
 
 
-# --- Bitcoin checks (spec "Bitcoin Checks")
-
-
 @dataclass(frozen=True, slots=True)
 class ChainBlock:
     """The block at a height on a node's best chain.
@@ -200,8 +193,6 @@ class ChainCheck:
     source: BlockHeaderSource
     confirmations: int
 
-
-# --- config
 
 _PARAMS: dict[str, type] = {
     "proofDigestAlgorithm": str,
@@ -283,11 +274,13 @@ def read_config(fsys: FS, obj_path: str) -> OtsConfig | None:
     return OtsConfig.from_json(raw)
 
 
-# --- content proofs
+class StateSplit(NamedTuple):
+    ordinary: frozenset[str]
+    companion_of: dict[str, str]
 
 
-def split_state(paths: Iterable[str]) -> tuple[frozenset[str], dict[str, str]]:
-    """(ordinary paths, {content proof: companion}) of one version's state.
+def split_state(paths: Iterable[str]) -> StateSplit:
+    """Split one version's state into ordinary paths and content proofs.
 
     `P.ots` is a content proof when `P` is in the same state. Every other
     path, including a standalone `x.ots`, is ordinary and needs a proof.
@@ -298,7 +291,7 @@ def split_state(paths: Iterable[str]) -> tuple[frozenset[str], dict[str, str]]:
         for p in path_set
         if p.endswith(PROOF_SUFFIX) and p.removesuffix(PROOF_SUFFIX) in path_set
     }
-    return frozenset(path_set - proofs.keys()), proofs
+    return StateSplit(frozenset(path_set - proofs.keys()), proofs)
 
 
 def covered_versions(cfg: OtsConfig, versions: Iterable[str]) -> list[str]:
@@ -316,18 +309,15 @@ def covered_versions(cfg: OtsConfig, versions: Iterable[str]) -> list[str]:
     return ordered[ordered.index(cfg.timestamp_from) :]
 
 
-# --- the proofs of an object
-
-
 @dataclass(frozen=True, slots=True)
 class ProofRef:
     """One proof of an object and the sha256 hex digest it must commit to.
 
-    `kind` is "content" or "inventory"; `path` is relative to the object
-    root; `version` is the first covered version that holds the proof.
+    `path` is relative to the object root; `version` is the first covered
+    version that holds the proof.
     """
 
-    kind: str
+    kind: Literal["content", "inventory"]
     version: str
     path: str
     digest: str
@@ -349,18 +339,18 @@ def object_proofs(fsys: FS, obj_path: str) -> tuple[ProofRef, ...]:
     )
     if inv is None:
         return ()
-    versions = object_field(inv, "versions")
+    versions = object_field_or_empty(inv, "versions")
     covered = covered_versions(cfg, versions)
     refs: list[ProofRef] = []
     if cfg.timestamp_content:
         first_path = {
             d: ps[0]
-            for d, ps in object_field(inv, "manifest").items()
+            for d, ps in object_field_or_empty(inv, "manifest").items()
             if isinstance(ps, list) and ps and isinstance(ps[0], str)
         }
         seen: set[str] = set()
         for v in covered:
-            state = object_field(as_object(versions.get(v)) or {}, "state")
+            state = object_field_or_empty(as_object(versions.get(v)) or {}, "state")
             digest_of = {
                 p: d
                 for d, ps in state.items()
@@ -382,12 +372,9 @@ def object_proofs(fsys: FS, obj_path: str) -> tuple[ProofRef, ...]:
         try:
             raw = fs_utils.read_all(fsys, join_path(obj_path, v, "inventory.json"))
         except FileNotFoundError:
-            continue  # E909
+            continue
         refs.append(ProofRef("inventory", v, path, hashlib.sha256(raw).hexdigest()))
     return tuple(refs)
-
-
-# --- Bitcoin checks of an object
 
 
 @dataclass(frozen=True, slots=True)
@@ -399,7 +386,7 @@ class ProofChainResult:
 
     @property
     def status(self) -> AttestationStatus | None:
-        """MISMATCH if any check is; else VERIFIED if any; None when pending."""
+        """MISMATCH if any check is; else VERIFIED, else SHALLOW; None when pending."""
         statuses = {c.status for c in self.checks}
         for status in (
             AttestationStatus.MISMATCH,

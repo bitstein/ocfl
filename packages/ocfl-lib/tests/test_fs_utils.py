@@ -1,5 +1,3 @@
-"""Tests for FS utility functions."""
-
 from typing import TYPE_CHECKING
 
 import pytest
@@ -69,13 +67,11 @@ class TestWriteBytes:
 
 class TestCopy:
     def test_same_fs_uses_copy_fs(self, fs: LocalFS, fs_dir: Path):
-        """When src and dst are the same CopyFS, use server-side copy."""
         n = copy(fs, "hello.txt", fs, "copy.txt")
         assert n == 11
         assert (fs_dir / "copy.txt").read_bytes() == b"hello world"
 
     def test_cross_fs(self, tmp_path: Path):
-        """When src and dst are different FS instances, stream copy."""
         src_dir = tmp_path / "src"
         dst_dir = tmp_path / "dst"
         src_dir.mkdir()

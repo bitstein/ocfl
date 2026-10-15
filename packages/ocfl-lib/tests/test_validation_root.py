@@ -1,5 +1,3 @@
-"""Tests for OCFL storage root validation."""
-
 import hashlib
 import json
 from typing import TYPE_CHECKING
@@ -14,10 +12,7 @@ from ocfl_lib.validation._root import validate_root
 
 class TestValidRoot:
     def test_minimal_root(self, tmp_path: Path):
-        """Create a minimal valid storage root and validate it."""
-        # NAMASTE
         (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
-        # A single valid object
         obj = tmp_path / "obj1"
         obj.mkdir()
         (obj / "0=ocfl_object_1.1").write_text("ocfl_object_1.1\n")
@@ -88,7 +83,6 @@ class TestRootExtensions:
 
 class TestE069cUnparseableDecl:
     def test_unparseable_zero_eq_fires_E069c(self, tmp_path: Path):
-        """Root dir has 0= files but none parse as valid root NAMASTE -> E069c."""
         (tmp_path / "0=garbage_1.1").write_text("garbage\n")
         fsys = LocalFS(tmp_path)
         r = validate_root(fsys, "", validate_objects=False)
@@ -96,7 +90,6 @@ class TestE069cUnparseableDecl:
         assert not any(e.code == "E069a" for e in r.errors)
 
     def test_no_zero_eq_at_all_fires_E069a(self, tmp_path: Path):
-        """Root dir has no 0= files at all -> E069a (not E069c)."""
         (tmp_path / "readme.txt").write_text("hello\n")
         fsys = LocalFS(tmp_path)
         r = validate_root(fsys, "", validate_objects=False)
@@ -106,7 +99,6 @@ class TestE069cUnparseableDecl:
 
 class TestE069dInvalidNamaste:
     def test_unparseable_zero_eq_fires_E069d(self, tmp_path: Path):
-        """Each unparseable 0= file fires E069d with filename."""
         (tmp_path / "0=garbage_1.1").write_text("garbage\n")
         (tmp_path / "0=alsogarbage").write_text("nope\n")
         fsys = LocalFS(tmp_path)
@@ -117,7 +109,6 @@ class TestE069dInvalidNamaste:
         assert any("0=alsogarbage" in m for m in msgs)
 
     def test_valid_plus_unparseable_fires_E069d_for_extra(self, tmp_path: Path):
-        """Valid root decl + extra unparseable 0= file -> E069d for the extra."""
         (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
         (tmp_path / "0=garbage").write_text("nope\n")
         fsys = LocalFS(tmp_path)
@@ -207,7 +198,6 @@ class TestRootSummary:
 
     def test_truncated_flag(self, tmp_path: Path):
         (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
-        # Create 3 invalid objects (just NAMASTE, no inventory)
         for i in range(3):
             d = tmp_path / f"obj{i}"
             d.mkdir()

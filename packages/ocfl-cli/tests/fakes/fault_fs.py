@@ -1,25 +1,16 @@
-"""A storage filesystem fake for the `fs_factory` port: hooks on chosen calls.
-
-`tests/helpers/faults.py` simulates a dead process (`Crash`, no undo). These
-CLI tests need the commit's own failure paths instead: an exception the
-commit reverts from, or another writer acting just before a step.
-"""
-
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol
 
 from ocfl_lib.fs import open_fs
 
-# hook(name, args, call) -> result; `call()` runs the real method.
-type Hook = Callable[[str, tuple[Any, ...], Callable[[], Any]], Any]
+
+class Hook(Protocol):
+    def __call__(
+        self, name: str, args: tuple[Any, ...], call_real_method: Callable[[], Any]
+    ) -> Any: ...
 
 
 def hooked_fs(location: str, hook: Hook):
-    """The real backend at `location`, with every public call going through `hook`.
-
-    The wrapper subclasses the backend, so backend checks (ClaimFS,
-    ConditionalFS) still see the real one.
-    """
     fs = open_fs(location)
 
     def __getattribute__(self, name):
@@ -42,29 +33,23 @@ def hooked_fs(location: str, hook: Hook):
 
 
 def raise_on_content_write(exc: BaseException) -> Callable[[str], Any]:
-    """An `fs_factory` whose first write of version content raises `exc`.
-
-    The commit is building `vN/content/` in the work dir: nothing is claimed
-    yet, so the commit reverts and the object is untouched.
-    """
     fired = False
 
-    def hook(name, args, call):
+    def hook(name, args, call_real_method):
         nonlocal fired
         if name == "write" and "/content/" in str(args[0]) and not fired:
             fired = True
             raise exc
-        return call()
+        return call_real_method()
 
     return lambda location: hooked_fs(location, hook)
 
 
 def before_claim(action: Callable[[], None]) -> Callable[[str], Any]:
-    """An `fs_factory` that runs `action` just before the commit's claim."""
 
-    def hook(name, args, call):
+    def hook(name, args, call_real_method):
         if name == "rename_noreplace":
             action()
-        return call()
+        return call_real_method()
 
     return lambda location: hooked_fs(location, hook)

@@ -1,5 +1,3 @@
-"""OCFL CLI entry point."""
-
 import json
 import logging
 import os
@@ -8,8 +6,8 @@ from typing import Annotated
 
 import typer
 
-from ocfl_cli._appctx import install_app_ctx
-from ocfl_cli._common import DEFAULT_FS_FACTORY, installed_cli_version
+from ocfl_cli import _appctx as appctx
+from ocfl_cli._common import installed_cli_version
 from ocfl_cli._exit import OcflGroup
 from ocfl_cli.archive.config import config_app
 from ocfl_cli.archive.diff import diff
@@ -27,8 +25,10 @@ from ocfl_cli.errors import ConfigError
 from ocfl_cli.exit_codes import format_exit_code_help
 from ocfl_cli.ots.bitcoin import default_block_stream_factory, default_btc_factory
 from ocfl_cli.ots.simpleproof import default_sp_factory
+from ocfl_cli.ports import Ports
 from ocfl_cli.stage import stage_app
 from ocfl_cli.system import SYSTEM_CLOCK, SYSTEM_SLEEPER
+from ocfl_lib.fs import open_fs
 
 ARCHIVE_PANEL = "Archive"
 STAGING_PANEL = "Staging"
@@ -48,13 +48,16 @@ class _JsonFormatter(logging.Formatter):
         return json.dumps(payload)
 
 
+class _OcflHandler(logging.StreamHandler):
+    pass
+
+
 def configure_logging(json_mode: bool, verbose: bool, quiet: bool) -> None:
     root = logging.getLogger()
     for h in list(root.handlers):
-        if getattr(h, "_ocfl_handler", False):
+        if isinstance(h, _OcflHandler):
             root.removeHandler(h)
-    handler = logging.StreamHandler(sys.stderr)
-    handler._ocfl_handler = True  # type: ignore[attr-defined]
+    handler = _OcflHandler(sys.stderr)
     if json_mode:
         handler.setFormatter(_JsonFormatter())
     else:
@@ -90,6 +93,36 @@ app.command(rich_help_panel=ARCHIVE_PANEL)(show)
 app.command(rich_help_panel=STORAGE_ADMIN_PANEL)(validate)
 app.add_typer(config_app, rich_help_panel=STORAGE_ADMIN_PANEL)
 app.add_typer(stage_app, rich_help_panel=STAGING_PANEL)
+
+
+def production_ports() -> Ports:
+    return Ports(
+        sp_client_factory=default_sp_factory,
+        btc_rpc_factory=default_btc_factory,
+        block_stream_factory=default_block_stream_factory,
+        clock=SYSTEM_CLOCK,
+        sleeper=SYSTEM_SLEEPER,
+        fs_factory=open_fs,
+    )
+
+
+def _ports(obj: object) -> Ports:
+    match obj:
+        case None:
+            return production_ports()
+        case Ports():
+            return obj
+        case _:
+            raise appctx.AppCtxError(
+                f"internal error: obj must be Ports, got {type(obj).__name__}"
+            )
+
+
+def _load() -> Config | ConfigError:
+    try:
+        return load_config()
+    except ConfigError as e:
+        return e
 
 
 def _print_version(value: bool) -> None:
@@ -137,51 +170,17 @@ def main(
         ),
     ] = False,
 ) -> None:
-    """CLI for managing an OCFL archive."""
     configure_logging(
         json_mode=log_json or os.environ.get("OCFL_LOG_JSON") == "1",
         verbose=verbose,
         quiet=quiet,
     )
-    ctx.ensure_object(dict)
-
-    try:
-        config = load_config()
-    except ConfigError as e:
-        # `config path|check` diagnose a broken config instead of failing on it.
-        if ctx.invoked_subcommand != "config":
-            raise
-        config = Config()
-        ctx.obj["config_error"] = e
-
-    # Resolve `-r` through config: alias → archive root. Precedence:
-    # flag > OCFL_ROOT env > implicit-single-archive default.
-    archive = None
-    resolved_root = root
-    if root is not None:
-        a = config.archive(root)
-        if a is not None:
-            archive = a
-            resolved_root = a.root
-    elif os.environ.get("OCFL_ROOT") is None:
-        implicit = config.implicit_default()
-        if implicit is not None:
-            archive = implicit
-            resolved_root = implicit.root
-
-    install_app_ctx(
+    ctx.obj = appctx.start(
         ctx,
-        root=resolved_root,
-        config=config,
-        archive=archive,
-        json_output=json_output,
+        _ports(ctx.obj),
+        _load(),
+        root_option=root,
+        json=json_output,
         quiet=quiet,
-        verbose=verbose,
         no_color=no_color,
-        sp_client_factory=default_sp_factory,
-        btc_rpc_factory=default_btc_factory,
-        clock=SYSTEM_CLOCK,
-        sleeper=SYSTEM_SLEEPER,
-        block_stream_factory=default_block_stream_factory,
-        fs_factory=DEFAULT_FS_FACTORY,
     )

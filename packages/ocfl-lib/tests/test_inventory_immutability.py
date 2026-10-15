@@ -1,5 +1,3 @@
-"""Frozen-attr enforcement on Inventory structs."""
-
 import pytest
 
 from ocfl_lib._inventory import Inventory, UserInfo, VersionInfo

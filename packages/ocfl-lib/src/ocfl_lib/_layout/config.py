@@ -1,8 +1,3 @@
-"""Layout config I/O: read/write extension configs and ocfl_layout.json.
-
-`root` is the storage root's path within the FS ("" for the FS root).
-"""
-
 from typing import Any
 
 import msgspec
@@ -14,20 +9,19 @@ _EXTENSIONS_DIR = "extensions"
 _OCFL_LAYOUT_FILE = "ocfl_layout.json"
 
 
-class _OcflLayout(msgspec.Struct):
+class OcflLayout(msgspec.Struct):
     extension: str
     description: str = ""
 
 
-def _config_dir(root: str, layout_name: str) -> str:
-    return join_path(root, _EXTENSIONS_DIR, layout_name)
+def _config_dir(root_path: str, layout_name: str) -> str:
+    return join_path(root_path, _EXTENSIONS_DIR, layout_name)
 
 
 def read_layout_config(
-    fsys: FS, layout_name: str, *, root: str = ""
+    fsys: FS, layout_name: str, *, root_path: str = ""
 ) -> dict[str, Any] | None:
-    """Read extensions/{layout_name}/config.json, or None if absent."""
-    path = join_path(_config_dir(root, layout_name), "config.json")
+    path = join_path(_config_dir(root_path, layout_name), "config.json")
     try:
         data = read_all(fsys, path)
     except FileNotFoundError:
@@ -36,29 +30,25 @@ def read_layout_config(
 
 
 def write_layout_config(
-    fsys: WriteFS, layout_name: str, config: dict[str, Any], *, root: str = ""
+    fsys: WriteFS, layout_name: str, config: dict[str, Any], *, root_path: str = ""
 ) -> None:
-    """Write config dict to extensions/{layout_name}/config.json."""
-    dir_path = _config_dir(root, layout_name)
+    dir_path = _config_dir(root_path, layout_name)
     fsys.mkdir(dir_path)
     data = msgspec.json.encode(config)
     write_bytes(fsys, join_path(dir_path, "config.json"), data)
 
 
-def read_ocfl_layout(fsys: FS, *, root: str = "") -> tuple[str, str] | None:
-    """Read ocfl_layout.json → (extension, description) or None."""
+def read_ocfl_layout(fsys: FS, *, root_path: str = "") -> OcflLayout | None:
     try:
-        data = read_all(fsys, join_path(root, _OCFL_LAYOUT_FILE))
+        data = read_all(fsys, join_path(root_path, _OCFL_LAYOUT_FILE))
     except FileNotFoundError:
         return None
-    layout = msgspec.json.decode(data, type=_OcflLayout)
-    return layout.extension, layout.description
+    return msgspec.json.decode(data, type=OcflLayout)
 
 
 def write_ocfl_layout(
-    fsys: WriteFS, *, extension: str, description: str, root: str = ""
+    fsys: WriteFS, *, extension: str, description: str, root_path: str = ""
 ) -> None:
-    """Write ocfl_layout.json."""
-    layout = _OcflLayout(extension=extension, description=description)
+    layout = OcflLayout(extension=extension, description=description)
     data = msgspec.json.encode(layout)
-    write_bytes(fsys, join_path(root, _OCFL_LAYOUT_FILE), data)
+    write_bytes(fsys, join_path(root_path, _OCFL_LAYOUT_FILE), data)

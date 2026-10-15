@@ -1,6 +1,4 @@
-"""The stage command group: Typer apps, the group callback, shared preflight."""
-
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -8,13 +6,14 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from ocfl_cli import _appctx as appctx
+from ocfl_cli._appctx import AppCtx
 from ocfl_cli.errors import ConfigError, UsageError
 from ocfl_cli.workflow import staging as wf_staging
 
 if TYPE_CHECKING:
     from ocfl_cli.config import Config, SimpleProofConfig
     from ocfl_cli.ports import BtcRpcFactory, SpClientFactory
-    from ocfl_cli.workflow.staging import StagingResolved
+    from ocfl_cli.workflow.staging import StagingResolved, StagingStore
 
 
 OTS_HELP_PANEL = "OTS"
@@ -34,6 +33,26 @@ batch_app = typer.Typer(
 
 
 @dataclass(frozen=True, slots=True)
+class StageCtx(AppCtx):
+    store: StagingStore
+
+    @classmethod
+    def extend(cls, app: AppCtx, store: StagingStore) -> StageCtx:
+        return cls(
+            **{f.name: getattr(app, f.name) for f in fields(AppCtx)}, store=store
+        )
+
+
+def stage_of(ctx: typer.Context) -> StageCtx:
+    app = appctx.of(ctx)
+    if not isinstance(app, StageCtx):
+        raise appctx.AppCtxError(
+            "internal error: stage command outside the stage group"
+        )
+    return app
+
+
+@dataclass(frozen=True, slots=True)
 class TimestampPreflight:
     cfg: Config
     resolved: StagingResolved
@@ -42,37 +61,18 @@ class TimestampPreflight:
 
 
 class DigestOption(StrEnum):
-    """The content digests OCFL 1.1 allows for a new object (§3.5.1)."""
-
     SHA512 = "sha512"
     SHA256 = "sha256"
 
 
-def resolve_root_path(ctx: typer.Context) -> str:
-    """Resolve absolute root path string for staging path hashing.
-
-    S3 URIs are returned as-is: ``Path.resolve`` would prefix the cwd.
-    """
-    root = appctx.root(ctx)
+def resolve_root_path(root: str | None) -> str:
     if root is not None and root.startswith("s3://"):
         return root
     return str(Path(root or Path.cwd()).resolve())
 
 
-def stage_store(ctx: typer.Context):
-    """The Staging Area store the group callback opened for this run."""
-    obj = ctx.obj
-    if not isinstance(obj, dict):
-        raise RuntimeError("internal error: expected ctx.obj to be a dict")
-    return wf_staging.require_store(obj.get("staging"))
-
-
-def require_config(ctx: typer.Context) -> Config:
-    return appctx.config(ctx)
-
-
 def require_simpleproof(ctx: typer.Context, cfg: Config) -> None:
-    cfg.require("simpleproof")
+    cfg.raise_if_broken("simpleproof")
     if cfg.simpleproof is None:
         raise ConfigError(
             f"{appctx.command_path(ctx)!r} requires [simpleproof] config section"
@@ -80,7 +80,7 @@ def require_simpleproof(ctx: typer.Context, cfg: Config) -> None:
 
 
 def require_bitcoin(ctx: typer.Context, cfg: Config) -> None:
-    cfg.require("bitcoin")
+    cfg.raise_if_broken("bitcoin")
     if cfg.bitcoin is None:
         raise ConfigError(
             f"{appctx.command_path(ctx)!r} requires [bitcoin] config section"
@@ -88,41 +88,35 @@ def require_bitcoin(ctx: typer.Context, cfg: Config) -> None:
 
 
 def require_existing_staging(
-    ctx: typer.Context, object_id: str, *, hint: str | None = None
+    stage: StageCtx, object_id: str, *, hint: str | None = None
 ) -> StagingResolved:
     return wf_staging.resolve_staging(
-        stage_store(ctx), resolve_root_path(ctx), object_id, hint=hint
+        stage.store, resolve_root_path(stage.root), object_id, hint=hint
     )
-
-
-def get_factories(ctx: typer.Context) -> tuple[SpClientFactory, BtcRpcFactory]:
-    return appctx.sp_client_factory(ctx), appctx.btc_rpc_factory(ctx)
 
 
 def require_timestamp_preflight(
     ctx: typer.Context, object_id: str, *, bitcoin: bool
 ) -> TimestampPreflight:
-    """Config the verb needs (`[bitcoin]` too when `bitcoin`), an OTS staging."""
-    cfg = require_config(ctx)
+    stage = stage_of(ctx)
+    cfg = stage.config
     require_simpleproof(ctx, cfg)
     if bitcoin:
         require_bitcoin(ctx, cfg)
 
-    resolved = require_existing_staging(ctx, object_id)
+    resolved = require_existing_staging(stage, object_id)
     wf_staging.require_ots_staging(resolved.staging_dir, object_id)
-    sp_factory, btc_factory = get_factories(ctx)
     return TimestampPreflight(
         cfg=cfg,
         resolved=resolved,
-        sp_factory=sp_factory,
-        btc_factory=btc_factory,
+        sp_factory=stage.sp_client_factory,
+        btc_factory=stage.btc_rpc_factory,
     )
 
 
 def require_ots_config(
     cfg: Config | None, digest: DigestOption | None
 ) -> SimpleProofConfig:
-    """Preflight `stage new --ots`. Returns validated [simpleproof] config."""
     if digest is not None and digest is not DigestOption.SHA256:
         raise UsageError(
             f"--ots requires SHA-256 (SimpleProof API constraint); "
@@ -134,8 +128,8 @@ def require_ots_config(
         else "in your ocfl config"
     )
     if cfg is not None:
-        cfg.require("simpleproof")
-        cfg.require("bitcoin")
+        cfg.raise_if_broken("simpleproof")
+        cfg.raise_if_broken("bitcoin")
     if cfg is None or cfg.simpleproof is None:
         raise ConfigError(f"--ots requires [simpleproof] section {where}")
     if cfg.bitcoin is None:
@@ -155,7 +149,6 @@ def stage_callback(
         ),
     ] = None,
 ) -> None:
-    """Stage changes for OCFL objects."""
-    ctx.ensure_object(dict)
+    app = appctx.of(ctx)
     root = Path(staging_root) if staging_root else wf_staging.default_staging_root()
-    ctx.obj["staging"] = wf_staging.open_store(root)
+    ctx.obj = StageCtx.extend(app, wf_staging.open_store(root))

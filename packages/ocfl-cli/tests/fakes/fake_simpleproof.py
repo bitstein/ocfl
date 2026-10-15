@@ -1,5 +1,3 @@
-"""In-memory FakeSimpleProof mirroring the `SimpleProofClient` protocol."""
-
 from dataclasses import dataclass, field
 
 from ocfl_cli.model.simpleproof import (

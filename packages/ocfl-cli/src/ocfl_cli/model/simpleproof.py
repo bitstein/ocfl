@@ -1,7 +1,6 @@
-"""SimpleProof API results, as the workflows see them."""
-
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from types import MappingProxyType
 
 
@@ -9,6 +8,22 @@ from types import MappingProxyType
 class SubmitResult:
     digests: tuple[str, ...]
     record_ids: tuple[str, ...]
+
+
+class VerifyJobStatus(StrEnum):
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    EXPIRED = "EXPIRED"
+
+
+ACTIVE_VERIFY_STATUSES = frozenset(
+    {VerifyJobStatus.PENDING, VerifyJobStatus.IN_PROGRESS, VerifyJobStatus.PROCESSING}
+)
+RESUBMIT_VERIFY_STATUSES = frozenset({VerifyJobStatus.FAILED, VerifyJobStatus.EXPIRED})
+TERMINAL_VERIFY_STATUSES = RESUBMIT_VERIFY_STATUSES | {VerifyJobStatus.COMPLETED}
 
 
 @dataclass(frozen=True, slots=True)

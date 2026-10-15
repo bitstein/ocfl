@@ -1,5 +1,3 @@
-"""Tests for InventoryBuilder."""
-
 from typing import TYPE_CHECKING
 
 import pytest
@@ -31,7 +29,6 @@ class TestBuildFirstVersion:
         assert inv.versions["v1"].state == state
 
     def test_manifest_generated(self):
-        """Content paths generated as v1/content/<logical_path>."""
         state: DigestMap = {"abc": ["dir/file.txt"], "def": ["other.txt"]}
         inv = (
             InventoryBuilder()
@@ -39,7 +36,6 @@ class TestBuildFirstVersion:
             .add_version(state, created="2024-01-01T00:00:00Z")
             .build()
         )
-        # Each digest should map to v1/content/<logical_path>
         assert inv.manifest["abc"] == ["v1/content/dir/file.txt"]
         assert inv.manifest["def"] == ["v1/content/other.txt"]
 
@@ -106,7 +102,6 @@ class TestBuildFirstVersion:
         assert inv.versions["v1"].state == {}
 
     def test_multiple_paths_same_digest(self):
-        """Deduplication: same content at multiple logical paths."""
         state: DigestMap = {"abc": ["a.txt", "copy.txt"]}
         inv = (
             InventoryBuilder()
@@ -114,9 +109,7 @@ class TestBuildFirstVersion:
             .add_version(state, created="2024-01-01T00:00:00Z")
             .build()
         )
-        # Only one content path in manifest (first logical path)
-        assert len(inv.manifest["abc"]) == 1
-        assert inv.manifest["abc"][0].startswith("v1/content/")
+        assert inv.manifest["abc"] == ["v1/content/a.txt"]
 
 
 class TestBuildSubsequentVersion:
@@ -143,7 +136,6 @@ class TestBuildSubsequentVersion:
         assert inv.versions["v2"].state == new_state
 
     def test_forward_delta_manifest(self):
-        """Existing content reuses manifest entries; only new content added."""
         prev = self._base_inv()
         new_state: DigestMap = {"abc": ["file.txt"], "def": ["new.txt"]}
         inv = (
@@ -151,9 +143,7 @@ class TestBuildSubsequentVersion:
             .add_version(new_state, created="2024-06-01T00:00:00Z")
             .build()
         )
-        # abc should still point to v1 content path
         assert inv.manifest["abc"] == ["v1/content/file.txt"]
-        # def is new, should point to v2
         assert inv.manifest["def"] == ["v2/content/new.txt"]
 
     def test_preserves_prior_versions(self):
@@ -191,10 +181,7 @@ class TestContentPathFunc:
 
 
 class TestFixitySupport:
-    """InventoryBuilder fixity support."""
-
     def test_fixity_populated_from_source(self):
-        """New manifest digests query FixitySource, populate fixity block."""
         state: DigestMap = {"abc123": ["file.txt"]}
 
         class FakeFixity:
@@ -213,7 +200,6 @@ class TestFixitySupport:
         assert inv.fixity is not None
         assert "md5" in inv.fixity
         assert "md5_of_abc123" in inv.fixity["md5"]
-        # fixity content path should match manifest content path
         assert inv.fixity["md5"]["md5_of_abc123"] == inv.manifest["abc123"]
 
     def test_no_fixity_when_source_is_none(self):
@@ -227,7 +213,6 @@ class TestFixitySupport:
         assert inv.fixity is None
 
     def test_fixity_multiple_algorithms(self):
-        """FixitySource returning multiple algs populates all."""
         state: DigestMap = {"abc": ["file.txt"]}
 
         class MultiFixity:
@@ -270,8 +255,6 @@ class TestFixitySupport:
         ]
 
     def test_fixity_merged_with_prev(self):
-        """Fixity from prev inventory preserved, new fixity added."""
-        # Build v1 with fixity
         state_v1: DigestMap = {"abc": ["file.txt"]}
 
         class FixityV1:
@@ -289,7 +272,6 @@ class TestFixitySupport:
         )
         assert prev.fixity is not None
 
-        # Build v2 with new file and fixity
         state_v2: DigestMap = {"abc": ["file.txt"], "def": ["new.txt"]}
 
         class FixityV2:
@@ -305,13 +287,11 @@ class TestFixitySupport:
             .build()
         )
         assert inv.fixity is not None
-        # Both old and new fixity present
         md5 = inv.fixity["md5"]
         assert "md5_abc" in md5
         assert "md5_def" in md5
 
     def test_fixity_not_queried_for_existing_digests(self):
-        """Existing manifest digests (dedup) should not query fixity again."""
         state_v1: DigestMap = {"abc": ["file.txt"]}
         prev = (
             InventoryBuilder()
@@ -331,11 +311,9 @@ class TestFixitySupport:
         InventoryBuilder(prev=prev).fixity_source(TrackingFixity()).add_version(
             state_v2, created="2024-06-01T00:00:00Z"
         ).build()
-        # Only "def" should be queried (abc already in manifest)
         assert calls == ["def"]
 
     def test_fixity_empty_source_returns(self):
-        """FixitySource returning empty dict → no fixity block."""
         state: DigestMap = {"abc": ["file.txt"]}
 
         class EmptyFixity:
@@ -408,7 +386,6 @@ class TestValidationFailures:
 
 class TestMixedCaseDedupe:
     def test_mixed_case_digest_dedupes(self):
-        """Same digest in different case across versions reuses content path."""
         state1: DigestMap = {"ABC": ["file.txt"]}
         inv1 = (
             InventoryBuilder()
@@ -424,5 +401,4 @@ class TestMixedCaseDedupe:
             .add_version(state2, created="2024-02-01T00:00:00Z")
             .build()
         )
-        # Should reuse v1 manifest entry, no new content path
         assert len(inv2.manifest) == 1

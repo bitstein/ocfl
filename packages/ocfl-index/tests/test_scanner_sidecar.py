@@ -17,7 +17,6 @@ def test_sha256_preferred_over_sha512(tmp_path: Path) -> None:
     fixture.commit("alpha", {"a.txt": "hello"}, algorithm=DigestAlgorithm.SHA256)
     relpath = _object_relpath(fixture, "alpha")
 
-    # Manually drop a stale sha512 sidecar to ensure sha256 wins
     sha512_sidecar = fixture.root_dir / relpath / "inventory.json.sha512"
     sha512_sidecar.write_text("0000000000000000 inventory.json\n")
 

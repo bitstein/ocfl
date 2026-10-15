@@ -1,5 +1,3 @@
-"""Tests for S3FS backend."""
-
 from io import BytesIO
 from typing import TYPE_CHECKING
 
@@ -18,6 +16,8 @@ if TYPE_CHECKING:
 
 BUCKET = "test-bucket"
 REGION = "us-east-1"
+_A_TXT = b"hello"
+_LIST_OBJECTS_MAX_KEYS = 1000
 
 
 @pytest.fixture
@@ -29,8 +29,7 @@ def s3_client():
 
 
 def _seed(client: S3Client) -> None:
-    """Seed standard test objects directly via boto3."""
-    client.put_object(Bucket=BUCKET, Key="a.txt", Body=b"hello")
+    client.put_object(Bucket=BUCKET, Key="a.txt", Body=_A_TXT)
     client.put_object(Bucket=BUCKET, Key="sub/b.txt", Body=b"world")
     client.put_object(Bucket=BUCKET, Key="sub/deep/c.txt", Body=b"\x00\x01\x02")
 
@@ -56,7 +55,7 @@ class TestProtocolConformance:
 class TestOpenFile:
     def test_read_file(self, fs: S3FS):
         with fs.open_file("a.txt") as f:
-            assert f.read() == b"hello"
+            assert f.read() == _A_TXT
 
     def test_read_nested(self, fs: S3FS):
         with fs.open_file("sub/b.txt") as f:
@@ -89,22 +88,22 @@ class TestReadDir:
 
     def test_file_size(self, fs: S3FS):
         entries = {e.name: e for e in fs.read_dir("")}
-        assert entries["a.txt"].size == 5  # len("hello")
+        assert entries["a.txt"].size == len(_A_TXT)
 
     def test_not_found(self, fs: S3FS):
         with pytest.raises(FileNotFoundError):
             list(fs.read_dir("nope"))
 
-    def test_pagination(self, s3_client: S3Client):
-        """Verify read_dir paginates correctly with >1000 keys."""
+    def test_read_dir_spans_list_pages(self, s3_client: S3Client):
         from ocfl_lib.fs.s3 import S3FS
 
-        for i in range(1050):
+        n = _LIST_OBJECTS_MAX_KEYS + 50
+        for i in range(n):
             s3_client.put_object(Bucket=BUCKET, Key=f"many/{i:04d}.txt", Body=b"x")
         s3fs = S3FS(BUCKET, client=s3_client)
         entries = list(s3fs.read_dir("many"))
         file_entries = [e for e in entries if e.is_file]
-        assert len(file_entries) == 1050
+        assert len(file_entries) == n
 
 
 class TestWrite:
@@ -171,11 +170,10 @@ class TestRemoveAll:
         with pytest.raises(FileNotFoundError):
             fs.remove_all("nope")
 
-    def test_batch_deletion(self, s3_client: S3Client):
-        """Verify batch deletion works for >1000 keys."""
-        from ocfl_lib.fs.s3 import S3FS
+    def test_remove_all_spans_delete_batches(self, s3_client: S3Client):
+        from ocfl_lib.fs.s3 import _DELETE_OBJECTS_MAX_KEYS, S3FS
 
-        for i in range(1050):
+        for i in range(_DELETE_OBJECTS_MAX_KEYS + 50):
             s3_client.put_object(Bucket=BUCKET, Key=f"bulk/{i:04d}.txt", Body=b"x")
         s3fs = S3FS(BUCKET, client=s3_client)
         s3fs.remove_all("bulk")
@@ -253,7 +251,6 @@ class TestRemoveAll:
 
 class TestMkdir:
     def test_noop(self, fs: S3FS, s3_client: S3Client):
-        """mkdir is a no-op on S3 -- should not create any objects."""
         fs.mkdir("newdir")
         resp = s3_client.list_objects_v2(Bucket=BUCKET, Prefix="newdir/")
         assert resp.get("KeyCount", 0) == 0
@@ -264,18 +261,17 @@ class TestMkdir:
         assert resp.get("KeyCount", 0) == 0
 
     def test_existing_ok(self, fs: S3FS):
-        fs.mkdir("sub")  # already has keys under sub/ -- should not raise
+        fs.mkdir("sub")
 
 
 class TestCopy:
     def test_copy_file(self, fs: S3FS, s3_client: S3Client):
         n = fs.copy("a.txt", "copy.txt")
-        assert n == 5
+        assert n == len(_A_TXT)
         body = s3_client.get_object(Bucket=BUCKET, Key="copy.txt")["Body"].read()
-        assert body == b"hello"
-        # Source unchanged
+        assert body == _A_TXT
         src = s3_client.get_object(Bucket=BUCKET, Key="a.txt")["Body"].read()
-        assert src == b"hello"
+        assert src == _A_TXT
 
     def test_copy_nested(self, fs: S3FS, s3_client: S3Client):
         fs.copy("sub/b.txt", "out/b_copy.txt")
@@ -350,25 +346,21 @@ class TestRepr:
 
 
 class TestPrefix:
-    """Verify S3FS with prefix correctly scopes all operations."""
-
     @pytest.fixture
     def prefixed_fs(self, s3_client: S3Client) -> S3FS:
         from ocfl_lib.fs.s3 import S3FS
 
-        # Seed objects under the prefix via raw boto3
-        s3_client.put_object(Bucket=BUCKET, Key="myprefix/a.txt", Body=b"hello")
+        s3_client.put_object(Bucket=BUCKET, Key="myprefix/a.txt", Body=_A_TXT)
         s3_client.put_object(Bucket=BUCKET, Key="myprefix/sub/b.txt", Body=b"world")
         s3_client.put_object(
             Bucket=BUCKET, Key="myprefix/sub/deep/c.txt", Body=b"\x00\x01\x02"
         )
-        # Also put an object outside the prefix to verify isolation
         s3_client.put_object(Bucket=BUCKET, Key="other/outside.txt", Body=b"nope")
         return S3FS(BUCKET, prefix="myprefix", client=s3_client)
 
     def test_open_file(self, prefixed_fs: S3FS):
         with prefixed_fs.open_file("a.txt") as f:
-            assert f.read() == b"hello"
+            assert f.read() == _A_TXT
 
     def test_open_nested(self, prefixed_fs: S3FS):
         with prefixed_fs.open_file("sub/b.txt") as f:
@@ -383,7 +375,6 @@ class TestPrefix:
         names = [e.name for e in entries]
         assert "a.txt" in names
         assert "sub" in names
-        # Object outside prefix must not appear
         assert "other" not in names
         assert "outside.txt" not in names
 
@@ -430,7 +421,7 @@ class TestPrefix:
         body = s3_client.get_object(Bucket=BUCKET, Key="myprefix/a_copy.txt")[
             "Body"
         ].read()
-        assert body == b"hello"
+        assert body == _A_TXT
 
     def test_walk_files(self, prefixed_fs: S3FS):
         refs = sorted(prefixed_fs.walk_files(""), key=lambda r: r.path)

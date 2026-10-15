@@ -1,39 +1,27 @@
-"""Typed preflight helpers for stage commands."""
-
-import click
 import pytest
-import typer
+from fakes import FakeBitcoinRPC, FakeSimpleProof
 from pydantic import SecretStr
+from runner_helpers import probe_ctx
 
 from ocfl_cli._exit import error_class_of
 from ocfl_cli.config import BitcoinConfig, Config, SimpleProofConfig
 from ocfl_cli.errors import CLIError
 from ocfl_cli.exit_codes import ExitCode, exit_code_for_class
+from ocfl_cli.main import production_ports
 from ocfl_cli.model.ots_state import OtsState
 from ocfl_cli.model.phase import Phase
 from ocfl_cli.stage._app import (
     TimestampPreflight,
-    get_factories,
     require_bitcoin,
     require_existing_staging,
     require_simpleproof,
     require_timestamp_preflight,
+    stage_of,
 )
 from ocfl_cli.store.ots_state import save_ots
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow.staging import StagingResolved, require_ots_staging
 from ocfl_lib import DigestAlgorithm, Inventory, InventoryBuilder
-
-
-def _ctx(
-    obj: dict[str, object], *, command_parts: tuple[str, ...] = ("probe",)
-) -> typer.Context:
-    ctx: typer.Context | None = typer.Context(
-        click.Command("ocfl"), info_name="ocfl", obj=obj
-    )
-    for part in command_parts:
-        ctx = typer.Context(click.Command(part), info_name=part, parent=ctx, obj=obj)
-    return ctx
 
 
 def _inventory(object_id: str = "obj:test") -> Inventory:
@@ -47,7 +35,7 @@ def _inventory(object_id: str = "obj:test") -> Inventory:
 
 
 def test_require_simpleproof_rejects_missing_section(capsys) -> None:
-    ctx = _ctx({}, command_parts=("stage", "upgrade"))
+    ctx = probe_ctx(command_parts=("stage", "upgrade"))
 
     with pytest.raises(CLIError) as exc_info:
         require_simpleproof(ctx, Config())
@@ -57,7 +45,7 @@ def test_require_simpleproof_rejects_missing_section(capsys) -> None:
 
 
 def test_require_bitcoin_rejects_missing_section(capsys) -> None:
-    ctx = _ctx({}, command_parts=("stage", "upgrade"))
+    ctx = probe_ctx(command_parts=("stage", "upgrade"))
 
     with pytest.raises(CLIError) as exc_info:
         require_bitcoin(ctx, Config())
@@ -70,9 +58,9 @@ def test_require_existing_staging_returns_typed_resolution(tmp_path) -> None:
     store = StagingStore(tmp_path / "staging")
     root_path = str((tmp_path / "root").resolve())
     store.create(root_path, "obj:test", _inventory())
-    ctx = _ctx({"staging": store, "root": str(tmp_path / "root")})
+    stage = stage_of(probe_ctx(root=str(tmp_path / "root"), staging=store))
 
-    resolved = require_existing_staging(ctx, "obj:test")
+    resolved = require_existing_staging(stage, "obj:test")
 
     assert isinstance(resolved, StagingResolved)
     assert resolved.store is store
@@ -82,10 +70,10 @@ def test_require_existing_staging_returns_typed_resolution(tmp_path) -> None:
 
 def test_require_existing_staging_includes_optional_hint(tmp_path) -> None:
     store = StagingStore(tmp_path / "staging")
-    ctx = _ctx({"staging": store, "root": str(tmp_path / "root")})
+    stage = stage_of(probe_ctx(root=str(tmp_path / "root"), staging=store))
 
     with pytest.raises(CLIError) as exc_info:
-        require_existing_staging(ctx, "obj:missing", hint="run 'stage new' first")
+        require_existing_staging(stage, "obj:missing", hint="run 'stage new' first")
 
     assert exit_code_for_class(error_class_of(exc_info.value)) is ExitCode.GENERIC
     assert "run 'stage new' first" in str(exc_info.value)
@@ -110,18 +98,6 @@ def test_require_ots_staging_accepts_ots_state(tmp_path) -> None:
     require_ots_staging(staging_dir, "obj:test")
 
 
-def test_get_factories_returns_injected_factories() -> None:
-    def sp_factory(_cfg):
-        return object()
-
-    def btc_factory(_cfg):
-        return object()
-
-    ctx = _ctx({"sp_client_factory": sp_factory, "btc_rpc_factory": btc_factory})
-
-    assert get_factories(ctx) == (sp_factory, btc_factory)
-
-
 def test_require_timestamp_preflight_returns_validated_context(tmp_path) -> None:
     store = StagingStore(tmp_path / "staging")
     root_path = str((tmp_path / "root").resolve())
@@ -129,34 +105,30 @@ def test_require_timestamp_preflight_returns_validated_context(tmp_path) -> None
     staging_dir = store.staging_path(root_path, "obj:test")
     save_ots(staging_dir, OtsState(phase=Phase.DRAFTING, category_id=641))
 
-    def sp_factory(_cfg):
-        return object()
-
-    def btc_factory(_cfg):
-        return object()
+    sp_client, btc_client = FakeSimpleProof(), FakeBitcoinRPC()
+    ports = production_ports()
+    ports.sp_client_factory = lambda _cfg: sp_client
+    ports.btc_rpc_factory = lambda _cfg: btc_client
 
     cfg = Config(
-        simpleproof=SimpleProofConfig(
+        simpleproof_section=SimpleProofConfig(
             base_url="https://simpleproof.example",
             proof_category_id=641,
             access_token=SecretStr("token"),
             api_key=SecretStr("key"),
         ),
-        bitcoin=BitcoinConfig(
+        bitcoin_section=BitcoinConfig(
             rpc_url="https://bitcoin.example",
             zmq_endpoint="tcp://127.0.0.1:28332",
             rpc_user="user",
             rpc_password=SecretStr("pass"),
         ),
     )
-    ctx = _ctx(
-        {
-            "config": cfg,
-            "root": str(tmp_path / "root"),
-            "staging": store,
-            "sp_client_factory": sp_factory,
-            "btc_rpc_factory": btc_factory,
-        },
+    ctx = probe_ctx(
+        ports=ports,
+        config=cfg,
+        root=str(tmp_path / "root"),
+        staging=store,
         command_parts=("stage", "upgrade"),
     )
 
@@ -169,5 +141,5 @@ def test_require_timestamp_preflight_returns_validated_context(tmp_path) -> None
     assert isinstance(preflight, TimestampPreflight)
     assert preflight.cfg is cfg
     assert preflight.resolved.staging_dir == staging_dir
-    assert preflight.sp_factory is sp_factory
-    assert preflight.btc_factory is btc_factory
+    assert preflight.sp_factory(cfg) is sp_client
+    assert preflight.btc_factory(cfg) is btc_client

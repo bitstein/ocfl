@@ -1,15 +1,13 @@
-"""Tests for staged version metadata CLI commands."""
-
 from pathlib import Path
 from typing import Any
 
 import pytest
-from click.testing import Result
 from fakes.locks import is_flocked, lock_runtime
 from msgspec.structs import replace
-from runner_helpers import runner_obj
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner
+from typer.testing import Result
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.metadata import StagedMetadata, StagedUser
 from ocfl_cli.model.ots_state import Proof, StagedInventory, VerifyJob
@@ -18,7 +16,7 @@ from ocfl_cli.store.ots_state import load_ots, plan_path, save_ots, with_lock
 from ocfl_cli.store.staging import StagingStore
 
 
-def _invoke(runner: CliRunner, storage_root: Path, staging: Path, *args: str) -> Result:
+def _invoke(runner: ObjRunner, storage_root: Path, staging: Path, *args: str) -> Result:
     return runner.invoke(
         app,
         ["--root", str(storage_root), "stage", "--staging-root", str(staging), *args],
@@ -49,7 +47,7 @@ zmq_endpoint = "tcp://127.0.0.1:28332"
 
 class TestStageNewMetadata:
     def test_new_accepts_initial_metadata(
-        self, runner: CliRunner, storage_root: Path, tmp_path: Path
+        self, runner: ObjRunner, storage_root: Path, tmp_path: Path
     ) -> None:
         staging = tmp_path / "staging"
 
@@ -67,7 +65,7 @@ class TestStageNewMetadata:
             "mailto:alice@example.org",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert _metadata(storage_root, staging, "obj:new") == StagedMetadata(
             message="Initial deposit",
             user=StagedUser(name="Alice", address="mailto:alice@example.org"),
@@ -75,7 +73,7 @@ class TestStageNewMetadata:
 
     def test_new_ots_accepts_initial_metadata(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -98,7 +96,7 @@ class TestStageNewMetadata:
             "mailto:alice@example.org",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert _metadata(storage_root, staging, "obj:ots") == StagedMetadata(
             message="Timestamped deposit",
             user=StagedUser(name="Alice", address="mailto:alice@example.org"),
@@ -114,7 +112,7 @@ class TestStageNewMetadata:
     )
     def test_new_rejects_empty_metadata_value_without_creating_staging(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         args: tuple[str, ...],
@@ -131,7 +129,7 @@ class TestStageNewMetadata:
             *args,
         )
 
-        assert result.exit_code == 2
+        assert result.exit_code == ExitCode.USAGE
         assert expected in result.output.lower()
         store = StagingStore(staging)
         assert not store.exists(str(storage_root.resolve()), "obj:new")
@@ -139,7 +137,7 @@ class TestStageNewMetadata:
 
 class TestStageMetadata:
     def test_metadata_updates_only_supplied_fields(
-        self, runner: CliRunner, storage_root: Path, tmp_path: Path
+        self, runner: ObjRunner, storage_root: Path, tmp_path: Path
     ) -> None:
         staging = tmp_path / "staging"
         assert (
@@ -156,7 +154,7 @@ class TestStageMetadata:
                 "--address",
                 "mailto:alice@example.org",
             ).exit_code
-            == 0
+            == ExitCode.SUCCESS
         )
 
         result = _invoke(
@@ -169,14 +167,14 @@ class TestStageMetadata:
             "Bob",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert _metadata(storage_root, staging, "obj:new") == StagedMetadata(
             message="Initial",
             user=StagedUser(name="Bob", address="mailto:alice@example.org"),
         )
 
     def test_metadata_clears_fields(
-        self, runner: CliRunner, storage_root: Path, tmp_path: Path
+        self, runner: ObjRunner, storage_root: Path, tmp_path: Path
     ) -> None:
         staging = tmp_path / "staging"
         assert (
@@ -193,7 +191,7 @@ class TestStageMetadata:
                 "--address",
                 "mailto:alice@example.org",
             ).exit_code
-            == 0
+            == ExitCode.SUCCESS
         )
 
         result = _invoke(
@@ -206,13 +204,13 @@ class TestStageMetadata:
             "--clear-address",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert _metadata(storage_root, staging, "obj:new") == StagedMetadata(
             user=StagedUser(name="Alice")
         )
 
     def test_clear_name_also_clears_address_unless_address_is_set(
-        self, runner: CliRunner, storage_root: Path, tmp_path: Path
+        self, runner: ObjRunner, storage_root: Path, tmp_path: Path
     ) -> None:
         staging = tmp_path / "staging"
         assert (
@@ -227,7 +225,7 @@ class TestStageMetadata:
                 "--address",
                 "mailto:alice@example.org",
             ).exit_code
-            == 0
+            == ExitCode.SUCCESS
         )
 
         result = _invoke(
@@ -241,7 +239,7 @@ class TestStageMetadata:
             "mailto:bob@example.org",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert _metadata(storage_root, staging, "obj:new") == StagedMetadata(
             user=StagedUser(address="mailto:bob@example.org")
         )
@@ -255,7 +253,7 @@ class TestStageMetadata:
             "--clear-name",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert _metadata(storage_root, staging, "obj:new") == StagedMetadata()
 
     @pytest.mark.parametrize(
@@ -268,24 +266,30 @@ class TestStageMetadata:
     )
     def test_metadata_rejects_set_and_clear_conflict(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         args: tuple[str, ...],
     ) -> None:
         staging = tmp_path / "staging"
-        assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
+        assert (
+            _invoke(runner, storage_root, staging, "new", "obj:new").exit_code
+            == ExitCode.SUCCESS
+        )
 
         result = _invoke(runner, storage_root, staging, "metadata", "obj:new", *args)
 
-        assert result.exit_code == 2
+        assert result.exit_code == ExitCode.USAGE
         assert "incompatible" in result.output.lower()
 
     def test_metadata_rejects_empty_value(
-        self, runner: CliRunner, storage_root: Path, tmp_path: Path
+        self, runner: ObjRunner, storage_root: Path, tmp_path: Path
     ) -> None:
         staging = tmp_path / "staging"
-        assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
+        assert (
+            _invoke(runner, storage_root, staging, "new", "obj:new").exit_code
+            == ExitCode.SUCCESS
+        )
 
         result = _invoke(
             runner,
@@ -297,14 +301,17 @@ class TestStageMetadata:
             "\t",
         )
 
-        assert result.exit_code == 2
+        assert result.exit_code == ExitCode.USAGE
         assert "name" in result.output.lower()
 
     def test_metadata_updates_staging_without_metadata_file(
-        self, runner: CliRunner, storage_root: Path, tmp_path: Path
+        self, runner: ObjRunner, storage_root: Path, tmp_path: Path
     ) -> None:
         staging = tmp_path / "staging"
-        assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
+        assert (
+            _invoke(runner, storage_root, staging, "new", "obj:new").exit_code
+            == ExitCode.SUCCESS
+        )
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
         (store.staging_path(root_path, "obj:new") / "metadata.json").unlink()
@@ -319,20 +326,23 @@ class TestStageMetadata:
             "Recovered metadata",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert _metadata(storage_root, staging, "obj:new") == StagedMetadata(
             message="Recovered metadata"
         )
 
     def test_metadata_command_holds_staging_lock_during_update(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         staging = tmp_path / "staging"
-        assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
+        assert (
+            _invoke(runner, storage_root, staging, "new", "obj:new").exit_code
+            == ExitCode.SUCCESS
+        )
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
         original_save_metadata = StagingStore.save_metadata
@@ -344,7 +354,6 @@ class TestStageMetadata:
             observed_lock = True
             original_save_metadata(self, *args, **kwargs)
 
-        # The store is the adapter: its write must happen under the lock.
         monkeypatch.setattr(StagingStore, "save_metadata", assert_locked)
 
         result = _invoke(
@@ -357,21 +366,24 @@ class TestStageMetadata:
             "Locked update",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert observed_lock
 
     def test_metadata_command_reports_lock_timeout(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         staging = tmp_path / "staging"
-        assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
+        assert (
+            _invoke(runner, storage_root, staging, "new", "obj:new").exit_code
+            == ExitCode.SUCCESS
+        )
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
-        runner_obj(runner)["lock_timeout"] = 0.01
+        runner.ports.lock_timeout = 0.01
 
         with with_lock(staging_dir, lock_runtime(1)):
             result = _invoke(
@@ -384,21 +396,24 @@ class TestStageMetadata:
                 "Blocked update",
             )
 
-        assert result.exit_code == 4
+        assert result.exit_code == ExitCode.LOCK_TIMEOUT
         assert "lock" in result.output.lower()
 
     def test_metadata_usage_error_precedes_lock_timeout(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         staging = tmp_path / "staging"
-        assert _invoke(runner, storage_root, staging, "new", "obj:new").exit_code == 0
+        assert (
+            _invoke(runner, storage_root, staging, "new", "obj:new").exit_code
+            == ExitCode.SUCCESS
+        )
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:new")
-        runner_obj(runner)["lock_timeout"] = 0.01
+        runner.ports.lock_timeout = 0.01
 
         with with_lock(staging_dir, lock_runtime(1)):
             result = _invoke(
@@ -412,7 +427,7 @@ class TestStageMetadata:
                 "--clear-name",
             )
 
-        assert result.exit_code == 2
+        assert result.exit_code == ExitCode.USAGE
         assert "incompatible" in result.output.lower()
 
     @pytest.mark.parametrize(
@@ -420,7 +435,7 @@ class TestStageMetadata:
     )
     def test_metadata_edit_invalidates_inventory_timestamp_state(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -443,7 +458,7 @@ class TestStageMetadata:
                 "--address",
                 "mailto:alice@example.org",
             ).exit_code
-            == 0
+            == ExitCode.SUCCESS
         )
         store = StagingStore(staging)
         staging_dir = store.staging_path(str(storage_root.resolve()), "obj:ots")
@@ -499,23 +514,24 @@ class TestStageMetadata:
             "Updated",
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         updated_state = load_ots(staging_dir)
         assert updated_state.phase is Phase.CONTENT_UPGRADED
         assert updated_state.inventory is None
         assert updated_state.inventory_proof is None
-        # ADR-0004: moving back keeps every proof, job and plan.json.
-        assert updated_state.verify_jobs == (content_job, inventory_job)
+        assert updated_state.verify_jobs == (content_job, inventory_job), (
+            "ADR-0004: moving back keeps every verify job"
+        )
         assert updated_state.proofs == {
             content_digest: content_proof,
             inventory_digest: inv_proof,
-        }
+        }, "ADR-0004: moving back keeps every proof"
         assert updated_state.pending_digests == (content_digest,)
-        assert plan_path(staging_dir).exists()
+        assert plan_path(staging_dir).exists(), "ADR-0004: moving back keeps plan.json"
 
     def test_metadata_edit_invalidates_ots_state_before_metadata_write(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -537,7 +553,7 @@ class TestStageMetadata:
                 "--address",
                 "mailto:alice@example.org",
             ).exit_code
-            == 0
+            == ExitCode.SUCCESS
         )
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -598,7 +614,7 @@ class TestStageMetadata:
             "Updated",
         )
 
-        assert result.exit_code != 0
+        assert result.exit_code != ExitCode.SUCCESS
         assert observed_safe_order
         assert _metadata(storage_root, staging, "obj:ots").message == "Initial"
         updated_state = load_ots(staging_dir)

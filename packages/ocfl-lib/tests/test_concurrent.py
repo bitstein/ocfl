@@ -1,5 +1,3 @@
-"""Tests for bounded_map."""
-
 import math
 import threading
 import time
@@ -19,22 +17,22 @@ class TestBoundedMap:
 
     def test_fail_fast(self):
         called = set()
+        fail_at = 5
+        cap = 4
 
         def fn(x: int) -> int:
             called.add(x)
-            if x == 5:
+            if x == fail_at:
                 raise ValueError("boom")
             time.sleep(0.01)
             return x
 
         with pytest.raises(ValueError, match="boom"):
-            list(bounded_map(fn, range(100), max_workers=2, max_outstanding=4))
+            list(bounded_map(fn, range(100), max_workers=2, max_outstanding=cap))
 
-        # Items well beyond the window should never be called
-        assert max(called) < 20
+        assert max(called) < fail_at + cap
 
-    def test_bounded_memory(self):
-        """Peak in-flight futures stay within window size."""
+    def test_peak_in_flight_stays_within_outstanding_cap(self):
         peak = [0]
         current = [0]
         lock = threading.Lock()
@@ -52,8 +50,7 @@ class TestBoundedMap:
         workers = 4
         cap = 2 * workers
         list(bounded_map(fn, range(200), max_workers=workers, max_outstanding=cap))
-        # Peak should be at most max_outstanding + small margin
-        assert peak[0] <= 2 * workers + workers
+        assert peak[0] <= cap
 
     def test_submission_does_not_exceed_outstanding_cap_before_yield(self):
         release = threading.Event()
@@ -106,16 +103,14 @@ class TestBoundedMap:
             time.sleep(0.01)
             return x
 
-        gen = bounded_map(fn, range(10000), max_workers=2, max_outstanding=4)
+        cap = 4
+        gen = bounded_map(fn, range(10000), max_workers=2, max_outstanding=cap)
         next(gen)
         gen.close()
 
-        # Should not have processed all 10k items
-        assert call_count[0] < 100
+        assert call_count[0] <= cap + 1
 
     def test_preserves_order(self):
-        """Results come back in submission order even with varying latency."""
-
         def fn(x: int) -> int:
             time.sleep(0.001 * (x % 3))
             return x

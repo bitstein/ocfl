@@ -1,5 +1,3 @@
-"""Text renderers shared by the stage commands."""
-
 from typing import TYPE_CHECKING
 
 import typer

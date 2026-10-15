@@ -1,17 +1,19 @@
-"""Tests for ocfl stage discard."""
-
 from pathlib import Path
 
 import pytest
 from msgspec.structs import replace
+from ots_helpers import verified_content_proof
+from runner_helpers import staging_dir
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import (
     OtsState,
     Proof,
     StagedInventory,
     Submission,
+    SubmissionStatus,
     VerifyJob,
 )
 from ocfl_cli.model.phase import Phase, TimestampTarget
@@ -41,51 +43,28 @@ class TestStageDiscard:
         assert store.exists(root_path, "obj:new")
 
         result = _invoke(runner, storage_root, staging, "discard", "obj:new")
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert not store.exists(root_path, "obj:new")
 
     def test_discard_no_staging_warns(self, runner, storage_root, tmp_path):
-        """Discard on non-existent staging warns and exits 0."""
         staging = tmp_path / "staging"
         result = _invoke(runner, storage_root, staging, "discard", "obj:nope")
-        assert result.exit_code == 0
-        # Should have a warning
+        assert result.exit_code == ExitCode.SUCCESS
         assert "no staging" in result.output.lower() or "warn" in result.output.lower()
 
 
-def _staging_dir(storage_root: Path, staging: Path, object_id: str) -> Path:
-    return StagingStore(staging).staging_path(str(storage_root.resolve()), object_id)
-
-
-def _mk_ots_staging(
+def _plain_staging_plus_drafting_ots_json(
     runner: CliRunner,
     storage_root: Path,
     staging: Path,
     object_id: str,
 ) -> Path:
-    """Create a basic staging area + write `ots.json` at fresh drafting.
-
-    Side-steps the [simpleproof]/[bitcoin] preflight that `stage new --ots`
-    runs by creating a non-OTS staging then dropping `ots.json` directly.
-    Sufficient because the discard command only inspects `ots.json` shape.
-    """
     r = _invoke(runner, storage_root, staging, "new", object_id)
-    assert r.exit_code == 0, r.output
-    sd = _staging_dir(storage_root, staging, object_id)
+    assert r.exit_code == ExitCode.SUCCESS, r.output
+    sd = staging_dir(storage_root, staging, object_id)
     save_ots(sd, OtsState(phase=Phase.DRAFTING, category_id=641))
     assert has_ots(sd)
     return sd
-
-
-def _verified_proof(digest: str = "deadbeef" * 8) -> Proof:
-    return Proof(
-        target=TimestampTarget.CONTENT,
-        ots_path=f"ots-cache/{digest}.ots",
-        verified=True,
-        block_height=800_000,
-        confirmations_at_verify=3,
-        verified_at="2026-04-23T16:30:00+00:00",
-    )
 
 
 def _inv_proof(version: str = "v1", digest: str = "feedface" * 8) -> StagedInventory:
@@ -96,13 +75,13 @@ INV_DIGEST = "feedface" * 8
 
 
 def _inv_proof_entry() -> Proof:
-    return replace(_verified_proof(INV_DIGEST), target=TimestampTarget.INVENTORY)
+    return replace(verified_content_proof(INV_DIGEST), target=TimestampTarget.INVENTORY)
 
 
 def _submission(
     digest: str,
     *,
-    status: str = "submitted",
+    status: SubmissionStatus = "submitted",
     batch_id: str | None = None,
     target: TimestampTarget = TimestampTarget.CONTENT,
 ) -> Submission:
@@ -111,7 +90,6 @@ def _submission(
         digests=(digest,),
         status=status,
         target=target,
-        job_id="job-1",
         attempts=1,
         batch_id=batch_id,
     )
@@ -145,7 +123,7 @@ class TestForceRequiredAtNonDraftingPhase:
                 {
                     "pending_digests": ("a" * 64,),
                     "submissions": (_submission("a" * 64),),
-                    "proofs": {"a" * 64: _verified_proof("a" * 64)},
+                    "proofs": {"a" * 64: verified_content_proof("a" * 64)},
                 },
             ),
             (
@@ -153,7 +131,7 @@ class TestForceRequiredAtNonDraftingPhase:
                 {
                     "submissions": (_submission("a" * 64), _submission("b" * 64)),
                     "proofs": {
-                        "a" * 64: _verified_proof("a" * 64),
+                        "a" * 64: verified_content_proof("a" * 64),
                         INV_DIGEST: _inv_proof_entry(),
                     },
                     "inventory": _inv_proof(),
@@ -163,7 +141,7 @@ class TestForceRequiredAtNonDraftingPhase:
                 Phase.INVENTORY_UPGRADED,
                 {
                     "proofs": {
-                        "a" * 64: _verified_proof("a" * 64),
+                        "a" * 64: verified_content_proof("a" * 64),
                         INV_DIGEST: _inv_proof_entry(),
                     },
                     "inventory": _inv_proof(),
@@ -186,7 +164,9 @@ class TestForceRequiredAtNonDraftingPhase:
         fields: dict[str, object],
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:gated")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:gated"
+        )
         _pin_state(sd, phase, **fields)
 
         store = StagingStore(staging)
@@ -195,7 +175,7 @@ class TestForceRequiredAtNonDraftingPhase:
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:gated")
 
-        assert r.exit_code != 0, (
+        assert r.exit_code != ExitCode.SUCCESS, (
             f"discard at phase {phase.value!r} with persisted progress "
             f"must require --force; got exit=0 output={r.output!r}"
         )
@@ -220,7 +200,7 @@ class TestForceRequiredAtNonDraftingPhase:
                 Phase.INVENTORY_UPGRADED,
                 {
                     "proofs": {
-                        "a" * 64: _verified_proof("a" * 64),
+                        "a" * 64: verified_content_proof("a" * 64),
                         INV_DIGEST: _inv_proof_entry(),
                     },
                     "inventory": _inv_proof(),
@@ -238,7 +218,9 @@ class TestForceRequiredAtNonDraftingPhase:
         fields: dict[str, object],
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:gated-force")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:gated-force"
+        )
         _pin_state(sd, phase, **fields)
 
         store = StagingStore(staging)
@@ -247,7 +229,7 @@ class TestForceRequiredAtNonDraftingPhase:
         r = _invoke(
             runner, storage_root, staging, "discard", "obj:gated-force", "--force"
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert not store.exists(root_path, "obj:gated-force"), (
             "discard --force must purge staging at any phase"
         )
@@ -261,23 +243,23 @@ class TestForceRequiredAtDraftingAfterRegression:
         tmp_path: Path,
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:regressed")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:regressed"
+        )
 
-        # Mirrors post-rm/mv regression shape: phase=drafting but
-        # proofs preserved — that still counts as progress.
         da = "a" * 64
         _pin_state(
             sd,
             Phase.DRAFTING,
             pending_digests=(da,),
-            proofs={da: _verified_proof(da)},
+            proofs={da: verified_content_proof(da)},
         )
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:regressed")
-        assert r.exit_code != 0, (
+        assert r.exit_code != ExitCode.SUCCESS, (
             "drafting + preserved proofs must still require --force; "
             f"got exit=0 output={r.output!r}"
         )
@@ -287,7 +269,7 @@ class TestForceRequiredAtDraftingAfterRegression:
         r2 = _invoke(
             runner, storage_root, staging, "discard", "obj:regressed", "--force"
         )
-        assert r2.exit_code == 0, r2.output
+        assert r2.exit_code == ExitCode.SUCCESS, r2.output
         assert not store.exists(root_path, "obj:regressed")
 
 
@@ -299,7 +281,9 @@ class TestForceNotRequiredAtFreshDrafting:
         tmp_path: Path,
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:fresh")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:fresh"
+        )
         s = load_ots(sd)
         assert s.phase is Phase.DRAFTING
         assert s.submissions == ()
@@ -311,7 +295,7 @@ class TestForceNotRequiredAtFreshDrafting:
         root_path = str(storage_root.resolve())
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:fresh")
-        assert r.exit_code == 0, (
+        assert r.exit_code == ExitCode.SUCCESS, (
             f"fresh drafting must not require --force; got {r.output!r}"
         )
         assert not store.exists(root_path, "obj:fresh")
@@ -325,7 +309,9 @@ class TestDiscardPurgesOtsCache:
         tmp_path: Path,
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:cache")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:cache"
+        )
 
         da = "a" * 64
         _pin_state(
@@ -333,7 +319,7 @@ class TestDiscardPurgesOtsCache:
             Phase.CONTENT_UPGRADED,
             pending_digests=(da,),
             submissions=(_submission(da),),
-            proofs={da: _verified_proof(da)},
+            proofs={da: verified_content_proof(da)},
         )
 
         cache = ots_cache_path(sd, da)
@@ -343,7 +329,7 @@ class TestDiscardPurgesOtsCache:
         assert cache_dir.is_dir() and cache.is_file()
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:cache", "--force")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
@@ -364,7 +350,9 @@ class TestDiscardWarnMessage:
         tmp_path: Path,
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:batch")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:batch"
+        )
 
         batch_id = "018f1f7e-7b4a-7c6a-8a2b-4a7f4c2e9d10"
         _pin_state(
@@ -376,7 +364,7 @@ class TestDiscardWarnMessage:
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:batch")
 
-        assert r.exit_code != 0, r.output
+        assert r.exit_code != ExitCode.SUCCESS, r.output
         assert batch_id in r.output
         assert f"ocfl stage batch status {batch_id}" in r.output
 
@@ -387,7 +375,9 @@ class TestDiscardWarnMessage:
         tmp_path: Path,
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:inventory-batch")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:inventory-batch"
+        )
 
         batch_id = "018f1f7e-7b4a-7c6a-8a2b-4a7f4c2e9d10"
         _pin_state(
@@ -395,7 +385,6 @@ class TestDiscardWarnMessage:
             Phase.INVENTORY_PENDING,
             inventory=_inv_proof(),
             proofs={INV_DIGEST: _inv_proof_entry()},
-            # The inventory's batch lives on its Submission, like content's.
             submissions=(
                 _submission(
                     INV_DIGEST, batch_id=batch_id, target=TimestampTarget.INVENTORY
@@ -405,7 +394,7 @@ class TestDiscardWarnMessage:
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:inventory-batch")
 
-        assert r.exit_code != 0, r.output
+        assert r.exit_code != ExitCode.SUCCESS, r.output
         assert batch_id in r.output
         assert f"ocfl stage batch status {batch_id}" in r.output
 
@@ -416,7 +405,9 @@ class TestDiscardWarnMessage:
         tmp_path: Path,
     ) -> None:
         staging = tmp_path / "staging"
-        sd = _mk_ots_staging(runner, storage_root, staging, "obj:warn")
+        sd = _plain_staging_plus_drafting_ots_json(
+            runner, storage_root, staging, "obj:warn"
+        )
 
         da, db = "a" * 64, "b" * 64
         _pin_state(
@@ -426,15 +417,15 @@ class TestDiscardWarnMessage:
             submissions=(_submission(da), _submission(db)),
             verify_jobs=(_verify_job(da),),
             proofs={
-                da: _verified_proof(da),
-                db: _verified_proof(db),
+                da: verified_content_proof(da),
+                db: verified_content_proof(db),
                 INV_DIGEST: _inv_proof_entry(),
             },
             inventory=_inv_proof(),
         )
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:warn", "--force")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         out = r.output
         assert Phase.INVENTORY_PENDING.value in out, (
@@ -464,9 +455,9 @@ class TestNonOtsDiscardUnchanged:
     ) -> None:
         staging = tmp_path / "staging"
         r = _invoke(runner, storage_root, staging, "new", "obj:plain")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
-        sd = _staging_dir(storage_root, staging, "obj:plain")
+        sd = staging_dir(storage_root, staging, "obj:plain")
         assert not has_ots(sd), "non-OTS staging must not have ots.json"
 
         store = StagingStore(staging)
@@ -474,6 +465,6 @@ class TestNonOtsDiscardUnchanged:
         assert store.exists(root_path, "obj:plain")
 
         r = _invoke(runner, storage_root, staging, "discard", "obj:plain")
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert not store.exists(root_path, "obj:plain")
         assert "--force" not in r.output

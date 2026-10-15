@@ -1,7 +1,4 @@
-"""Shared CLI test fixtures."""
-
 import json
-import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,17 +10,16 @@ from fakes import (
     InMemoryHashBlockStream,
     RecordingSleeper,
 )
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner
+from seed_root import build_seed_root
 
 from ocfl_cli.ports import Runtime
 from ocfl_cli.system import SYSTEM_CLOCK
 from ocfl_lib import (
-    DigestAlgorithm,
     LocalFS,
     Spec,
     StorageRoot,
     get_layout,
-    scan_dir,
 )
 from tests.helpers.regtest import (
     RegtestNode,
@@ -57,7 +53,6 @@ def pytest_collection_modifyitems(
 
 @pytest.fixture(autouse=True)
 def _isolate_user_config(tmp_path_factory, monkeypatch):
-    """Keep config and dotenv reads inside pytest-owned temp paths."""
     base = tmp_path_factory.mktemp("ocfl-config")
     sentinel = base / "config.toml"
     env_file = base / ".env"
@@ -73,25 +68,8 @@ def _isolate_user_config(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture
-def runner():
-    """CliRunner that auto-attaches a per-test ``obj`` dict to every invoke.
-
-    Tests inject `sp_client_factory` / `btc_rpc_factory` into ``runner.obj``
-    (typically via per-file `_inject_fake_*` helpers); the wrapper passes
-    the dict through to ``CliRunner.invoke(obj=...)``. Explicit ``obj=``
-    kwargs from callers win.
-    """
-    runner = CliRunner()
-    obj: dict = {}
-    runner.obj = obj  # type: ignore[attr-defined]
-    original_invoke = runner.invoke
-
-    def invoke(*args, **kwargs):
-        kwargs.setdefault("obj", obj)
-        return original_invoke(*args, **kwargs)
-
-    runner.invoke = invoke  # type: ignore[method-assign]
-    return runner
+def runner() -> ObjRunner:
+    return ObjRunner()
 
 
 @pytest.fixture
@@ -103,26 +81,18 @@ def fixtures_root() -> Path:
 
 @pytest.fixture
 def storage_root(tmp_path: Path) -> Path:
-    """Create a valid storage root with one object for testing."""
-    fs = LocalFS(tmp_path)
-    layout = get_layout("0002-flat-direct-storage-layout")
-    root = StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
-
-    # Create a test object with 2 versions
-    obj_dir = tmp_path / "test-files"
-    obj_dir.mkdir()
-    (obj_dir / "file1.txt").write_text("hello")
-    stage = scan_dir(fs, "test-files", DigestAlgorithm.SHA512)
-    root.commit(fs, "obj:test", stage, message="v1")
-
-    # v2
-    (obj_dir / "file2.txt").write_text("world")
-    stage2 = scan_dir(fs, "test-files", DigestAlgorithm.SHA512)
-    root.commit(fs, "obj:test", stage2, message="v2")
-
-    shutil.rmtree(obj_dir)
-
+    build_seed_root(tmp_path)
     return tmp_path
+
+
+@pytest.fixture
+def empty_sha256_root(tmp_path: Path) -> Path:
+    location = tmp_path / "root"
+    location.mkdir()
+    fs = LocalFS(location)
+    layout = get_layout("0002-flat-direct-storage-layout")
+    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
+    return location
 
 
 @dataclass
@@ -148,7 +118,6 @@ def sleeper() -> RecordingSleeper:
 
 @pytest.fixture
 def runtime(sleeper: RecordingSleeper) -> Runtime:
-    """The ports for calling use cases directly: real clock, no real sleeps."""
     return Runtime(
         clock=SYSTEM_CLOCK,
         sleeper=sleeper,
@@ -186,21 +155,7 @@ def bitcoind_regtest(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Regte
     node = start_regtest(binary, datadir)
     try:
         ensure_wallet(node)
-        fund_wallet(node, "ocfltest", blocks=101)
+        fund_wallet(node, "ocfltest")
         yield node
     finally:
         stop_regtest(node)
-
-
-@pytest.fixture
-def real_ots_bytes(bitcoind_regtest: RegtestNode) -> bytes:
-    """Real OTS attestation for ``b"hello regtest"`` against bitcoind regtest."""
-    import hashlib
-
-    from tests.helpers.ots import build_regtest_attestation
-
-    digest = hashlib.sha256(b"hello regtest").digest()
-    ots_bytes, _height, _block_hash = build_regtest_attestation(
-        bitcoind_regtest, digest
-    )
-    return ots_bytes

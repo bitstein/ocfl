@@ -17,6 +17,7 @@ from ocfl_lib import (
     ObjectLockedError,
     RecoveryRequiredError,
     Spec,
+    StaleHeadError,
     StorageRoot,
     UnsupportedBackendError,
     get_layout,
@@ -60,8 +61,7 @@ def _root(fs) -> StorageRoot:
     return StorageRoot.open(fs)
 
 
-def _ots_object(fs, src: Path):
-    """An OTS object at v1 and the plan (with proof) for its v2."""
+def _ots_v1_and_proved_v2_plan(fs, src: Path):
     root = _root(fs)
     vs1 = _stage(src, "s1", _ots({"a.txt": b"a"}))
     p1 = _with_proof(root.plan(OID, vs1, created="2026-01-01T00:00:00Z"))
@@ -101,7 +101,7 @@ class TestLocal:
     def test_existing_object_claims_then_proof_inventory_sidecar(self, tmp_path):
         d = tmp_path / "root"
         d.mkdir()
-        root, plan, content = _ots_object(LocalFS(d), tmp_path)
+        root, plan, content = _ots_v1_and_proved_v2_plan(LocalFS(d), tmp_path)
         obj = root.object_path(OID)
         rec = Recorder(d)
         root.commit(rec, OID, plan, content=content)
@@ -159,6 +159,43 @@ class TestLocal:
         assert sorted(p for p in d.rglob("*") if p.is_file()) == before
         assert not any(target.iterdir())
 
+    @pytest.mark.parametrize(("prunes", "claimed"), [(2, True), (3, False)])
+    def test_new_object_claim_outlasts_pruned_parent(self, tmp_path, prunes, claimed):
+        d = tmp_path / "root"
+        d.mkdir()
+
+        class PrunedParent(LocalFS):
+            left = prunes
+
+            def rename_noreplace(self, src, dst):
+                if self.left:
+                    self.left -= 1
+                    (d / dst).parent.rmdir()
+                return super().rename_noreplace(src, dst)
+
+        fs = PrunedParent(d)
+        root = _root(fs)
+        vs = _stage(tmp_path, "s", {"a.txt": b"a"})
+        if claimed:
+            root.commit(fs, OID, root.plan(OID, vs), content=vs.content_source)
+            assert validate_root(LocalFS(d), "").is_valid
+        else:
+            with pytest.raises(ClaimLostError, match="parent keeps disappearing"):
+                root.commit(fs, OID, root.plan(OID, vs), content=vs.content_source)
+
+    def test_refused_commit_leaves_no_work_dir(self, tmp_path):
+        d = tmp_path / "root"
+        d.mkdir()
+        fs = LocalFS(d)
+        root = _root(fs)
+        vs = _stage(tmp_path, "s", {"a.txt": b"a"})
+        stale = root.plan(OID, vs)
+        root.commit(fs, OID, root.plan(OID, vs), content=vs.content_source)
+        with pytest.raises(StaleHeadError):
+            root.commit(fs, OID, stale, content=vs.content_source)
+        assert not (d / "extensions" / "NNNN-work-dir").exists()
+        assert validate_root(fs, "").is_valid
+
     def test_empty_target_is_not_replaced(self, tmp_path):
         fs = LocalFS(tmp_path)
         (tmp_path / "a").mkdir()
@@ -201,7 +238,7 @@ class TestLocal:
         d = tmp_path / "root"
         d.mkdir()
         fs = LocalFS(d)
-        root, plan, content = _ots_object(fs, tmp_path)
+        root, plan, content = _ots_v1_and_proved_v2_plan(fs, tmp_path)
         stale = d / root.object_path(OID) / OTS / "inventory.json.v2.ots"
         stale.write_bytes(b"stale")
         root.commit(fs, OID, plan, content=content)
@@ -272,7 +309,7 @@ class TestS3:
         from ocfl_lib.fs.s3 import S3FS
 
         fs = S3FS(BUCKET, client=s3)
-        root, plan, content = _ots_object(fs, tmp_path)
+        root, plan, content = _ots_v1_and_proved_v2_plan(fs, tmp_path)
         obj = root.object_path(OID)
         log: list = []
         rec = _record(s3, log)
@@ -371,8 +408,6 @@ class TestS3:
 
 
 class _Swapped:
-    """A content source that hands over the wrong bytes for every digest."""
-
     def __init__(self, tmp_path: Path) -> None:
         (tmp_path / "wrong").write_bytes(b"not what the manifest says")
         self.fs = LocalFS(tmp_path)

@@ -1,6 +1,3 @@
-"""Batch creation: pick the objects, prepare each row, recover lost intents."""
-
-from pathlib import Path  # noqa: TC003 - Typer reads option annotations at runtime.
 from typing import TYPE_CHECKING
 
 import msgspec
@@ -28,6 +25,8 @@ from ocfl_cli.workflow.batch.reasons import (
 from ocfl_cli.workflow.targets import Area, rules_for
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from ocfl_cli.model.ots_state import OtsState
     from ocfl_cli.model.phase import TimestampTarget
     from ocfl_cli.ports import Runtime
@@ -60,7 +59,6 @@ def replace_batch_object(
 def object_has_other_batch(
     state: OtsState, batch_id: str, target: TimestampTarget
 ) -> str | None:
-    """The other batch still waiting on one of the object's submissions of `target`."""
     for submission in state.submissions:
         if (
             submission.target is target
@@ -95,8 +93,8 @@ def prepare_batch_object(
             skipped_reason=fixed_batch_reason(reason),
         )
     try:
-        with with_lock(staging_dir, runtime):
-            state = load_ots(staging_dir)
+        with with_lock(staging_dir, runtime) as staging:
+            state = load_ots(staging)
             if state.category_id != batch.category_id:
                 return batch_model.BatchObject(
                     object_id=object_id,
@@ -119,6 +117,7 @@ def prepare_batch_object(
                     object_id=object_id,
                     staging_dir=staging_dir,
                 ),
+                staging,
                 category_config=cfg.simpleproof.proof_category_id,
                 runtime=runtime,
                 expect=target,
@@ -134,7 +133,7 @@ def prepare_batch_object(
                         else fixed_batch_reason("no_new_digests")
                     ),
                 )
-            state = load_ots(staging_dir)
+            state = load_ots(staging)
             submissions = tuple(
                 msgspec.structs.replace(
                     s,
@@ -145,9 +144,7 @@ def prepare_batch_object(
                 else s
                 for s in state.submissions
             )
-            save_ots(
-                staging_dir, msgspec.structs.replace(state, submissions=submissions)
-            )
+            save_ots(staging, msgspec.structs.replace(state, submissions=submissions))
             return batch_model.BatchObject(
                 object_id=object_id, status="prepared", digests=prepared.digests
             )
@@ -226,7 +223,6 @@ def merge_recovered_object_intents(
 def recover_intent(
     batch: batch_model.BatchFile, object_id: str, state: OtsState
 ) -> batch_model.BatchObject | None:
-    """The row of the object's submission tagged with this batch, if any."""
     for submission in state.submissions:
         if (
             submission.batch_id != batch.batch_id

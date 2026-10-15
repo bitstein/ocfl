@@ -1,5 +1,3 @@
-"""Tests for OCFL Object read operations."""
-
 from typing import TYPE_CHECKING
 
 import pytest
@@ -15,8 +13,6 @@ if TYPE_CHECKING:
 
 
 class TestObjectReadExisting:
-    """Object class — read existing objects from fixtures."""
-
     def test_exists_true(self, good_objects_1_1: Path):
         obj_path = good_objects_1_1 / "minimal_one_version_one_file"
         fsys = LocalFS(obj_path)
@@ -64,7 +60,7 @@ class TestObjectReadExisting:
         obj = Object(fsys, "")
         stored = obj.inventory
         assert stored.inventory.id == "ark:123/abc"
-        assert stored.digest  # non-empty digest
+        assert stored.digest
 
     def test_inventory_cached(self, good_objects_1_1: Path):
         obj_path = good_objects_1_1 / "minimal_one_version_one_file"
@@ -73,6 +69,16 @@ class TestObjectReadExisting:
         inv1 = obj.inventory
         inv2 = obj.inventory
         assert inv1 is inv2
+
+    def test_load_reads_inventory_up_front(self, good_objects_1_1: Path):
+        fsys = LocalFS(good_objects_1_1 / "minimal_one_version_one_file")
+        assert Object.load(fsys, "").id == "ark:123/abc"
+
+    def test_load_fails_where_constructor_defers(self, tmp_path: Path):
+        fsys = LocalFS(tmp_path)
+        Object(fsys, "missing")
+        with pytest.raises(FileNotFoundError):
+            Object.load(fsys, "missing")
 
     def test_versions_single(self, good_objects_1_1: Path):
         obj_path = good_objects_1_1 / "minimal_one_version_one_file"
@@ -87,7 +93,6 @@ class TestObjectReadExisting:
         assert obj.versions() == [VNum(1), VNum(2), VNum(3)]
 
     def test_version_inventory_head(self, good_objects_1_1: Path):
-        """Head version inventory should exist and match root."""
         obj_path = good_objects_1_1 / "minimal_one_version_one_file"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
@@ -96,15 +101,12 @@ class TestObjectReadExisting:
         assert vinv.inventory.id == obj.id
 
     def test_version_inventory_missing(self, good_objects_1_1: Path):
-        """Version inventory for non-existent version returns None."""
         obj_path = good_objects_1_1 / "minimal_one_version_one_file"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
         assert obj.version_inventory(VNum(99)) is None
 
     def test_sidecar_validated_on_load(self, tmp_path: Path):
-        """Sidecar mismatch raises on inventory load."""
-        # Create a minimal object with a bad sidecar
         obj_dir = tmp_path / "obj"
         obj_dir.mkdir()
         (obj_dir / "0=ocfl_object_1.1").write_text("ocfl_object_1.1\n")
@@ -141,14 +143,11 @@ class TestObjectReadExisting:
 
 
 class TestVersionContentAccess:
-    """Version content access."""
-
     def test_version_state(self, good_objects_1_1: Path):
         obj_path = good_objects_1_1 / "minimal_one_version_one_file"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
         state = obj.version_info(VNum(1)).state
-        # state is digest → [logical_paths]
         assert len(state) == 1
         paths = next(iter(state.values()))
         assert paths == ["a_file.txt"]
@@ -157,11 +156,9 @@ class TestVersionContentAccess:
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
-        # v1 has 3 files: foo/bar.xml, empty.txt, image.tiff
         state_v1 = obj.version_info(VNum(1)).state
         v1_paths = sorted(p for paths in state_v1.values() for p in paths)
         assert v1_paths == ["empty.txt", "foo/bar.xml", "image.tiff"]
-        # v2: foo/bar.xml modified, image.tiff removed, empty2.txt added
         state_v2 = obj.version_info(VNum(2)).state
         v2_paths = sorted(p for paths in state_v2.values() for p in paths)
         assert v2_paths == ["empty.txt", "empty2.txt", "foo/bar.xml"]
@@ -188,7 +185,6 @@ class TestVersionContentAccess:
         obj_path = good_objects_1_1 / "minimal_one_version_one_file"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
-        # Get the digest from state
         state = obj.version_info(VNum(1)).state
         digest = next(iter(state.keys()))
         cp = obj.content_path(digest)
@@ -209,7 +205,6 @@ class TestVersionContentAccess:
         assert content == b"Hello! I am a file.\n"
 
     def test_open_logical_path_multi_version(self, good_objects_1_1: Path):
-        """Read same logical path from different versions gets different content."""
         obj_path = good_objects_1_1 / "updates_three_versions_one_file"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
@@ -227,32 +222,25 @@ class TestVersionContentAccess:
             obj.open_logical_path(VNum(1), "nonexistent.txt")
 
     def test_open_logical_path_custom_content_dir(self, good_objects_1_1: Path):
-        """Object with custom contentDirectory should still resolve paths."""
         obj_path = good_objects_1_1 / "minimal_content_dir_called_stuff"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
-        # This fixture uses contentDirectory="stuff"
         state = obj.version_info(VNum(1)).state
         logical_path = next(iter(state.values()))[0]
         with obj.open_logical_path(VNum(1), logical_path) as f:
-            assert f.read()  # non-empty content
+            assert f.read()
 
     def test_open_logical_path_cross_version_dedup(self, good_objects_1_1: Path):
-        """v3 reuses image.tiff from v1 content — manifest resolves across versions."""
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
-        # v3 state has image.tiff, but content lives in v1/content/
         with obj.open_logical_path(VNum(3), "image.tiff") as f:
             data = f.read()
         assert len(data) > 0
 
 
 class TestObjectDiff:
-    """Object diff between versions."""
-
     def test_diff_no_changes(self, good_objects_1_1: Path):
-        """Diffing a version against itself yields no entries."""
         obj_path = good_objects_1_1 / "minimal_one_version_one_file"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
@@ -260,7 +248,6 @@ class TestObjectDiff:
         assert diff == []
 
     def test_diff_modified_file(self, good_objects_1_1: Path):
-        """v1→v2: a_file.txt modified (different digest, same path)."""
         obj_path = good_objects_1_1 / "updates_three_versions_one_file"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
@@ -274,7 +261,6 @@ class TestObjectDiff:
         assert entry.digest_before != entry.digest_after
 
     def test_diff_spec_ex_full_v1_v2(self, good_objects_1_1: Path):
-        """v1→v2: bar.xml modified, image.tiff deleted, empty2.txt added."""
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
@@ -286,7 +272,6 @@ class TestObjectDiff:
         assert by_path["empty2.txt"].action == "added"
 
     def test_diff_spec_ex_full_v2_v3(self, good_objects_1_1: Path):
-        """spec-ex-full v2→v3: image.tiff reinstated, empty.txt deleted."""
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
@@ -297,7 +282,6 @@ class TestObjectDiff:
         assert by_path["empty.txt"].action == "deleted"
 
     def test_diff_rename_detection(self, good_objects_1_1: Path):
-        """v1→v2: poe.txt renamed to poe-nevermore.txt (same digest)."""
         obj_path = good_objects_1_1 / "updates_all_actions"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
@@ -309,7 +293,6 @@ class TestObjectDiff:
         assert rename.renamed_from == "my_content/poe.txt"
 
     def test_diff_entry_fields(self, good_objects_1_1: Path):
-        """DiffEntry has expected fields for an added file."""
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
@@ -323,7 +306,6 @@ class TestObjectDiff:
         assert entry.renamed_from is None
 
     def test_diff_deleted_entry_fields(self, good_objects_1_1: Path):
-        """DiffEntry for deleted file has digest_before but no digest_after."""
         obj_path = good_objects_1_1 / "spec-ex-full"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")
@@ -336,7 +318,6 @@ class TestObjectDiff:
         assert entry.renamed_from is None
 
     def test_diff_updates_all_actions_v2_v3(self, good_objects_1_1: Path):
-        """v2→v3: a_second_copy removed, poe-nevermore modified."""
         obj_path = good_objects_1_1 / "updates_all_actions"
         fsys = LocalFS(obj_path)
         obj = Object(fsys, "")

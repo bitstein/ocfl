@@ -280,11 +280,11 @@ def test_sniff_failure_rolls_back_transaction(
             pass
 
 
-def test_commit_failure_releases_writer_lock(
+def test_deferred_fk_violation_at_commit_releases_writer_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Deferred-FK violations surface at COMMIT; scanner must release the lock."""
     fixture = FixtureRoot(tmp_path)
     fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
 
@@ -302,10 +302,51 @@ def test_commit_failure_releases_writer_lock(
             return 0
 
         monkeypatch.setattr(scanner, "sniff_pass", inject_deferred_violation)
-        with pytest.raises(sqlite3.IntegrityError):
+        with (
+            caplog.at_level(logging.WARNING, logger=_SCANNER_LOGGER),
+            pytest.raises(sqlite3.IntegrityError),
+        ):
             scan(idx._conn, idx.storage_root, full=False)
 
         assert idx._conn.in_transaction is False
-        # Writer lock released — a fresh tx must succeed.
         with db.immediate_transaction(idx._conn):
             pass
+
+    [rec] = [r for r in caplog.records if r.name == _SCANNER_LOGGER]
+    assert rec.message.startswith(
+        "scan failed during metadata update: FOREIGN KEY constraint failed; "
+        "rolled back refresh transaction"
+    )
+    assert rec.__dict__["phase"] == "metadata update"
+    assert rec.__dict__["relpath"] is None
+
+
+def test_interrupt_rolls_back_without_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
+
+    with Index.open(tmp_path / "i.db", fixture.path) as idx:
+        scan(idx._conn, idx.storage_root, full=False)
+        fixture.commit("beta", {"b.txt": "y"}, algorithm=DigestAlgorithm.SHA256)
+
+        def interrupt(_conn, _fs) -> int:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(scanner, "sniff_pass", interrupt)
+        with (
+            caplog.at_level(logging.WARNING, logger=_SCANNER_LOGGER),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            scan(idx._conn, idx.storage_root, full=False)
+
+        assert idx._conn.in_transaction is False
+        rows = idx._conn.execute(
+            "SELECT object_id FROM objects ORDER BY object_id"
+        ).fetchall()
+        assert rows == [("alpha",)]
+
+    assert [r for r in caplog.records if r.name == _SCANNER_LOGGER] == []

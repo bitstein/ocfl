@@ -1,5 +1,3 @@
-"""Tests for Layout.config property."""
-
 from ocfl_lib._layout import (
     FlatDirectLayout,
     FlatOmitPrefixLayout,
@@ -11,7 +9,6 @@ from ocfl_lib._layout import (
 
 class TestFlatDirectConfig:
     def test_config_returns_none(self):
-        """Flat direct has no meaningful config — returns None."""
         layout = FlatDirectLayout()
         assert layout.config is None
 
@@ -25,7 +22,6 @@ class TestHashedNTupleConfig:
         assert cfg["tupleSize"] == 3
         assert cfg["numberOfTuples"] == 3
         assert cfg["shortObjectRoot"] is False
-        # Round-trip: from_config(config) produces equivalent layout
         layout2 = HashedNTupleLayout.from_config(cfg)
         assert layout2.config == cfg
 

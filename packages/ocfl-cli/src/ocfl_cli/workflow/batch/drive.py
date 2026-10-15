@@ -1,19 +1,11 @@
-"""Batch use cases: create or resume a batch and drive it, reporting events.
-
-Each driver holds the batch lock (`store.batch.batch_lock`, a `flock`) for
-its whole run, so a second driver, a commit or an `rm` of the same batch
-waits, then exits 4 (ADR-0005). It reports what changed through
-`BatchEvents`; the command renders the events.
-"""
-
-import contextlib
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol
 
 from ocfl_cli.errors import (
     AttestationMismatchError,
     BatchMismatchError,
     CommitFailedError,
     ErrorContext,
+    InventoryProofMissingError,
     LockTimeoutError,
     MissingStagedMetadataError,
     PhaseError,
@@ -56,15 +48,13 @@ if TYPE_CHECKING:
 
     from ocfl_cli.config import Config
     from ocfl_cli.model.phase import TimestampTarget
-    from ocfl_cli.ports import BlockStream, BtcRpcFactory, Runtime, SpClientFactory
+    from ocfl_cli.ports import BtcRpcFactory, Runtime, SpClientFactory
     from ocfl_cli.store.staging import StagingStore
     from ocfl_lib import StorageRoot
     from ocfl_lib.fs import WriteFS
 
 
 class BatchEvents(Protocol):
-    """What a batch run reports, in order, as it goes."""
-
     def created(self, batch: batch_model.BatchFile) -> None: ...
 
     def resumed(self, batch: batch_model.BatchFile) -> None: ...
@@ -107,7 +97,6 @@ def _new_or_resumed(
     default_category: int,
     runtime: Runtime,
 ) -> tuple[batch_model.BatchFile, bool]:
-    """Resume `batch_id` (its target comes from its file) or create a batch."""
     if batch_id is not None:
         return load_batch_or_usage(store.root, batch_id), False
     if target is None:
@@ -141,7 +130,6 @@ def _start(
     events: BatchEvents,
     runtime: Runtime,
 ) -> batch_model.BatchFile:
-    """Create (or resume) the batch, recover lost intents, submit what is due."""
     staging_root = store.root
     if created:
         batch_state.save_batch(staging_root, batch)
@@ -199,7 +187,6 @@ def submit(
     events: BatchEvents,
     runtime: Runtime,
 ) -> batch_model.BatchFile:
-    """`stage batch create` (no `batch_id`) or `stage batch submit BATCH`."""
     sp_cfg = cfg.simpleproof
     if sp_cfg is None:
         raise RuntimeError("simpleproof config missing")
@@ -239,7 +226,6 @@ def retry(
     events: BatchEvents,
     runtime: Runtime,
 ) -> batch_model.BatchFile:
-    """`stage batch retry BATCH`: resubmit the batch's failed chunks."""
     staging_root = store.root
     batch = load_batch_or_usage(staging_root, batch_id)
     target = batch.target
@@ -270,7 +256,6 @@ def upgrade(
     events: BatchEvents,
     runtime: Runtime,
 ) -> batch_model.BatchFile:
-    """`stage batch upgrade BATCH`: one upgrade pass over the batch."""
     staging_root = store.root
     batch = load_batch_or_usage(staging_root, batch_id)
     target = batch.target
@@ -309,14 +294,6 @@ def watch(
     events: BatchEvents,
     runtime: Runtime,
 ) -> int:
-    """`--watch`: submit what is due, then run an upgrade pass per Bitcoin block.
-
-    `stage batch create --watch` (no `batch_id`) or `stage batch upgrade
-    BATCH --watch` (the target comes from the batch file).
-
-    Returns the exit code: 0 when every row upgraded, 1 when the batch
-    finished with failures, 130 when interrupted.
-    """
     sp_cfg = cfg.simpleproof
     if sp_cfg is None:
         raise RuntimeError("simpleproof config missing")
@@ -382,16 +359,9 @@ def watch(
 
             events.waiting(batch)
             btc = btc_factory(cfg)
-            stream = runtime.block_streams(cfg)
-            stream_cm = cast(
-                "contextlib.AbstractContextManager[BlockStream]",
-                stream
-                if hasattr(stream, "__enter__")
-                else contextlib.nullcontext(stream),
-            )
             last_height: int | None = None
             last_tip_hash: str | None = None
-            with stream_cm as zmq_sub:
+            with runtime.block_streams(cfg) as zmq_sub:
                 while True:
                     block = zmq_sub.wait_for_block(timeout_ms=5000)
                     if block is None:
@@ -447,7 +417,7 @@ def watch(
 def commit_failure_reason(exc: Exception) -> str:
     if isinstance(exc, AttestationMismatchError):
         return "attestation_mismatch"
-    if isinstance(exc, PhaseError):
+    if isinstance(exc, (PhaseError, InventoryProofMissingError)):
         return "phase_error"
     if isinstance(exc, MissingStagedMetadataError):
         return "missing_metadata"
@@ -472,10 +442,6 @@ def commit(
     runtime: Runtime,
     commit_object: Callable[..., None] = wf_commit.commit_ots,
 ) -> int:
-    """`stage batch commit BATCH`: commit every upgraded object; returns failures.
-
-    `commit_object` commits one object's Staging Area (`commit_ots` keywords).
-    """
     staging_root = store.root
     batch = load_batch_or_usage(staging_root, batch_id)
     with batch_state.batch_lock(staging_root, batch.batch_id, runtime):
@@ -539,6 +505,7 @@ def commit(
             except (
                 AttestationMismatchError,
                 PhaseError,
+                InventoryProofMissingError,
                 MissingStagedMetadataError,
                 StagingFileMissingError,
                 StagingFileChangedError,

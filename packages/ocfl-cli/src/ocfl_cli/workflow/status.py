@@ -1,19 +1,18 @@
-"""Status use cases: what is staged, where the OTS workflow is, what to do next."""
-
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from ocfl_cli.model.metadata import NextActionKind
 from ocfl_cli.model.phase import Phase
+from ocfl_cli.model.simpleproof import (
+    RESUBMIT_VERIFY_STATUSES,
+    TERMINAL_VERIFY_STATUSES,
+)
 from ocfl_cli.store.ots_state import (
     load_ots,
 )
 from ocfl_cli.workflow import hints
 from ocfl_cli.workflow.common import (
-    StateMap,
-    is_failed_verify_job,
-    is_terminal_verify_job,
     ordinary_digests,
 )
 from ocfl_lib import (
@@ -36,6 +35,7 @@ if TYPE_CHECKING:
         Runtime,
     )
     from ocfl_cli.store.staging import StagingStore
+    from ocfl_lib import DigestMap
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +48,17 @@ class _OutstandingJobJson(TypedDict):
     age_seconds: int
 
 
+IN_SYNC_MIN_PROGRESS = 0.9999
+
+
 def compute_in_sync(info: BlockchainInfo) -> bool:
-    """Bitcoin-in-sync derivation pinned by `OTS workflow contract`."""
-    return (not info.initial_block_download) and info.verification_progress >= 0.9999
+    return (
+        not info.initial_block_download
+        and info.verification_progress >= IN_SYNC_MIN_PROGRESS
+    )
 
 
 def humanize_age(seconds: int) -> str:
-    """Floor-rounded ASCII single-unit age (`30s ago`, `5m ago`, `2h ago`, `3d ago`)."""
     if seconds < 60:
         return f"{seconds}s ago"
     if seconds < 3600:
@@ -77,7 +81,6 @@ def _submission_age_seconds(submitted_at: str, now: datetime) -> int:
 def next_action_for(
     state: OtsState, has_files: bool, object_id: str
 ) -> tuple[NextActionKind, str]:
-    """FSM-aware `(kind, command)` pair for the OTS status next-action surface."""
     match state.phase:
         case Phase.DRAFTING:
             kind = (
@@ -89,7 +92,8 @@ def next_action_for(
             verified = {d for d in state.pending_digests if state.verified(d)}
             still_pending = set(state.pending_digests) - verified
             failed_covers = any(
-                is_failed_verify_job(j.status) and (set(j.digests) & still_pending)
+                j.status in RESUBMIT_VERIFY_STATUSES
+                and (set(j.digests) & still_pending)
                 for j in state.verify_jobs
             )
             kind = (
@@ -105,7 +109,7 @@ def next_action_for(
                 NextActionKind.RETRY_INVENTORY
                 if ip is not None
                 and any(
-                    is_failed_verify_job(j.status) and ip.digest in j.digests
+                    j.status in RESUBMIT_VERIFY_STATUSES and ip.digest in j.digests
                     for j in state.verify_jobs
                 )
                 else NextActionKind.UPGRADE_INVENTORY
@@ -122,7 +126,6 @@ def next_action_for(
 def next_step(
     store: StagingStore, root_path: str, object_id: str, staging_dir: Path
 ) -> str:
-    """The command that takes an OTS Staging Area on from where it is now."""
     state = load_ots(staging_dir)
     inv = store.load_inventory(root_path, object_id)
     has_files = bool(ordinary_digests(inv.versions[inv.head].state))
@@ -141,19 +144,13 @@ def _cache_bytes(staging_dir: Path) -> int:
 
 
 def _submission_submitted_at(state: OtsState, digests: tuple[str, ...]) -> str:
-    """Earliest submitted_at among submissions overlapping *digests*.
-
-    Production never back-fills Submission.job_id (see make_content_submission),
-    so a verify job is matched to its originating submission by digest overlap
-    rather than job_id; joining on job_id always missed, rendering every
-    outstanding job '0s ago'. ISO-8601 UTC strings sort chronologically.
-    """
     target = set(digests)
     times = [
         s.submitted_at
         for s in state.submissions
         if s.submitted_at and target & set(s.digests)
     ]
+    # ISO-8601 UTC strings sort chronologically.
     return min(times) if times else ""
 
 
@@ -162,7 +159,7 @@ def _build_outstanding_jobs(
 ) -> list[_OutstandingJobJson]:
     outstanding: list[_OutstandingJobJson] = []
     for j in state.verify_jobs:
-        if is_terminal_verify_job(j.status):
+        if j.status in TERMINAL_VERIFY_STATUSES:
             continue
         submitted_at = _submission_submitted_at(state, j.digests)
         outstanding.append(
@@ -185,7 +182,7 @@ def _build_counts(state: OtsState, non_ots: set[str]) -> dict[str, int]:
     non_failed_set: set[str] = set()
     failed_set: set[str] = set()
     for j in state.verify_jobs:
-        (failed_set if is_failed_verify_job(j.status) else non_failed_set).update(
+        (failed_set if j.status in RESUBMIT_VERIFY_STATUSES else non_failed_set).update(
             j.digests
         )
     return {
@@ -218,7 +215,6 @@ def _build_bitcoin_section(
 def metadata_status_dict(
     store: StagingStore, root_path: str, object_id: str
 ) -> dict[str, str | None]:
-    """Return saved values for required staged metadata fields."""
     metadata = store.load_metadata(root_path, object_id)
     user = metadata.user
     return {
@@ -238,7 +234,6 @@ def status_ots_dict(
     btc_factory: BtcRpcFactory,
     runtime: Runtime,
 ) -> dict[str, Any]:
-    """Build the JSON-shaped OTS status payload (commands.py renders human form)."""
     state = load_ots(staging_dir)
     inv = store.load_inventory(root_path, object_id)
     head_state = inv.versions[inv.head].state
@@ -272,7 +267,6 @@ def status_ots_dict(
 def status_diff_dict(
     store: StagingStore, root_path: str, object_id: str
 ) -> dict[str, Any]:
-    """Build the staged-vs-prior diff payload."""
     from ocfl_lib import VNum, to_path_map
 
     inv = store.load_inventory(root_path, object_id)
@@ -301,7 +295,7 @@ def status_diff_dict(
         elif prior_pm[p] != staged_pm[p]:
             changes.append({"path": p, "action": "modified"})
 
-    removed_by_digest: StateMap = {}
+    removed_by_digest: DigestMap = {}
     for p, d in removed.items():
         removed_by_digest.setdefault(d, []).append(p)
 

@@ -1,5 +1,3 @@
-"""Integration tests for S3 CLI support via moto mock."""
-
 import shutil
 
 import boto3
@@ -7,6 +5,7 @@ import pytest
 from moto import mock_aws
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_lib import (
     DigestAlgorithm,
@@ -28,7 +27,6 @@ def runner():
 
 @pytest.fixture
 def s3_env():
-    """Activate moto mock and create bucket."""
     with mock_aws():
         client = boto3.client("s3", region_name="us-east-1")
         client.create_bucket(Bucket=BUCKET)
@@ -42,12 +40,10 @@ def s3_root_url():
 
 @pytest.fixture
 def s3_storage_root(s3_env, s3_root_url, tmp_path):
-    """Create a valid S3 storage root with one object (2 versions)."""
     fs = S3FS(BUCKET, "ocfl-root", client=s3_env)
     layout = get_layout("0002-flat-direct-storage-layout")
     root = StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
 
-    # Stage locally, commit to S3
     local_fs = LocalFS(tmp_path)
     obj_dir = tmp_path / "test-files"
     obj_dir.mkdir()
@@ -75,8 +71,7 @@ class TestInit:
                 "0002-flat-direct-storage-layout",
             ],
         )
-        assert result.exit_code == 0, result.output
-        # Verify NAMASTE file exists on S3
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         resp = s3_env.list_objects_v2(Bucket=BUCKET, Prefix="ocfl-root/0=ocfl_1.1")
         assert resp.get("KeyCount", 0) > 0
 
@@ -84,40 +79,40 @@ class TestInit:
 class TestRoundTrip:
     def test_ls(self, runner: CliRunner, s3_storage_root):
         result = runner.invoke(app, ["--root", s3_storage_root, "ls"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "obj:test" in result.stdout
 
     def test_log(self, runner: CliRunner, s3_storage_root):
         result = runner.invoke(app, ["--root", s3_storage_root, "log", "obj:test"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "v1" in result.stdout
         assert "v2" in result.stdout
 
     def test_show(self, runner: CliRunner, s3_storage_root):
         result = runner.invoke(app, ["--root", s3_storage_root, "show", "obj:test"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "v2" in result.stdout
 
     def test_info(self, runner: CliRunner, s3_storage_root):
         result = runner.invoke(app, ["--root", s3_storage_root, "info"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "1.1" in result.stdout
 
     def test_validate_root(self, runner: CliRunner, s3_storage_root):
         result = runner.invoke(app, ["--root", s3_storage_root, "validate"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "Valid" in result.stdout
 
     def test_validate_object(self, runner: CliRunner, s3_storage_root):
         result = runner.invoke(app, ["--root", s3_storage_root, "validate", "obj:test"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "Valid" in result.stdout
 
     def test_diff(self, runner: CliRunner, s3_storage_root):
         result = runner.invoke(
             app, ["--root", s3_storage_root, "diff", "obj:test", "v1", "v2"]
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "file2.txt" in result.stdout
 
     def test_export(self, runner: CliRunner, s3_storage_root, tmp_path):
@@ -127,17 +122,16 @@ class TestRoundTrip:
             app,
             ["--root", s3_storage_root, "export", "obj:test", "--to", str(out)],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert (out / "file1.txt").read_text() == "hello"
         assert (out / "file2.txt").read_text() == "world"
 
     def test_purge(self, runner: CliRunner, s3_storage_root):
         result = runner.invoke(
             app,
-            ["--root", s3_storage_root, "purge", "obj:test", "--force"],
+            ["--root", s3_storage_root, "purge", "obj:test", "--yes"],
         )
-        assert result.exit_code == 0, result.output
-        # Verify object is gone
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         ls_result = runner.invoke(app, ["--root", s3_storage_root, "ls"])
-        assert ls_result.exit_code == 0
+        assert ls_result.exit_code == ExitCode.SUCCESS
         assert "obj:test" not in ls_result.stdout

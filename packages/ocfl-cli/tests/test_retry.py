@@ -1,15 +1,9 @@
-"""Tests for ocfl_cli.ots._retry.retry helper."""
-
 from collections.abc import Callable
 
 import pytest
 
 from ocfl_cli.errors import Transient
 from ocfl_cli.ots._retry import retry
-
-
-class _FakeTransient(Exception, Transient):
-    pass
 
 
 class _FatalError(Exception):
@@ -47,7 +41,7 @@ class TestRetryOnTransient:
             nonlocal calls
             calls += 1
             if calls < 3:
-                raise _FakeTransient("boom")
+                raise Transient("boom")
             return 42
 
         result = retry(
@@ -68,9 +62,9 @@ class TestRetryOnTransient:
         def fn() -> None:
             nonlocal calls
             calls += 1
-            raise _FakeTransient(f"fail-{calls}")
+            raise Transient(f"fail-{calls}")
 
-        with pytest.raises(_FakeTransient, match="fail-3"):
+        with pytest.raises(Transient, match="fail-3"):
             retry(fn, attempts=3, backoff=(2.0, 4.0), sleep=sleep)
 
         assert calls == 3
@@ -103,9 +97,7 @@ class TestRetryAfterOverride:
             nonlocal calls
             calls += 1
             if calls == 1:
-                exc = _FakeTransient("429")
-                exc.retry_after = 7.5
-                raise exc
+                raise Transient("429", retry_after=7.5)
             return "ok"
 
         result = retry(fn, attempts=3, backoff=(2.0, 4.0), sleep=sleep)
@@ -122,11 +114,9 @@ class TestRetryAfterOverride:
             nonlocal calls
             calls += 1
             if calls == 1:
-                raise _FakeTransient("first")
+                raise Transient("first")
             if calls == 2:
-                exc = _FakeTransient("429")
-                exc.retry_after = 9.0
-                raise exc
+                raise Transient("429", retry_after=9.0)
             return "done"
 
         result = retry(fn, attempts=3, backoff=(2.0, 4.0), sleep=sleep)
@@ -159,9 +149,9 @@ class TestAttemptsOne:
         def fn() -> None:
             nonlocal calls
             calls += 1
-            raise _FakeTransient("once")
+            raise Transient("once")
 
-        with pytest.raises(_FakeTransient):
+        with pytest.raises(Transient):
             retry(fn, attempts=1, backoff=(2.0, 4.0), sleep=sleep)
 
         assert calls == 1
@@ -176,9 +166,9 @@ class TestBackoffSchedule:
         def fn() -> int:
             nonlocal calls
             calls += 1
-            raise _FakeTransient("x")
+            raise Transient("x")
 
-        with pytest.raises(_FakeTransient):
+        with pytest.raises(Transient):
             retry(fn, attempts=8, sleep=sleep)
 
         assert sleeps == [2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0]

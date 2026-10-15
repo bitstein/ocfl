@@ -1,127 +1,17 @@
-"""Tests for `stage retry` on the content target.
-
-Pins the FAILED-only resubmit contract from `OTS workflow contract`:
-
-- `stage retry OBJ --expect content`.
-- Legal only at phase ``content-pending`` (per FSM matrix). Any other phase
-  ⇒ ``PhaseError`` ⇒ exit 3.
-- For each ``Submission`` with ``status == "failed"``: re-POST those digests
-  to SP via ``sp.submit_hashes(digests, category_id)``, increment
-  ``attempts``, flip ``status`` back to ``"submitted"`` (crash-safe write
-  protocol: ``submitting`` intent → POST → ``submitted``).
-- Submissions with ``status`` of ``"submitted"`` or ``"submitting"`` are
-  NOT touched (no second POST, ``attempts`` unchanged, ``submitted_at``
-  unchanged).
-- Empty failed-set ⇒ noop (exit 0, no SP calls, ots.json byte-equal).
-- Phase remains ``content-pending`` (FSM ``stay``).
-"""
-
-import hashlib
 from pathlib import Path
 
 import pytest
 from fakes import FakeSimpleProof
 from msgspec.structs import replace
-from runner_helpers import runner_obj
-from typer.testing import CliRunner
+from ots_helpers import inject_fake_sp, new_ots_staging, write_config
+from runner_helpers import ObjRunner, stage_args
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import Submission
 from ocfl_cli.model.phase import Phase, TimestampTarget
 from ocfl_cli.store.ots_state import load_ots, save_ots
-from ocfl_cli.store.staging import StagingStore
-from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
-
-# --------------------------------------------------------------------------- #
-# Config + path helpers (copied from test_stage_timestamp_content_upgrade.py;
-# the workflow rule is "smaller file > shared module before 3rd use").
-# --------------------------------------------------------------------------- #
-
-_SP_OK = """\
-[simpleproof]
-base_url = "https://stage.example"
-proof_category_id = 641
-"""
-
-_BTC_OK_COOKIE = """\
-[bitcoin]
-rpc_url = "http://127.0.0.1:8332"
-zmq_endpoint = "tcp://127.0.0.1:28332"
-confirmations = 3
-"""
-
-
-def _write_config(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    body: str = _SP_OK + _BTC_OK_COOKIE,
-) -> Path:
-    cfg = tmp_path / "ocfl-config" / "config.toml"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(body)
-    monkeypatch.setenv("OCFL_CONFIG", str(cfg))
-    return cfg
-
-
-def _stage_args(root: Path, staging: Path, *args: str) -> list[str]:
-    return ["--root", str(root), "stage", "--staging-root", str(staging), *args]
-
-
-def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
-    store = StagingStore(staging)
-    return store.staging_path(str(root.resolve()), object_id)
-
-
-def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
-    """Inject *fake* via ``runner.obj["sp_client_factory"]``."""
-    runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
-
-
-# --------------------------------------------------------------------------- #
-# Storage-root fixture
-# --------------------------------------------------------------------------- #
-
-
-@pytest.fixture
-def empty_sha256_root(tmp_path: Path) -> Path:
-    location = tmp_path / "root"
-    location.mkdir()
-    fs = LocalFS(location)
-    layout = get_layout("0002-flat-direct-storage-layout")
-    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
-    return location
-
-
-# --------------------------------------------------------------------------- #
-# OTS staging setup helpers
-# --------------------------------------------------------------------------- #
-
-
-def _new_ots_staging(
-    runner: CliRunner,
-    root: Path,
-    staging: Path,
-    object_id: str,
-    *files: tuple[str, bytes],
-) -> tuple[Path, dict[str, str], dict[str, str]]:
-    """Run ``stage new --ots`` + ``stage add`` for each file.
-
-    Returns ``(staging_dir, path_by_seed, digest_by_seed)``.
-    """
-    r = runner.invoke(app, _stage_args(root, staging, "new", object_id, "--ots"))
-    assert r.exit_code == 0, r.output
-
-    paths: dict[str, str] = {}
-    digests: dict[str, str] = {}
-    for name, data in files:
-        src = staging.parent / name
-        src.write_bytes(data)
-        r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(src)))
-        assert r.exit_code == 0, r.output
-        paths[name] = name
-        digests[name] = hashlib.sha256(data).hexdigest()
-
-    return _staging_dir(root, staging, object_id), paths, digests
+from tests.helpers.faults import Crash, CrashBoundary
 
 
 def _set_state(
@@ -141,28 +31,20 @@ def _set_state(
     save_ots(sd, state)
 
 
-# =========================================================================== #
-# Layer-2: --retry resubmits ONLY failed; touches nothing else.
-# =========================================================================== #
-
-
 class TestRetryResubmitsOnlyFailed:
     def test_retry_resubmits_only_failed(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Three submissions: failed, submitted, submitting. --retry POSTs
-        only the failed entry's digests; the other two are byte-identical
-        afterwards. Phase stays content-pending."""
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -182,7 +64,6 @@ class TestRetryResubmitsOnlyFailed:
             digests=(d1, d2),
             status="failed",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=1,
         )
         submitted = Submission(
@@ -190,7 +71,6 @@ class TestRetryResubmitsOnlyFailed:
             digests=(d3,),
             status="submitted",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=1,
         )
         submitting = Submission(
@@ -198,7 +78,6 @@ class TestRetryResubmitsOnlyFailed:
             digests=(d4,),
             status="submitting",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=2,
         )
         _set_state(
@@ -208,12 +87,11 @@ class TestRetryResubmitsOnlyFailed:
             submissions=(failed, submitted, submitting),
         )
 
-        # Snapshot the pre-retry SP submission count (should be 0 from fixtures).
         pre_calls = list(sp_fake._submissions)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "retry",
@@ -222,9 +100,8 @@ class TestRetryResubmitsOnlyFailed:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
-        # Exactly one new SP call, carrying ONLY the failed entry's digests.
         new_calls = sp_fake._submissions[len(pre_calls) :]
         assert len(new_calls) == 1, new_calls
         assert tuple(new_calls[0].digests) == (d1, d2)
@@ -234,39 +111,29 @@ class TestRetryResubmitsOnlyFailed:
 
         by_first = {s.digests[0]: s for s in state.submissions}
 
-        # Failed entry: status flipped to submitted, attempts incremented.
         retried = by_first[d1]
         assert retried.status == "submitted"
         assert retried.attempts > failed.attempts
         assert retried.digests == (d1, d2)
 
-        # Submitted entry: completely untouched.
         assert by_first[d3] == submitted
-        # Submitting entry: completely untouched.
         assert by_first[d4] == submitting
-
-
-# =========================================================================== #
-# Layer-2: empty failed-set is a noop.
-# =========================================================================== #
 
 
 class TestRetryEmptyFailedNoop:
     def test_retry_empty_failed_set_is_noop(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """No failed submissions: --retry exits 0, posts nothing, leaves
-        ots.json byte-equal, and prints a user-friendly notice."""
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -280,7 +147,6 @@ class TestRetryEmptyFailedNoop:
             digests=(d,),
             status="submitted",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=1,
         )
         _set_state(
@@ -296,7 +162,7 @@ class TestRetryEmptyFailedNoop:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "retry",
@@ -305,37 +171,27 @@ class TestRetryEmptyFailedNoop:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
-        # No SP POSTs.
         assert len(sp_fake._submissions) == before_calls
-        # ots.json byte-equal.
         assert ots_json.read_bytes() == before_bytes
-        # User-friendly mention of "failed" in stdout/stderr.
         assert "failed" in r.output.lower()
-
-
-# =========================================================================== #
-# Layer-2: multiple failed entries each get their own POST.
-# =========================================================================== #
 
 
 class TestRetryMultipleFailedIndependent:
     def test_retry_multiple_failed_resubmits_each_independently(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Two disjoint failed submissions ⇒ two SP POSTs; both flip to
-        submitted; both attempts incremented."""
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -351,7 +207,6 @@ class TestRetryMultipleFailedIndependent:
             digests=(da,),
             status="failed",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=1,
         )
         failed_b = Submission(
@@ -359,7 +214,6 @@ class TestRetryMultipleFailedIndependent:
             digests=(db,),
             status="failed",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=2,
         )
         _set_state(
@@ -373,7 +227,7 @@ class TestRetryMultipleFailedIndependent:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "retry",
@@ -382,7 +236,7 @@ class TestRetryMultipleFailedIndependent:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
         new_calls = sp_fake._submissions[len(pre_calls) :]
         assert len(new_calls) == 2, new_calls
@@ -399,11 +253,6 @@ class TestRetryMultipleFailedIndependent:
         assert by_first[db].attempts > failed_b.attempts
 
 
-# =========================================================================== #
-# Layer-2: retry at any phase other than content-pending raises PhaseError.
-# =========================================================================== #
-
-
 class TestRetryPhaseGate:
     @pytest.mark.parametrize(
         "phase",
@@ -416,20 +265,18 @@ class TestRetryPhaseGate:
     )
     def test_retry_at_wrong_phase_raises_phase_error(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         phase: Phase,
     ) -> None:
-        """All phases ∉ {content-pending} ⇒ non-zero exit with the wrong
-        phase mentioned in stderr/stdout."""
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -443,7 +290,6 @@ class TestRetryPhaseGate:
             digests=(d,),
             status="failed",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=1,
         )
         _set_state(
@@ -457,7 +303,7 @@ class TestRetryPhaseGate:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "retry",
@@ -466,75 +312,113 @@ class TestRetryPhaseGate:
                 "content",
             ),
         )
-        assert r.exit_code != 0, r.output
-        # Wrong-phase value should surface in the diagnostic.
+        assert r.exit_code != ExitCode.SUCCESS, r.output
         assert phase.value in r.output
-        # No SP POSTs on rejection.
         assert len(sp_fake._submissions) == pre_calls
 
 
-class TestRetryCrashSafeShape:
-    def test_retry_crash_safe_resubmit_intent(
+class TestRetryCrashAtPost:
+    def test_crash_leaves_intents_that_timestamp_resends(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A clean --retry over a single failed submission demonstrates the
-        crash-safe write protocol shape: attempts bumped at least once and
-        the entry lands at status=submitted (intent → POST → submitted).
-
-        Fault-injection coverage of the same code lives in the submit-path
-        tests; --retry reuses the same protocol, so this asserts the
-        end-state shape is consistent."""
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
-            "obj:retry-shape",
+            "obj:retry-crash",
             ("a.txt", b"alpha"),
+            ("b.txt", b"bravo"),
         )
-        d = digests["a.txt"]
-
+        da, db = digests["a.txt"], digests["b.txt"]
         failed = Submission(
             submitted_at="2026-04-23T16:30:00+00:00",
-            digests=(d,),
+            digests=(da,),
             status="failed",
             target=TimestampTarget.CONTENT,
-            job_id=None,
             attempts=1,
         )
         _set_state(
             sd,
             phase=Phase.CONTENT_PENDING,
-            pending_digests=(d,),
-            submissions=(failed,),
+            pending_digests=(da, db),
+            submissions=(failed, replace(failed, digests=(db,), attempts=3)),
         )
+
+        with CrashBoundary(sp_fake, "submit_hashes"), pytest.raises(Crash):
+            runner.invoke(
+                app,
+                stage_args(empty_sha256_root, staging, "retry", "obj:retry-crash"),
+            )
+
+        state = load_ots(sd)
+        assert [(s.status, s.digests, s.attempts) for s in state.submissions] == [
+            ("submitting", (da,), 2),
+            ("submitting", (db,), 4),
+        ]
 
         r = runner.invoke(
             app,
-            _stage_args(
-                empty_sha256_root,
-                staging,
-                "retry",
-                "obj:retry-shape",
-                "--expect",
-                "content",
-            ),
+            stage_args(empty_sha256_root, staging, "timestamp", "obj:retry-crash"),
         )
-        assert r.exit_code == 0, r.output
-
+        assert r.exit_code == ExitCode.SUCCESS, r.output
+        both = tuple(sorted((da, db)))
+        assert [s.digests for s in sp_fake._submissions] == [both]
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
-        # Exactly one Submission for this digest set in the post state.
-        retried = [s for s in state.submissions if s.digests == (d,)]
-        assert len(retried) == 1
-        s = retried[0]
-        assert s.status == "submitted"
-        assert s.attempts > failed.attempts
+        assert [(s.status, s.digests, s.attempts) for s in state.submissions] == [
+            ("submitted", both, 5)
+        ]
+
+
+class TestRetrySameDigests:
+    def test_only_the_failed_one_of_two_same_digest_submissions_is_resent(
+        self,
+        runner: ObjRunner,
+        empty_sha256_root: Path,
+        sp_fake: FakeSimpleProof,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        staging = tmp_path / "staging"
+        sd, digests = new_ots_staging(
+            runner,
+            empty_sha256_root,
+            staging,
+            "obj:retry-twins",
+            ("a.txt", b"alpha"),
+        )
+        da = digests["a.txt"]
+        failed = Submission(
+            submitted_at="2026-04-23T16:30:00+00:00",
+            digests=(da,),
+            status="failed",
+            target=TimestampTarget.CONTENT,
+            attempts=1,
+        )
+        submitted = replace(failed, status="submitted")
+        _set_state(
+            sd,
+            phase=Phase.CONTENT_PENDING,
+            pending_digests=(da,),
+            submissions=(failed, submitted),
+        )
+
+        r = runner.invoke(
+            app, stage_args(empty_sha256_root, staging, "retry", "obj:retry-twins")
+        )
+
+        assert r.exit_code == ExitCode.SUCCESS, r.output
+        assert [s.digests for s in sp_fake._submissions] == [(da,)]
+        state = load_ots(sd)
+        assert state.submissions[0].attempts == 2
+        assert state.submissions[1] == submitted

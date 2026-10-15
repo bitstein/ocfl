@@ -1,9 +1,3 @@
-"""System adapters for the time ports: the real clock and real sleep.
-
-The one module in ``ocfl_cli`` that reads the time or sleeps; everything
-else gets a ``Clock`` / ``Sleeper`` through ``AppCtx`` / ``Runtime``.
-"""
-
 import time
 from datetime import UTC, datetime
 

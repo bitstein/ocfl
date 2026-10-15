@@ -1,5 +1,3 @@
-"""Tests for layout config I/O."""
-
 import json
 
 import pytest
@@ -43,9 +41,8 @@ class TestLayoutConfigIO:
         )
         result = read_ocfl_layout(fs)
         assert result is not None
-        ext, desc = result
-        assert ext == "0004-hashed-n-tuple-storage-layout"
-        assert desc == "Hashed n-tuple"
+        assert result.extension == "0004-hashed-n-tuple-storage-layout"
+        assert result.description == "Hashed n-tuple"
 
     def test_read_ocfl_layout_not_found(self, fs):
         assert read_ocfl_layout(fs) is None

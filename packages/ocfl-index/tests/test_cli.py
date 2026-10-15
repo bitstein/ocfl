@@ -4,23 +4,27 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import typer
 from index_fixtures import FixtureRoot
 from typer.testing import CliRunner
 
 from ocfl_index import db
 from ocfl_index.cli import app
 from ocfl_lib import DigestAlgorithm
+from tests.helpers.docs import iter_commands
 
 runner = CliRunner()
 
 
-def _combined_output(result: object) -> str:
-    """Return stdout plus any captured stderr, robust across Click versions."""
-    text = getattr(result, "output", "")
-    stderr_bytes = getattr(result, "stderr_bytes", None)
-    if stderr_bytes:
-        text += getattr(result, "stderr", "")
-    return text
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        pytest.param(c, id=p)
+        for p, c in iter_commands(typer.main.get_command(app), "ocfl-index")
+    ],
+)
+def test_every_command_has_help(cmd) -> None:
+    assert (cmd.help or "").strip()
 
 
 def _db(tmp_path: Path) -> Path:
@@ -125,7 +129,6 @@ def test_refresh_error_exit_code_1(tmp_path: Path) -> None:
 def _stale_db_with_writer_lock(
     tmp_path: Path,
 ) -> tuple[Path, sqlite3.Connection]:
-    """Build an initialized DB with stale schema_version, hold a writer lock."""
     fixture = FixtureRoot(tmp_path)
     fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
     db_path = _db(tmp_path)
@@ -157,14 +160,13 @@ def test_cli_open_time_contention_is_friendly(tmp_path: Path, argv: list[str]) -
         holder.execute("ROLLBACK")
         holder.close()
 
-    output = _combined_output(result)
+    output = result.output
     assert result.exit_code == 1, output
     assert "index busy" in output
     assert "database is locked" not in output
 
 
 def test_cli_refresh_time_contention_is_friendly(tmp_path: Path) -> None:
-    """Clean schema: open succeeds, refresh's BEGIN IMMEDIATE hits the lock."""
     fixture = FixtureRoot(tmp_path)
     fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
     db_path = _db(tmp_path)
@@ -179,7 +181,7 @@ def test_cli_refresh_time_contention_is_friendly(tmp_path: Path) -> None:
         holder.execute("ROLLBACK")
         holder.close()
 
-    output = _combined_output(result)
+    output = result.output
     assert result.exit_code == 1, output
     assert "index busy" in output
     assert "database is locked" not in output

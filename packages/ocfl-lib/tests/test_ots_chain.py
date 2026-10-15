@@ -1,5 +1,3 @@
-"""Bitcoin checks: the pure check, validation and the RPC client."""
-
 import hashlib
 import json
 
@@ -15,7 +13,7 @@ from ocfl_lib import (
 )
 from ocfl_lib.bitcoin import BitcoinRpcClient
 from ocfl_lib.ots import AttestationStatus, ChainBlock, ChainCheck
-from tests.helpers.ots import build_attestation, build_committed_attestation
+from tests.helpers.ots import build_attestation
 
 
 class Chain:
@@ -35,7 +33,8 @@ def _check(chain: Chain, raw: bytes, n: int = 3):
 
 
 def test_statuses():
-    raw, root = build_committed_attestation(b"\1" * 32, block_height=10)
+    raw = build_attestation(b"\1" * 32, block_height=10, merkle_step=True)
+    root = hashlib.sha256(b"\1" * 32).digest()
     assert [c.status for c in _check(Chain(20, {10: root}), raw)] == [
         AttestationStatus.VERIFIED
     ]
@@ -122,9 +121,6 @@ def test_validate_object_chain(tmp_path):
         ("inventory", AttestationStatus.VERIFIED),
     ]
     assert results[0].verified is not None and results[0].verified.height == 50
-
-
-# --- the [bitcoin] extra client
 
 
 def _client(handler, *, sleeps: list[float] | None = None) -> BitcoinRpcClient:

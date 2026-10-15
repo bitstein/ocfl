@@ -1,16 +1,16 @@
-"""ocfl validate command."""
-
 import json
+from contextlib import contextmanager
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
+from rich.markup import escape
 
 from ocfl_cli import _appctx as appctx
 from ocfl_cli import _style
-from ocfl_cli._common import open_location, open_root, output_json, resolve_root
+from ocfl_cli._common import open_root, output_json, resolve_root
 from ocfl_cli._exit import error_line
-from ocfl_cli.errors import ConfigError, ErrorContext, UsageError
+from ocfl_cli.errors import ConfigError, ErrorContext
 from ocfl_cli.workflow import validation as wf_validation
 from ocfl_lib import (
     Finding,
@@ -24,23 +24,20 @@ from ocfl_lib import (
 from ocfl_lib import fs as fs_utils
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from rich.console import Console
 
+    from ocfl_cli._appctx import AppCtx
     from ocfl_cli.config import Config
     from ocfl_cli.ports import BtcRpcFactory
     from ocfl_lib.fs import FS, FileWalker
 
 
 class OtsMode(StrEnum):
-    """How far `validate` checks the OTS extension's proofs.
-
-    Every mode runs the extension's own checks (the lib always does); the
-    modes differ only in whether the proofs are also checked against Bitcoin.
-    """
-
-    AUTO = "auto"  # chain when [bitcoin] is configured, else local
-    LOCAL = "local"  # the proofs' structure and digests only
-    CHAIN = "chain"  # also against the configured Bitcoin node
+    AUTO = "auto"
+    LOCAL = "local"
+    CHAIN = "chain"
 
 
 def validate(
@@ -53,102 +50,76 @@ def validate(
         typer.Option("--no-check-digests", help="Skip content digest verification."),
     ] = False,
     ots_mode: Annotated[
-        OtsMode | None,
+        OtsMode,
         typer.Option(
             "--ots",
-            help=(
+            help=escape(
                 f"Checks of the {ots.EXTENSION_NAME} proofs: auto (chain when "
                 "[bitcoin] is configured, else local), local (no Bitcoin node), "
                 "or chain (against Bitcoin). Default: auto."
             ),
         ),
-    ] = None,
-    verify_ots: Annotated[
-        bool | None,
-        # The old spelling: --verify-ots is --ots=chain, --no-verify-ots
-        # --ots=local.
-        typer.Option("--verify-ots/--no-verify-ots", hidden=True),
-    ] = None,
+    ] = OtsMode.AUTO,
 ) -> None:
     """Validate an OCFL storage root or a specific object."""
-    as_json = appctx.json_mode(ctx)
+    app = appctx.of(ctx)
     check_digests = not no_check_digests
-    suppress = _suppressed_codes(ctx)
-    if verify_ots is not None:
-        if ots_mode is not None:
-            raise UsageError("--ots and --verify-ots/--no-verify-ots conflict")
-        ots_mode = OtsMode.CHAIN if verify_ots else OtsMode.LOCAL
-    chain = _chain_for(ctx, ots_mode or OtsMode.AUTO)
+    suppress = app.config.effective_suppress(app.archive)
+    chain = _chain_for(app, ots_mode)
 
     if object_id is not None:
-        _validate_object(ctx, object_id, check_digests, as_json, suppress, chain)
+        _validate_object(app, object_id, check_digests, suppress, chain)
     else:
-        _validate_root(ctx, check_digests, as_json, suppress, chain)
+        _validate_root(app, check_digests, suppress, chain)
 
 
-def _chain_for(ctx: typer.Context, mode: OtsMode) -> ots.ChainCheck | None:
-    """The Bitcoin check `mode` asks for; None means local checks only.
-
-    `auto` uses the node when `[bitcoin]` is configured; a section that is
-    present but does not load is still a config error (exit 6).
-    """
-    cfg = appctx.config(ctx)
+def _chain_for(app: AppCtx, mode: OtsMode) -> ots.ChainCheck | None:
+    cfg = app.config
     match mode:
         case OtsMode.LOCAL:
             return None
         case OtsMode.CHAIN:
-            return _chain_check(cfg, appctx.btc_rpc_factory(ctx))
+            return _chain_check(cfg, app.btc_rpc_factory)
         case OtsMode.AUTO:
-            cfg.require("bitcoin")
+            cfg.raise_if_broken("bitcoin")
             if cfg.bitcoin is None:
                 return None
-            return _chain_check(cfg, appctx.btc_rpc_factory(ctx))
-
-
-def _suppressed_codes(ctx: typer.Context) -> frozenset[str]:
-    config = appctx.config(ctx)
-    return config.effective_suppress(appctx.archive(ctx))
+            return _chain_check(cfg, app.btc_rpc_factory)
 
 
 def _validate_root(
-    ctx: typer.Context,
+    app: AppCtx,
     check_digests: bool,
-    json_mode: bool,
     suppress: frozenset[str],
     chain: ots.ChainCheck | None,
 ) -> None:
-    path = resolve_root(appctx.root(ctx))
-    emit_progress = _should_emit_progress(ctx)
-    _emit(ctx, f"Validating OCFL storage root: {path}")
-    _emit(ctx, "Checking root structure (NAMASTE, layout, extensions)...")
-    _emit(ctx, "Walking object hierarchy...")
-    fs = open_location(ctx, path)
+    path = resolve_root(app.root)
+    emit_progress = _should_emit_progress(app)
+    _emit(app, f"Validating OCFL storage root: {path}")
+    _emit(app, "Checking root structure (NAMASTE, layout, extensions)...")
+    _emit(app, "Walking object hierarchy...")
+    fs = app.fs_factory(path)
     object_ids = _object_ids_by_path(fs) if emit_progress else {}
     if emit_progress:
-        appctx.err_console(ctx).print(_style.dim(f"  Found {len(object_ids)} objects"))
+        app.err_console.print(_style.dim(f"  Found {len(object_ids)} objects"))
     digest_status = "content digests enabled" if check_digests else "digests skipped"
-    _emit(ctx, f"Validating objects ({digest_status})...")
+    _emit(app, f"Validating objects ({digest_status})...")
 
     if chain is not None:
         _emit(
-            ctx,
+            app,
             f"Verifying OTS attestations (min {chain.confirmations} confirmations)...",
         )
     else:
-        _emit(ctx, "OTS proofs: local checks only (no Bitcoin node)")
-    try:
+        _emit(app, "OTS proofs: local checks only (no Bitcoin node)")
+    with _fail_if_chain_unavailable():
         report = validate_root(fs, "", check_digests=check_digests, chain=chain)
-    except OcflError as e:
-        # The chain could not be checked: a failure, not a finding (no E906).
-        raise ErrorContext(e, prefix="cannot verify OTS attestations: ") from e
-    emit_root_object_results(
-        appctx.err_console(ctx), emit_progress, fs, object_ids, report
-    )
+    emit_root_object_results(app.err_console, emit_progress, fs, object_ids, report)
     _output_result(
-        appctx.console(ctx),
-        appctx.err_console(ctx),
+        app.console,
+        app.err_console,
         report,
-        json_mode,
+        app.json,
         suppress,
         show_paths=True,
     )
@@ -157,45 +128,41 @@ def _validate_root(
 
 
 def _validate_object(
-    ctx: typer.Context,
+    app: AppCtx,
     object_id: str,
     check_digests: bool,
-    json_mode: bool,
     suppress: frozenset[str],
     chain: ots.ChainCheck | None,
 ) -> None:
-    root, fs = open_root(ctx)
+    root, fs = open_root(app)
     obj_path = root.object_path(object_id)
 
-    _emit(ctx, f"Validating object: {object_id}")
-    _emit(ctx, "Checking OCFL structure...")
+    _emit(app, f"Validating object: {object_id}")
+    _emit(app, "Checking OCFL structure...")
     if check_digests:
-        _emit(ctx, "Verifying content digests...")
+        _emit(app, "Verifying content digests...")
 
     if not _ots_extension_present(fs, obj_path):
         chain = None
     elif chain is not None:
         _emit(
-            ctx,
+            app,
             f"Verifying OTS attestations (min {chain.confirmations} confirmations)...",
         )
     else:
-        _emit(ctx, "OTS proofs: local checks only (no Bitcoin node)")
-    try:
+        _emit(app, "OTS proofs: local checks only (no Bitcoin node)")
+    with _fail_if_chain_unavailable():
         report = validate_object(fs, obj_path, check_digests=check_digests, chain=chain)
-        if chain is not None and _should_emit_progress(ctx):
+        if chain is not None and _should_emit_progress(app):
             _emit_chain_results(
-                appctx.err_console(ctx), ots.check_object_chain(fs, obj_path, chain)
+                app.err_console, ots.check_object_chain(fs, obj_path, chain)
             )
-    except OcflError as e:
-        # The chain could not be checked: a failure, not a finding (no E906).
-        raise ErrorContext(e, prefix="cannot verify OTS attestations: ") from e
 
     _output_result(
-        appctx.console(ctx),
-        appctx.err_console(ctx),
+        app.console,
+        app.err_console,
         report,
-        json_mode,
+        app.json,
         suppress,
         show_paths=False,
     )
@@ -203,14 +170,21 @@ def _validate_object(
         raise typer.Exit(1)
 
 
+@contextmanager
+def _fail_if_chain_unavailable() -> Generator[None]:
+    try:
+        yield
+    except OcflError as e:
+        raise ErrorContext(e, prefix="cannot verify OTS attestations: ") from e
+
+
 def _ots_extension_present(fs: FS, obj_path: str) -> bool:
     return fs.exists(_join(obj_path, ots.EXTENSION_DIR))
 
 
 def _chain_check(cfg: Config | None, btc_factory: BtcRpcFactory) -> ots.ChainCheck:
-    """The Bitcoin checks of the OTS extension, against the configured node."""
     if cfg is not None:
-        cfg.require("bitcoin")
+        cfg.raise_if_broken("bitcoin")
     if cfg is None or cfg.bitcoin is None:
         where = (
             f"in {cfg.path}"
@@ -243,16 +217,13 @@ def _emit_chain_results(
         err_out.print(f"  {r.proof.version} ({name}): {outcome}")
 
 
-def _should_emit_progress(ctx: typer.Context) -> bool:
-    if appctx.json_mode(ctx):
-        return False
-    typed = appctx.app_ctx(ctx)
-    return not typed.quiet
+def _should_emit_progress(app: AppCtx) -> bool:
+    return not (app.json or app.quiet)
 
 
-def _emit(ctx: typer.Context, msg: str) -> None:
-    if _should_emit_progress(ctx):
-        appctx.err_console(ctx).print(_style.dim(msg))
+def _emit(app: AppCtx, msg: str) -> None:
+    if _should_emit_progress(app):
+        app.err_console.print(_style.dim(msg))
 
 
 def _object_ids_by_path(fs: FS) -> dict[str, str]:

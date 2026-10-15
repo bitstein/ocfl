@@ -1,9 +1,8 @@
-"""ocfl purge command."""
-
 from typing import Annotated
 
 import typer
 
+from ocfl_cli import _appctx as appctx
 from ocfl_cli._common import open_root
 
 
@@ -14,17 +13,12 @@ def purge(
         bool,
         typer.Option("--yes", "-y", help="Skip the confirmation prompt."),
     ] = False,
-    force: Annotated[
-        bool,
-        # The old spelling of --yes. Elsewhere --force overrides a safety
-        # check, so it is hidden here.
-        typer.Option("--force", hidden=True),
-    ] = False,
 ) -> None:
     """Permanently remove an object from the storage root."""
-    root, fs = open_root(ctx)
+    app = appctx.of(ctx)
+    root, fs = open_root(app)
 
-    if not (yes or force):
+    if not yes:
         typer.confirm(
             f"Permanently delete {object_id!r}? This cannot be undone",
             abort=True,

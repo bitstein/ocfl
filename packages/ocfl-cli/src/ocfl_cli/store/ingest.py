@@ -1,5 +1,3 @@
-"""Pure helper to digest a source file and record it in a content map."""
-
 from typing import TYPE_CHECKING
 
 from ocfl_cli.model.content import ContentMap, IngestResult

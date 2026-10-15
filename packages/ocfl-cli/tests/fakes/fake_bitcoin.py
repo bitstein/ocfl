@@ -1,8 +1,7 @@
-"""In-memory FakeBitcoinRPC + InMemoryHashBlockStream."""
-
 from collections import deque
 from dataclasses import dataclass, field
 from hashlib import sha256
+from typing import Self
 
 from ocfl_cli.ots.bitcoin import BlockchainInfo, BlockHeader
 from ocfl_lib import BitcoinNoBlockError
@@ -40,20 +39,15 @@ class FakeBitcoinRPC:
         self._salt = self._salt + b"r"
         del self._chain[height:]
         self._chain.append(_hash_at(height, self._salt))
-        # The replacement block (and anything above it) is new content. Drop
-        # stale explicit roots so getblockheader falls back to the replacement
-        # block's deterministic root, matching real reorg semantics without
-        # preserving orphaned merkle data.
+        self._forget_merkle_roots_from(height)
+
+    def _forget_merkle_roots_from(self, height: int) -> None:
         for h in [h for h in self._merkle_roots if h >= height]:
             del self._merkle_roots[h]
 
-    def register_merkle_root(self, height: int, merkle_hex: str) -> None:
-        """Register the merkle_root reported by getblockheader at *height*.
-
-        ``merkle_hex`` follows bitcoind's RPC convention: hex of the merkle
-        root bytes in *reversed* (display) order.
-        """
-        self._merkle_roots[height] = merkle_hex
+    def register_merkle_root(self, height: int, merkle_root: bytes) -> None:
+        """bitcoind getblockheader reports merkle roots in reversed (display) hex."""
+        self._merkle_roots[height] = merkle_root[::-1].hex()
 
     def getblockchaininfo(self) -> BlockchainInfo:
         return BlockchainInfo(
@@ -79,8 +73,16 @@ class FakeBitcoinRPC:
         return self._chain[height]
 
 
+class FakeBlockStream:
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+
 @dataclass
-class InMemoryHashBlockStream:
+class InMemoryHashBlockStream(FakeBlockStream):
     _feed: deque[bytes] = field(default_factory=deque)
 
     def push(self, block_hash: bytes) -> None:

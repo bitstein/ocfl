@@ -1,5 +1,3 @@
-"""OCFL storage root operations."""
-
 import posixpath
 from typing import TYPE_CHECKING
 
@@ -107,11 +105,11 @@ class StorageRoot:
                 fsys,
                 extension=layout.name,
                 description=layout_description,
-                root=path,
+                root_path=path,
             )
             cfg = layout.config
             if cfg is not None:
-                write_layout_config(fsys, layout.name, cfg, root=path)
+                write_layout_config(fsys, layout.name, cfg, root_path=path)
 
         return cls(walker, path, spec=spec, layout=layout)
 
@@ -210,6 +208,10 @@ class StorageRoot:
         and created) or a CommitPlan from `plan`, whose content comes from
         `content`. Raises StaleHeadError if the object moved past the plan's
         base. Returns the object at its new head.
+
+        On an Exception or KeyboardInterrupt the commit undoes its own writes,
+        unless the root inventory is already published. A process that dies
+        leaves the partial state for `recover`.
         """
         if isinstance(version, CommitPlan):
             if any(v is not None for v in (spec, message, user, created)):
@@ -300,18 +302,14 @@ class StorageRoot:
         if not obj_paths:
             return
 
-        def _load(path: str) -> Object:
-            obj = Object(self._fsys, path)
-            # Force inventory load to parallelize I/O
-            _ = obj.inventory
-            return obj
-
-        yield from bounded_map(_load, obj_paths, max_workers=max_workers)
+        yield from bounded_map(
+            lambda path: Object.load(self._fsys, path),
+            obj_paths,
+            max_workers=max_workers,
+        )
 
 
 class _NoContent:
-    """ContentSource for a plan committed without one."""
-
     def get_content(self, digest: str) -> tuple[FS, str]:
         raise ContentNotFound(f"no content source for {digest}")
 
@@ -320,7 +318,6 @@ _NO_CONTENT = _NoContent()
 
 
 def _detect_spec(fsys: FileWalker, path: str) -> Spec:
-    """Find and parse the root NAMASTE declaration."""
     try:
         entries = list(fsys.read_dir(path))
     except OSError as e:
@@ -340,10 +337,8 @@ def _detect_spec(fsys: FileWalker, path: str) -> Spec:
 
 
 def _load_layout(fsys: FileWalker, path: str, layouts: LayoutRegistry) -> Layout | None:
-    """Load the declared layout with its extension config, or None."""
-    info = read_ocfl_layout(fsys, root=path)
+    info = read_ocfl_layout(fsys, root_path=path)
     if info is None:
         return None
-    ext_name, _description = info
-    config = read_layout_config(fsys, ext_name, root=path)
-    return get_layout(ext_name, config=config, layouts=layouts)
+    config = read_layout_config(fsys, info.extension, root_path=path)
+    return get_layout(info.extension, config=config, layouts=layouts)

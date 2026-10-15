@@ -1,13 +1,9 @@
-"""A `BatchEvents` sink that records what a batch driver reports."""
-
 from dataclasses import dataclass, field
 from typing import Any
 
 
 @dataclass
 class RecordingBatchEvents:
-    """Every event as `(name, payload)`; `commit_events` holds commit dicts."""
-
     events: list[tuple[str, Any]] = field(default_factory=list)
     commit_events: list[dict[str, Any]] = field(default_factory=list)
 

@@ -1,5 +1,3 @@
-"""ocfl show command."""
-
 from typing import Annotated
 
 import typer
@@ -27,8 +25,8 @@ def show(
     ] = None,
 ) -> None:
     """Show version metadata and diff vs previous."""
-    as_json = appctx.json_mode(ctx)
-    root, _fs = open_root(ctx)
+    app = appctx.of(ctx)
+    root, _fs = open_root(app)
 
     obj = root.get_object(object_id)
     if not obj.exists:
@@ -36,7 +34,6 @@ def show(
     v = parse_version(version) if version else obj.head
     info = obj.version_info(v)
 
-    # Diff: v1 diffs against empty (all added), others diff against previous
     if v.number == 1:
         state = obj.version_info(v).state
         pm = to_path_map(state)
@@ -48,7 +45,7 @@ def show(
         prev_v = VNum(v.number - 1, v.padding)
         changes = obj.diff_versions(prev_v, v)
 
-    if as_json:
+    if app.json:
         output_json(
             {
                 "version": str(v),
@@ -66,7 +63,7 @@ def show(
             }
         )
     else:
-        appctx.console(ctx).print(
+        app.console.print(
             Text.assemble(_style.version(str(v)), "  ", _style.date(info.created))
         )
         if info.message:
@@ -84,4 +81,4 @@ def show(
             parts: list = ["  ", styled_sym, "  ", c.path]
             if c.renamed_from:
                 parts.append(f"  (from {c.renamed_from})")
-            appctx.console(ctx).print(Text.assemble(*parts))
+            app.console.print(Text.assemble(*parts))

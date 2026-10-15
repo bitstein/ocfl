@@ -1,5 +1,3 @@
-"""Open a filesystem backend from a location string."""
-
 import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING

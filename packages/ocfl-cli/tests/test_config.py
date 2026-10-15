@@ -1,11 +1,9 @@
-"""Tests for ocfl CLI user config (~/.config/ocfl/config.toml)."""
-
 import json
 import shutil
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner
 
 from ocfl_cli.config import (
     ArchiveConfig,
@@ -14,6 +12,7 @@ from ocfl_cli.config import (
     config_path,
     load_config,
 )
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_lib import (
     DigestAlgorithm,
@@ -195,7 +194,6 @@ class TestEffective:
         assert cfg.effective_suppress(arch) == frozenset({"W004"})
 
     def test_empty_suppress_overrides_defaults(self):
-        """suppress = [] explicitly opts out of default suppressions."""
         cfg = Config(
             defaults_suppress=("W004",),
             archives={"strict": ArchiveConfig(name="strict", root="/x", suppress=())},
@@ -203,10 +201,41 @@ class TestEffective:
         arch = cfg.archive("strict")
         assert cfg.effective_suppress(arch) == frozenset()
 
+    def test_loaded_suppress_unset_empty_and_list(self, tmp_path):
+        path = _write_config(
+            tmp_path / "c.toml",
+            """
+            [defaults]
+            suppress = ["W004"]
+
+            [archives.inherit]
+            root = "/a"
+
+            [archives.strict]
+            root = "/b"
+            suppress = []
+
+            [archives.own]
+            root = "/c"
+            suppress = ["W007", "W013"]
+            """,
+        )
+        cfg = load_config(path)
+        assert {
+            name: cfg.effective_suppress(cfg.archive(name))
+            for name in ("inherit", "strict", "own")
+        } == {
+            "inherit": frozenset({"W004"}),
+            "strict": frozenset(),
+            "own": frozenset({"W007", "W013"}),
+        }
+        assert cfg.effective_suppress(None) == frozenset({"W004"})
+
     def test_implicit_default_single_archive(self):
         cfg = Config(archives={"only": ArchiveConfig(name="only", root="/x")})
-        assert cfg.implicit_default() is not None
-        assert cfg.implicit_default().name == "only"  # type: ignore[union-attr]
+        default = cfg.implicit_default()
+        assert default is not None
+        assert default.name == "only"
 
     def test_implicit_default_multi_returns_none(self):
         cfg = Config(
@@ -220,7 +249,7 @@ class TestEffective:
 
 class TestAliasResolution:
     def test_alias_resolves_to_root(
-        self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, storage_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -231,11 +260,11 @@ class TestAliasResolution:
         )
         monkeypatch.setenv("OCFL_CONFIG", str(cfg))
         result = runner.invoke(app, ["-r", "mine", "validate"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "Valid" in result.stdout
 
     def test_implicit_single_archive(
-        self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, storage_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -247,12 +276,11 @@ class TestAliasResolution:
         monkeypatch.setenv("OCFL_CONFIG", str(cfg))
         monkeypatch.delenv("OCFL_ROOT", raising=False)
         result = runner.invoke(app, ["validate"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
     def test_env_var_beats_implicit_default(
-        self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, storage_root: Path, tmp_path, monkeypatch
     ):
-        """OCFL_ROOT env takes precedence over implicit single-archive."""
         cfg = _write_config(
             tmp_path / "config.toml",
             """
@@ -263,10 +291,10 @@ class TestAliasResolution:
         monkeypatch.setenv("OCFL_CONFIG", str(cfg))
         monkeypatch.setenv("OCFL_ROOT", str(storage_root))
         result = runner.invoke(app, ["validate"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
     def test_flag_path_still_works_when_not_an_alias(
-        self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, storage_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -277,12 +305,12 @@ class TestAliasResolution:
         )
         monkeypatch.setenv("OCFL_CONFIG", str(cfg))
         result = runner.invoke(app, ["-r", str(storage_root), "validate"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
 
 class TestConfigDigestDefault:
     def test_stage_new_rejects_invalid_config_digest(
-        self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, storage_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -306,7 +334,7 @@ class TestConfigDigestDefault:
                 "obj:bad-cfg",
             ],
         )
-        assert result.exit_code == 6
+        assert result.exit_code == ExitCode.CONFIG
         assert "defaults.digest" in result.output
         assert "bogus" in result.output
         assert "traceback" not in result.output.lower()
@@ -317,7 +345,7 @@ class TestConfigDigestDefault:
         assert not store.exists(str(storage_root.resolve()), "obj:bad-cfg")
 
     def test_stage_new_uses_config_digest(
-        self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, storage_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -341,7 +369,7 @@ class TestConfigDigestDefault:
                 "obj:cfg",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         from ocfl_cli.store.staging import StagingStore
 
@@ -351,7 +379,7 @@ class TestConfigDigestDefault:
         assert inv.digest_algorithm == "sha256"
 
     def test_archive_digest_beats_defaults(
-        self, runner: CliRunner, storage_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, storage_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -379,7 +407,7 @@ class TestConfigDigestDefault:
                 "obj:cfg2",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         from ocfl_cli.store.staging import StagingStore
 
@@ -391,7 +419,6 @@ class TestConfigDigestDefault:
 
 @pytest.fixture
 def sha256_root(tmp_path: Path) -> Path:
-    """Storage root using sha256 digest (triggers W004 on validate)."""
     fs = LocalFS(tmp_path)
     layout = get_layout("0002-flat-direct-storage-layout")
     root = StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
@@ -406,17 +433,17 @@ def sha256_root(tmp_path: Path) -> Path:
 
 
 class TestSuppressWarnings:
-    def test_w004_emitted_without_suppress(self, runner: CliRunner, sha256_root: Path):
+    def test_w004_emitted_without_suppress(self, runner: ObjRunner, sha256_root: Path):
         result = runner.invoke(
             app, ["--root", str(sha256_root), "--json", "validate", "obj:x"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
         codes = [w["code"] for w in data["warnings"]]
         assert "W004" in codes
 
     def test_w004_suppressed_via_defaults(
-        self, runner: CliRunner, sha256_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, sha256_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -429,13 +456,13 @@ class TestSuppressWarnings:
         result = runner.invoke(
             app, ["--root", str(sha256_root), "--json", "validate", "obj:x"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
         codes = [w["code"] for w in data["warnings"]]
         assert "W004" not in codes
 
     def test_suppress_via_archive_alias(
-        self, runner: CliRunner, sha256_root: Path, tmp_path, monkeypatch
+        self, runner: ObjRunner, sha256_root: Path, tmp_path, monkeypatch
     ):
         cfg = _write_config(
             tmp_path / "config.toml",
@@ -447,7 +474,7 @@ class TestSuppressWarnings:
         )
         monkeypatch.setenv("OCFL_CONFIG", str(cfg))
         result = runner.invoke(app, ["-r", "mine", "--json", "validate", "obj:x"])
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
         codes = [w["code"] for w in data["warnings"]]
         assert "W004" not in codes

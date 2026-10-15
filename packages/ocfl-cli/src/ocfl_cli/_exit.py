@@ -13,20 +13,21 @@ import typer
 from typer.core import TyperGroup
 
 from ocfl_cli import _style
+from ocfl_cli._appctx import AppCtx
 from ocfl_cli.errors import CLIError, ErrorContext
 from ocfl_cli.exit_codes import exit_code_for_class
 from ocfl_lib import ErrorClass, OcflError
 
 if TYPE_CHECKING:
-    import click
+    # Typer vendors Click and exports no public alias for its base Context.
     from rich.console import Console
     from rich.text import Text
+    from typer._click import Context
 
 HANDLED = (OcflError, CLIError, OSError, KeyboardInterrupt)
 
 
 def error_class_of(exc: BaseException) -> ErrorClass:
-    """How the CLI reacts to `exc`; context wrappers report their cause."""
     match exc:
         case ErrorContext():
             return error_class_of(exc.cause)
@@ -39,7 +40,6 @@ def error_class_of(exc: BaseException) -> ErrorClass:
 
 
 def error_code_of(exc: BaseException) -> str:
-    """The stable snake_case code reported under `--json`."""
     match exc:
         case ErrorContext():
             return error_code_of(exc.cause)
@@ -54,14 +54,12 @@ def error_code_of(exc: BaseException) -> str:
 
 
 def error_line(message: str) -> Text:
-    """An error as the CLI prints it: `Error: <message>`."""
     return _style.error(f"Error: {message}")
 
 
 def handle_error(
     exc: BaseException, *, json_mode: bool, console: Console | None = None
 ) -> NoReturn:
-    """Report `exc` on stderr (this run's `console`) and exit with its code."""
     code = exit_code_for_class(error_class_of(exc))
     message = str(exc) or ("interrupted" if isinstance(exc, KeyboardInterrupt) else "")
     if json_mode:
@@ -81,17 +79,16 @@ def handle_error(
 
 
 class OcflGroup(TyperGroup):
-    """Root command group that routes every error through `handle_error`."""
-
-    def invoke(self, ctx: click.Context) -> Any:
+    def invoke(self, ctx: Context) -> Any:
         try:
             return super().invoke(ctx)
         except HANDLED as exc:
-            obj = ctx.obj if isinstance(ctx.obj, dict) else {}
-            console = obj.get("err_console")
-            if console is None:
-                no_color = bool(ctx.params.get("no_color"))
-                console = _style.make_console(stderr=True, no_color=no_color)
+            match ctx.obj:
+                case AppCtx(err_console=console):
+                    pass
+                case _:
+                    no_color = bool(ctx.params.get("no_color"))
+                    console = _style.make_console(stderr=True, no_color=no_color)
             handle_error(
                 exc, json_mode=bool(ctx.params.get("json_output")), console=console
             )

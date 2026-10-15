@@ -1,5 +1,3 @@
-"""Core OCFL types and constants."""
-
 import enum
 import functools
 import re
@@ -41,7 +39,6 @@ INVENTORY_FILENAME: str = "inventory.json"
 DEFAULT_CONTENT_DIRECTORY: str = "content"
 DEFAULT_DIGEST_ALGORITHM: str = "sha512"
 
-# Version directory name syntax. VNum.parse also requires a number >= 1.
 VERSION_DIR_RE = re.compile(r"^v(\d+)$")
 
 

@@ -1,10 +1,11 @@
-"""Tests for ocfl stage add."""
-
 import pytest
+from seed_root import SEED_ID
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.store.staging import StagingStore
+from ocfl_lib import LocalFS, StorageRoot
 
 
 @pytest.fixture
@@ -13,7 +14,6 @@ def runner():
 
 
 def _invoke_new(runner, storage_root, staging, object_id="obj:new"):
-    """Helper: create a fresh staging area for a new object."""
     return runner.invoke(
         app,
         [
@@ -58,16 +58,14 @@ class TestStageAdd:
 
         _invoke_new(runner, storage_root, staging)
         result = _invoke_add(runner, storage_root, staging, "obj:new", src)
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
-        # Should have one file in v1 state
         assert len(inv.versions["v1"].state) == 1
         paths = [p for ps in inv.versions["v1"].state.values() for p in ps]
         assert "hello.txt" in paths
 
-        # Content map should reference the file
         cm = store.load_content_map(root_path, "obj:new")
         assert len(cm) == 1
         entry = next(iter(cm.values()))
@@ -82,7 +80,7 @@ class TestStageAdd:
         _invoke_new(runner, storage_root, staging)
         result = _invoke_add(runner, storage_root, staging, "obj:new", missing)
 
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "source not found" in result.output.lower()
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
@@ -101,7 +99,7 @@ class TestStageAdd:
 
         result = _invoke_add(runner, storage_root, staging, "obj:new", source)
 
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "unsupported source" in result.output.lower()
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
@@ -118,7 +116,7 @@ class TestStageAdd:
 
         _invoke_new(runner, storage_root, staging)
         result = _invoke_add(runner, storage_root, staging, "obj:new", src_dir)
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
@@ -140,7 +138,7 @@ class TestStageAdd:
             src,
             extra_args=["--as", "docs/readme.txt"],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
@@ -167,7 +165,7 @@ class TestStageAdd:
             src,
             extra_args=["--as", logical_path],
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "invalid logical path" in result.output.lower()
 
         store, root_path = _store_and_root(storage_root, staging)
@@ -175,7 +173,6 @@ class TestStageAdd:
         assert inv.versions["v1"].state == {}
 
     def test_add_dir_with_as_prefix(self, runner, storage_root, tmp_path):
-        """--as with directory sets parent logical path prefix."""
         staging = tmp_path / "staging"
         src_dir = tmp_path / "mydir"
         src_dir.mkdir()
@@ -190,7 +187,7 @@ class TestStageAdd:
             src_dir,
             extra_args=["--as", "prefix"],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
@@ -198,7 +195,6 @@ class TestStageAdd:
         assert "prefix/x.txt" in paths
 
     def test_overwrite_existing_path(self, runner, storage_root, tmp_path):
-        """Adding a file that overwrites an existing logical path."""
         staging = tmp_path / "staging"
         src1 = tmp_path / "v1.txt"
         src1.write_text("version 1")
@@ -222,67 +218,39 @@ class TestStageAdd:
             src2,
             extra_args=["--as", "file.txt"],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
-        # Should have only one path with the new content
         paths = [p for ps in inv.versions["v1"].state.values() for p in ps]
         assert paths.count("file.txt") == 1
 
     def test_dedup_with_prior_manifest(self, runner, storage_root, tmp_path):
-        """Content already in prior manifest shouldn't appear in content.json."""
         staging = tmp_path / "staging"
-
-        # Stage for existing object (obj:test has files from conftest)
-        _invoke_new(runner, storage_root, staging, "obj:test")
-
+        _invoke_new(runner, storage_root, staging, SEED_ID)
         store, root_path = _store_and_root(storage_root, staging)
 
-        # Create a file with same content as one in the object
-        # Read one of the existing files to get its content
-        from ocfl_lib import LocalFS
-
-        fs = LocalFS(storage_root)
-        from ocfl_lib import StorageRoot
-
-        sr = StorageRoot.open(fs)
-        obj = sr.get_object("obj:test")
-        # Get digest of file1.txt from head version
-        head_state = obj.inventory.inventory.versions[
-            obj.inventory.inventory.head
-        ].state
-        target_digest = None
-        for d, ps in head_state.items():
-            if "file1.txt" in ps:
-                target_digest = d
-                break
-
-        if target_digest:
-            # Read content of file1.txt from the object
-            with obj.open_logical_path(obj.head, "file1.txt") as f:
-                content = f.read()
-
-            # Write same content to a new file
+        obj = StorageRoot.open(LocalFS(storage_root)).get_object(SEED_ID)
+        inv = obj.inventory.inventory
+        [target_digest] = [
+            d for d, ps in inv.versions[inv.head].state.items() if "file1.txt" in ps
+        ]
+        with obj.open_logical_path(obj.head, "file1.txt") as f:
             dup_file = tmp_path / "dup.txt"
-            dup_file.write_bytes(content)
+            dup_file.write_bytes(f.read())
 
-            result = _invoke_add(
-                runner,
-                storage_root,
-                staging,
-                "obj:test",
-                dup_file,
-                extra_args=["--as", "dup.txt"],
-            )
-            assert result.exit_code == 0, result.output
-
-            # Content map should NOT have this digest (it's in prior manifest)
-            cm = store.load_content_map(root_path, "obj:test")
-            assert target_digest not in cm
+        result = _invoke_add(
+            runner,
+            storage_root,
+            staging,
+            SEED_ID,
+            dup_file,
+            extra_args=["--as", "dup.txt"],
+        )
+        assert result.exit_code == ExitCode.SUCCESS, result.output
+        assert target_digest not in store.load_content_map(root_path, SEED_ID)
 
     def test_skip_symlinks(self, runner, storage_root, tmp_path):
-        """Symlinks are skipped."""
         staging = tmp_path / "staging"
         src_dir = tmp_path / "mydir"
         src_dir.mkdir()
@@ -293,7 +261,7 @@ class TestStageAdd:
 
         _invoke_new(runner, storage_root, staging)
         result = _invoke_add(runner, storage_root, staging, "obj:new", src_dir)
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
@@ -302,7 +270,6 @@ class TestStageAdd:
         assert "link.txt" not in paths
 
     def test_skip_empty_dirs(self, runner, storage_root, tmp_path):
-        """Empty directories are skipped."""
         staging = tmp_path / "staging"
         src_dir = tmp_path / "mydir"
         src_dir.mkdir()
@@ -311,11 +278,10 @@ class TestStageAdd:
 
         _invoke_new(runner, storage_root, staging)
         result = _invoke_add(runner, storage_root, staging, "obj:new", src_dir)
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         store, root_path = _store_and_root(storage_root, staging)
         inv = store.load_inventory(root_path, "obj:new")
         paths = [p for ps in inv.versions["v1"].state.values() for p in ps]
         assert "file.txt" in paths
-        # No directory entries
         assert not any("empty" in p for p in paths)

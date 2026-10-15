@@ -1,6 +1,4 @@
-"""Batch read models: status, events and counts in their `--json` shapes."""
-
-from pathlib import Path  # noqa: TC003 - Typer reads option annotations at runtime.
+from pathlib import Path  # noqa: TC003 - get_type_hints reads it.
 from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 from ocfl_cli import errors as errors
@@ -10,12 +8,16 @@ from ocfl_cli.errors import (
     StagingError,
     UsageError,
 )
-from ocfl_cli.model import batch as batch_model
+from ocfl_cli.model import batch as batch_model  # noqa: TC001 - get_type_hints reads it.
 from ocfl_cli.model.ots_state import (  # noqa: TC001 - get_type_hints reads it.
     OtsState,
 )
 from ocfl_cli.model.phase import (
     TimestampTarget,  # noqa: TC001 - get_type_hints reads it.
+)
+from ocfl_cli.model.simpleproof import (
+    ACTIVE_VERIFY_STATUSES,
+    VerifyJobStatus,
 )
 from ocfl_cli.store import batch as batch_state
 from ocfl_cli.store.ots_state import (
@@ -48,7 +50,7 @@ class BatchVerboseDigestOutput(TypedDict):
     verified: bool
     record_id: str | None
     submit_status: batch_model.BatchSubmissionStatus | None
-    verify_status: batch_model.BatchVerifyJobStatus | None
+    verify_status: VerifyJobStatus | None
 
 
 class BatchStatusObjectOutput(TypedDict):
@@ -78,7 +80,7 @@ class BatchSubmissionOutput(TypedDict):
 class BatchVerifyJobOutput(TypedDict):
     job_id: str
     digests: list[str]
-    status: batch_model.BatchVerifyJobStatus
+    status: VerifyJobStatus
     submitted_at: str
     results_url: str | None
     results_url_expires_at: str | None
@@ -239,11 +241,6 @@ def load_batches_or_exit(staging_root: Path) -> list[batch_model.BatchFile]:
 
 
 def resolve_batch_id(staging_root: Path, batch_id: str) -> str:
-    """The full id of the one batch whose id is or starts with `batch_id`.
-
-    No match is `BatchFileMissingError` (exit 1); more than one is a usage
-    error (exit 2), like an ambiguous git short hash.
-    """
     ids = batch_state.batch_ids(staging_root)
     if batch_id in ids:
         return batch_id
@@ -261,14 +258,12 @@ def resolve_batch_id(staging_root: Path, batch_id: str) -> str:
 
 
 def load_batch_or_usage(staging_root: Path, batch_id: str) -> batch_model.BatchFile:
-    """The batch named by `batch_id` or a unique prefix of it."""
     return batch_state.load_batch(
         staging_root, resolve_batch_id(staging_root, batch_id)
     )
 
 
 def not_staged(batch: batch_model.BatchFile) -> tuple[str, ...]:
-    """Objects of the batch that have no OTS Staging Area under its root."""
     return tuple(
         row.object_id
         for row in batch.objects
@@ -277,7 +272,6 @@ def not_staged(batch: batch_model.BatchFile) -> tuple[str, ...]:
 
 
 def upgraded_objects(staging_root: Path, batch_id: str) -> tuple[str, ...]:
-    """The objects whose rows reached `upgraded` in a content batch."""
     batch = load_batch_or_usage(staging_root, batch_id)
     if rules_for(batch.target).commits:
         raise UsageError(
@@ -410,10 +404,8 @@ def submit_status_by_digest(
 
 def verify_status_by_digest(
     batch: batch_model.BatchFile, row: batch_model.BatchObject
-) -> dict[str, batch_model.BatchVerifyJobStatus | None]:
-    statuses: dict[str, batch_model.BatchVerifyJobStatus | None] = dict.fromkeys(
-        row.digests
-    )
+) -> dict[str, VerifyJobStatus | None]:
+    statuses: dict[str, VerifyJobStatus | None] = dict.fromkeys(row.digests)
     wanted = set(row.digests)
     for job in batch.verify_jobs:
         for digest in job.digests:
@@ -465,8 +457,7 @@ def verify_job_covers(
 ) -> bool:
     wanted = set(row.digests)
     return any(
-        job.status in batch_model.BATCH_VERIFY_ACTIVE_STATUSES
-        and wanted.issubset(set(job.digests))
+        job.status in ACTIVE_VERIFY_STATUSES and wanted.issubset(set(job.digests))
         for job in batch.verify_jobs
     )
 
@@ -582,7 +573,7 @@ def batch_verified_digest_counts(
 def batch_verify_job_status_counts(batch: batch_model.BatchFile) -> str:
     if not batch.verify_jobs:
         return "none"
-    counts: dict[str, int] = dict.fromkeys(batch_model.BATCH_VERIFY_JOB_STATUSES, 0)
+    counts = dict.fromkeys(VerifyJobStatus, 0)
     for job in batch.verify_jobs:
         counts[job.status] += 1
     return " ".join(
@@ -624,12 +615,6 @@ def commit_summary_event(
 def remove_batch(
     staging_root: Path, batch_id: str, *, force: bool, runtime: Runtime
 ) -> str:
-    """Delete the batch file and its lock file; refuses open rows unless `force`.
-
-    Holds the batch lock, so a running driver blocks it (exit 4). The lock
-    file goes too, while held: a command that was waiting on it then finds
-    no batch file (ADR-0005). Returns the batch's full id.
-    """
     batch_id = resolve_batch_id(staging_root, batch_id)
     with batch_state.batch_lock(staging_root, batch_id, runtime):
         batch = load_batch_or_usage(staging_root, batch_id)

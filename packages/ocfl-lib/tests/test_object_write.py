@@ -1,8 +1,7 @@
-"""Tests for writing object versions through StorageRoot.commit."""
-
 from typing import TYPE_CHECKING
 
 import pytest
+from builders import stage_files, write_tree
 
 from ocfl_lib import (
     CommitPlan,
@@ -27,22 +26,6 @@ if TYPE_CHECKING:
 OID = "test:1"
 
 
-def _make_src_dir(tmp_path: Path, files: dict[str, str], name: str = "src") -> Path:
-    """Create a source directory with given files."""
-    src = tmp_path / name
-    src.mkdir()
-    for path, content in files.items():
-        p = src / path
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content)
-    return src
-
-
-def _stage(tmp_path: Path, files: dict[str, str], name: str = "src") -> VersionState:
-    src = _make_src_dir(tmp_path, files, name)
-    return scan_dir(LocalFS(src.parent), src.name, DigestAlgorithm.SHA512)
-
-
 def _root(tmp_path: Path) -> tuple[LocalFS, StorageRoot]:
     d = tmp_path / "root"
     d.mkdir()
@@ -65,15 +48,13 @@ class _FailingSource:
 
 
 class TestCommit:
-    """StorageRoot.commit with a VersionState."""
-
     def test_create_new_object(self, tmp_path: Path):
         fs, root = _root(tmp_path)
         assert not root.get_object(OID).exists
         obj = root.commit(
             fs,
             OID,
-            _stage(tmp_path, {"file.txt": "hello"}),
+            stage_files(tmp_path, {"file.txt": "hello"}),
             message="initial commit",
             user=UserInfo(name="Test User"),
             created="2024-01-01T00:00:00Z",
@@ -86,15 +67,15 @@ class TestCommit:
 
     def test_create_object_reads_back_content(self, tmp_path: Path):
         fs, root = _root(tmp_path)
-        obj = root.commit(fs, OID, _stage(tmp_path, {"file.txt": "hello world"}))
+        obj = root.commit(fs, OID, stage_files(tmp_path, {"file.txt": "hello world"}))
         with obj.open_logical_path(VNum(1), "file.txt") as f:
             assert f.read() == b"hello world"
 
     def test_add_version_to_existing(self, tmp_path: Path):
         fs, root = _root(tmp_path)
-        root.commit(fs, OID, _stage(tmp_path, {"file.txt": "v1 content"}))
-        stage2 = _stage(
-            tmp_path, {"file.txt": "v2 content", "new.txt": "brand new"}, "src2"
+        root.commit(fs, OID, stage_files(tmp_path, {"file.txt": "v1 content"}))
+        stage2 = stage_files(
+            tmp_path, {"file.txt": "v2 content", "new.txt": "brand new"}, name="src2"
         )
         obj = root.commit(fs, OID, stage2, message="second version")
         assert obj.head == VNum(2)
@@ -102,10 +83,9 @@ class TestCommit:
         _valid(fs, obj)
 
     def test_forward_delta_dedup(self, tmp_path: Path):
-        """Unchanged files reuse v1 content paths (no duplication)."""
         fs, root = _root(tmp_path)
-        root.commit(fs, OID, _stage(tmp_path, {"a.txt": "same", "b.txt": "old"}))
-        stage2 = _stage(tmp_path, {"a.txt": "same", "b.txt": "new"}, "src2")
+        root.commit(fs, OID, stage_files(tmp_path, {"a.txt": "same", "b.txt": "old"}))
+        stage2 = stage_files(tmp_path, {"a.txt": "same", "b.txt": "new"}, name="src2")
         obj = root.commit(fs, OID, stage2)
         inv = obj.inventory.inventory
         v2_content_paths = [
@@ -116,9 +96,9 @@ class TestCommit:
 
     def test_create_with_fixity(self, tmp_path: Path):
         fs, root = _root(tmp_path)
-        src = _make_src_dir(tmp_path, {"file.txt": "hello"})
+        write_tree(tmp_path / "src", {"file.txt": "hello"})
         stage = scan_dir(
-            LocalFS(src.parent),
+            LocalFS(tmp_path),
             "src",
             DigestAlgorithm.SHA512,
             fixity_algs=[DigestAlgorithm.MD5],
@@ -153,7 +133,7 @@ class TestCommit:
 
     def test_keyboard_interrupt_v2_preserves_root_inventory(self, tmp_path: Path):
         fs, root = _root(tmp_path)
-        root.commit(fs, OID, _stage(tmp_path, {"file.txt": "v1-content"}))
+        root.commit(fs, OID, stage_files(tmp_path, {"file.txt": "v1-content"}))
         obj_dir = tmp_path / "root" / OID
         v1_inv_bytes = (obj_dir / "inventory.json").read_bytes()
         v1_sidecar_bytes = (obj_dir / "inventory.json.sha512").read_bytes()
@@ -172,7 +152,7 @@ class TestCommit:
 
     def test_multiple_files(self, tmp_path: Path):
         fs, root = _root(tmp_path)
-        stage = _stage(
+        stage = stage_files(
             tmp_path, {"a.txt": "aaa", "dir/b.txt": "bbb", "dir/sub/c.txt": "ccc"}
         )
         obj = root.commit(fs, OID, stage)
@@ -187,7 +167,7 @@ class TestCommit:
         obj = root.commit(
             fs,
             OID,
-            _stage(tmp_path, {"file.txt": "hello"}),
+            stage_files(tmp_path, {"file.txt": "hello"}),
             message="test msg",
             user=user,
             created="2024-01-01T00:00:00Z",
@@ -201,26 +181,26 @@ class TestCommit:
 
     def test_returns_fresh_object(self, tmp_path: Path):
         fs, root = _root(tmp_path)
-        obj = root.commit(fs, OID, _stage(tmp_path, {"file.txt": "v1"}))
+        obj = root.commit(fs, OID, stage_files(tmp_path, {"file.txt": "v1"}))
         assert obj.head == VNum(1)
-        obj = root.commit(fs, OID, _stage(tmp_path, {"file.txt": "v2"}, "src2"))
+        obj = root.commit(
+            fs, OID, stage_files(tmp_path, {"file.txt": "v2"}, name="src2")
+        )
         assert obj.head == VNum(2)
         assert obj.inventory.inventory.head == "v2"
         _valid(fs, obj)
 
 
 class TestPlanThenCommit:
-    """StorageRoot.plan, then StorageRoot.commit of the CommitPlan."""
-
     def test_plan_writes_nothing(self, tmp_path: Path):
         _fs, root = _root(tmp_path)
-        plan = root.plan(OID, _stage(tmp_path, {"file.txt": "hello"}))
+        plan = root.plan(OID, stage_files(tmp_path, {"file.txt": "hello"}))
         assert plan.version == "v1"
         assert not root.get_object(OID).exists
 
     def test_create_via_plan(self, tmp_path: Path):
         fs, root = _root(tmp_path)
-        stage = _stage(tmp_path, {"file.txt": "hello"})
+        stage = stage_files(tmp_path, {"file.txt": "hello"})
         plan = root.plan(OID, stage, created="2024-01-01T00:00:00Z")
         obj = root.commit(fs, OID, plan, content=stage.content_source)
         assert obj.head == VNum(1)
@@ -228,7 +208,7 @@ class TestPlanThenCommit:
 
     def test_plan_survives_json(self, tmp_path: Path):
         fs, root = _root(tmp_path)
-        stage = _stage(tmp_path, {"file.txt": "hello"})
+        stage = stage_files(tmp_path, {"file.txt": "hello"})
         plan = root.plan(OID, stage, created="2024-01-01T00:00:00Z")
         plan2 = CommitPlan.from_json(plan.to_json())
         assert plan2 == plan
@@ -237,8 +217,8 @@ class TestPlanThenCommit:
 
     def test_v2_via_plan(self, tmp_path: Path):
         fs, root = _root(tmp_path)
-        root.commit(fs, OID, _stage(tmp_path, {"file.txt": "v1"}))
-        stage2 = _stage(tmp_path, {"file.txt": "v2"}, "src2")
+        root.commit(fs, OID, stage_files(tmp_path, {"file.txt": "v1"}))
+        stage2 = stage_files(tmp_path, {"file.txt": "v2"}, name="src2")
         plan = root.plan(OID, stage2, created="2024-06-01T00:00:00Z")
         obj = root.commit(fs, OID, plan, content=stage2.content_source)
         assert obj.head == VNum(2)
@@ -246,15 +226,14 @@ class TestPlanThenCommit:
 
     def test_metadata_belongs_to_plan(self, tmp_path: Path):
         fs, root = _root(tmp_path)
-        stage = _stage(tmp_path, {"file.txt": "hello"})
+        stage = stage_files(tmp_path, {"file.txt": "hello"})
         plan = root.plan(OID, stage)
         with pytest.raises(PlanMismatchError):
             root.commit(fs, OID, plan, content=stage.content_source, message="m")
 
     def test_dropping_paths_needs_no_content(self, tmp_path: Path):
-        """A version that only drops paths reads no content."""
         fs, root = _root(tmp_path)
-        obj = root.commit(fs, OID, _stage(tmp_path, {"a.txt": "a", "b.txt": "b"}))
+        obj = root.commit(fs, OID, stage_files(tmp_path, {"a.txt": "a", "b.txt": "b"}))
         v1 = obj.version_state(VNum(1))
         keep = {d: ps for d, ps in v1.state.items() if "a.txt" in ps}
         stage2 = VersionState(
@@ -267,11 +246,10 @@ class TestPlanThenCommit:
         _valid(fs, obj)
 
     def test_independently_built_stale_plan_cannot_publish(self, tmp_path: Path):
-        """Two v2 plans built from the same v1 head cannot both publish."""
         fs, root = _root(tmp_path)
-        root.commit(fs, OID, _stage(tmp_path, {"base.txt": "v1"}))
-        stage_a = _stage(tmp_path, {"a.txt": "writer a"}, "src2a")
-        stage_b = _stage(tmp_path, {"b.txt": "writer b"}, "src2b")
+        root.commit(fs, OID, stage_files(tmp_path, {"base.txt": "v1"}))
+        stage_a = stage_files(tmp_path, {"a.txt": "writer a"}, name="src2a")
+        stage_b = stage_files(tmp_path, {"b.txt": "writer b"}, name="src2b")
         plan_a = root.plan(OID, stage_a, created="2024-02-01T00:00:00Z")
         plan_b = root.plan(OID, stage_b, created="2024-02-01T00:00:01Z")
 
@@ -285,7 +263,7 @@ class TestPlanThenCommit:
 
     def test_object_id_must_match_inventory(self, tmp_path: Path):
         fs, root = _root(tmp_path)
-        root.commit(fs, OID, _stage(tmp_path, {"file.txt": "x"}))
+        root.commit(fs, OID, stage_files(tmp_path, {"file.txt": "x"}))
         (tmp_path / "root" / OID).rename(tmp_path / "root" / "other")
         with pytest.raises(PlanMismatchError):
-            root.plan("other", _stage(tmp_path, {"f": "y"}, "s2"))
+            root.plan("other", stage_files(tmp_path, {"f": "y"}, name="s2"))

@@ -1,19 +1,15 @@
-"""A filesystem that dies at write N, for crash tests (ADR-0001)."""
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any, Self, cast
 
-from dataclasses import dataclass
-
-# Calls that only read. Every other public method call counts as a write.
 READS = frozenset({"open_file", "read_dir", "exists", "walk_files", "read_tagged"})
 
 
-class Crash(BaseException):
-    """The writing process died. Not an Exception, so no undo or cleanup runs."""
+class Crash(BaseException): ...
 
 
 @dataclass
 class Counter:
-    """Writes seen so far; `crashed` once the fault fired."""
-
     writes: int = 0
     crashed: bool = False
 
@@ -46,6 +42,37 @@ def fail_at[F](fs: F, n: int | None) -> tuple[F, Counter]:
     faulty = type(
         f"FailAt{cls.__name__}", (cls,), {"__getattribute__": __getattribute__}
     )
-    wrapped = object.__new__(faulty)
+    wrapped = cast("F", object.__new__(faulty))
     wrapped.__dict__.update(fs.__dict__)
     return wrapped, counter
+
+
+_ABSENT = object()
+
+
+@dataclass
+class CrashBoundary:
+    owner: object
+    name: str
+    when: Callable[..., bool] = lambda *args, **kwargs: True
+    crashed: bool = False
+    _saved: object = field(default=_ABSENT, init=False, repr=False)
+
+    def __enter__(self) -> Self:
+        real = getattr(self.owner, self.name)
+        self._saved = vars(self.owner).get(self.name, _ABSENT)
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            if self.when(*args, **kwargs):
+                self.crashed = True
+                raise Crash(f"{self.name}{args[:1]}")
+            return real(*args, **kwargs)
+
+        setattr(self.owner, self.name, call)
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        if self._saved is _ABSENT:
+            delattr(self.owner, self.name)
+        else:
+            setattr(self.owner, self.name, self._saved)

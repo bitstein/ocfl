@@ -1,18 +1,9 @@
-"""Shared helpers for ocfl-index tests."""
-
 import hashlib
 import json
 from collections.abc import Mapping
 from pathlib import Path
 
 import msgspec
-from opentimestamps.core.notary import (
-    BitcoinBlockHeaderAttestation,
-    PendingAttestation,
-)
-from opentimestamps.core.op import OpSHA256
-from opentimestamps.core.serialize import BytesSerializationContext
-from opentimestamps.core.timestamp import DetachedTimestampFile, Timestamp
 
 from ocfl_lib import (
     DigestAlgorithm,
@@ -24,6 +15,7 @@ from ocfl_lib import (
     UserInfo,
     scan_dir,
 )
+from tests.helpers.ots import build_attestation
 
 
 def write_files(dir_path: Path, files: Mapping[str, bytes | str]) -> None:
@@ -38,8 +30,6 @@ def write_files(dir_path: Path, files: Mapping[str, bytes | str]) -> None:
 
 
 class FixtureRoot:
-    """Helper to build, mutate, and inspect a local OCFL storage root."""
-
     def __init__(self, base: Path) -> None:
         self.base = base
         self.base.mkdir(parents=True, exist_ok=True)
@@ -83,17 +73,12 @@ class FixtureRoot:
 
 
 def build_proof(payload: bytes, *, height: int | None = 854_321) -> bytes:
-    file_hash = hashlib.sha256(payload).digest()
-    ts = Timestamp(file_hash)
-    sub = ts.ops.add(OpSHA256())
-    if height is None:
-        sub.attestations.add(PendingAttestation("https://example.invalid"))
-    else:
-        sub.attestations.add(BitcoinBlockHeaderAttestation(height))
-    dtsf = DetachedTimestampFile(OpSHA256(), ts)
-    ctx = BytesSerializationContext()
-    dtsf.serialize(ctx)
-    return ctx.getbytes()
+    return build_attestation(
+        hashlib.sha256(payload).digest(),
+        block_height=height,
+        pending_uri="https://example.invalid" if height is None else None,
+        merkle_step=True,
+    )
 
 
 def commit_with_inventory_proof(

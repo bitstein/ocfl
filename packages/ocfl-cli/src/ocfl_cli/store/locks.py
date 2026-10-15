@@ -2,9 +2,7 @@
 
 Every lock is an exclusive `flock(2)` on a lock file. The kernel drops it
 when its holder exits, however it exits, so no lock can go stale and none
-needs a heartbeat (ADR-0005). A taker polls with `LOCK_NB` and waits through
-`Runtime.sleeper` (tests wait no real time), then fails with
-`LockTimeoutError` (exit 4).
+needs a heartbeat (ADR-0005).
 """
 
 import fcntl
@@ -19,7 +17,7 @@ from typing import TYPE_CHECKING
 from ocfl_cli.errors import LockTimeoutError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
     from ocfl_cli.ports import Runtime
 
@@ -28,11 +26,9 @@ _OBJECT_LOCK_DIR = "ocfl-cli-object-locks"
 
 
 @contextmanager
-def flock(path: Path, runtime: Runtime, *, what: str) -> Iterator[None]:
+def flock(path: Path, runtime: Runtime, *, what: str) -> Generator[None]:
     """Hold an exclusive `flock` on `path` (created if missing).
 
-    Waits up to `runtime.lock_timeout` seconds, in `POLL_SECONDS` steps
-    through `runtime.sleeper`, then raises `LockTimeoutError` naming `what`.
     Two opens of the same file conflict even within one process.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,7 +52,6 @@ def flock(path: Path, runtime: Runtime, *, what: str) -> Iterator[None]:
 
 
 def object_lock_path(root_path: str, object_id: str) -> Path:
-    """`$TMPDIR/ocfl-cli-object-locks/<sha256(root \\0 object)>.lock`."""
     key = hashlib.sha256(f"{root_path}\0{object_id}".encode()).hexdigest()
     return Path(tempfile.gettempdir()) / _OBJECT_LOCK_DIR / f"{key}.lock"
 
@@ -64,14 +59,7 @@ def object_lock_path(root_path: str, object_id: str) -> Path:
 @contextmanager
 def object_commit_lock(
     root_path: str, object_id: str, runtime: Runtime
-) -> Iterator[None]:
-    """Serialize local CLI commits for one storage-root/object pair.
-
-    This is an operator-ergonomics lock: it prevents ordinary same-machine CLI
-    commits from racing into retryable stale-head failures. The library still
-    enforces optimistic stale-head checks because S3 and non-CLI callers need a
-    backend-independent correctness guard.
-    """
+) -> Generator[None]:
     with flock(
         object_lock_path(root_path, object_id),
         runtime,

@@ -1,5 +1,3 @@
-"""Direct tests for the ots.json wire-shape boundary (schema 2)."""
-
 import copy
 
 import pytest
@@ -103,7 +101,6 @@ def test_batch_fields_round_trip_when_present() -> None:
 
     assert raw["submissions"][0]["batch_id"] == "batch-1"
     assert raw["submissions"][0]["record_ids"] == ("record-1",)
-    # The inventory's batch fields live on its Submission, like content's.
     assert raw["submissions"][1]["target"] == "inventory"
     assert raw["submissions"][1]["batch_id"] == "batch-2"
     assert raw["submissions"][1]["record_ids"] == ("record-2",)
@@ -145,7 +142,6 @@ def test_decode_reads_the_inventory_proof_from_the_table() -> None:
 
 
 def test_decode_accepts_hypothetical_migration_output_without_mutating_it() -> None:
-    """Migration steps can hand current-shape raw JSON to the wire decoder."""
     digest = _bare_hex("c")
     v2_raw = {
         "schema_version": 2,

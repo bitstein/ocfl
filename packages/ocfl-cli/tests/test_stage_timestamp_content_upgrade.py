@@ -1,54 +1,31 @@
-"""Tests for `ocfl stage upgrade` on the content target (OTS workflow step 11).
-
-Pins step 11 of `OTS workflow contract`:
-
-- For each ``Submission(status="submitted")`` in ``ots.json`` with no
-  associated ``VerifyJob`` covering its digests, call
-  ``sp.verify_batch(digests)`` and append a ``VerifyJob`` to
-  ``state.verify_jobs``.
-- Poll each outstanding ``VerifyJob`` via ``sp.poll_job``.
-- On ``COMPLETED``: download via ``sp.download_results``; for every digest
-  parse the ``.ots`` and call ``verify_attestation(rpc, ots_bytes,
-  expected_digest=bytes.fromhex(d), min_confirmations=cfg.bitcoin.confirmations)``.
-- On ``VerifiedAttestation`` apply the per-digest crash-recovery invariant:
-  (1) atomic write ``ots-cache/<d>.ots``,
-  (2) ``ingest_file`` cached bytes into stage state at ``<obj_rel>.ots``
-      (updating ``content_map``),
-  (3) atomic update ``ots.json.proofs[d] = Proof(target=CONTENT,
-      verified=True, block_height=..., confirmations_at_verify=...,
-      verified_at=...)``; companions ``P.ots`` are placed from the cache
-      on every pass.
-- On ``PendingVerification`` cache bytes (step 1), record ``proofs[d]
-  = Proof(target=TimestampTarget.CONTENT, verified=False)`` (no ingest, no advance).
-- ``ReorgDetectedError`` / ``AttestationMismatchError`` HALT the upgrade
-  (CLI exit 5); ``ots.json`` left intact.
-- Phase advances to ``content-upgraded`` only when both:
-  (1) ∀ d ∈ pending_digests: proofs[d].verified is True
-  (2) non_ots_digests(stage.state) ⊆ pending_digests
-- Reorg reconciliation (`reverify_content_proofs`) at head of every
-  --upgrade pass: for each verified=True proof, re-parse cached `.ots`
-  and compare attested block hash against ``btc.getblockhash(block_height)``;
-  on mismatch reset ``verified=False`` and re-fetch via SP.
-
-Tests inject ``FakeBitcoinRPC`` / ``FakeSimpleProof`` via
-``runner.obj["btc_rpc_factory"]`` / ``runner.obj["sp_client_factory"]``
-(see ``conftest.py::runner`` for the auto-attach mechanism).
-"""
-
 import hashlib
-import json
 import os
-import shutil
 from pathlib import Path
 
 import pytest
-from fakes import FakeBitcoinRPC, FakeSimpleProof
+from fakes import FakeSimpleProof
 from msgspec.structs import replace
-from runner_helpers import runner_obj
-from typer.testing import CliRunner
+from ots_helpers import (
+    DIGEST_BLOCK_HEIGHT,
+    MIN_CONFS,
+    SP_OK,
+    bury,
+    crash_at,
+    end_chain_below,
+    final_proof_for,
+    inject_fake_btc,
+    inject_fake_sp,
+    new_ots_staging,
+    register_attested,
+    register_mismatched_merkle_root,
+    replace_attested_block,
+    write_config,
+)
+from runner_helpers import ObjRunner, stage_args
 
 from ocfl_cli._style import make_console
 from ocfl_cli.errors import AttestationMismatchError
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.ots_state import (
     CalendarAttestation,
@@ -63,149 +40,18 @@ from ocfl_cli.store.ots_state import load_ots, ots_cache_path, save_ots
 from ocfl_cli.store.staging import StagingStore
 from ocfl_cli.workflow import common as wf_common
 from ocfl_cli.workflow import timestamp as wf_timestamp
-from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
+from tests.helpers.faults import Crash, CrashBoundary
 from tests.helpers.ots import build_attestation
-
-# --------------------------------------------------------------------------- #
-# Config + path helpers
-# --------------------------------------------------------------------------- #
-
-_SP_OK = """\
-[simpleproof]
-base_url = "https://stage.example"
-proof_category_id = 641
-"""
-
-_BTC_OK_COOKIE = """\
-[bitcoin]
-rpc_url = "http://127.0.0.1:8332"
-zmq_endpoint = "tcp://127.0.0.1:28332"
-confirmations = 3
-"""
-
-
-def _write_config(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    body: str = _SP_OK + _BTC_OK_COOKIE,
-) -> Path:
-    cfg = tmp_path / "ocfl-config" / "config.toml"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(body)
-    monkeypatch.setenv("OCFL_CONFIG", str(cfg))
-    return cfg
-
-
-def _stage_args(root: Path, staging: Path, *args: str) -> list[str]:
-    return ["--root", str(root), "stage", "--staging-root", str(staging), *args]
-
-
-def _staging_dir(root: Path, staging: Path, object_id: str) -> Path:
-    store = StagingStore(staging)
-    return store.staging_path(str(root.resolve()), object_id)
-
-
-def _inject_fake_sp(runner: CliRunner, fake: FakeSimpleProof) -> None:
-    """Inject *fake* via ``runner.obj["sp_client_factory"]``."""
-    runner_obj(runner)["sp_client_factory"] = lambda cfg: fake
-
-
-def _inject_fake_btc(runner: CliRunner, fake: FakeBitcoinRPC) -> None:
-    """Inject *fake* via ``runner.obj["btc_rpc_factory"]``."""
-    runner_obj(runner)["btc_rpc_factory"] = lambda cfg: fake
-
-
-# --------------------------------------------------------------------------- #
-# Storage-root + staging fixtures
-# --------------------------------------------------------------------------- #
-
-
-@pytest.fixture
-def empty_sha256_root(tmp_path: Path) -> Path:
-    location = tmp_path / "root"
-    location.mkdir()
-    fs = LocalFS(location)
-    layout = get_layout("0002-flat-direct-storage-layout")
-    StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
-    return location
-
-
-# --------------------------------------------------------------------------- #
-# .ots-bytes + chain helpers
-# --------------------------------------------------------------------------- #
-
-DIGEST_BLOCK_HEIGHT = 800_000
-MIN_CONFS = 3
-
-
-def _ots_for(digest_hex: str, *, block_height: int = DIGEST_BLOCK_HEIGHT) -> bytes:
-    """Build synthetic .ots bytes committing to *digest_hex* at *block_height*."""
-    return build_attestation(bytes.fromhex(digest_hex), block_height=block_height)
 
 
 def _ots_pending(digest_hex: str) -> bytes:
-    """Build synthetic .ots bytes with only a PendingAttestation (no block)."""
     return build_attestation(
         bytes.fromhex(digest_hex),
         pending_uri="https://a.pool.opentimestamps.org",
     )
 
 
-def _grow_chain_to(rpc: FakeBitcoinRPC, height: int) -> None:
-    needed = height - rpc.tip_height
-    if needed > 0:
-        rpc.extend(needed)
-
-
-def _register_attested(
-    rpc: FakeBitcoinRPC, digest_hex: str, height: int = DIGEST_BLOCK_HEIGHT
-) -> None:
-    """Register the merkle root in the fake chain so verify_attestation succeeds.
-
-    `build_attestation` puts no ops between the leaf and the
-    BitcoinBlockHeaderAttestation — attested merkle root (internal bytes) ==
-    the file digest. bitcoind reports merkle in display (reversed) hex.
-    """
-    rpc.register_merkle_root(height, bytes.fromhex(digest_hex)[::-1].hex())
-
-
-# --------------------------------------------------------------------------- #
-# Setup helper: create OTS staging at content-pending with a single submitted
-# digest, optionally pre-load a COMPLETED verify_job covering it.
-# --------------------------------------------------------------------------- #
-
-
-def _new_ots_staging(
-    runner: CliRunner,
-    root: Path,
-    staging: Path,
-    object_id: str,
-    *files: tuple[str, bytes],
-) -> tuple[Path, dict[str, str], dict[str, str]]:
-    """Run ``stage new --ots`` + ``stage add`` for each file.
-
-    Returns ``(staging_dir, path_by_seed, digest_by_seed)``.
-    Each *file* is ``(seed_name, bytes)`` written to a tmp path; logical
-    path is ``seed_name`` (e.g. ``"a.txt"``).
-    """
-    r = runner.invoke(app, _stage_args(root, staging, "new", object_id, "--ots"))
-    assert r.exit_code == 0, r.output
-
-    paths: dict[str, str] = {}
-    digests: dict[str, str] = {}
-    for name, data in files:
-        src = staging.parent / name
-        src.write_bytes(data)
-        r = runner.invoke(app, _stage_args(root, staging, "add", object_id, str(src)))
-        assert r.exit_code == 0, r.output
-        paths[name] = name
-        digests[name] = hashlib.sha256(data).hexdigest()
-
-    return _staging_dir(root, staging, object_id), paths, digests
-
-
 def _force_content_pending(sd: Path, digests: tuple[str, ...]) -> None:
-    """Pin ots.json into phase=content-pending with a submitted Submission."""
     state = load_ots(sd)
     state = replace(
         state,
@@ -217,7 +63,6 @@ def _force_content_pending(sd: Path, digests: tuple[str, ...]) -> None:
                 digests=digests,
                 status="submitted",
                 target=TimestampTarget.CONTENT,
-                job_id=None,
                 attempts=1,
             ),
         ),
@@ -231,11 +76,6 @@ def _seed_completed_verify_job(
     digests: tuple[str, ...],
     ots_results: dict[str, bytes],
 ) -> str:
-    """Pre-create a COMPLETED job on the fake + record IN_PROGRESS in ots.json.
-
-    The upgrade pass should detect the existing verify_job (no second
-    POST), poll, see COMPLETED, then download + verify.
-    """
     job_id = sp_fake.verify_batch(list(digests)).job_id
     sp_fake.advance_to_completed(job_id, ots_results)
     state = load_ots(sd)
@@ -414,16 +254,16 @@ class TestProgressRendering:
 class TestMidflightProgressSnapshots:
     def test_snapshot_persists_attestations_on_verify_job_only(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         sp_fake: FakeSimpleProof,
         runtime,
     ):
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, _paths, digests_by_name = _new_ots_staging(
+        sd, digests_by_name = new_ots_staging(
             runner, empty_sha256_root, staging, "obj:progress", ("a.txt", b"a")
         )
         digest = digests_by_name["a.txt"]
@@ -459,15 +299,15 @@ class TestMidflightProgressSnapshots:
 
     def test_snapshot_rejects_foreign_digest(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         sp_fake: FakeSimpleProof,
     ):
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, _paths, digests_by_name = _new_ots_staging(
+        sd, digests_by_name = new_ots_staging(
             runner, empty_sha256_root, staging, "obj:foreign", ("a.txt", b"a")
         )
         digest = digests_by_name["a.txt"]
@@ -486,16 +326,16 @@ class TestMidflightProgressSnapshots:
 
     def test_unconfirmed_result_does_not_count_as_anchored(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         sp_fake: FakeSimpleProof,
         runtime,
     ):
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, _paths, digests_by_name = _new_ots_staging(
+        sd, digests_by_name = new_ots_staging(
             runner, empty_sha256_root, staging, "obj:unconfirmed", ("a.txt", b"a")
         )
         digest = digests_by_name["a.txt"]
@@ -512,15 +352,15 @@ class TestMidflightProgressSnapshots:
 
     def test_updated_at_none_refetches_snapshot_each_pass(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         sp_fake: FakeSimpleProof,
     ):
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, _paths, digests_by_name = _new_ots_staging(
+        sd, digests_by_name = new_ots_staging(
             runner, empty_sha256_root, staging, "obj:refetch", ("a.txt", b"a")
         )
         digest = digests_by_name["a.txt"]
@@ -559,15 +399,15 @@ class TestMidflightProgressSnapshots:
 
     def test_snapshot_rebuilds_attestation_dict_identity(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         sp_fake: FakeSimpleProof,
     ):
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, _paths, digests_by_name = _new_ots_staging(
+        sd, digests_by_name = new_ots_staging(
             runner, empty_sha256_root, staging, "obj:identity", ("a.txt", b"a")
         )
         digest = digests_by_name["a.txt"]
@@ -598,24 +438,24 @@ class TestMidflightProgressSnapshots:
 
     def test_resubmitted_job_starts_with_empty_snapshots(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         sp_fake: FakeSimpleProof,
         btc_fake,
     ):
-        _write_config(tmp_path, monkeypatch)
+        write_config(tmp_path, monkeypatch)
         staging = tmp_path / "staging"
-        sd, _paths, digests_by_name = _new_ots_staging(
+        sd, digests_by_name = new_ots_staging(
             runner, empty_sha256_root, staging, "obj:resubmit", ("a.txt", b"a")
         )
         digest = digests_by_name["a.txt"]
         cache_file = ots_cache_path(sd, digest)
         cache_file.parent.mkdir(parents=True, exist_ok=True)
-        cache_file.write_bytes(_ots_for(digest))
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        btc_fake.rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, "00" * 32)
+        cache_file.write_bytes(final_proof_for(digest))
+        bury(btc_fake.rpc)
+        register_mismatched_merkle_root(btc_fake.rpc)
         state = load_ots(sd)
         state = replace(
             state,
@@ -663,7 +503,7 @@ class TestMidflightProgressSnapshots:
 
     def test_verified_ingest_preserves_attestation_snapshots(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -671,15 +511,15 @@ class TestMidflightProgressSnapshots:
         btc_fake,
         runtime,
     ):
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_btc(runner, btc_fake.rpc)
         staging = tmp_path / "staging"
-        sd, _paths, digests_by_name = _new_ots_staging(
+        sd, digests_by_name = new_ots_staging(
             runner, empty_sha256_root, staging, "obj:preserve", ("a.txt", b"a")
         )
         digest = digests_by_name["a.txt"]
         _force_content_pending(sd, (digest,))
-        ots_bytes = _ots_for(digest)
+        ots_bytes = final_proof_for(digest)
         job_id = sp_fake.verify_batch([digest]).job_id
         sp_fake.advance_to_completed(job_id, {digest: ots_bytes})
         snapshot: dict[str, tuple[CalendarAttestation, ...]] = {
@@ -705,8 +545,8 @@ class TestMidflightProgressSnapshots:
             ),
         )
         save_ots(sd, state)
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        _register_attested(btc_fake.rpc, digest)
+        bury(btc_fake.rpc)
+        register_attested(btc_fake.rpc, digest)
 
         downloads = sp_fake.download_results(f"results://{job_id}", {digest})
         state = wf_timestamp.verify_digest(
@@ -724,42 +564,36 @@ class TestMidflightProgressSnapshots:
         assert state.verify_jobs[0].attestation_snapshots == snapshot
 
 
-# =========================================================================== #
-# Layer-2: --upgrade happy path  (verified, ingested, phase advances)
-# =========================================================================== #
-
-
 class TestUpgradeHappyPath:
     def test_single_digest_at_3_confs_advances_to_content_upgraded(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner, empty_sha256_root, staging, "obj:up", ("a.txt", b"alpha")
         )
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = _ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
-        # Tip exactly N confirmations deep past attested height.
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        _register_attested(btc_fake.rpc, d)
+        bury(btc_fake.rpc)
+        register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -768,7 +602,7 @@ class TestUpgradeHappyPath:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "Content:" in r.output
         assert "Object: obj:up" in r.output
         assert "Checked SimpleProof jobs" in r.output
@@ -785,40 +619,35 @@ class TestUpgradeHappyPath:
         assert proof.confirmations_at_verify is not None
         assert proof.confirmations_at_verify >= MIN_CONFS
         assert proof.verified_at is not None
-        # ots_path is staging-relative.
         assert proof.ots_path == f"ots-cache/{d}.ots"
 
-        # Cache bytes match what SP returned.
         assert ots_cache_path(sd, d).read_bytes() == ots_bytes
 
-        # Inventory has the .ots companion ingested at "<obj_rel>.ots".
         store = StagingStore(staging)
         root_path = str(empty_sha256_root.resolve())
         inv = store.load_inventory(root_path, "obj:up")
         all_paths = {p for ps in inv.versions[inv.head].state.values() for p in ps}
         assert "a.txt" in all_paths
         assert "a.txt.ots" in all_paths
-        # content_map gained an entry for the .ots digest.
         cm = store.load_content_map(root_path, "obj:up")
         ots_digest = hashlib.sha256(ots_bytes).hexdigest()
         assert ots_digest in cm
 
     def test_multi_digest_partial_pending_does_not_advance(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Two digests submitted; only one verifies → phase stays content-pending."""
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -829,16 +658,16 @@ class TestUpgradeHappyPath:
         da, db = digests["a.txt"], digests["b.txt"]
         _force_content_pending(sd, (da, db))
 
-        ots_a = _ots_for(da)  # buried — verifies
-        ots_b = _ots_pending(db)  # pending attestation — held
+        ots_a = final_proof_for(da)
+        ots_b = _ots_pending(db)
         _seed_completed_verify_job(sp_fake, sd, (da, db), {da: ots_a, db: ots_b})
 
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        _register_attested(btc_fake.rpc, da)
+        bury(btc_fake.rpc)
+        register_attested(btc_fake.rpc, da)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -847,7 +676,7 @@ class TestUpgradeHappyPath:
                 "content",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         assert "Content:" in r.output
         assert "Object: obj:multi" in r.output
         assert "Checked SimpleProof jobs" in r.output
@@ -860,43 +689,37 @@ class TestUpgradeHappyPath:
         assert state.phase is Phase.CONTENT_PENDING
         assert state.proofs[da].verified is True
         assert state.proofs[db].verified is False
-        # Both .ots bytes cached, even the pending one.
         assert ots_cache_path(sd, da).is_file()
         assert ots_cache_path(sd, db).is_file()
 
 
-# =========================================================================== #
-# Layer-2: 3-conf gate
-# =========================================================================== #
-
-
 class TestThreeConfGate:
     @pytest.mark.parametrize(
-        ("confs_to_grow", "expect_advance"),
+        ("confs", "expect_advance"),
         [
-            (1, False),  # 1 confirmation: held
-            (2, False),  # 2 confirmations: held
-            (3, True),  # 3 confirmations: verifies + advances
-            (4, True),  # deeper than gate: still verifies
+            (MIN_CONFS - 2, False),
+            (MIN_CONFS - 1, False),
+            (MIN_CONFS, True),
+            (MIN_CONFS + 1, True),
         ],
     )
     def test_advance_only_at_or_above_min_confirmations(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        confs_to_grow: int,
+        confs: int,
         expect_advance: bool,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -906,16 +729,15 @@ class TestThreeConfGate:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = _ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
-        # confirmations_at_height = tip - height + 1.
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + confs_to_grow - 1)
-        _register_attested(btc_fake.rpc, d)
+        bury(btc_fake.rpc, confs)
+        register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -924,7 +746,9 @@ class TestThreeConfGate:
                 "content",
             ),
         )
-        assert r.exit_code == (0 if expect_advance else 75), r.output
+        assert r.exit_code == (
+            ExitCode.SUCCESS if expect_advance else ExitCode.PENDING
+        ), r.output
 
         state = load_ots(sd)
         if expect_advance:
@@ -932,33 +756,26 @@ class TestThreeConfGate:
             assert state.proofs[d].verified is True
         else:
             assert state.phase is Phase.CONTENT_PENDING
-            # Insufficient-confs path still records a (verified=False) proof
-            # entry alongside the cached bytes.
             assert ots_cache_path(sd, d).is_file()
             assert state.proofs[d].verified is False
-
-
-# =========================================================================== #
-# Layer-2: pending attestation held until confirmations reached
-# =========================================================================== #
 
 
 class TestPendingHeld:
     def test_pending_attestation_held_then_resolves_on_next_pass(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -968,14 +785,13 @@ class TestPendingHeld:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        # Round 1: SP returns a PendingAttestation-only .ots.
         pending_bytes = _ots_pending(d)
         job_id = _seed_completed_verify_job(sp_fake, sd, (d,), {d: pending_bytes})
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -984,7 +800,7 @@ class TestPendingHeld:
                 "content",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         assert "Waiting on 1 pending digest" in r.output
         assert "Phase: content-pending" in r.output
         state = load_ots(sd)
@@ -992,14 +808,13 @@ class TestPendingHeld:
         assert state.proofs[d].verified is False
         assert ots_cache_path(sd, d).is_file()
 
-        # Round 2: SP now serves a Bitcoin-anchored .ots; re-poll converges.
-        anchored = _ots_for(d)
+        anchored = final_proof_for(d)
         sp_fake._results[f"results://{job_id}"] = {d: anchored}
-        _register_attested(btc_fake.rpc, d)
+        register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1008,40 +823,29 @@ class TestPendingHeld:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "Phase: content-pending -> content-upgraded" in r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
         assert state.proofs[d].verified is True
 
 
-# =========================================================================== #
-# Layer-2: reorg shallower than N → absorbed (verified→False on next pass)
-# =========================================================================== #
-
-
 class TestReorgShallow:
     def test_reorg_of_attested_block_within_n_marks_unverified(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """First pass: verifies. Reorg replaces the attested block (shallow):
-        the chain is truncated to the attested height, so confirmations drop
-        below MIN_CONFS. Second pass: ``reverify_content_proofs`` sees the
-        insufficient-confirmations window and resets verified=False — no HALT.
-        (Merkle-mismatch-at-sufficient-confs after a reorg is a separate HALT
-        case, covered by ``TestReorgMerkleMismatch``.)"""
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1051,16 +855,15 @@ class TestReorgShallow:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = _ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        _register_attested(btc_fake.rpc, d)
+        bury(btc_fake.rpc)
+        register_attested(btc_fake.rpc, d)
 
-        # Round 1: verifies + advances.
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1069,19 +872,14 @@ class TestReorgShallow:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).proofs[d].verified is True
 
-        # Reorg the attested height: block_hash changes, height still in chain
-        # (within N). The cached .ots's embedded merkle path is now stale.
-        btc_fake.rpc.reorg_at(DIGEST_BLOCK_HEIGHT)
-        # Chain now ends at the attested height: confs == 1 < MIN_CONFS, so
-        # re-verify returns insufficient-confirmations and resets the proof.
+        replace_attested_block(btc_fake.rpc, confs=1)
 
-        # Round 2: --upgrade re-verifies existing proofs at head.
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1090,34 +888,28 @@ class TestReorgShallow:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert "Waiting on 1 pending digest" in r.output
         state = load_ots(sd)
-        # Reorg absorbed: proof was reset, no HALT.
         assert state.proofs[d].verified is False
-
-
-# =========================================================================== #
-# Layer-2: reorg deeper than N → ReorgDetectedError (HALT, exit 5)
-# =========================================================================== #
 
 
 class TestReorgDeep:
     def test_reorg_deeper_than_n_halts_with_exit_5(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1127,15 +919,14 @@ class TestReorgDeep:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = _ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
-        # Tip well behind attested height (more than MIN_CONFS short).
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT - MIN_CONFS - 5)
+        end_chain_below(btc_fake.rpc, MIN_CONFS + 5)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1144,33 +935,27 @@ class TestReorgDeep:
                 "content",
             ),
         )
-        assert r.exit_code == 5, r.output
-        # ots.json untouched at HALT — phase still content-pending.
+        assert r.exit_code == ExitCode.ATTESTATION, r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
-
-
-# =========================================================================== #
-# Layer-2: merkle mismatch → AttestationMismatchError (HALT, exit 5)
-# =========================================================================== #
 
 
 class TestMerkleMismatch:
     def test_wrong_merkle_root_halts_with_exit_5(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1180,16 +965,15 @@ class TestMerkleMismatch:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = _ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        # Register a WRONG merkle root at the attested height.
-        btc_fake.rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, "00" * 32)
+        bury(btc_fake.rpc)
+        register_mismatched_merkle_root(btc_fake.rpc)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1198,41 +982,28 @@ class TestMerkleMismatch:
                 "content",
             ),
         )
-        assert r.exit_code == 5, r.output
+        assert r.exit_code == ExitCode.ATTESTATION, r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
-        # ots.json's proofs unchanged for d (no verified=True written).
         assert d not in state.proofs or not state.proofs[d].verified
 
 
 class TestReorgMerkleMismatch:
     def test_reorg_replaces_block_at_sufficient_confs_resets_and_resubmits(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Reorg replaces the attested block with DIFFERENT content, then
-        re-buries it to >= MIN_CONFS. Re-verify reaches the merkle comparison
-        (confs are sufficient, unlike the shallow case) and the replacement
-        block's root no longer matches the cached proof, so the proof is reset
-        to verified=False and a fresh verify job is submitted — graceful
-        re-anchoring, not a HALT (HALT is reserved for deep reorgs > N).
-
-        This is the honest merkle-mismatch path: it only resets because
-        ``reorg_at`` drops the orphaned merkle root. If the fake leaked the
-        stale root, the proof would still match at sufficient confs and stay
-        verified=True — so this test guards that fidelity.
-        """
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1242,16 +1013,15 @@ class TestReorgMerkleMismatch:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = _ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        _register_attested(btc_fake.rpc, d)
+        bury(btc_fake.rpc)
+        register_attested(btc_fake.rpc, d)
 
-        # Round 1: verifies + advances.
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1260,20 +1030,14 @@ class TestReorgMerkleMismatch:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).proofs[d].verified is True
 
-        # Reorg the attested height to different content, then re-bury it to
-        # MIN_CONFS. The replacement block reports a deterministic non-stale
-        # merkle root, so re-verify hits a genuine merkle mismatch at
-        # sufficient confirmations.
-        btc_fake.rpc.reorg_at(DIGEST_BLOCK_HEIGHT)
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        replace_attested_block(btc_fake.rpc, confs=MIN_CONFS)
 
-        # Round 2: --upgrade re-verifies, resets the proof, resubmits.
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1282,11 +1046,9 @@ class TestReorgMerkleMismatch:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         state = load_ots(sd)
-        # The merkle no longer matches → proof reset (fidelity guard).
         assert state.proofs[d].verified is False
-        # A fresh verify job was queued to re-anchor the reset digest.
         assert any(
             d in j.digests and j.status == "IN_PROGRESS" for j in state.verify_jobs
         )
@@ -1295,19 +1057,19 @@ class TestReorgMerkleMismatch:
 class TestContentUpgradeExpired:
     def test_expired_content_verify_job_triggers_fresh_batch(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1328,7 +1090,7 @@ class TestContentUpgradeExpired:
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1338,7 +1100,7 @@ class TestContentUpgradeExpired:
             ),
         )
 
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         assert len(sp_fake._jobs) == 2
         state = load_ots(sd)
         assert any(
@@ -1350,19 +1112,19 @@ class TestContentUpgradeExpired:
 class TestConfirmationsBeforeMerkleCli:
     def test_shallow_wrong_merkle_waits_but_trusted_depth_halts(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1372,15 +1134,15 @@ class TestConfirmationsBeforeMerkleCli:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = _ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT)
-        btc_fake.rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, "00" * 32)
+        bury(btc_fake.rpc, 1)
+        register_mismatched_merkle_root(btc_fake.rpc)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1389,16 +1151,16 @@ class TestConfirmationsBeforeMerkleCli:
                 "content",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         assert "Waiting on 1 pending digest" in r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
         assert state.proofs[d].verified is False
 
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
+        bury(btc_fake.rpc)
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1407,49 +1169,38 @@ class TestConfirmationsBeforeMerkleCli:
                 "content",
             ),
         )
-        assert r.exit_code == 5, r.output
+        assert r.exit_code == ExitCode.ATTESTATION, r.output
         assert "halt:" in r.output
 
 
-# =========================================================================== #
-# Layer-2: crash-recovery parametrized fault injection
-# =========================================================================== #
-
-
 class TestCrashRecovery:
-    """Inject a fault at each step boundary; assert restart converges.
-
-    Boundaries tested:
-      - ``before_cache``: fault before atomic cache write
-      - ``after_cache``: cache written, ingest_file fails
-      - ``after_ingest``: cache + ingest done, ots.json save fails
-      - ``during_ots_save``: ots.json save raises mid-write (atomicity guards)
-
-    For each: first --upgrade pass crashes (non-zero exit); a second pass
-    with no fault converges to phase=content-upgraded, proofs[d]
-    .verified=True, cached bytes intact, .ots companion ingested.
-    """
-
     @pytest.mark.parametrize(
-        "fault_at",
-        ["before_cache", "after_cache", "after_ingest", "during_ots_save"],
+        ("boundary", "cached", "verified"),
+        [
+            ("cache", False, False),
+            ("proof", True, False),
+            ("proof_torn", True, False),
+            ("companion", True, True),
+        ],
     )
-    def test_fault_at_boundary_converges_on_restart(
+    def test_crash_at_boundary_heals_on_next_pass(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        fault_at: str,
+        boundary: str,
+        cached: bool,
+        verified: bool,
     ) -> None:
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1459,166 +1210,58 @@ class TestCrashRecovery:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = _ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        _register_attested(btc_fake.rpc, d)
-
-        # Inject the configured fault.
-        _install_crash_fault(monkeypatch, fault_at, sd, d)
-
-        # Round 1: expect non-zero exit (crash).
-        r = runner.invoke(
-            app,
-            _stage_args(
-                empty_sha256_root,
-                staging,
-                "upgrade",
-                "obj:crash",
-                "--expect",
-                "content",
-            ),
+        bury(btc_fake.rpc)
+        register_attested(btc_fake.rpc, d)
+        upgrade = stage_args(
+            empty_sha256_root, staging, "upgrade", "obj:crash", "--expect", "content"
         )
-        assert r.exit_code != 0, r.output
-        # Crash-recovery invariant: ots.json is never torn (always parses).
-        load_ots(sd)
-        # If verified=True is recorded for d, the cache write completed (the
-        # implication direction of the invariant). The companion `a.txt.ots`
-        # is placed from the cache on every pass, so it may still be missing
-        # here; the converging pass below places it.
-        post_crash = load_ots(sd)
-        if d in post_crash.proofs and post_crash.proofs[d].verified is True:
-            assert ots_cache_path(sd, d).is_file()
+        store = StagingStore(staging)
 
-        # Remove the fault; a second pass must converge.
-        _uninstall_crash_fault(monkeypatch)
+        def staged_paths() -> set[str]:
+            inv = store.load_inventory(str(empty_sha256_root.resolve()), "obj:crash")
+            return {p for ps in inv.versions[inv.head].state.values() for p in ps}
 
-        r = runner.invoke(
-            app,
-            _stage_args(
-                empty_sha256_root,
-                staging,
-                "upgrade",
-                "obj:crash",
-                "--expect",
-                "content",
-            ),
+        with (
+            CrashBoundary(os, "replace", crash_at(boundary, sd, d)),
+            pytest.raises(Crash),
+        ):
+            runner.invoke(app, upgrade)
+
+        state = load_ots(sd)
+        assert state.phase is Phase.CONTENT_PENDING
+        assert (ots_cache_path(sd, d).is_file(), state.verified(d)) == (
+            cached,
+            verified,
         )
-        assert r.exit_code == 0, r.output
+        assert "a.txt.ots" not in staged_paths()
+
+        r = runner.invoke(app, upgrade)
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
-        assert state.proofs[d].verified is True
-        # Cache bytes are correct (digest-keyed; survives multiple writes).
+        assert state.verified(d)
         assert ots_cache_path(sd, d).read_bytes() == ots_bytes
-        # .ots companion present in staged inventory.
-        store = StagingStore(staging)
-        inv = store.load_inventory(str(empty_sha256_root.resolve()), "obj:crash")
-        paths = {p for ps in inv.versions[inv.head].state.values() for p in ps}
-        assert "a.txt.ots" in paths
-
-
-_CRASH_FAULT_RESTORERS: list = []
-
-
-def _patch_attr(target: object, attr: str, value: object) -> None:
-    """Set *attr* on *target* selectively-undoably (no monkeypatch)."""
-    sentinel = object()
-    original = getattr(target, attr, sentinel)
-    setattr(target, attr, value)
-    if original is sentinel:
-        _CRASH_FAULT_RESTORERS.append(lambda: delattr(target, attr))
-    else:
-        _CRASH_FAULT_RESTORERS.append(lambda: setattr(target, attr, original))
-
-
-def _install_crash_fault(
-    monkeypatch: pytest.MonkeyPatch,
-    fault_at: str,
-    sd: Path,
-    digest: str,
-) -> None:
-    """Crash at one boundary of the upgrade's per-digest ingest.
-
-    Every staging write (the ots-cache entry, the staged inventory and
-    content map, ``ots.json``) is an atomic write that ends in
-    ``os.replace``. The fault fails the replace that would publish the
-    file at the chosen boundary, the same way a crash before that point
-    would leave the staging area:
-
-      - ``before_cache``: the ots-cache entry is never written.
-      - ``after_cache``: the cache is written; ingesting the companion
-        (the staged inventory / content map) fails.
-      - ``after_ingest``: cache and ingest done; saving the verified
-        ``ots.json`` fails.
-      - ``during_ots_save``: as ``after_ingest``, and a dead process's
-        temp file is left next to ``ots.json``.
-    """
-    cache_path = ots_cache_path(sd, digest)
-    ots_json_path = sd / "ots.json"
-    ingest_paths = {sd / "inventory.json", sd / "content.json"}
-
-    def verified_save(src: object) -> bool:
-        try:
-            parsed = json.loads(Path(str(src)).read_bytes())
-        except OSError, json.JSONDecodeError:
-            return False
-        entry = (parsed.get("proofs") or {}).get(digest)
-        return bool(entry and entry.get("verified") is True)
-
-    def fails(src: object, dst: Path) -> bool:
-        match fault_at:
-            case "before_cache":
-                return dst == cache_path
-            case "after_cache":
-                return dst in ingest_paths and cache_path.is_file()
-            case "after_ingest" | "during_ots_save":
-                return dst == ots_json_path and verified_save(src)
-        raise AssertionError(f"unknown fault_at: {fault_at!r}")
-
-    real_replace = os.replace
-
-    def faulty_replace(src, dst, *args, **kwargs):
-        dst_path = Path(dst)
-        if fails(src, dst_path):
-            if fault_at == "during_ots_save":
-                shutil.copyfile(src, dst_path.with_name(f"{dst_path.name}.tmp.1"))
-            raise OSError(f"injected: {fault_at}")
-        return real_replace(src, dst, *args, **kwargs)
-
-    _patch_attr(os, "replace", faulty_replace)
-
-
-def _uninstall_crash_fault(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Undo every monkeypatch installed by ``_install_crash_fault``."""
-    while _CRASH_FAULT_RESTORERS:
-        _CRASH_FAULT_RESTORERS.pop()()
-
-
-# =========================================================================== #
-# Layer-2: orphan-guard
-# =========================================================================== #
+        assert "a.txt.ots" in staged_paths()
 
 
 class TestOrphanGuard:
     def test_mid_flight_stage_add_blocks_phase_advance(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """While at content-pending, ``stage add`` lands a NEW digest with
-        no submission. ``--upgrade`` verifies the existing pending digest
-        but MUST NOT advance: orphan in stage state outside pending_digests.
-        """
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1628,30 +1271,26 @@ class TestOrphanGuard:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = _ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        _register_attested(btc_fake.rpc, d)
+        bury(btc_fake.rpc)
+        register_attested(btc_fake.rpc, d)
 
-        # Mid-flight add of a NEW file (not in pending_digests).
         new_src = tmp_path / "b.txt"
         new_src.write_bytes(b"bravo")
         r = runner.invoke(
             app,
-            _stage_args(empty_sha256_root, staging, "add", "obj:orphan", str(new_src)),
+            stage_args(empty_sha256_root, staging, "add", "obj:orphan", str(new_src)),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
 
-        # `stage add` regresses phase per the FSM (CONTENT_PENDING/add ⇒ stay)
-        # — re-pin to content-pending for this contract test (the stage_add
-        # hook may or may not regress; we test the orphan-guard isolation).
         state = load_ots(sd)
         if state.phase is not Phase.CONTENT_PENDING:
             save_ots(sd, replace(state, phase=Phase.CONTENT_PENDING))
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1660,41 +1299,32 @@ class TestOrphanGuard:
                 "content",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         assert "Held by 1 orphan digest" in r.output
         assert "Phase: content-pending" in r.output
         state = load_ots(sd)
-        # Orphan-guard: phase MUST NOT advance even though d verifies.
-        assert state.phase is Phase.CONTENT_PENDING
-        # Existing digest still verifies (work isn't wasted).
+        assert state.phase is Phase.CONTENT_PENDING, "an orphan digest holds the phase"
         assert state.proofs[d].verified is True
-        # Orphan digest absent from pending_digests (it never joined).
         d_b = hashlib.sha256(b"bravo").hexdigest()
         assert d_b not in state.pending_digests
 
 
-# =========================================================================== #
-# Layer-2: phase advance only when both invariant conditions hold
-# =========================================================================== #
-
-
 class TestPhaseAdvanceInvariant:
-    def test_advance_when_both_conditions_hold(
+    def test_advance_when_all_pending_verified_and_no_unpending_content(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Both conditions hold: pending fully verified + no orphans."""
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1704,14 +1334,14 @@ class TestPhaseAdvanceInvariant:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = _ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        _register_attested(btc_fake.rpc, d)
+        bury(btc_fake.rpc)
+        register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1720,25 +1350,24 @@ class TestPhaseAdvanceInvariant:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
 
-    def test_no_advance_when_condition1_fails_pending_unverified(
+    def test_no_advance_while_a_pending_digest_is_unverified(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Cond (1) fails: at least one pending digest unverified → no advance."""
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1748,14 +1377,13 @@ class TestPhaseAdvanceInvariant:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        # Insufficient confs → not yet verified.
-        _seed_completed_verify_job(sp_fake, sd, (d,), {d: _ots_for(d)})
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT)  # 1 conf only
-        _register_attested(btc_fake.rpc, d)
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: final_proof_for(d)})
+        bury(btc_fake.rpc, 1)
+        register_attested(btc_fake.rpc, d)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1764,28 +1392,26 @@ class TestPhaseAdvanceInvariant:
                 "content",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_PENDING
         assert state.proofs[d].verified is False
 
-    def test_no_advance_when_condition2_fails_orphan_present(
+    def test_no_advance_while_staged_content_digest_is_not_pending(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Cond (2) fails: stage state has a non-.ots digest not in
-        pending_digests → no advance even if all pending verified."""
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1794,17 +1420,16 @@ class TestPhaseAdvanceInvariant:
             ("b.txt", b"bravo"),
         )
         da = digests["a.txt"]
-        # Pin only `a.txt` into pending_digests (b is the orphan).
         _force_content_pending(sd, (da,))
 
-        ots_a = _ots_for(da)
+        ots_a = final_proof_for(da)
         _seed_completed_verify_job(sp_fake, sd, (da,), {da: ots_a})
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        _register_attested(btc_fake.rpc, da)
+        bury(btc_fake.rpc)
+        register_attested(btc_fake.rpc, da)
 
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1813,35 +1438,28 @@ class TestPhaseAdvanceInvariant:
                 "content",
             ),
         )
-        assert r.exit_code == 75, r.output  # still pending
+        assert r.exit_code == ExitCode.PENDING, r.output
         state = load_ots(sd)
-        # Cond (1) holds (a verified), but b is in stage state outside pending.
         assert state.proofs[da].verified is True
         assert state.phase is Phase.CONTENT_PENDING
-
-
-# =========================================================================== #
-# Layer-2: idempotent re-verify of an already-verified proof
-# =========================================================================== #
 
 
 class TestReverifyIdempotent:
     def test_second_upgrade_pass_with_no_changes_is_noop(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         btc_fake,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``--upgrade`` already at content-upgraded with stable chain → no-op."""
-        _write_config(tmp_path, monkeypatch)
-        _inject_fake_sp(runner, sp_fake)
-        _inject_fake_btc(runner, btc_fake.rpc)
+        write_config(tmp_path, monkeypatch)
+        inject_fake_sp(runner, sp_fake)
+        inject_fake_btc(runner, btc_fake.rpc)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner,
             empty_sha256_root,
             staging,
@@ -1851,15 +1469,14 @@ class TestReverifyIdempotent:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = _ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
-        _grow_chain_to(btc_fake.rpc, DIGEST_BLOCK_HEIGHT + MIN_CONFS - 1)
-        _register_attested(btc_fake.rpc, d)
+        bury(btc_fake.rpc)
+        register_attested(btc_fake.rpc, d)
 
-        # First pass: advances.
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1868,13 +1485,12 @@ class TestReverifyIdempotent:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
 
-        # Second pass: chain unchanged → noop, still content-upgraded.
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1883,42 +1499,32 @@ class TestReverifyIdempotent:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         assert load_ots(sd).phase is Phase.CONTENT_UPGRADED
-
-
-# =========================================================================== #
-# Layer-3: regtest end-to-end (skipped without --run-bitcoin)
-# =========================================================================== #
 
 
 @pytest.mark.bitcoin
 class TestRegtestEndToEnd:
     def test_real_rpc_real_attestation_with_invalidateblock_reorg(
         self,
-        runner: CliRunner,
+        runner: ObjRunner,
         empty_sha256_root: Path,
         sp_fake: FakeSimpleProof,
         bitcoind_regtest,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Real bitcoind regtest, real OTS bytes, real RPC verify; then
-        ``invalidateblock`` on the attestation block forces the next
-        ``--upgrade`` pass to mark the proof ``verified=False`` via
-        ``reverify_content_proofs``."""
         from tests.helpers.ots import build_regtest_attestation
         from tests.helpers.regtest import bitcoin_config_toml, bury_to_confs
 
-        cfg_body = _SP_OK + bitcoin_config_toml(bitcoind_regtest, confirmations=3)
+        cfg_body = SP_OK + bitcoin_config_toml(bitcoind_regtest, confirmations=3)
         monkeypatch.setenv("BITCOIN_RPC_USER", bitcoind_regtest.rpc_user)
         monkeypatch.setenv("BITCOIN_RPC_PASSWORD", bitcoind_regtest.rpc_password)
-        _write_config(tmp_path, monkeypatch, body=cfg_body)
-        _inject_fake_sp(runner, sp_fake)
-        # Production btc_rpc_factory path used; no btc fake.
+        write_config(tmp_path, monkeypatch, body=cfg_body)
+        inject_fake_sp(runner, sp_fake)
 
         staging = tmp_path / "staging"
-        sd, _paths, digests = _new_ots_staging(
+        sd, digests = new_ots_staging(
             runner, empty_sha256_root, staging, "obj:rt", ("a.txt", b"alpha")
         )
         d = digests["a.txt"]
@@ -1931,10 +1537,9 @@ class TestRegtestEndToEnd:
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
         bury_to_confs(bitcoind_regtest, attest_height, MIN_CONFS, "ocfltest")
 
-        # First pass: verify + ingest + advance phase.
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1943,28 +1548,19 @@ class TestRegtestEndToEnd:
                 "content",
             ),
         )
-        assert r.exit_code == 0, r.output
+        assert r.exit_code == ExitCode.SUCCESS, r.output
         state = load_ots(sd)
         assert state.phase is Phase.CONTENT_UPGRADED
         assert state.proofs[d].verified is True
         assert state.proofs[d].block_height == attest_height
 
-        # Reorg: invalidate the attestation block. Mine a longer fork so
-        # the chain advances past it without the OP_RETURN tx — the cached
-        # `.ots`'s merkle path no longer matches the chain at that height.
         bitcoind_regtest.rpc("invalidateblock", [attest_hash])
         addr = bitcoind_regtest.wallet_rpc("ocfltest", "getnewaddress")
         bitcoind_regtest.rpc("generatetoaddress", [MIN_CONFS + 2, addr])
 
-        # SP re-fetch path: the upgrade pass calls verify-batches again
-        # for the affected digest. Pre-seed a fresh COMPLETED job so the
-        # call resolves; for this assertion we need only that the proof
-        # gets reset to verified=False (not that it re-converges).
-        sp_fake.advance_to_completed(sp_fake.verify_batch([d]).job_id, {d: ots_bytes})
-
         r = runner.invoke(
             app,
-            _stage_args(
+            stage_args(
                 empty_sha256_root,
                 staging,
                 "upgrade",
@@ -1973,7 +1569,6 @@ class TestRegtestEndToEnd:
                 "content",
             ),
         )
-        # Reorg reconciliation marks proof unverified; phase regresses.
         post = load_ots(sd)
         assert (
             post.proofs[d].verified is False or post.phase is not Phase.CONTENT_UPGRADED

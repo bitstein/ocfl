@@ -1,5 +1,3 @@
-"""ocfl diff command."""
-
 from typing import Annotated
 
 import typer
@@ -26,8 +24,8 @@ def diff(
     v2: Annotated[str, typer.Argument(help="Second version (e.g. v2 or 2).")],
 ) -> None:
     """Show changes between two object versions."""
-    as_json = appctx.json_mode(ctx)
-    root, _fs = open_root(ctx)
+    app = appctx.of(ctx)
+    root, _fs = open_root(app)
 
     obj = root.get_object(object_id)
     if not obj.exists:
@@ -36,7 +34,7 @@ def diff(
     vnum2 = parse_version(v2)
     entries = obj.diff_versions(vnum1, vnum2)
 
-    if as_json:
+    if app.json:
         output_json(
             [
                 {
@@ -55,4 +53,4 @@ def diff(
             parts: list = [styled_sym, "  ", e.path]
             if e.renamed_from:
                 parts.append(f"  (from {e.renamed_from})")
-            appctx.console(ctx).print(Text.assemble(*parts))
+            app.console.print(Text.assemble(*parts))

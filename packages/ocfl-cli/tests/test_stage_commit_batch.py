@@ -1,19 +1,23 @@
-"""Tests for `ocfl stage batch commit`."""
-
 import json
 import shutil
 from collections.abc import Callable
 from pathlib import Path
-from typing import get_args, get_type_hints, is_typeddict
+from typing import NamedTuple, get_args, get_type_hints, is_typeddict
 
 import pytest
 from fakes import RecordingSleeper
 from fakes.batch_events import RecordingBatchEvents
 from fakes.locks import held_flock, is_flocked
 from msgspec.structs import replace
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner
 
-from ocfl_cli.errors import AttestationMismatchError, LockTimeoutError, PhaseError
+from ocfl_cli.errors import (
+    AttestationMismatchError,
+    InventoryProofMissingError,
+    LockTimeoutError,
+    PhaseError,
+)
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 from ocfl_cli.model.batch import BatchFile, BatchObject
 from ocfl_cli.model.phase import TimestampTarget
@@ -26,7 +30,7 @@ from ocfl_cli.workflow.batch import report as batch_report
 from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 
 
-def _invoke_json(runner: CliRunner, storage_root: Path, staging: Path, *args: str):
+def _invoke_json(runner: ObjRunner, storage_root: Path, staging: Path, *args: str):
     return runner.invoke(
         app,
         [
@@ -41,15 +45,14 @@ def _invoke_json(runner: CliRunner, storage_root: Path, staging: Path, *args: st
     )
 
 
-def _invoke(runner: CliRunner, storage_root: Path, staging: Path, *args: str):
+def _invoke(runner: ObjRunner, storage_root: Path, staging: Path, *args: str):
     return runner.invoke(
         app,
         ["--root", str(storage_root), "stage", "--staging-root", str(staging), *args],
     )
 
 
-def _remove_staging(**kwargs) -> None:
-    """A commit that succeeds: the object's Staging Area goes away."""
+def _succeeding_commit_removes_staging(**kwargs) -> None:
     shutil.rmtree(kwargs["staging_dir"])
 
 
@@ -58,17 +61,18 @@ def _open_root(storage_root: Path) -> tuple[StorageRoot, LocalFS]:
     return StorageRoot.open(fs), fs
 
 
-def _commit_batch(
+class BatchCommitResult(NamedTuple):
+    exit_code: int
+    events: list[dict]
+
+
+def _drive_batch_commit(
     storage_root: Path,
     staging: Path,
     batch_id: str,
     commit_object: Callable[..., None],
     runtime: Runtime,
-) -> tuple[int, list[dict]]:
-    """`stage batch commit` through its use case, with a fake object commit.
-
-    Returns the command's exit code and the events it would print.
-    """
+) -> BatchCommitResult:
     events = RecordingBatchEvents()
     failures = drive.commit(
         StagingStore(staging),
@@ -79,7 +83,7 @@ def _commit_batch(
         runtime=runtime,
         commit_object=commit_object,
     )
-    return (1 if failures else 0), events.commit_events
+    return BatchCommitResult(1 if failures else 0, events.commit_events)
 
 
 def _batch(
@@ -137,7 +141,7 @@ def test_commit_batch_output_helpers_have_typed_contracts() -> None:
 
 
 def test_all_upgraded_batch_commits_every_object(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     runtime: Runtime,
@@ -162,11 +166,11 @@ def test_all_upgraded_batch_commits_every_object(
 
     commit_object = fake_commit_ots
 
-    exit_code, events = _commit_batch(
+    exit_code, events = _drive_batch_commit(
         storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    assert exit_code == 0, events
+    assert exit_code == ExitCode.SUCCESS, events
     assert committed == [("obj:one", False), ("obj:two", False)]
     assert events == [
         {
@@ -197,7 +201,7 @@ def test_all_upgraded_batch_commits_every_object(
 
 
 def test_mixed_batch_commits_upgraded_and_skips_other_rows(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     runtime: Runtime,
@@ -223,13 +227,13 @@ def test_mixed_batch_commits_upgraded_and_skips_other_rows(
             ),
         ),
     )
-    commit_object = _remove_staging
+    commit_object = _succeeding_commit_removes_staging
 
-    exit_code, events = _commit_batch(
+    exit_code, events = _drive_batch_commit(
         storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    assert exit_code == 0, events
+    assert exit_code == ExitCode.SUCCESS, events
     assert events == [
         {
             "event": "object_committed",
@@ -266,12 +270,21 @@ def test_mixed_batch_commits_upgraded_and_skips_other_rows(
     ]
 
 
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (AttestationMismatchError("plan digest mismatch"), "attestation_mismatch"),
+        (InventoryProofMissingError("plan digest mismatch"), "phase_error"),
+    ],
+)
 def test_batch_commit_continues_after_failure_and_exits_one(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     runtime: Runtime,
     monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    reason: str,
 ) -> None:
     staging = tmp_path / "staging"
     for object_id in ("obj:stale", "obj:next"):
@@ -289,16 +302,16 @@ def test_batch_commit_continues_after_failure_and_exits_one(
     def fake_commit_ots(**kwargs) -> None:
         calls.append(kwargs["object_id"])
         if kwargs["object_id"] == "obj:stale":
-            raise AttestationMismatchError("plan digest mismatch")
+            raise error
         shutil.rmtree(kwargs["staging_dir"])
 
     commit_object = fake_commit_ots
 
-    exit_code, events = _commit_batch(
+    exit_code, events = _drive_batch_commit(
         storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    assert exit_code == 1, events
+    assert exit_code == ExitCode.GENERIC, events
     assert calls == ["obj:stale", "obj:next"]
     assert events == [
         {
@@ -306,7 +319,7 @@ def test_batch_commit_continues_after_failure_and_exits_one(
             "batch_id": batch.batch_id,
             "target": "inventory",
             "object_id": "obj:stale",
-            "reason": "attestation_mismatch",
+            "reason": reason,
             "message": "plan digest mismatch",
         },
         {
@@ -329,7 +342,7 @@ def test_batch_commit_continues_after_failure_and_exits_one(
 
 
 def test_resume_after_partial_commit_skips_missing_staging(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     runtime: Runtime,
@@ -345,13 +358,13 @@ def test_resume_after_partial_commit_skips_missing_staging(
             BatchObject(object_id="obj:remaining", status="upgraded"),
         ),
     )
-    commit_object = _remove_staging
+    commit_object = _succeeding_commit_removes_staging
 
-    exit_code, events = _commit_batch(
+    exit_code, events = _drive_batch_commit(
         storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    assert exit_code == 0, events
+    assert exit_code == ExitCode.SUCCESS, events
     assert events == [
         {
             "event": "object_skipped",
@@ -381,7 +394,7 @@ def test_resume_after_partial_commit_skips_missing_staging(
 
 
 def test_content_target_batch_is_rejected_before_commit_attempt(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -396,12 +409,12 @@ def test_content_target_batch_is_rejected_before_commit_attempt(
     )
     result = _invoke(runner, storage_root, staging, "batch", "commit", batch.batch_id)
 
-    assert result.exit_code == 3  # batch_mismatch: a state error
+    assert result.exit_code == ExitCode.PHASE
     assert "commit batches must target inventory; got content" in result.output
 
 
 def test_batch_commit_rejects_wrong_archive_root_before_commit_attempt(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -416,7 +429,7 @@ def test_batch_commit_rejects_wrong_archive_root_before_commit_attempt(
     )
     result = _invoke(runner, other_root, staging, "batch", "commit", batch.batch_id)
 
-    assert result.exit_code == 3  # batch_mismatch: a state error
+    assert result.exit_code == ExitCode.PHASE
     assert f"batch {batch.batch_id} belongs to root" in result.output
     assert str(storage_root.resolve()) in result.output
     assert str(other_root.resolve()) in result.output
@@ -427,7 +440,6 @@ def test_batch_commit_holds_the_batch_lock(
     tmp_path: Path,
     runtime: Runtime,
 ) -> None:
-    """The batch lock is the lease: commit holds it for the whole run."""
     staging = tmp_path / "staging"
     _stage_dir(staging, storage_root, "obj:leased")
     batch = _batch(
@@ -441,13 +453,13 @@ def test_batch_commit_holds_the_batch_lock(
         held_during_commit.append(
             is_flocked(batch_state.batch_lock_path(staging, batch.batch_id))
         )
-        _remove_staging(**kwargs)
+        _succeeding_commit_removes_staging(**kwargs)
 
-    exit_code, events = _commit_batch(
+    exit_code, events = _drive_batch_commit(
         storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    assert exit_code == 0, events
+    assert exit_code == ExitCode.SUCCESS, events
     assert held_during_commit == [True]
 
 
@@ -469,7 +481,13 @@ def test_batch_commit_waits_for_a_running_driver(
         held_flock(batch_state.batch_lock_path(staging, batch.batch_id)),
         pytest.raises(LockTimeoutError),
     ):
-        _commit_batch(storage_root, staging, batch.batch_id, _remove_staging, runtime)
+        _drive_batch_commit(
+            storage_root,
+            staging,
+            batch.batch_id,
+            _succeeding_commit_removes_staging,
+            runtime,
+        )
 
     assert sum(sleeper.calls) == pytest.approx(runtime.lock_timeout)
     assert (staging / "batches").is_dir()
@@ -483,20 +501,19 @@ def test_batch_commit_waits_for_a_running_driver(
         ("obj:one", "--batch", "018f63de-0000-7000-8000-000000000001"),
     ],
 )
-def test_commit_takes_one_object_and_no_batch(
-    runner: CliRunner,
+def test_commit_rejects_batch_args_which_belong_to_stage_batch_commit(
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     args: tuple[str, ...],
 ) -> None:
-    """Batches commit with `stage batch commit BATCH`."""
     result = _invoke(runner, storage_root, tmp_path / "staging", "commit", *args)
 
-    assert result.exit_code == 2
+    assert result.exit_code == ExitCode.USAGE
 
 
 def test_snapshot_row_invalidated_mid_run_is_reported_as_failed(
-    runner: CliRunner,
+    runner: ObjRunner,
     storage_root: Path,
     tmp_path: Path,
     runtime: Runtime,
@@ -534,11 +551,11 @@ def test_snapshot_row_invalidated_mid_run_is_reported_as_failed(
 
     commit_object = fake_commit_ots
 
-    exit_code, events = _commit_batch(
+    exit_code, events = _drive_batch_commit(
         storage_root, staging, batch.batch_id, commit_object, runtime
     )
 
-    assert exit_code == 1, events
+    assert exit_code == ExitCode.GENERIC, events
     assert calls == ["obj:invalidated", "obj:after"]
     assert events[0] == {
         "event": "object_failed",

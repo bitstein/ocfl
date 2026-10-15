@@ -1,11 +1,9 @@
-"""OCFL object reads."""
-
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, BinaryIO, Literal
+from typing import TYPE_CHECKING, BinaryIO, Literal, Self
 
 from ocfl_lib._digest import DigestAlgorithm
-from ocfl_lib._digest_map import to_path_map
+from ocfl_lib._digest_map import PathMap, from_path_map, to_path_map
 from ocfl_lib._errors import (
     ContentNotFound,
     InventorySidecarMismatch,
@@ -47,6 +45,13 @@ class Object:
         self._fsys = fsys
         self._path = path
         self._stored_inv: StoredInventory | None = None
+
+    @classmethod
+    def load(cls, fsys: FS, path: str) -> Self:
+        """Object at `path` with its root inventory already read."""
+        obj = cls(fsys, path)
+        obj._stored_inv = obj._load_inventory(path)
+        return obj
 
     @property
     def fs(self) -> FS:
@@ -132,11 +137,13 @@ class Object:
     def open_logical_path(self, v: VNum, logical_path: str) -> BinaryIO:
         """Open a file by logical path in a version.
 
-        Raises KeyError if logical_path not in version state.
-        Raises FileNotFoundError if content file missing on disk.
+        Raises VersionNotFound if the version is absent, LogicalPathNotFound
+        if the path is not in its state, ContentNotFound if the manifest has
+        no path for its digest, and FileNotFoundError if the content file is
+        missing from storage.
         """
         state = self.version_info(v).state
-        path_map = to_path_map(state)  # logical_path → digest
+        path_map = to_path_map(state)
         if logical_path not in path_map:
             raise LogicalPathNotFound(
                 f"logical path {logical_path!r} not in version {v} state"
@@ -154,12 +161,12 @@ class Object:
         Detects added, deleted, modified, and renamed files.
         Rename detection: pairs added/removed files sharing a digest.
         """
-        pm1 = to_path_map(self.version_info(v1).state)  # path → digest
+        pm1 = to_path_map(self.version_info(v1).state)
         pm2 = to_path_map(self.version_info(v2).state)
 
         all_paths = set(pm1) | set(pm2)
-        added: dict[str, str] = {}  # path → digest
-        removed: dict[str, str] = {}  # path → digest
+        added: PathMap = {}
+        removed: PathMap = {}
         entries: list[DiffEntry] = []
 
         for path in sorted(all_paths):
@@ -182,48 +189,20 @@ class Object:
                     )
                 )
 
-        # Rename detection: pair added/removed sharing a digest
-        # Build digest → [paths] maps for added and removed
-        added_by_digest: dict[str, list[str]] = {}
-        for path, digest in added.items():
-            added_by_digest.setdefault(digest, []).append(path)
-        removed_by_digest: dict[str, list[str]] = {}
-        for path, digest in removed.items():
-            removed_by_digest.setdefault(digest, []).append(path)
-
-        paired_added: set[str] = set()
-        paired_removed: set[str] = set()
-
-        for digest in added_by_digest:
-            if digest not in removed_by_digest:
-                continue
-            a_paths = sorted(added_by_digest[digest])
-            r_paths = sorted(removed_by_digest[digest])
-            # Pair up: min(len(a), len(r)) renames, rest are pure adds/removes
-            for a_path, r_path in zip(a_paths, r_paths, strict=False):
-                entries.append(
-                    DiffEntry(
-                        path=a_path,
-                        action="renamed",
-                        digest_before=digest,
-                        digest_after=digest,
-                        renamed_from=r_path,
-                    )
-                )
-                paired_added.add(a_path)
-                paired_removed.add(r_path)
-
-        # Remaining unpaired adds/removes
-        for path in sorted(added):
-            if path not in paired_added:
-                entries.append(
-                    DiffEntry(path=path, action="added", digest_after=added[path])
-                )
-        for path in sorted(removed):
-            if path not in paired_removed:
-                entries.append(
-                    DiffEntry(path=path, action="deleted", digest_before=removed[path])
-                )
+        renames = _pair_renames(added, removed)
+        renamed_to = {e.path for e in renames}
+        renamed_from = {e.renamed_from for e in renames}
+        entries.extend(renames)
+        entries.extend(
+            DiffEntry(path=path, action="added", digest_after=digest)
+            for path, digest in added.items()
+            if path not in renamed_to
+        )
+        entries.extend(
+            DiffEntry(path=path, action="deleted", digest_before=digest)
+            for path, digest in removed.items()
+            if path not in renamed_from
+        )
 
         entries.sort(key=lambda e: e.path)
         return entries
@@ -237,16 +216,13 @@ class Object:
         return self._load_inventory(vdir)
 
     def _load_inventory(self, dir_path: str) -> StoredInventory:
-        """Read inventory.json + sidecar, validate digest, return StoredInventory."""
         inv_path = join_path(dir_path, INVENTORY_FILENAME)
         inv_bytes = fs_utils.read_all(self._fsys, inv_path)
 
-        # Determine algorithm from inventory JSON
         inv_data = json.loads(inv_bytes)
         alg_name = inv_data.get("digestAlgorithm", "sha512")
         alg = DigestAlgorithm.from_ocfl_name(alg_name)
 
-        # Validate sidecar digest
         sidecar_name = f"{INVENTORY_FILENAME}.{alg.ocfl_name}"
         sidecar_path = join_path(dir_path, sidecar_name)
         sidecar_text = fs_utils.read_text(self._fsys, sidecar_path)
@@ -264,8 +240,6 @@ class Object:
 
 
 class _ObjectContentSource(ContentSource):
-    """ContentSource backed by an object's manifest."""
-
     def __init__(self, fsys: FS, obj_path: str, manifest: dict[str, list[str]]):
         self._fsys = fsys
         self._obj_path = obj_path
@@ -277,3 +251,20 @@ class _ObjectContentSource(ContentSource):
             raise ContentNotFound(f"digest {digest!r} not in manifest")
         full = join_path(self._obj_path, paths[0])
         return self._fsys, full
+
+
+def _pair_renames(added: PathMap, removed: PathMap) -> list[DiffEntry]:
+    removed_by_digest = from_path_map(removed)
+    return [
+        DiffEntry(
+            path=to,
+            action="renamed",
+            digest_before=digest,
+            digest_after=digest,
+            renamed_from=frm,
+        )
+        for digest, to_paths in from_path_map(added).items()
+        for to, frm in zip(
+            sorted(to_paths), sorted(removed_by_digest.get(digest, [])), strict=False
+        )
+    ]

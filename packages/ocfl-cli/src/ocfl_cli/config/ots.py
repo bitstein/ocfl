@@ -1,5 +1,3 @@
-"""OTS-domain configuration models."""
-
 import ipaddress
 import logging
 import os
@@ -30,12 +28,10 @@ _TAILSCALE_CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 
 def user_env_file_path() -> Path:
-    """The default secrets file, `.env` next to the default `config.toml`."""
     return user_config_path("ocfl") / ".env"
 
 
 def env_file_path() -> Path | None:
-    """Return the configured dotenv path when one exists."""
     override = os.environ.get("OCFL_ENV_FILE")
     if override:
         return Path(override)
@@ -72,9 +68,7 @@ def _validate_zmq_endpoint(value: str) -> str:
     return value
 
 
-class _EnvOverInitSettings:
-    """Mixin: rank env_settings above init kwargs so env beats TOML."""
-
+class _EnvOverTomlSettings:
     @classmethod
     def settings_customise_sources(
         cls,
@@ -93,9 +87,7 @@ class _EnvOverInitSettings:
         return (env_settings, dotenv_settings, init_settings, file_secret_settings)
 
 
-class SimpleProofConfig(_EnvOverInitSettings, BaseSettings):
-    """`[simpleproof]` section. Tokens are SecretStr."""
-
+class SimpleProofConfig(_EnvOverTomlSettings, BaseSettings):
     model_config = SettingsConfigDict(
         frozen=True,
         extra="forbid",
@@ -114,9 +106,7 @@ class SimpleProofConfig(_EnvOverInitSettings, BaseSettings):
         return _validate_http_url(v)
 
 
-class BitcoinConfig(_EnvOverInitSettings, BaseSettings):
-    """`[bitcoin]` section. `rpc_password` is SecretStr."""
-
+class BitcoinConfig(_EnvOverTomlSettings, BaseSettings):
     model_config = SettingsConfigDict(
         frozen=True,
         extra="forbid",

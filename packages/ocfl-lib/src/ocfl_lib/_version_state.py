@@ -1,7 +1,5 @@
-"""Version State: a version's logical state plus where its content is."""
-
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from ocfl_lib._digest import DigestAlgorithm, stream_multi_digest
 from ocfl_lib._errors import ContentNotFound, DigestAlgorithmMismatch
@@ -12,6 +10,13 @@ if TYPE_CHECKING:
 
     from ocfl_lib._digest_map import DigestMap
     from ocfl_lib.fs._protocols import FS, FileWalker
+
+
+class _DigestedFile(NamedTuple):
+    state_path: str
+    walk_path: str
+    digest: str
+    fixity: dict[DigestAlgorithm, str]
 
 
 @dataclass
@@ -30,7 +35,7 @@ class VersionState:
         share the same digest_algorithm. Content and fixity sources
         are chained: tries each in order.
         """
-        from ocfl_lib._digest_map import merge
+        from ocfl_lib._digest_map import overlay_paths
 
         for other in others:
             if other.digest_algorithm != self.digest_algorithm:
@@ -40,16 +45,13 @@ class VersionState:
                 )
                 raise DigestAlgorithmMismatch(msg)
 
-        # Merge states: overlay paths win
         merged_state = dict(self.state)
         for other in others:
-            merged_state = merge(merged_state, other.state, replace=True)
+            merged_state = overlay_paths(merged_state, other.state)
 
-        # Chain content sources
         all_sources = [self.content_source, *(o.content_source for o in others)]
         content_source = _ChainContentSource(all_sources)
 
-        # Chain fixity sources
         all_fixity = [
             s.fixity_source for s in [self, *others] if s.fixity_source is not None
         ]
@@ -66,8 +68,6 @@ class VersionState:
 
 
 class _ChainContentSource(ContentSource):
-    """ContentSource that tries multiple sources in order."""
-
     def __init__(self, sources: list[ContentSource]):
         self._sources = sources
 
@@ -81,8 +81,6 @@ class _ChainContentSource(ContentSource):
 
 
 class _ChainFixitySource(FixitySource):
-    """FixitySource that tries multiple sources in order."""
-
     def __init__(self, sources: list[FixitySource]):
         self._sources = sources
 
@@ -95,8 +93,6 @@ class _ChainFixitySource(FixitySource):
 
 
 class _DirContentSource(ContentSource):
-    """ContentSource backed by a directory in an FS."""
-
     def __init__(self, fsys: FS, path_by_digest: dict[str, str]):
         self._fsys = fsys
         self._paths = path_by_digest
@@ -106,8 +102,6 @@ class _DirContentSource(ContentSource):
 
 
 class _DictFixitySource(FixitySource):
-    """FixitySource backed by a precomputed dict."""
-
     def __init__(self, fixity: dict[str, dict[DigestAlgorithm, str]]):
         self._fixity = fixity
 
@@ -131,7 +125,6 @@ def scan_dir(
 
     dir = dir.rstrip("/")
 
-    # Collect all file paths
     files = list(fsys.walk_files(dir))
     if not files:
         return VersionState(
@@ -143,23 +136,20 @@ def scan_dir(
     all_algs = [alg, *fixity_algs]
     compute_fixity = len(fixity_algs) > 0
 
-    # walk_files returns paths relative to FS root; strip dir prefix for state
     dir_prefix = f"{dir}/" if dir else ""
 
-    def _digest_file(
-        walk_path: str,
-    ) -> tuple[str, str, str, dict[DigestAlgorithm, str]]:
-        """Return (state_path, walk_path, primary_digest, fixity_digests)."""
-        state_path = walk_path.removeprefix(dir_prefix)
+    def _digest_file(walk_path: str) -> _DigestedFile:
         with fsys.open_file(walk_path) as f:
             digests = stream_multi_digest(f, all_algs)
-        fixity = {a: digests[a] for a in fixity_algs}
-        return state_path, walk_path, digests[alg], fixity
+        return _DigestedFile(
+            state_path=walk_path.removeprefix(dir_prefix),
+            walk_path=walk_path,
+            digest=digests[alg],
+            fixity={a: digests[a] for a in fixity_algs},
+        )
 
-    # Parallel digest computation
     results = list(bounded_map(lambda fr: _digest_file(fr.path), files))
 
-    # Build state (digest → [paths]) and path_by_digest
     state: dict[str, list[str]] = {}
     path_by_digest: dict[str, str] = {}
     fixity_map: dict[str, dict[DigestAlgorithm, str]] = {}
@@ -171,7 +161,6 @@ def scan_dir(
         if fixity:
             fixity_map[primary] = fixity
 
-    # Sort paths within each digest for determinism
     for paths in state.values():
         paths.sort()
 

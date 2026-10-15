@@ -1,10 +1,8 @@
-"""User configuration for the ocfl CLI (XDG-located config.toml)."""
-
 import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from platformdirs import user_config_path
 from pydantic import BaseModel, ValidationError
@@ -36,36 +34,48 @@ __all__ = [
     "user_env_file_path",
 ]
 
-# Values of these keys are secrets: `redacted` never shows them.
 _SECRET_KEYS = frozenset({"access_token", "api_key", "rpc_user", "rpc_password"})
 REDACTED = "<redacted>"
+
+type SectionName = Literal["simpleproof", "bitcoin"]
+type Section[T: BaseSettings] = T | ConfigError | None
+
+
+def _loaded[T: BaseSettings](section: Section[T]) -> T | None:
+    return None if isinstance(section, ConfigError) else section
 
 
 @dataclass(frozen=True)
 class Config:
-    """Loaded user config. `path is None` when no file existed."""
-
     path: Path | None = None
     defaults_digest: str | None = None
     defaults_suppress: tuple[str, ...] = ()
     archives: dict[str, ArchiveConfig] = field(default_factory=dict)
-    simpleproof: SimpleProofConfig | None = None
-    bitcoin: BitcoinConfig | None = None
-    # Why a present `[simpleproof]` / `[bitcoin]` section did not load. The
-    # section is then None: only commands that need it fail (`require`).
-    section_errors: dict[str, ConfigError] = field(default_factory=dict)
+    simpleproof_section: Section[SimpleProofConfig] = None
+    bitcoin_section: Section[BitcoinConfig] = None
 
-    def require(self, section: str) -> None:
-        """Raise the error that kept `[section]` from loading, if one did."""
-        error = self.section_errors.get(section)
-        if error is not None:
-            raise error
+    @property
+    def simpleproof(self) -> SimpleProofConfig | None:
+        return _loaded(self.simpleproof_section)
+
+    @property
+    def bitcoin(self) -> BitcoinConfig | None:
+        return _loaded(self.bitcoin_section)
+
+    def sections(self) -> dict[SectionName, Section[BaseSettings]]:
+        return {
+            "simpleproof": self.simpleproof_section,
+            "bitcoin": self.bitcoin_section,
+        }
+
+    def raise_if_broken(self, section: SectionName) -> None:
+        if isinstance(state := self.sections()[section], ConfigError):
+            raise state
 
     def archive(self, name: str) -> ArchiveConfig | None:
         return self.archives.get(name)
 
     def implicit_default(self) -> ArchiveConfig | None:
-        """The sole archive if exactly one is configured, else None."""
         if len(self.archives) == 1:
             return next(iter(self.archives.values()))
         return None
@@ -82,7 +92,6 @@ class Config:
 
 
 def config_path() -> Path:
-    """Return the canonical config path, honoring `$OCFL_CONFIG` then XDG."""
     override = os.environ.get("OCFL_CONFIG")
     if override:
         return Path(override)
@@ -90,7 +99,6 @@ def config_path() -> Path:
 
 
 def load_config(path: Path | None = None) -> Config:
-    """Load config from *path* (default: `config_path()`). Missing file → empty."""
     if path is None:
         path = config_path()
     check_env_file()
@@ -129,38 +137,25 @@ def _build(data: dict[str, Any], path: Path) -> Config:
             f"archives.{name}",
         )
 
-    # The OTS sections carry secrets from the environment; a missing or bad
-    # one fails only the commands that need the section (`Config.require`).
-    section_errors: dict[str, ConfigError] = {}
-    try:
-        simpleproof = _build_section(
-            SimpleProofConfig,
-            data.get("simpleproof"),
-            path,
-            "simpleproof",
-            forbidden_keys=("access_token", "api_key"),
-        )
-    except ConfigError as e:
-        simpleproof, section_errors["simpleproof"] = None, e
-    try:
-        bitcoin = _build_section(
-            BitcoinConfig,
-            data.get("bitcoin"),
-            path,
-            "bitcoin",
-            forbidden_keys=("rpc_user", "rpc_password"),
-        )
-    except ConfigError as e:
-        bitcoin, section_errors["bitcoin"] = None, e
-
     return Config(
         path=path,
         defaults_digest=d_digest,
         defaults_suppress=d_suppress or (),
         archives=archives,
-        simpleproof=simpleproof,
-        bitcoin=bitcoin,
-        section_errors=section_errors,
+        simpleproof_section=_build_section(
+            SimpleProofConfig,
+            data.get("simpleproof"),
+            path,
+            "simpleproof",
+            forbidden_keys=("access_token", "api_key"),
+        ),
+        bitcoin_section=_build_section(
+            BitcoinConfig,
+            data.get("bitcoin"),
+            path,
+            "bitcoin",
+            forbidden_keys=("rpc_user", "rpc_password"),
+        ),
     )
 
 
@@ -171,12 +166,15 @@ def _build_section[T: BaseSettings](
     label: str,
     *,
     forbidden_keys: tuple[str, ...] = (),
-) -> T | None:
+) -> Section[T]:
     if section is None:
         return None
-    section = _require_table(section, path, label)
-    _reject_forbidden_keys(cls, section, path, label, forbidden_keys)
-    return _validate(cls, section, path, label)
+    try:
+        section = _require_table(section, path, label)
+        _reject_forbidden_keys(cls, section, path, label, forbidden_keys)
+        return _validate(cls, section, path, label)
+    except ConfigError as e:
+        return e
 
 
 def _validate[T: BaseModel](
@@ -206,7 +204,6 @@ def _reject_forbidden_keys[T: BaseSettings](
 
 
 def check_env_file() -> None:
-    """Refuse a secrets file that is missing (when named) or not mode 0600."""
     path = env_file_path()
     if path is None:
         return
@@ -226,8 +223,6 @@ def check_env_file() -> None:
 
 
 def redacted(cfg: Config) -> dict[str, Any]:
-    """The effective config as plain data, every secret replaced by `REDACTED`."""
-
     def section(model: BaseModel | None) -> dict[str, Any] | None:
         if model is None:
             return None
@@ -243,7 +238,11 @@ def redacted(cfg: Config) -> dict[str, Any]:
         "archives": {name: section(archive) for name, archive in cfg.archives.items()},
         "simpleproof": section(cfg.simpleproof),
         "bitcoin": section(cfg.bitcoin),
-        "errors": {name: str(e) for name, e in cfg.section_errors.items()},
+        "errors": {
+            name: str(state)
+            for name, state in cfg.sections().items()
+            if isinstance(state, ConfigError)
+        },
     }
 
 
@@ -255,12 +254,10 @@ def _format_validation_error(e: ValidationError, path: Path, label: str) -> str:
     return f"{path}: " + "; ".join(parts)
 
 
+_PYDANTIC_VALUE_ERROR_PREFIX = "Value error, "
+
+
 def _clean_msg(err: Mapping[str, Any]) -> str:
-    """Make pydantic's default messages read like the rest of our errors."""
-    # Map pydantic error types to phrasing that reads as a continuation of
-    # the "<section>.<field>: " label. Fall through to the raw `msg` for
-    # anything we haven't tuned, after stripping the "Value error, " prefix
-    # pydantic adds to ValueErrors raised inside validators.
     match err["type"]:
         case "missing":
             return "is required"
@@ -269,7 +266,7 @@ def _clean_msg(err: Mapping[str, Any]) -> str:
         ):
             return "must not be empty"
         case _:
-            return err["msg"].removeprefix("Value error, ")
+            return err["msg"].removeprefix(_PYDANTIC_VALUE_ERROR_PREFIX)
 
 
 def _require_table(value: Any, path: Path, label: str) -> dict[str, Any]:

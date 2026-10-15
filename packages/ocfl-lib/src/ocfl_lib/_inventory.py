@@ -1,5 +1,3 @@
-"""OCFL inventory model using msgspec structs."""
-
 import json
 from dataclasses import dataclass
 
@@ -48,7 +46,6 @@ class Inventory(msgspec.Struct, frozen=True, rename="camel", omit_defaults=True)
 
 
 def _sort_path_lists(obj: dict) -> None:
-    """Sort all path lists in manifest, version states, and fixity in place."""
     if "manifest" in obj:
         for digest in obj["manifest"]:
             obj["manifest"][digest].sort()
@@ -63,12 +60,7 @@ def _sort_path_lists(obj: dict) -> None:
                 alg[digest].sort()
 
 
-def _encode_inventory(inv: Inventory) -> bytes:
-    """Canonical compact JSON encoding for an Inventory.
-
-    Single source of truth for byte serialization; from_inventory and the
-    StoredInventory drift self-check must agree byte-for-byte.
-    """
+def _canonical_json(inv: Inventory) -> bytes:
     obj = msgspec.to_builtins(inv)
     _sort_path_lists(obj)
     return json.dumps(
@@ -98,7 +90,7 @@ class StoredInventory:
     @classmethod
     def from_inventory(cls, inv: Inventory, alg: DigestAlgorithm) -> StoredInventory:
         """Encode inventory to canonical compact JSON bytes."""
-        raw = _encode_inventory(inv)
+        raw = _canonical_json(inv)
         digest = bytes_digest(raw, alg)
         return cls(inventory=inv, raw_bytes=raw, digest=digest, digest_algorithm=alg)
 

@@ -1,10 +1,3 @@
-"""ots.json wire-shape conversion.
-
-Schema 2 is the msgspec shape of `OtsState` with absent optional fields
-omitted. Keep that boundary here so future schema migrations have one
-serialization file to update.
-"""
-
 import copy
 import logging
 from typing import TYPE_CHECKING, Any
@@ -21,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 def encode_ots_state(state: OtsState) -> dict[str, Any]:
-    """Encode an in-memory OTS state into the current ots.json wire shape."""
     raw = msgspec.to_builtins(state)
     _omit_absent_proof_fields(raw)
     _omit_absent_batch_fields(raw)
@@ -30,8 +22,8 @@ def encode_ots_state(state: OtsState) -> dict[str, Any]:
 
 
 def decode_ots_state(raw: dict[str, Any]) -> OtsState:
-    """Decode a current-schema ots.json dict. No I/O, no migrations."""
-    from ocfl_cli.model.ots_state import VERIFY_JOB_STATUSES, OtsState
+    from ocfl_cli.model.ots_state import OtsState
+    from ocfl_cli.model.simpleproof import VerifyJobStatus
 
     raw = copy.deepcopy(raw)
     try:
@@ -39,7 +31,7 @@ def decode_ots_state(raw: dict[str, Any]) -> OtsState:
     except msgspec.ValidationError as e:
         raise StagingError(f"ots.json: invalid OTS state: {e}") from None
     for job in state.verify_jobs:
-        if job.status not in VERIFY_JOB_STATUSES:
+        if job.status not in VerifyJobStatus:
             logger.warning(
                 "unknown verify job status %r for job %s; treating as in-progress",
                 job.status,

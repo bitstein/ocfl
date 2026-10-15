@@ -1,13 +1,6 @@
-"""Ports: what the use cases need from the outside world, as Protocols.
-
-Adapters implement them (``ocfl_cli.system``, ``ocfl_cli.ots``, the lib's
-``BitcoinRpcClient``); ``main`` wires the production ones into ``AppCtx`` and
-tests inject fakes through ``ctx.obj`` under the same names.
-"""
-
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -27,27 +20,21 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class Clock(Protocol):
-    """The current time."""
-
-    def now(self) -> datetime:
-        """An aware UTC datetime."""
-        ...
+    def now(self) -> datetime: ...
 
 
 @runtime_checkable
 class Sleeper(Protocol):
-    """Waiting, so tests need not."""
-
     def sleep(self, seconds: float) -> None: ...
 
 
 @runtime_checkable
 class BlockStream(Protocol):
-    """New Bitcoin blocks (ZMQ `hashblock` in production)."""
+    def __enter__(self) -> Self: ...
 
-    def wait_for_block(self, timeout_ms: int) -> bytes | None:
-        """The next block hash, or None when `timeout_ms` passes first."""
-        ...
+    def __exit__(self, *exc_info: object) -> None: ...
+
+    def wait_for_block(self, timeout_ms: int) -> bytes | None: ...
 
 
 class BitcoinRPC(Protocol):
@@ -60,15 +47,11 @@ class BitcoinRPC(Protocol):
 
 class SimpleProofClient(Protocol):
     @property
-    def submit_chunk_size(self) -> int:
-        """At most this many hashes per `submit_hashes` call."""
-        ...
+    def submit_chunk_size(self) -> int: ...
 
     def submit_hashes(self, digests: list[str], category_id: int) -> SubmitResult: ...
 
-    def check_access(self) -> None:
-        """Prove the credentials work with a read-only call; raise if not."""
-        ...
+    def check_access(self) -> None: ...
 
     def verify_batch(self, digests: list[str], category_id: int) -> VerifyBatchAck: ...
 
@@ -84,18 +67,33 @@ class SimpleProofClient(Protocol):
 type SpClientFactory = Callable[[Config], SimpleProofClient]
 type BtcRpcFactory = Callable[[Config], BitcoinRPC]
 type BlockStreamFactory = Callable[[Config], BlockStream]
-# Opens the storage root's filesystem at a local path or `s3://` URI.
 type FsFactory = Callable[[str], LocalFS | S3FS]
 
-# How long a lock taker waits before it fails with exit 4 (ADR-0005).
 DEFAULT_LOCK_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True, slots=True)
 class Runtime:
-    """The time-related ports one command run gives its use cases."""
-
     clock: Clock
     sleeper: Sleeper
     block_streams: BlockStreamFactory
     lock_timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS
+
+
+@dataclass(slots=True)
+class Ports:
+    sp_client_factory: SpClientFactory
+    btc_rpc_factory: BtcRpcFactory
+    block_stream_factory: BlockStreamFactory
+    clock: Clock
+    sleeper: Sleeper
+    fs_factory: FsFactory
+    lock_timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS
+
+    def runtime(self) -> Runtime:
+        return Runtime(
+            clock=self.clock,
+            sleeper=self.sleeper,
+            block_streams=self.block_stream_factory,
+            lock_timeout=self.lock_timeout,
+        )

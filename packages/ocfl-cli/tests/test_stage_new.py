@@ -1,8 +1,8 @@
-"""Tests for ocfl stage new."""
-
 import pytest
+from seed_root import SEED_DIGEST, SEED_HEAD, SEED_ID
 from typer.testing import CliRunner
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 
 
@@ -13,7 +13,6 @@ def runner():
 
 class TestStageNew:
     def test_new_fresh_object(self, runner, storage_root, tmp_path):
-        """New staging for object that doesn't exist in root."""
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -27,9 +26,8 @@ class TestStageNew:
                 "obj:new",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
-        # Verify staging dir created with v1 inventory
         from ocfl_cli.store.staging import StagingStore
 
         store = StagingStore(staging)
@@ -42,7 +40,6 @@ class TestStageNew:
         assert inv.versions["v1"].state == {}
 
     def test_new_existing_object(self, runner, storage_root, tmp_path):
-        """New staging for object that already exists — clones head, adds v(N+1)."""
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -53,25 +50,22 @@ class TestStageNew:
                 "--staging-root",
                 str(staging),
                 "new",
-                "obj:test",
+                SEED_ID,
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         from ocfl_cli.store.staging import StagingStore
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
-        inv = store.load_inventory(root_path, "obj:test")
-        # Existing object has v2 head, so staged should be v3
-        assert inv.head == "v3"
-        # Prior manifest should be preserved
+        inv = store.load_inventory(root_path, SEED_ID)
+        staged = str(SEED_HEAD.next())
+        assert inv.head == staged
         assert len(inv.manifest) > 0
-        # New version should have empty state (placeholder)
-        assert inv.versions["v3"].state == {}
+        assert inv.versions[staged].state == {}
 
     def test_error_on_double_new(self, runner, storage_root, tmp_path):
-        """Error if staging already exists for this (root, object_id)."""
         staging = tmp_path / "staging"
         args = [
             "--root",
@@ -83,17 +77,15 @@ class TestStageNew:
             "obj:new",
         ]
         result = runner.invoke(app, args)
-        assert result.exit_code == 0
-        # Second time should fail
+        assert result.exit_code == ExitCode.SUCCESS
         result = runner.invoke(app, args)
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert (
             "already" in result.output.lower()
             or "already" in (result.stderr or "").lower()
         )
 
     def test_digest_for_new_object(self, runner, storage_root, tmp_path):
-        """--digest sets algorithm for new objects."""
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -109,7 +101,7 @@ class TestStageNew:
                 "sha256",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         from ocfl_cli.store.staging import StagingStore
 
@@ -119,7 +111,6 @@ class TestStageNew:
         assert inv.digest_algorithm == "sha256"
 
     def test_invalid_digest_is_usage_error(self, runner, storage_root, tmp_path):
-        """Unknown --digest values are rejected by option parsing."""
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -135,7 +126,7 @@ class TestStageNew:
                 "bogus",
             ],
         )
-        assert result.exit_code == 2
+        assert result.exit_code == ExitCode.USAGE
         assert "invalid value" in result.output.lower()
 
         from ocfl_cli.store.staging import StagingStore
@@ -147,7 +138,6 @@ class TestStageNew:
     def test_non_spec_content_digest_is_usage_error(
         self, runner, storage_root, tmp_path, digest
     ):
-        """OCFL content-addressing digestAlgorithm is limited to sha512/sha256."""
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -163,7 +153,7 @@ class TestStageNew:
                 digest,
             ],
         )
-        assert result.exit_code == 2
+        assert result.exit_code == ExitCode.USAGE
         assert "sha512" in result.output
         assert "sha256" in result.output
 
@@ -173,7 +163,6 @@ class TestStageNew:
         assert not store.exists(str(storage_root.resolve()), "obj:bad-content-digest")
 
     def test_digest_inheritance_existing(self, runner, storage_root, tmp_path):
-        """Existing objects inherit digest algorithm from head inventory."""
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -184,21 +173,19 @@ class TestStageNew:
                 "--staging-root",
                 str(staging),
                 "new",
-                "obj:test",
+                SEED_ID,
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         from ocfl_cli.store.staging import StagingStore
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
-        inv = store.load_inventory(root_path, "obj:test")
-        # storage_root fixture uses SHA512
-        assert inv.digest_algorithm == "sha512"
+        inv = store.load_inventory(root_path, SEED_ID)
+        assert inv.digest_algorithm == SEED_DIGEST.ocfl_name
 
     def test_digest_ignored_for_existing(self, runner, storage_root, tmp_path):
-        """--digest is ignored for existing objects (they inherit from head)."""
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
@@ -209,17 +196,16 @@ class TestStageNew:
                 "--staging-root",
                 str(staging),
                 "new",
-                "obj:test",
+                SEED_ID,
                 "--digest",
                 "sha256",
             ],
         )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == ExitCode.SUCCESS, result.output
 
         from ocfl_cli.store.staging import StagingStore
 
         store = StagingStore(staging)
         root_path = str(storage_root.resolve())
-        inv = store.load_inventory(root_path, "obj:test")
-        # Should still be sha512 from existing object, not sha256
-        assert inv.digest_algorithm == "sha512"
+        inv = store.load_inventory(root_path, SEED_ID)
+        assert inv.digest_algorithm == SEED_DIGEST.ocfl_name

@@ -1,5 +1,3 @@
-"""Walk an OCFL root and update the index cache."""
-
 import logging
 import sqlite3
 import time
@@ -48,10 +46,6 @@ class _Counters:
 
 
 def _read_sidecar(fs: FS, relpath: str) -> tuple[DigestAlgorithm, str] | None:
-    """Find the inventory sidecar for an object and return (algo, digest).
-
-    Probes sha256 then sha512. Returns None if neither sidecar is present.
-    """
     for alg in _SIDECAR_PROBE_ORDER:
         sidecar = f"{relpath}/inventory.json.{alg.ocfl_name}"
         try:
@@ -284,13 +278,13 @@ def _ingest_ots_companions(
                 result = ots.upsert_attestation(conn, proof_bytes)
                 pdigest = result.proof_digest
                 proof_digest_by_content_digest[digest] = pdigest
-                if result.was_inserted and result.parse_error is not None:
+                if isinstance(result, ots.ParseFailure):
                     first_path = ots_paths[0]
                     _log.warning(
                         "ots proof parse failed for %s: proof_digest=%s error=%s",
                         first_path,
                         pdigest,
-                        result.parse_error,
+                        result.error,
                         extra={
                             "object_id": inv.id,
                             "version_num": vnum.number,
@@ -322,13 +316,13 @@ def _ingest_ots_inventory_proofs(
             continue
         result = ots.upsert_attestation(conn, proof_bytes)
         pdigest = result.proof_digest
-        if result.was_inserted and result.parse_error is not None:
+        if isinstance(result, ots.ParseFailure):
             _log.warning(
                 "ots inventory proof parse failed for proof_path=%s: "
                 "proof_digest=%s error=%s",
                 proof_path,
                 pdigest,
-                result.parse_error,
+                result.error,
                 extra={
                     "object_id": object_id,
                     "version_num": vnum,
@@ -346,7 +340,6 @@ def _ingest_ots_inventory_proofs(
 def _content_path_for_digest(
     conn: sqlite3.Connection, fs: FS, digest: str
 ) -> str | None:
-    """Resolve any physical path under root that stores ``digest``."""
     row = conn.execute(
         "SELECT objects.root_relpath FROM objects "
         "JOIN content_paths ON content_paths.object_id = objects.object_id "
@@ -386,7 +379,6 @@ def sniff_pass(
     *,
     sniffer: Callable[[bytes], str] = sniff,
 ) -> int:
-    """Populate media_type for blobs where it is NULL. Returns row count."""
     rows = conn.execute("SELECT digest FROM blobs WHERE media_type IS NULL").fetchall()
     updated = 0
     for (digest,) in rows:
@@ -403,7 +395,6 @@ def sniff_pass(
 
 
 def sweep_objects(conn: sqlite3.Connection, walked: set[str]) -> int:
-    """Delete object rows whose root_relpath is not in walked. Returns count."""
     rows = conn.execute("SELECT root_relpath FROM objects").fetchall()
     db_relpaths = {r[0] for r in rows}
     missing = db_relpaths - walked
@@ -422,82 +413,61 @@ def scan(
     *,
     full: bool,
 ) -> ScanReport:
-    """Walk the storage root and update the index cache.
-
-    Single ``BEGIN IMMEDIATE`` tx by design: walk, sweep, sniff, and
-    ``meta.last_scan_at`` advance together. Readers see one consistent snapshot;
-    a crash rolls back the whole refresh.
-
-    Tradeoff: lock-hold scales with ``sniff_pass`` (per-blob file I/O), so a
-    very large root can stall other writers for minutes. Acceptable while
-    refresh is the only writer.
-
-    ``sniff_pass`` is idempotent and resumable via ``WHERE media_type IS NULL``;
-    splitting it into batched short txs is a clean refactor the day a second
-    writer exists.
-    """
     fs: FS = storage_root.fs
     counters = _Counters()
     walked: set[str] = set()
     size_cache: dict[str, int] = {}
     start = time.perf_counter()
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-    except sqlite3.OperationalError as err:
-        if db.is_lock_error(err):
-            raise RefreshInProgress(
-                "another refresh is holding the write lock"
-            ) from err
-        raise
     current_relpath: str | None = None
-    current_phase = "object walk"
+    current_phase = "write lock"
     try:
-        if full:
-            current_phase = "cache reset"
-            db.reset_cache(conn)
-        current_phase = "blob digest load"
-        blob_seen = _existing_blob_digests(conn)
-        current_phase = "object walk"
-        for relpath in storage_root.object_paths(strict=True):
-            current_relpath = relpath
-            _scan_object(
-                conn,
-                fs,
-                relpath,
-                counters,
-                walked=walked,
-                blob_seen=blob_seen,
-                size_cache=size_cache,
-            )
-        current_relpath = None
-        current_phase = "purge sweep"
-        counters.objects_purged = sweep_objects(conn, walked)
-        current_phase = "media type sniff"
-        sniff_pass(conn, fs)
-        current_phase = "metadata update"
-        now = db.now_iso()
-        db.meta_set(conn, "last_scan_at", now)
-        if full:
-            db.meta_set(conn, "last_full_scan_at", now)
-        # Under autocommit=True, Connection.commit/rollback are no-ops, so the
-        # explicit refresh tx is driven with raw SQL.
-        conn.execute("COMMIT")
-    except BaseException as exc:
-        if isinstance(exc, Exception):
-            failure_at = (
-                f"{current_phase} at {current_relpath}"
-                if current_relpath is not None
-                else current_phase
-            )
-            _log.warning(
-                "scan failed during %s: %s; rolled back refresh transaction",
-                failure_at,
-                exc,
-                extra={"phase": current_phase, "relpath": current_relpath},
-                exc_info=True,
-            )
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
+        with db.immediate_transaction(conn) as tx:
+            if full:
+                current_phase = "cache reset"
+                db.reset_cache(tx)
+            current_phase = "blob digest load"
+            blob_seen = _existing_blob_digests(tx)
+            current_phase = "object walk"
+            for relpath in storage_root.object_paths(strict=True):
+                current_relpath = relpath
+                _scan_object(
+                    tx,
+                    fs,
+                    relpath,
+                    counters,
+                    walked=walked,
+                    blob_seen=blob_seen,
+                    size_cache=size_cache,
+                )
+            current_relpath = None
+            current_phase = "purge sweep"
+            counters.objects_purged = sweep_objects(tx, walked)
+            current_phase = "media type sniff"
+            sniff_pass(tx, fs)
+            current_phase = "metadata update"
+            now = db.now_iso()
+            db.meta_set(tx, "last_scan_at", now)
+            if full:
+                db.meta_set(tx, "last_full_scan_at", now)
+    except Exception as exc:
+        if current_phase == "write lock":
+            if isinstance(exc, sqlite3.OperationalError) and db.is_lock_error(exc):
+                raise RefreshInProgress(
+                    "another refresh is holding the write lock"
+                ) from exc
+            raise
+        failure_at = (
+            f"{current_phase} at {current_relpath}"
+            if current_relpath is not None
+            else current_phase
+        )
+        _log.warning(
+            "scan failed during %s: %s; rolled back refresh transaction",
+            failure_at,
+            exc,
+            extra={"phase": current_phase, "relpath": current_relpath},
+            exc_info=True,
+        )
         raise
     elapsed = time.perf_counter() - start
     return ScanReport(**vars(counters), elapsed_seconds=elapsed)

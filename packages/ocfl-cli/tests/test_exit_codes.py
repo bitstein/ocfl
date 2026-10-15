@@ -1,12 +1,11 @@
-"""Canonical CLI exit-code contract: one handler, `ErrorClass` -> `ExitCode`."""
-
 import json
 from pathlib import Path
 
 import pytest
 import typer
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner
 
+from ocfl_cli import _exit
 from ocfl_cli._exit import error_class_of, error_code_of, handle_error
 from ocfl_cli.errors import (
     AttestationMismatchError,
@@ -115,8 +114,17 @@ def test_handle_error_json(capsys) -> None:
     }
 
 
+def test_exit_module_documents_the_json_error_shape(capsys) -> None:
+    with pytest.raises(typer.Exit):
+        handle_error(LockTimeoutError("busy"), json_mode=True)
+    keys = json.loads(capsys.readouterr().err)["error"]
+    shape = '{"error": {' + ", ".join(f'"{k}"' for k in keys) + "}}"
+
+    assert shape in (_exit.__doc__ or "")
+
+
 def test_root_config_error_exits_6(
-    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runner: ObjRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = tmp_path / "config.toml"
     config.write_text("not [valid")
@@ -124,12 +132,12 @@ def test_root_config_error_exits_6(
 
     result = runner.invoke(app, ["validate"])
 
-    assert result.exit_code == 6, result.output
+    assert result.exit_code == ExitCode.CONFIG, result.output
     assert str(config) in result.output
 
 
 def test_root_config_error_json(
-    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runner: ObjRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = tmp_path / "config.toml"
     config.write_text("not [valid")
@@ -137,14 +145,14 @@ def test_root_config_error_json(
 
     result = runner.invoke(app, ["--json", "validate"])
 
-    assert result.exit_code == 6, result.output
+    assert result.exit_code == ExitCode.CONFIG, result.output
     assert result.stdout == ""
     error = json.loads(result.stderr)["error"]
     assert error["code"] == "config_error" and error["exit"] == 6
     assert str(config) in error["message"]
 
 
-def test_missing_object_json_error_on_stderr(runner: CliRunner, tmp_path: Path) -> None:
+def test_missing_object_json_error_on_stderr(runner: ObjRunner, tmp_path: Path) -> None:
     from ocfl_lib import LocalFS, Spec, StorageRoot, get_layout
 
     fs = LocalFS(tmp_path)
@@ -154,7 +162,7 @@ def test_missing_object_json_error_on_stderr(runner: CliRunner, tmp_path: Path) 
 
     result = runner.invoke(app, ["--json", "--root", str(tmp_path), "info", "nope"])
 
-    assert result.exit_code == 1, result.output
+    assert result.exit_code == ExitCode.GENERIC, result.output
     assert result.stdout == ""
     assert json.loads(result.stderr) == {
         "error": {

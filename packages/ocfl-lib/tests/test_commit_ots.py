@@ -1,8 +1,7 @@
-"""StorageRoot.commit and the OTS extension: no commit publishes an invalid version."""
-
 import dataclasses
 import hashlib
 from pathlib import Path
+from typing import NamedTuple
 
 import boto3
 import pytest
@@ -97,9 +96,6 @@ def root(request, tmp_path, monkeypatch):
         yield Root(S3FS("ots-commit", client=client), tmp_path)
 
 
-# --- 4.4 refuse a version the extension rejects
-
-
 def test_refuses_version_without_inventory_proof(root):
     root.commit(proved(FILES), proof=True)
     before = root.read("inventory.json")
@@ -163,9 +159,6 @@ def test_proof_and_content_proofs_commit(root):
     root.assert_clean()
 
 
-# --- 4.5 an existing object starts timestamping
-
-
 def test_start_on_existing_object(root):
     root.commit(FILES, proof=False)
     root.commit(proved(FILES), proof=True)
@@ -202,11 +195,14 @@ def test_new_object_config_has_no_timestamp_from(root):
     assert raw is not None and ots.OtsConfig.from_json(raw) == ots.OtsConfig()
 
 
+class PartialStart(NamedTuple):
+    state: CommitState
+    has_config: bool
+    has_inventory_proof: bool
+
+
 @pytest.mark.parametrize("action", [RecoveryAction.RESUME, RecoveryAction.REVERT])
-def test_start_crash_at_every_write(root, action):
-    """Each partial state of a starting commit (claimed; config; config and
-    proof; root inventory) recovers to v1 without the extension or to v2
-    with it."""
+def test_crash_starting_extension_recovers_to_plain_v1_or_extended_v2(root, action):
     seen = set()
     for n in range(1, 60):
         if root.root.get_object(OID).exists:
@@ -221,10 +217,11 @@ def test_start_crash_at_every_write(root, action):
         else:
             break
         seen.add(
-            (
+            PartialStart(
                 root.root.commit_status(OID).state,
-                root.read(ots.CONFIG_PATH) is not None,
-                root.read(ots.inventory_proof_path("v2")) is not None,
+                has_config=root.read(ots.CONFIG_PATH) is not None,
+                has_inventory_proof=root.read(ots.inventory_proof_path("v2"))
+                is not None,
             )
         )
         try:
@@ -240,11 +237,9 @@ def test_start_crash_at_every_write(root, action):
             assert not root.fs.exists(f"{obj}/{ots.EXTENSION_DIR}")
     else:
         pytest.fail("commit never finished")
-    assert (CommitState.CLAIMED, True, False) in seen  # config, no proof yet
-    assert (CommitState.CLAIMED, True, True) in seen  # config and proof
-
-
-# --- content proofs are final and correct before their version is committed
+    claimed = CommitState.CLAIMED
+    assert PartialStart(claimed, has_config=True, has_inventory_proof=False) in seen
+    assert PartialStart(claimed, has_config=True, has_inventory_proof=True) in seen
 
 
 def _refused(root: Root, files: dict[str, bytes], exc: type[Exception], code: str):
@@ -286,9 +281,7 @@ def test_new_object_checks_its_proofs(root):
     root.assert_clean()
 
 
-def test_start_checks_carried_forward_proofs(root):
-    """A `.ots` already in the object becomes a content proof when its
-    version starts the extension; it is read from the object."""
+def test_start_checks_ots_file_already_in_object_as_content_proof(root):
     root.commit({**FILES, "a.txt.ots": b"historical junk"}, proof=False)
     v2 = proved(FILES)
     v2["a.txt.ots"] = b"historical junk"

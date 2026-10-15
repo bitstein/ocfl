@@ -1,5 +1,3 @@
-"""OCFL storage root validation."""
-
 import json
 import re
 from dataclasses import dataclass
@@ -7,28 +5,21 @@ from typing import TYPE_CHECKING
 
 from ocfl_lib._json_value import parse_json
 from ocfl_lib._path import join_path
-from ocfl_lib._spec import Namaste, Spec
+from ocfl_lib._spec import Spec
 from ocfl_lib.fs import _utils as fs_utils
-from ocfl_lib.validation._object import validate_object
+from ocfl_lib.validation._object import (
+    REGISTERED_EXTENSIONS,
+    check_extensions_dir,
+    declaration_reads_wrong,
+    split_declarations,
+    validate_object,
+)
 from ocfl_lib.validation._report import FindingCollector
 
 if TYPE_CHECKING:
     from ocfl_lib import ots
-    from ocfl_lib.fs._protocols import FileWalker
+    from ocfl_lib.fs._protocols import FS, FileWalker, FsEntry
     from ocfl_lib.validation._report import ValidationReport
-
-# Known OCFL community extensions (for storage root)
-_KNOWN_ROOT_EXTENSIONS = frozenset(
-    {
-        "0001-digest-algorithms",
-        "0002-flat-direct-storage-layout",
-        "0003-hash-and-id-n-tuple-storage-layout",
-        "0004-hashed-n-tuple-storage-layout",
-        "0005-mutable-head",
-        "0006-flat-omit-prefix-storage-layout",
-        "0007-n-tuple-omit-prefix-storage-layout",
-    }
-)
 
 _OBJ_DECL_RE = re.compile(r"^0=ocfl_object_(\d+\.\d+)$")
 
@@ -86,83 +77,22 @@ def _validate_root(
     max_errors: int,
     chain: ots.ChainCheck | None,
 ) -> None:
-    root_spec: Spec | None = None
-
-    # 1. Root NAMASTE declaration
     try:
         entries = list(fsys.read_dir(path))
     except OSError:
         result.error("E069a", assumed_version="1.1")
         return
 
-    raw_zero_files = [e for e in entries if e.name.startswith("0=")]
-    root_decls = []
-    for entry in entries:
-        n = Namaste.parse(entry.name)
-        if n is not None and n.kind == "root":
-            root_decls.append(n)
-
-    # Fire E069d for each unparseable 0= file
-    parsed_names = {d.filename for d in root_decls}
-    for zf in raw_zero_files:
-        if zf.name not in parsed_names:
-            result.error("E069d", filename=zf.name)
-
-    if not root_decls:
-        if raw_zero_files:
-            result.error("E069c", assumed_version="1.1")
-        else:
-            result.error("E069a", assumed_version="1.1")
-    elif len(root_decls) > 1:
-        result.error(
-            "E069b",
-            files=", ".join(d.filename for d in root_decls),
-            using_version=str(root_decls[0].spec),
-        )
-    else:
-        # Validate contents
-        decl = root_decls[0]
-        root_spec = decl.spec
-        decl_path = join_path(path, decl.filename)
-        try:
-            content = fs_utils.read_text(fsys, decl_path)
-            if content != decl.content:
-                result.error("E069e", filename=decl.filename)
-        except OSError:
-            pass
-
-    # 2. ocfl_layout.json
-    layout_path = join_path(path, "ocfl_layout.json")
-    try:
-        layout_bytes = fs_utils.read_all(fsys, layout_path)
-        try:
-            layout_data = parse_json(layout_bytes)
-        except (json.JSONDecodeError, ValueError) as e:
-            result.error(
-                "E070",
-                path=path or ".",
-                explanation=str(e),
-            )
-            layout_data = None
-
-        if layout_data is not None and not isinstance(layout_data, dict):
-            result.error("E071", path=path or ".")
-    except OSError:
-        pass  # ocfl_layout.json is optional
-
-    # 3. extensions/ directory
-    ext_path = join_path(path, "extensions")
-    try:
-        ext_entries = list(fsys.read_dir(ext_path))
-        for entry in ext_entries:
-            if not entry.is_dir:
-                result.error("E112", entry=entry.name)
-            elif entry.name not in _KNOWN_ROOT_EXTENSIONS:
-                result.warning("W016", entry=entry.name)
-    except OSError:
-        pass
-
-    # 4. Walk hierarchy for objects and validate
+    root_spec = _check_root_declaration(fsys, path, entries, result)
+    _check_layout_file(fsys, path, result)
+    check_extensions_dir(
+        fsys,
+        path,
+        result,
+        known=REGISTERED_EXTENSIONS,
+        not_dir_code="E112",
+        unknown_code="W016",
+    )
     if validate_objects:
         _walk_and_validate(
             fsys,
@@ -176,6 +106,45 @@ def _validate_root(
         )
 
 
+def _check_root_declaration(
+    fsys: FS, path: str, entries: list[FsEntry], result: FindingCollector
+) -> Spec | None:
+    unparsed, decls = split_declarations(entries, "root")
+    for name in unparsed:
+        result.error("E069d", filename=name)
+    if not decls:
+        result.error("E069c" if unparsed else "E069a", assumed_version="1.1")
+        return None
+    if len(decls) > 1:
+        result.error(
+            "E069b",
+            files=", ".join(d.filename for d in decls),
+            using_version=str(decls[0].spec),
+        )
+        return None
+    decl = decls[0]
+    if declaration_reads_wrong(fsys, path, decl):
+        result.error("E069e", filename=decl.filename)
+    return decl.spec
+
+
+def _check_layout_file(fsys: FS, path: str, result: FindingCollector) -> None:
+    """ocfl_layout.json is optional; when present it must parse (E070) to an
+    object (E071).
+    """
+    try:
+        layout_bytes = fs_utils.read_all(fsys, join_path(path, "ocfl_layout.json"))
+    except OSError:
+        return
+    try:
+        layout_data = parse_json(layout_bytes)
+    except (json.JSONDecodeError, ValueError) as e:
+        result.error("E070", path=path or ".", explanation=str(e))
+        return
+    if layout_data is not None and not isinstance(layout_data, dict):
+        result.error("E071", path=path or ".")
+
+
 def _walk_and_validate(
     fsys: FileWalker,
     root_path: str,
@@ -187,7 +156,6 @@ def _walk_and_validate(
     root_spec: Spec | None,
     chain: ots.ChainCheck | None,
 ) -> None:
-    """Walk storage root hierarchy, find objects, validate them."""
     obj_paths = _walk_hierarchy(fsys, root_path, result, root_spec)
 
     for obj_path in obj_paths:
@@ -211,11 +179,6 @@ def _walk_hierarchy(
     result: FindingCollector,
     root_spec: Spec | None,
 ) -> list[str]:
-    """Walk root hierarchy via read_dir. Emit E073 (empty dirs) and E072
-    (non-object dirs with files). Return discovered object root paths.
-
-    Matches ocfl-py's storage_root.py traversal approach.
-    """
     obj_paths: list[str] = []
     root_skip_dirs = {"extensions"}
     queue = [root_path]
@@ -230,7 +193,6 @@ def _walk_hierarchy(
         is_root = dir_path == root_path
 
         if not is_root:
-            # Check for object declarations (files starting with "0=")
             zero_eqs = [e for e in entries if e.name.startswith("0=")]
             if len(zero_eqs) > 1:
                 result.error("E003d", path=dir_path)
@@ -266,12 +228,10 @@ def _walk_hierarchy(
         if is_root:
             sub_dirs = [e for e in sub_dirs if e.name not in root_skip_dirs]
         else:
-            # E073: empty directories must not appear under a storage root
             if not entries:
                 result.error("E073", path=dir_path)
                 continue
 
-            # E072: hierarchy must not contain files not part of an object
             if files:
                 result.error("E072", path=dir_path)
 

@@ -1,7 +1,8 @@
-"""Tests for FS protocols, FileRef, and FsEntry."""
-
+import dataclasses
 from io import BytesIO
 from typing import TYPE_CHECKING, BinaryIO
+
+import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -21,11 +22,8 @@ class TestFileRef:
 
     def test_frozen(self):
         ref = FileRef(path="a.txt", size=0)
-        try:
-            ref.path = "b.txt"  # type: ignore[misc]
-            raise AssertionError("should be frozen")
-        except AttributeError:
-            pass
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            ref.path = "b.txt"  # ty: ignore[invalid-assignment]
 
     def test_equality(self):
         a = FileRef(path="f.txt", size=10)
@@ -54,11 +52,8 @@ class TestFsEntry:
 
     def test_frozen(self):
         entry = FsEntry(name="x", is_dir=False, is_file=True, size=0)
-        try:
-            entry.name = "y"  # type: ignore[misc]
-            raise AssertionError("should be frozen")
-        except AttributeError:
-            pass
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            entry.name = "y"  # ty: ignore[invalid-assignment]
 
     def test_equality(self):
         a = FsEntry(name="a", is_dir=True, is_file=False, size=None)
@@ -67,8 +62,6 @@ class TestFsEntry:
 
 
 class TestCopyFSRuntimeCheckable:
-    """CopyFS is the only @runtime_checkable FS protocol (isinstance in fs/utils.py)."""
-
     def test_copy_fs_protocol(self):
         class MyCopyFS:
             def open_file(self, name: str) -> BinaryIO:

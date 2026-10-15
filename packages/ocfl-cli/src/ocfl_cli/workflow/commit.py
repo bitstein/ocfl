@@ -1,5 +1,3 @@
-"""Commit use cases: build the plan from staging, commit it, purge staging."""
-
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +16,7 @@ from ocfl_cli.errors import (
     StagingFileMissingError,
 )
 from ocfl_cli.model.metadata import StagedMetadata, StagedUser
-from ocfl_cli.model.phase import Phase, check_transition
+from ocfl_cli.model.phase import Phase, PhaseCommand, check_transition
 from ocfl_cli.store.locks import object_commit_lock
 from ocfl_cli.store.ots_state import (
     load_ots,
@@ -53,8 +51,6 @@ if TYPE_CHECKING:
 
 
 class _StagingContentSource:
-    """ContentSource resolving digests against the staging content map."""
-
     def __init__(self, cm: dict[str, dict]) -> None:
         self._cm = cm
 
@@ -72,7 +68,6 @@ def _validate_and_build_content_source(
     root_path: str,
     object_id: str,
 ) -> _StagingContentSource:
-    """Re-load content_map, validate stale-file size+mtime, build source."""
     content_map = store.load_content_map(root_path, object_id)
     for entry in content_map.values():
         file_path = Path(entry["path"])
@@ -89,7 +84,6 @@ def _validate_and_build_content_source(
 def staged_content_source(
     store: StagingStore, root_path: str, object_id: str
 ) -> ContentSource:
-    """Content source over the object's staged files (checked unchanged)."""
     return _validate_and_build_content_source(store, root_path, object_id)
 
 
@@ -103,12 +97,6 @@ def build_inventory_plan(
     user: UserInfo | None = None,
     created: str | None = None,
 ) -> tuple[CommitPlan, ContentSource]:
-    """Build a CommitPlan from the staged inventory + content map.
-
-    Used by both `stage commit` (which commits it) and `stage timestamp`
-    inventory` (which saves it as `plan.json` for a later commit). Returns
-    the plan and the `_StagingContentSource` the commit reads content from.
-    """
     from ocfl_lib import DigestAlgorithm, VersionState
 
     inv = store.load_inventory(root_path, object_id)
@@ -126,7 +114,6 @@ def build_inventory_plan(
 
 
 def load_plan(staging_dir: Path) -> CommitPlan | None:
-    """The staged `plan.json`, or None if it is missing or unreadable."""
     try:
         return CommitPlan.from_json(plan_path(staging_dir).read_bytes())
     except FileNotFoundError, PlanMismatchError:
@@ -134,7 +121,6 @@ def load_plan(staging_dir: Path) -> CommitPlan | None:
 
 
 def missing_metadata_fields(metadata: StagedMetadata) -> list[str]:
-    """Return required staged metadata fields that are not present."""
     user = metadata.user
     missing: list[str] = []
     if metadata.message is None:
@@ -149,7 +135,6 @@ def missing_metadata_fields(metadata: StagedMetadata) -> list[str]:
 def require_staged_metadata(
     metadata: StagedMetadata, *, allow_missing_metadata: bool
 ) -> None:
-    """Enforce required staged metadata unless the caller explicitly bypasses."""
     if allow_missing_metadata:
         return
     missing = missing_metadata_fields(metadata)
@@ -164,7 +149,6 @@ def require_staged_metadata(
 def require_timestamped_plan_metadata(
     version: VersionInfo, *, allow_missing_metadata: bool
 ) -> None:
-    """Enforce required metadata on the immutable timestamped inventory plan."""
     if allow_missing_metadata:
         return
     missing = missing_metadata_fields(_staged_metadata_from_version(version))
@@ -194,8 +178,6 @@ def _staged_metadata_from_version(version: VersionInfo) -> StagedMetadata:
 
 @dataclass(frozen=True, slots=True)
 class _Prepared:
-    """What one commit path hands the shared execute/revert block."""
-
     plan: CommitPlan
     content: ContentSource
     phase_change: tuple[Phase, Phase] | None = None
@@ -212,12 +194,6 @@ def _commit_staging(
     runtime: Runtime,
     prepare: Callable[[], _Prepared],
 ) -> None:
-    """The one execute/revert block: lock, prepare, commit, purge.
-
-    Both locks are held throughout, so staging cannot change between the
-    checks in `prepare` and the purge. The lib reverts a failed commit and
-    staging is kept for a retry.
-    """
     with (
         object_commit_lock(root_path, object_id, runtime),
         with_lock(staging_dir, runtime),
@@ -251,8 +227,6 @@ def commit_bare(
     allow_missing_metadata: bool,
     runtime: Runtime,
 ) -> None:
-    """`stage commit` (non-OTS path): build the plan from staging and commit it."""
-
     def prepare() -> _Prepared:
         metadata = store.load_metadata(root_path, object_id)
         require_staged_metadata(metadata, allow_missing_metadata=allow_missing_metadata)
@@ -289,18 +263,9 @@ def commit_ots(
     allow_missing_metadata: bool,
     runtime: Runtime,
 ) -> None:
-    """Attach the cached inventory proof to the timestamped plan and commit it.
-
-    Raises `PhaseError` (exit 3) when the Staging Area is not
-    inventory-upgraded, or its inventory proof is missing, unverified, not
-    cached or for a stale plan (`InventoryProofMissingError`), and
-    `AttestationMismatchError` (exit 5, a halt) when the cached proof does
-    not parse or commits to other bytes.
-    """
-
     def prepare() -> _Prepared:
         state = load_ots(staging_dir)
-        target_phase = check_transition(state.phase, "commit (ots path)")
+        target_phase = check_transition(state.phase, PhaseCommand.COMMIT)
         require_verified_content_before_inventory(state)
         plan = _timestamped_plan(staging_dir, state, object_id)
         version = plan.inventory.inventory.versions[plan.version]
@@ -326,7 +291,6 @@ def commit_ots(
 
 
 def _timestamped_plan(staging_dir: Path, state: OtsState, object_id: str) -> CommitPlan:
-    """The staged plan with its verified inventory proof attached."""
     if state.inventory is None or not state.verified(state.inventory.digest):
         raise InventoryProofMissingError(
             "inventory_proof missing or unverified; "
@@ -372,7 +336,6 @@ def _timestamped_plan(staging_dir: Path, state: OtsState, object_id: str) -> Com
 def staged_content_for_recovery(
     staging_root: Path, root_path: str, object_id: str
 ) -> ContentSource | None:
-    """The object's staged content for `recover --resume`, if still staged."""
     if not staging_root.is_dir():
         return None
     store = StagingStore(staging_root)

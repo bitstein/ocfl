@@ -1,13 +1,11 @@
 from pathlib import Path
 
 import pytest
-
-FIXTURES_ROOT = Path(__file__).resolve().parents[3] / "tests" / "fixtures"
+from builders import FIXTURES_ROOT
 
 
 @pytest.fixture
 def fixtures_root() -> Path:
-    """Root of the OCFL official test fixtures."""
     assert FIXTURES_ROOT.is_dir(), (
         f"Fixtures not found at {FIXTURES_ROOT}. Run: git submodule update --init"
     )

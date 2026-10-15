@@ -1,69 +1,64 @@
-"""Tests for ocfl show command."""
-
 import json
 from pathlib import Path
 
-from typer.testing import CliRunner
+from runner_helpers import ObjRunner
+from seed_root import SEED_ID
 
+from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
 
 
 class TestShow:
-    def test_show_head(self, runner: CliRunner, storage_root: Path):
-        result = runner.invoke(app, ["--root", str(storage_root), "show", "obj:test"])
-        assert result.exit_code == 0
+    def test_show_head(self, runner: ObjRunner, storage_root: Path):
+        result = runner.invoke(app, ["--root", str(storage_root), "show", SEED_ID])
+        assert result.exit_code == ExitCode.SUCCESS
         assert "v2" in result.stdout
-        # Should show diff vs v1
         assert "file2.txt" in result.stdout
 
-    def test_show_v1(self, runner: CliRunner, storage_root: Path):
-        """v1 shows all files as added."""
+    def test_show_v1(self, runner: ObjRunner, storage_root: Path):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "show", "obj:test", "v1"]
+            app, ["--root", str(storage_root), "show", SEED_ID, "v1"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         assert "v1" in result.stdout
         assert "file1.txt" in result.stdout
 
-    def test_show_bare_version(self, runner: CliRunner, storage_root: Path):
-        result = runner.invoke(
-            app, ["--root", str(storage_root), "show", "obj:test", "1"]
-        )
-        assert result.exit_code == 0
+    def test_show_bare_version(self, runner: ObjRunner, storage_root: Path):
+        result = runner.invoke(app, ["--root", str(storage_root), "show", SEED_ID, "1"])
+        assert result.exit_code == ExitCode.SUCCESS
         assert "v1" in result.stdout
 
     def test_nonexistent_version_reports_clean_error(
-        self, runner: CliRunner, storage_root: Path
+        self, runner: ObjRunner, storage_root: Path
     ):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "show", "obj:test", "v9"]
+            app, ["--root", str(storage_root), "show", SEED_ID, "v9"]
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC
         assert "not found" in result.stderr.lower()
         assert result.exception.__class__.__name__ == "SystemExit"
 
-    def test_show_json(self, runner: CliRunner, storage_root: Path):
+    def test_show_json(self, runner: ObjRunner, storage_root: Path):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "--json", "show", "obj:test"]
+            app, ["--root", str(storage_root), "--json", "show", SEED_ID]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
         assert data["version"] == "v2"
         assert "changes" in data
         assert data["message"] == "v2"
 
-    def test_show_v1_json(self, runner: CliRunner, storage_root: Path):
+    def test_show_v1_json(self, runner: ObjRunner, storage_root: Path):
         result = runner.invoke(
-            app, ["--root", str(storage_root), "--json", "show", "obj:test", "v1"]
+            app, ["--root", str(storage_root), "--json", "show", SEED_ID, "v1"]
         )
-        assert result.exit_code == 0
+        assert result.exit_code == ExitCode.SUCCESS
         data = json.loads(result.stdout)
         assert data["version"] == "v1"
-        # All files should be "added" for v1
         assert all(c["action"] == "added" for c in data["changes"])
 
-    def test_show_nonexistent(self, runner: CliRunner, storage_root: Path):
+    def test_show_nonexistent(self, runner: ObjRunner, storage_root: Path):
         result = runner.invoke(
             app, ["--root", str(storage_root), "show", "nonexistent"]
         )
-        assert result.exit_code == 1
+        assert result.exit_code == ExitCode.GENERIC

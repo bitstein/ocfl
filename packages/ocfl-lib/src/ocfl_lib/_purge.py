@@ -15,8 +15,6 @@ from ocfl_lib._commit import (
     object_lock,
     prune_parents,
     remove_if_exists,
-    tidy_work_dir,
-    work_dir,
 )
 from ocfl_lib._errors import ObjectNotFound, RecoveryRequiredError
 from ocfl_lib._path import join_path
@@ -29,11 +27,9 @@ if TYPE_CHECKING:
 
 
 def purge(fsys: WriteFS, root_path: str, obj_path: str, object_id: str) -> None:
-    """Remove the object at `obj_path`. Re-running finishes a partial purge."""
-    wd = work_dir(root_path, object_id)
     with contextlib.ExitStack() as stack:
         if isinstance(fsys, ClaimFS):
-            stack.enter_context(object_lock(fsys, wd, timeout=0))
+            stack.enter_context(object_lock(fsys, root_path, object_id, timeout=0))
         status, plan = detect(fsys, root_path, obj_path, object_id)
         if plan is not None or status.state in (
             CommitState.STRAY,
@@ -45,15 +41,13 @@ def purge(fsys: WriteFS, root_path: str, obj_path: str, object_id: str) -> None:
             )
         entries = _entries(fsys, obj_path)
         if entries is None:
-            if not _has_empty_parent(fsys, root_path, obj_path):
-                tidy_work_dir(fsys, root_path, wd)  # the lock made it
+            if not _partial_purge_left_parents(fsys, root_path, obj_path):
                 raise ObjectNotFound(object_id)
         else:
             _delete_in_order(fsys, obj_path, entries)
         if isinstance(fsys, ClaimFS) and fsys.exists(obj_path):
             fsys.remove_empty_dir(obj_path)
         prune_parents(fsys, root_path, obj_path)
-        tidy_work_dir(fsys, root_path, wd)
 
 
 def _entries(fsys: WriteFS, obj_path: str) -> list[FsEntry] | None:
@@ -94,13 +88,12 @@ def _delete_in_order(fsys: WriteFS, obj_path: str, entries: list[FsEntry]) -> No
         if n is not None and n.kind == "object":
             namastes.append(name)
         else:
-            fsys.remove_all(path(name))  # not OCFL; still before the NAMASTE
+            fsys.remove_all(path(name))
     for name in namastes:
         remove_if_exists(fsys, path(name))
 
 
-def _has_empty_parent(fsys: WriteFS, root_path: str, obj_path: str) -> bool:
-    """A purge died after the object dir went but before its parents did."""
+def _partial_purge_left_parents(fsys: WriteFS, root_path: str, obj_path: str) -> bool:
     if not isinstance(fsys, ClaimFS):
         return False
     p = obj_path.rpartition("/")[0]

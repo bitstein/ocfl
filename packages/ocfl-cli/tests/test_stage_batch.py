@@ -1,5 +1,3 @@
-"""Batch timestamping state file helpers."""
-
 import json
 import os
 import signal
@@ -17,6 +15,7 @@ from fakes.locks import held_flock, is_flocked, lock_runtime
 from ocfl_cli.errors import LockTimeoutError, StagingError
 from ocfl_cli.model.batch import BatchFile, BatchObject, BatchSubmission, BatchVerifyJob
 from ocfl_cli.model.phase import TimestampTarget
+from ocfl_cli.model.simpleproof import VerifyJobStatus
 from ocfl_cli.store.batch import (
     batch_file_path,
     batch_lock,
@@ -25,6 +24,7 @@ from ocfl_cli.store.batch import (
     new_batch_id,
     save_batch,
 )
+from ocfl_cli.workflow.batch.report import batch_verify_job_status_counts
 
 
 def test_batch_file_round_trips_required_schema(tmp_path: Path):
@@ -57,7 +57,7 @@ def test_batch_file_round_trips_required_schema(tmp_path: Path):
             BatchVerifyJob(
                 job_id="verify-1",
                 digests=("sha256:a", "sha256:b"),
-                status="IN_PROGRESS",
+                status=VerifyJobStatus.IN_PROGRESS,
                 attempts=1,
                 submitted_at="2026-05-12T10:03:00Z",
             ),
@@ -292,7 +292,6 @@ def test_batch_lock_serializes_writers(tmp_path: Path):
 
 
 def test_batch_lock_waits_through_the_sleeper(tmp_path: Path):
-    """The wait is `lock_timeout` seconds of `Runtime.sleeper`, not real time."""
     batch_id = new_batch_id()
     sleeper = RecordingSleeper()
     with held_flock(batch_lock_path(tmp_path, batch_id)):
@@ -308,7 +307,6 @@ def test_batch_lock_waits_through_the_sleeper(tmp_path: Path):
 
 
 def test_batch_lock_is_free_once_its_holder_dies(tmp_path: Path):
-    """No lease file, no heartbeat: the kernel drops a dead holder's flock."""
     batch_id = new_batch_id()
     path = batch_lock_path(tmp_path, batch_id)
     path.parent.mkdir(parents=True)
@@ -339,3 +337,32 @@ def test_batch_lock_is_free_once_its_holder_dies(tmp_path: Path):
         assert is_flocked(path)
     assert not is_flocked(path)
     assert sorted(p.name for p in path.parent.iterdir()) == [path.name]
+
+
+def test_verify_job_counts_follow_status_declaration_order():
+    statuses = (
+        VerifyJobStatus.FAILED,
+        VerifyJobStatus.COMPLETED,
+        VerifyJobStatus.PENDING,
+        VerifyJobStatus.PENDING,
+    )
+    batch = BatchFile(
+        batch_id=new_batch_id(),
+        target=TimestampTarget.CONTENT,
+        root_path="/archive/root",
+        category_id=641,
+        created_at="2026-05-12T10:00:00Z",
+        updated_at="2026-05-12T10:05:00Z",
+        verify_jobs=tuple(
+            BatchVerifyJob(
+                job_id=f"verify-{i}",
+                digests=("sha256:a",),
+                status=status,
+                attempts=1,
+                submitted_at="2026-05-12T10:03:00Z",
+            )
+            for i, status in enumerate(statuses)
+        ),
+    )
+
+    assert batch_verify_job_status_counts(batch) == "2 pending 1 completed 1 failed"

@@ -1,10 +1,3 @@
-"""Regtest ``bitcoind`` subprocess manager for layer-3 integration tests.
-
-Hermetic by construction: per-session datadir, free ports, no system
-``bitcoin.conf`` involvement. Honors ``$BITCOIND`` for explicit binary
-path; falls back to ``shutil.which("bitcoind")``.
-"""
-
 import contextlib
 import os
 import secrets
@@ -74,7 +67,6 @@ def _rpc_call(
 
 
 def start_regtest(bitcoind: str, datadir: Path) -> RegtestNode:
-    """Spawn ``bitcoind -regtest`` in *datadir*, wait for RPC readiness."""
     rpc_port = _free_port()
     zmq_port = _free_port()
     rpc_user = "ocfltest"
@@ -182,7 +174,6 @@ def stop_regtest(node: RegtestNode) -> None:
 
 
 def ensure_wallet(node: RegtestNode, name: str = "ocfltest") -> str:
-    """Create or load *name*; return the wallet name."""
     existing = node.rpc("listwallets")
     if name in existing:
         return name
@@ -193,24 +184,20 @@ def ensure_wallet(node: RegtestNode, name: str = "ocfltest") -> str:
     return name
 
 
-def fund_wallet(node: RegtestNode, wallet: str, blocks: int = 101) -> None:
-    """Mine *blocks* to *wallet* so coinbase outputs become spendable.
+COINBASE_MATURITY = 100
 
-    Regtest needs 100 confirmations before coinbase is spendable; mining
-    101 fresh blocks gives one mature output for tx funding.
-    """
+
+def fund_wallet(node: RegtestNode, wallet: str) -> None:
     addr = node.wallet_rpc(wallet, "getnewaddress")
-    node.rpc("generatetoaddress", [blocks, addr])
+    node.rpc("generatetoaddress", [COINBASE_MATURITY + 1, addr])
 
 
 def serialized_block(node: RegtestNode, block_hash: str) -> bytes:
-    """Return the raw serialized bytes of a block by hash."""
     hex_str = node.rpc("getblock", [block_hash, 0])
     return bytes.fromhex(hex_str)
 
 
 def bitcoin_config_toml(node: RegtestNode, *, confirmations: int = 3) -> str:
-    """Render a ``[bitcoin]`` config block pointing at *node*."""
     return (
         "[bitcoin]\n"
         f'rpc_url = "{node.rpc_url}"\n'
@@ -222,7 +209,6 @@ def bitcoin_config_toml(node: RegtestNode, *, confirmations: int = 3) -> str:
 def bury_to_confs(
     node: RegtestNode, height: int, target_confs: int, wallet: str
 ) -> None:
-    """Mine until block at *height* has at least *target_confs* confirmations."""
     addr = node.wallet_rpc(wallet, "getnewaddress")
     while True:
         info = node.rpc("getblockchaininfo")

@@ -1,11 +1,4 @@
-"""Commit -> crash -> recover, as a hypothesis state machine (ADR-0001).
-
-A writer commits versions and may die at any write (`fail_at`), and may
-die again while recovering. Between steps the object's root inventory is
-always the last published one or the pending plan's, never anything else.
-Once recovered, the root validates clean, with no work-dir leftovers.
-Runs on local disk and on moto S3.
-"""
+"""Commit -> crash -> recover, as a hypothesis state machine (ADR-0001)."""
 
 import dataclasses
 import hashlib
@@ -37,7 +30,6 @@ from ocfl_lib import (
     RevertCompletedError,
     Spec,
     StorageRoot,
-    VNum,
     get_layout,
     ots,
     scan_dir,
@@ -58,13 +50,11 @@ CRASH_AT = st.none() | st.integers(min_value=1, max_value=60)
 
 
 class CommitCrashRules:
-    """Rules shared by the local and the S3 machine."""
-
     fs: LocalFS
     root: StorageRoot
     tmp: Path
-    published: bytes | None  # root inventory bytes of the last published head
-    pending: CommitPlan | None  # a commit that died part-way
+    published_root_inventory: bytes | None
+    unrecovered_plan: CommitPlan | None
     content: ContentSource | None
     n_src: int
 
@@ -78,8 +68,8 @@ class CommitCrashRules:
         layout = get_layout("0004-hashed-n-tuple-storage-layout")
         StorageRoot.init(self.fs, self.fs, spec=Spec.V1_1, layout=layout)
         self.root = StorageRoot.open(self.fs)
-        self.published = None
-        self.pending = None
+        self.published_root_inventory = None
+        self.unrecovered_plan = None
         self.content = None
         self.n_src = 0
 
@@ -104,7 +94,7 @@ class CommitCrashRules:
         except FileNotFoundError:
             return None
 
-    @precondition(lambda self: self.pending is None)
+    @precondition(lambda self: self.unrecovered_plan is None)
     @rule(files=FILES, crash_at=CRASH_AT)
     def commit(self, files, crash_at):
         vs, plan = self._planned(files)
@@ -115,15 +105,15 @@ class CommitCrashRules:
         try:
             self.root.commit(writer, OID, plan, content=vs.content_source)
         except Crash:
-            self.pending = plan
+            self.unrecovered_plan = plan
             self.content = vs.content_source
             return
-        self.published = plan.inventory.raw_bytes
+        self.published_root_inventory = plan.inventory.raw_bytes
 
-    @precondition(lambda self: self.pending is not None)
+    @precondition(lambda self: self.unrecovered_plan is not None)
     @rule(action=st.sampled_from([RecoveryAction.RESUME, RecoveryAction.REVERT]))
     def recover(self, action):
-        assert self.pending is not None
+        assert self.unrecovered_plan is not None
         state = self.root.commit_status(OID).state
         try:
             self.root.recover(self.fs, OID, action, content=self.content)
@@ -132,7 +122,7 @@ class CommitCrashRules:
             self.root.recover(self.fs, OID, RecoveryAction.RESUME)
         self._settle()
 
-    @precondition(lambda self: self.pending is not None)
+    @precondition(lambda self: self.unrecovered_plan is not None)
     @rule(
         action=st.sampled_from([RecoveryAction.RESUME, RecoveryAction.REVERT]),
         crash_at=st.integers(min_value=1, max_value=20),
@@ -148,26 +138,28 @@ class CommitCrashRules:
         self._settle()
 
     def _settle(self):
-        """The pending commit is finished or undone; it must be clean now."""
-        assert self.pending is not None
+        assert self.unrecovered_plan is not None
         assert self.root.commit_status(OID).state is CommitState.CLEAN
         current = self._root_inventory()
-        assert current in (self.published, self.pending.inventory.raw_bytes)
-        self.published = current
-        self.pending = None
+        assert current in (
+            self.published_root_inventory,
+            self.unrecovered_plan.inventory.raw_bytes,
+        )
+        self.published_root_inventory = current
+        self.unrecovered_plan = None
         self.content = None
 
     @invariant()
     def root_inventory_is_published_or_pending(self):
         current = self._root_inventory()
-        allowed = {self.published}
-        if self.pending is not None:
-            allowed.add(self.pending.inventory.raw_bytes)
+        allowed = {self.published_root_inventory}
+        if self.unrecovered_plan is not None:
+            allowed.add(self.unrecovered_plan.inventory.raw_bytes)
         assert current in allowed
 
     @invariant()
     def clean_when_nothing_pending(self):
-        if self.pending is not None:
+        if self.unrecovered_plan is not None:
             return
         report = validate_root(self.fs, "")
         assert report.is_valid, [(f.code, f.path) for f in report.errors]
@@ -178,11 +170,6 @@ class CommitCrashRules:
 
 
 class OtsCommitCrashRules(CommitCrashRules):
-    """Every version is timestamped: sha256, content proofs, inventory proof.
-
-    A commit without an inventory proof is refused before it writes (E904).
-    """
-
     def _stage(self, files: dict[str, bytes]):
         proved = dict(files)
         for p, b in files.items():
@@ -202,9 +189,9 @@ class OtsCommitCrashRules(CommitCrashRules):
         return vs, with_inventory_proof(plan)
 
     def _timestamped(self) -> bool:
-        return self.published is not None
+        return self.published_root_inventory is not None
 
-    @precondition(lambda self: self.pending is None and self._timestamped())
+    @precondition(lambda self: self.unrecovered_plan is None and self._timestamped())
     @rule(files=FILES)
     def commit_without_proof(self, files):
         vs, plan = super()._planned(files)
@@ -214,15 +201,10 @@ class OtsCommitCrashRules(CommitCrashRules):
 
 
 class StartTimestampingRules(OtsCommitCrashRules):
-    """The object starts without the extension; a commit with a proof starts it.
-
-    Every later commit is timestamped. A crash while starting recovers to
-    either the old head without the extension or vN with `timestampFrom`
-    set to vN.
-    """
+    started_at: str | None = None
 
     def _timestamped(self) -> bool:
-        if self.published is None:
+        if self.published_root_inventory is None:
             return False
         return ots.read_config(self.fs, self.root.get_object(OID).path) is not None
 
@@ -233,25 +215,24 @@ class StartTimestampingRules(OtsCommitCrashRules):
 
     @precondition(
         lambda self: (
-            self.pending is None
-            and self.published is not None
+            self.unrecovered_plan is None
+            and self.published_root_inventory is not None
             and not self._timestamped()
         )
     )
     @rule(files=FILES, crash_at=CRASH_AT)
     def start_timestamping(self, files, crash_at):
         vs, plan = OtsCommitCrashRules._planned(self, files)
+        self.started_at = plan.version
         self._commit(vs, plan, crash_at)
 
     @invariant()
-    def started_at_a_covered_version(self):
-        if self.pending is not None or not self._timestamped():
+    def timestamp_from_is_the_started_version(self):
+        if self.unrecovered_plan is not None or not self._timestamped():
             return
         cfg = ots.read_config(self.fs, self.root.get_object(OID).path)
         assert cfg is not None
-        if cfg.timestamp_from is not None:
-            head = self.root.get_object(OID).head
-            assert VNum.parse(cfg.timestamp_from) <= VNum.parse(str(head))
+        assert cfg.timestamp_from == self.started_at
 
 
 def with_inventory_proof(plan: CommitPlan) -> CommitPlan:

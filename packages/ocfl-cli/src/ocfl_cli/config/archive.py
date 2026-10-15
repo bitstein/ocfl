@@ -1,5 +1,3 @@
-"""Archive-domain configuration models."""
-
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from ocfl_lib import DigestAlgorithm
@@ -15,14 +13,11 @@ def validate_digest_name(value: str) -> str:
 
 
 class ArchiveConfig(BaseModel):
-    """One `[archives.<name>]` section."""
-
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     name: str
     root: str
     digest: str | None = None
-    # None = inherit defaults, () = suppress nothing
     suppress: tuple[str, ...] | None = None
 
     @field_validator("digest")

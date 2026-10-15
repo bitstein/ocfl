@@ -163,9 +163,6 @@ class _Wire(msgspec.Struct, rename="camel", forbid_unknown_fields=True):
     inventory_proof: bytes | None
 
 
-# --- planning
-
-
 def build_plan(
     obj: Object,
     version_state: VersionState,
@@ -176,7 +173,6 @@ def build_plan(
     user: UserInfo | None = None,
     created: str | None = None,
 ) -> CommitPlan:
-    """Build the plan for the next version of `obj`. Reads only."""
     base = obj.inventory if obj.exists else None
     prev = base.inventory if base else None
 
@@ -227,11 +223,6 @@ def _migrate_algorithm(
     obj_path: str,
     new_alg: DigestAlgorithm,
 ) -> Inventory:
-    """Remap inventory digests from old algorithm to new.
-
-    Re-digests all content files on disk, remaps manifest and version states,
-    demotes old manifest to fixity[old_algorithm].
-    """
     old_alg = DigestAlgorithm.from_ocfl_name(prev.digest_algorithm)
 
     old_to_new: dict[str, str] = {}

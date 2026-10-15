@@ -1,5 +1,3 @@
-"""Tests for StagingStore."""
-
 import hashlib
 import os
 
@@ -68,7 +66,6 @@ class TestInventoryRoundTrip:
 
     def test_save_and_load(self, store, sample_inventory):
         store.create("/root", "obj:1", sample_inventory)
-        # Modify and save
         new_inv = (
             InventoryBuilder(sample_inventory)
             .add_version({"def456": ["file2.txt"]}, created="2024-02-01T00:00:00Z")
@@ -192,13 +189,10 @@ class TestPurge:
         assert not store.exists("/root", "obj:1")
 
     def test_purge_nonexistent_is_noop(self, store):
-        # Should not raise
         store.purge("/root", "obj:1")
 
 
 class TestAtomicContentMap:
-    """content.json writes must be atomic (write-temp + fsync + os.replace)."""
-
     def test_save_content_map_no_temp_files_left(self, store, sample_inventory):
         store.create("/root", "obj:1", sample_inventory)
         content_map = {

@@ -1,5 +1,3 @@
-"""Architecture guards for the lib cleanup (docs/roadmap.md §2)."""
-
 import annotationlib
 import ast
 import dataclasses
@@ -10,14 +8,20 @@ import pkgutil
 import re
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING, BinaryIO
 
 import pytest
+from builders import FIXTURES_ROOT
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from ocfl_lib.fs import FileRef, FsEntry
 
 REPO = Path(__file__).resolve().parents[3]
 LIB_SRC = REPO / "packages/ocfl-lib/src/ocfl_lib"
 CLI_SRC = REPO / "packages/ocfl-cli/src/ocfl_cli"
 INDEX_SRC = REPO / "packages/ocfl-index/src/ocfl_index"
-FIXTURES = REPO / "tests/fixtures"
 
 
 def _py_files(root: Path) -> list[Path]:
@@ -36,16 +40,13 @@ def _lib_module_name(p: Path) -> str:
     return ".".join(parts)
 
 
-# --- 1. errors
-
-
 class TestErrors:
     def _error_classes(self):
         import ocfl_lib
 
         base = ocfl_lib.OcflError
-        seen = []
-        stack = [base]
+        seen: list[type[ocfl_lib.OcflError]] = []
+        stack: list[type[ocfl_lib.OcflError]] = [base]
         while stack:
             c = stack.pop()
             if c.__module__.startswith("ocfl_lib"):
@@ -88,8 +89,6 @@ class TestErrors:
             assert getattr(ocfl_lib, c.__name__) is c
 
     def test_lib_raises_only_ocfl_errors(self):
-        """Every `raise X(...)` / `raise X` in lib src (FS backends excepted)
-        names an OcflError subclass."""
         import ocfl_lib
 
         allowed_builtin = {"ExceptionGroup"}
@@ -113,7 +112,6 @@ class TestErrors:
         assert not bad, "\n".join(bad)
 
     def test_no_unused_error_classes(self):
-        """Every error class is raised in lib src or is a base of one that is."""
         raised: set[str] = set()
         for p in _py_files(LIB_SRC):
             for node in ast.walk(_tree(p)):
@@ -135,8 +133,6 @@ class TestErrors:
         assert issubclass(ocfl_lib.ObjectNotFound, LookupError)
         assert issubclass(ocfl_lib.VersionNotFound, LookupError)
 
-
-# --- 2. public API
 
 PUBLIC_MODULES = {
     "ocfl_lib",
@@ -205,12 +201,18 @@ class TestPublicApi:
         assert (REPO / "packages/ocfl-lib/CHANGELOG.md").is_file()
 
 
-# --- 3. Object reads; StorageRoot.open
-
-
 class _BoomFS:
-    def __getattr__(self, name):
-        raise AssertionError(f"I/O in constructor: {name}")
+    def open_file(self, name: str) -> BinaryIO:
+        raise AssertionError(f"I/O in constructor: open_file {name}")
+
+    def read_dir(self, name: str) -> Iterator[FsEntry]:
+        raise AssertionError(f"I/O in constructor: read_dir {name}")
+
+    def exists(self, name: str) -> bool:
+        raise AssertionError(f"I/O in constructor: exists {name}")
+
+    def walk_files(self, name: str) -> Iterator[FileRef]:
+        raise AssertionError(f"I/O in constructor: walk_files {name}")
 
 
 class TestReadOnlyObjectAndOpen:
@@ -226,8 +228,8 @@ class TestReadOnlyObjectAndOpen:
     def test_constructors_do_no_io(self):
         from ocfl_lib import Object, StorageRoot
 
-        StorageRoot(_BoomFS())  # ty: ignore[invalid-argument-type]
-        Object(_BoomFS(), "x")  # ty: ignore[invalid-argument-type]
+        StorageRoot(_BoomFS())
+        Object(_BoomFS(), "x")
 
     def test_open(self, tmp_path):
         from ocfl_lib import LocalFS, NotAnOcflRoot, Spec, StorageRoot
@@ -239,9 +241,6 @@ class TestReadOnlyObjectAndOpen:
         root = StorageRoot.open(fs)
         assert root.spec is Spec.V1_0
         assert root.layout is None
-
-
-# --- 4. Stage -> VersionState
 
 
 class TestVersionState:
@@ -278,9 +277,6 @@ class TestVersionState:
         assert cs.__module__ != ocfl_lib.CommitPlan.__module__
 
 
-# --- 5. JsonValue
-
-
 class TestJsonValue:
     def test_json_value_exported(self):
         import ocfl_lib
@@ -298,9 +294,6 @@ class TestJsonValue:
                 if isinstance(node, ast.alias) and node.name in ("Any", "cast"):
                     bad.append(f"{p.name}: import {node.name}")
         assert not bad, bad
-
-
-# --- 6. ValidationReport
 
 
 class TestValidationReport:
@@ -328,11 +321,11 @@ class TestValidationReport:
         from ocfl_lib import LocalFS
         from ocfl_lib.validation import Finding, ValidationReport, validate_object
 
-        good = FIXTURES / "1.1/good-objects/minimal_one_version_one_file"
+        good = FIXTURES_ROOT / "1.1/good-objects/minimal_one_version_one_file"
         report = validate_object(LocalFS(good), "")
         assert isinstance(report, ValidationReport)
         assert report.is_valid
-        bad = FIXTURES / "1.1/bad-objects/E001_extra_file_in_root"
+        bad = FIXTURES_ROOT / "1.1/bad-objects/E001_extra_file_in_root"
         report = validate_object(LocalFS(bad), "")
         assert not report.is_valid
         f = next(f for f in report.findings if f.code.startswith("E001"))
@@ -346,16 +339,13 @@ class TestValidationReport:
 
         fs = LocalFS(tmp_path)
         StorageRoot.init(fs, fs, spec=Spec.V1_1)
-        src = FIXTURES / "1.1/warn-objects/W005_id_not_uri"
+        src = FIXTURES_ROOT / "1.1/warn-objects/W005_id_not_uri"
         shutil.copytree(src, tmp_path / "a/obj")
         report = validate_root(fs, "")
         assert report.is_valid
         w = [f for f in report.findings if f.code.startswith("W005")]
         assert w, report.findings
         assert w[0].path == "a/obj"
-
-
-# --- 7. layout registry
 
 
 class TestLayoutRegistry:
@@ -366,7 +356,7 @@ class TestLayoutRegistry:
         with pytest.raises(
             (AttributeError, TypeError, dataclasses.FrozenInstanceError)
         ):
-            DEFAULT_LAYOUTS.foo = 1  # type: ignore[attr-defined]
+            DEFAULT_LAYOUTS.foo = 1  # ty: ignore[invalid-assignment]
 
     def test_custom_registry_passed_explicitly(self, tmp_path):
         from ocfl_lib import (
@@ -396,9 +386,6 @@ class TestLayoutRegistry:
         root = StorageRoot.open(fs, layouts=custom)
         assert root.layout is not None and root.layout.name == name
         assert name not in DEFAULT_LAYOUTS
-
-
-# --- 8. duplicates
 
 
 class TestNoDuplicates:
@@ -464,9 +451,6 @@ class TestNoDuplicates:
         assert not hasattr(fs, "exists")
 
 
-# --- phase 3 (docs/roadmap.md §3, ADR-0001)
-
-
 def _plan(tmp_path):
     from ocfl_lib import (
         DigestAlgorithm,
@@ -487,9 +471,6 @@ def _plan(tmp_path):
     StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)
     vs = scan_dir(LocalFS(tmp_path), "src", DigestAlgorithm.SHA512)
     return StorageRoot.open(fs).plan("x:1", vs, created="2026-01-01T00:00:00Z")
-
-
-# --- 3.1 the plan records only the intent
 
 
 class TestPlanIntent:
@@ -531,8 +512,6 @@ class TestPlanIntent:
         ]
         assert not bad, bad
 
-
-# --- 3.4 StorageRoot.commit is the only write entry point
 
 _OLD_WRITE_API = (
     "update_object",
@@ -597,9 +576,6 @@ class TestSingleWriteEntryPoint:
         assert not bad, bad
 
 
-# --- 3.2 claim, then publish
-
-
 class TestClaimThenPublish:
     def test_backends_declare_their_claim(self):
         from ocfl_lib.fs import ClaimFS, ConditionalFS, LocalFS
@@ -643,15 +619,16 @@ class TestClaimThenPublish:
         assert doc.is_file()
         assert f"`{WORK_DIR_EXTENSION}`" in doc.read_text()
 
-    def test_work_dir_not_hidden_from_validation(self):
-        """Tool conveniences never weaken the validator: W016 still fires."""
+    def test_leftover_work_dir_is_w016(self, tmp_path):
+        from ocfl_lib import LocalFS, Spec, StorageRoot
         from ocfl_lib._commit import WORK_DIR_EXTENSION
+        from ocfl_lib.validation import validate_root
 
-        text = (LIB_SRC / "validation/_root.py").read_text()
-        assert WORK_DIR_EXTENSION not in text
-
-
-# --- 3.3 recovery tables, one per backend
+        fs = LocalFS(tmp_path)
+        StorageRoot.init(fs, fs, spec=Spec.V1_1)
+        (tmp_path / "extensions" / WORK_DIR_EXTENSION).mkdir(parents=True)
+        report = validate_root(fs, "", validate_objects=False)
+        assert report.has_code("W016")
 
 
 class TestRecoveryTables:
@@ -682,28 +659,24 @@ class TestRecoveryTables:
         inner = LocalFS(tmp_path)
 
         class ReadOnly:
-            def open_file(self, n):
-                return inner.open_file(n)
+            def open_file(self, name: str) -> BinaryIO:
+                return inner.open_file(name)
 
-            def read_dir(self, n):
-                return inner.read_dir(n)
+            def read_dir(self, name: str) -> Iterator[FsEntry]:
+                return inner.read_dir(name)
 
-            def exists(self, n):
-                return inner.exists(n)
+            def exists(self, name: str) -> bool:
+                return inner.exists(name)
 
-        status, plan = detect(ReadOnly(), "", "obj", "x:1")  # ty: ignore[invalid-argument-type]
+        status, plan = detect(ReadOnly(), "", "obj", "x:1")
         assert plan is None and status.state.value == "clean"
 
     def test_recovery_reads_progress_from_storage_only(self):
-        """No module records commit progress next to the plan."""
         text = (LIB_SRC / "_recovery.py").read_text() + (
             LIB_SRC / "_commit.py"
         ).read_text()
         for word in ("completed", "journal", "progress.json"):
             assert word not in text, word
-
-
-# --- 3.5 purge follows the ADR-0001 order, refuses live or stray claims
 
 
 class TestPurgeGuards:
@@ -733,9 +706,6 @@ class TestPurgeGuards:
         assert order == sorted(order)
 
 
-# --- 3.6 ocfl recover OBJ --resume|--revert|--remove-stray VN
-
-
 class TestRecoverCommand:
     def test_registered_with_its_actions(self):
         import typer.main
@@ -753,9 +723,6 @@ class TestRecoverCommand:
         assert "recover" in attrs
         names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
         assert "RecoveryAction" in names
-
-
-# --- 3.7 fail at write N; commit -> crash -> recover state machines
 
 
 class TestCrashTests:
@@ -791,12 +758,7 @@ class TestCrashTests:
         assert "mock_aws" in text and "LocalFS(" in text and "fail_at(" in text
 
 
-# --- phase 4 (docs/roadmap.md §4, ADR-0002)
-
 OTS_SPEC = REPO / "docs/ext/NNNN-ots-timestamps.md"
-
-
-# --- 4.1 the revised extension spec
 
 
 class TestOtsExtensionSpec:
@@ -821,12 +783,15 @@ class TestOtsExtensionSpec:
         with pytest.raises(KeyError):
             get_code("E903")
 
-    def test_activation_is_the_extension_directory(self):
-        """Deleting config.json must not switch the checks off (E908)."""
-        text = (LIB_SRC / "validation/_extension_ots.py").read_text()
-        assert '"E908"' in text
-        assert "if not fsys.exists(ext_dir):" in text
-        assert 'fsys.exists(join_path(ext_dir, "config.json"))' not in text
+    def test_extension_dir_without_config_is_e908(self, tmp_path):
+        from ocfl_lib import LocalFS, ots
+        from ocfl_lib.validation import validate_object
+        from tests.helpers.ots import build_ots_object
+
+        build_ots_object(tmp_path)
+        (tmp_path / ots.CONFIG_PATH).unlink()
+        report = validate_object(LocalFS(tmp_path), "")
+        assert report.has_code("E908")
 
     def test_extra_detail_still_renders(self):
         from ocfl_lib.validation import Finding, Severity
@@ -834,8 +799,6 @@ class TestOtsExtensionSpec:
         f = Finding("E905", Severity.ERROR, None, "", {"proof": "x", "reason": "r"})
         assert f.render().endswith("(reason: r)")
 
-
-# --- 4.2 the extension rules, the .ots walk and the FS factory live in the lib
 
 OTS_NAME = "NNNN-ots-timestamps"
 
@@ -881,7 +844,6 @@ class TestOtsRulesInLib:
             assert not hasattr(_commit, name), name
 
     def test_consumers_build_no_proof_paths(self):
-        """Inventory-proof paths come from ots.inventory_proof_path."""
         bad = []
         for root in (CLI_SRC, INDEX_SRC, LIB_SRC):
             for p in _py_files(root):
@@ -912,8 +874,6 @@ class TestOtsRulesInLib:
         assert "ots.check_object_chain(" in text or "ots.object_proofs(" in text
         assert "_enumerate_versions" not in text
 
-
-# --- 4.3 BlockHeaderSource, a pure attestation check, RPC client in [bitcoin]
 
 _NETWORK = {"httpx", "httpx2", "requests", "urllib3", "zmq", "socket", "http"}
 
@@ -962,7 +922,6 @@ class TestBitcoinBoundary:
         assert proj["optional-dependencies"]["bitcoin"] == ["httpx2>=2.0"]
 
     def test_attestation_check_is_pure(self):
-        """The check reaches the chain only through the BlockHeaderSource."""
         tree = _tree(LIB_SRC / "ots.py")
         fn = next(
             n
@@ -992,9 +951,6 @@ class TestBitcoinBoundary:
         assert "verify_attestation" not in (CLI_SRC / "archive/validate.py").read_text()
 
 
-# --- 4.4 StorageRoot.commit refuses a version the extension rejects
-
-
 def _func(path: Path, name: str) -> ast.FunctionDef:
     return next(
         n
@@ -1010,9 +966,8 @@ def _names(node: ast.AST) -> set[str]:
 
 
 class TestCommitRefusesUnproved:
-    def test_check_base_checks_the_extension(self):
-        """Before the plan is written, so a refusal writes nothing."""
-        names = _names(_func(LIB_SRC / "_commit.py", "check_base"))
+    def test_extension_checked_before_plan_is_written(self):
+        names = _names(_func(LIB_SRC / "_commit.py", "_require_ots_admissible"))
         assert {"read_config", "check_extension"} <= names
 
     def test_refusals_name_the_spec_codes(self):
@@ -1028,11 +983,6 @@ class TestCommitRefusesUnproved:
         text = ast.unparse(fn)
         for code in ("E901", "E902", "E904"):
             assert code in text, code
-
-    def test_refusal_leaves_no_work_dir(self):
-        """The object lock makes the work dir; a refused commit removes it."""
-        body = ast.unparse(_func(LIB_SRC / "_commit.py", "_commit_local"))
-        assert "tidy_work_dir" in body.split("write_bytes(fsys, t.plan_file")[0]
 
     def test_state_machines_cover_timestamped_objects(self):
         path = REPO / "packages/ocfl-lib/tests/test_commit_stateful.py"
@@ -1051,15 +1001,12 @@ class TestCommitRefusesUnproved:
         assert "inventory_proof" in text and "MissingInventoryProofError" in text
 
 
-# --- 4.5 an existing object can start timestamping
-
-
 class TestStartTimestamping:
     def test_config_is_written_before_the_proof(self):
-        """Order: claim -> config -> proof -> root inventory -> root sidecar."""
         body = ast.unparse(_func(LIB_SRC / "_commit.py", "write_proof"))
-        assert body.index("ots.CONFIG_PATH") < body.index("inventory_proof)")
-        assert "start_config" in body
+        assert body.index("_start_extension_config(t)") < body.index("inventory_proof)")
+        start = ast.unparse(_func(LIB_SRC / "_commit.py", "_start_extension_config"))
+        assert "ots.CONFIG_PATH" in start and "start_config" in start
 
     def test_start_sets_timestamp_from_to_the_new_version(self):
         body = ast.unparse(_func(LIB_SRC / "_commit.py", "start_config"))
@@ -1079,18 +1026,15 @@ class TestStartTimestamping:
         assert "LocalStartTimestamping" in text and "S3StartTimestamping" in text
 
 
-# --- 4.6 a commit checks its content proofs (E905, E907)
-
-
 class TestCommitChecksContentProofs:
-    def test_check_base_checks_content_proofs(self):
-        """Before the plan is written, on both backends."""
+    def test_content_proofs_checked_before_plan_on_both_backends(self):
         assert "_check_content_proofs" in _names(
-            _func(LIB_SRC / "_commit.py", "check_base")
+            _func(LIB_SRC / "_commit.py", "_require_ots_admissible")
         )
         for fn in ("_commit_local", "_commit_s3"):
             body = ast.unparse(_func(LIB_SRC / "_commit.py", fn))
-            assert "check_base(fsys, t, raw, content)" in body, fn
+            check = body.index("_require_ots_admissible(fsys, t, base, content)")
+            assert check < body.index("t.plan_file, t.plan.to_json()"), fn
 
     def test_refusals_name_the_spec_codes(self):
         body = ast.unparse(_func(LIB_SRC / "_commit.py", "_check_content_proofs"))
