@@ -1,3 +1,4 @@
+import pytest
 from builders import inventory
 from digests import D1, D2
 
@@ -204,66 +205,52 @@ class TestVersionBlock:
         )
         assert r.has_code("E049d")
 
-    def test_created_no_timezone(self):
+    @pytest.mark.parametrize(
+        ("created", "expected"),
+        [
+            ("2024-01-01T00:00:00Z", set()),
+            ("2024-01-01t00:00:00z", set()),
+            ("2024-01-01T00:00:00+02:00", set()),
+            ("2024-01-01T00:00:00-00:00", set()),
+            ("2024-01-01T00:00:00.123456789Z", set()),
+            ("2016-12-31T23:59:60Z", set()),
+            ("2024-02-29T00:00:00Z", set()),
+            ("2024-01-01T00:00:00", {"E049a"}),
+            ("2024-01-01T00:00+00:00", {"E049b"}),
+            ("2024-01-01T00:00Z", {"E049b"}),
+            ("2024-01-01T00:00", {"E049a", "E049b"}),
+            ("2024-01-01T00:00:00+0000", {"E049c"}),
+            ("2024-W01-1T00:00:00Z", {"E049c"}),
+            ("not a date", {"E049c"}),
+            ("2024-13-01T00:00:00Z", {"E049c"}),
+            ("20240101T000000Z", {"E049c"}),
+            ("2024-01-01 00:00:00Z", {"E049c"}),
+            ("2024-02-30T00:00:00Z", {"E049c"}),
+            ("2023-02-29T00:00:00Z", {"E049c"}),
+            ("2024-01-00T00:00:00Z", {"E049c"}),
+            ("2024-01-01T24:00:00Z", {"E049c"}),
+            ("2024-01-01T00:60:00Z", {"E049c"}),
+            ("2024-01-01T00:00:61Z", {"E049c"}),
+            ("2024-01-01T00:00:00+24:00", {"E049c"}),
+            ("2024-01-01T00:00:00+00:60", {"E049c"}),
+            ("2024-01-01T00:00:00.Z", {"E049c"}),
+            ("2024-01-01T00:00.5Z", {"E049c"}),
+            ("2024-01-01", {"E049c"}),
+            ("2024-01-01T00:00:00Z\n", {"E049c"}),
+            ("\uff12\uff10\uff12\uff14-01-01T00:00:00Z", {"E049c"}),
+        ],
+    )
+    def test_created_rfc3339(self, created: str, expected: set[str]):
         r = FindingCollector()
         validate_inventory(
             inventory(
-                versions={
-                    "v1": {
-                        "created": "2024-01-01T00:00:00",
-                        "state": {D1: ["file.txt"]},
-                    },
-                }
+                versions={"v1": {"created": created, "state": {D1: ["file.txt"]}}}
             ),
             r,
         )
-        assert r.has_code("E049a")
-
-    def test_created_invalid_iso_rejected(self):
-        r = FindingCollector()
-        validate_inventory(
-            inventory(
-                versions={
-                    "v1": {
-                        "created": "not-a-date",
-                        "state": {D1: ["file.txt"]},
-                    },
-                }
-            ),
-            r,
+        assert {f.code for f in r.report().findings if f.code.startswith("E049")} == (
+            expected
         )
-        assert r.has_code("E049b")
-
-    def test_created_with_offset_tz_accepted(self):
-        r = FindingCollector()
-        validate_inventory(
-            inventory(
-                versions={
-                    "v1": {
-                        "created": "2024-01-01T00:00:00+02:00",
-                        "state": {D1: ["file.txt"]},
-                    },
-                }
-            ),
-            r,
-        )
-        assert not r.has_code("E049a")
-        assert not r.has_code("E049b")
-
-    def test_created_with_offset_requires_seconds(self):
-        r = FindingCollector()
-        validate_inventory(
-            inventory(
-                versions={
-                    "v1": {
-                        "created": "2024-01-01T00:00+00:00",
-                        "state": {D1: ["file.txt"]},
-                    },
-                }
-            ),
-            r,
-        )
-        assert r.has_code("E049b")
 
     def test_missing_state(self):
         r = FindingCollector()

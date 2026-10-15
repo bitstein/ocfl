@@ -35,7 +35,6 @@ _KNOWN_UNREACHED: dict[str, str] = {
     ),
     "E111": "non-object fixity value reported via E056a",
     "E110": "id change between versions reported as E037b, as ocfl-py does",
-    "E049c": "bad created date reported via E049b (RFC 3339 gaps: #4)",
     "L003": (
         "symlinks and fifos raise OcflFileTypeError from the fs layer, no report (#6)"
     ),

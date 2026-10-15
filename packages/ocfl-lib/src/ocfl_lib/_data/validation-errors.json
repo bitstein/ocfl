@@ -352,14 +352,14 @@
       "where",
       "version"
     ],
-    "description": "OCFL Object {where} inventory {version} version block created date SHOULD include a timezone designator"
+    "description": "OCFL Object {where} inventory {version} version block created date MUST include a time offset (RFC 3339)"
   },
   "E049b": {
     "params": [
       "where",
       "version"
     ],
-    "description": "OCFL Object {where} inventory {version} version block created date SHOULD be granular to the seconds level"
+    "description": "OCFL Object {where} inventory {version} version block created date MUST include seconds (RFC 3339)"
   },
   "E049c": {
     "params": [
@@ -367,7 +367,7 @@
       "version",
       "description"
     ],
-    "description": "OCFL Object {where} inventory {version} version block has bad created date, must be ISO8601 ({description})"
+    "description": "OCFL Object {where} inventory {version} version block has bad created date, must be RFC 3339 ({description})"
   },
   "E049d": {
     "params": [
