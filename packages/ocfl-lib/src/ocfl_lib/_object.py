@@ -137,8 +137,10 @@ class Object:
     def open_logical_path(self, v: VNum, logical_path: str) -> BinaryIO:
         """Open a file by logical path in a version.
 
-        Raises KeyError if logical_path not in version state.
-        Raises FileNotFoundError if content file missing on disk.
+        Raises VersionNotFound if the version is absent, LogicalPathNotFound
+        if the path is not in its state, ContentNotFound if the manifest has
+        no path for its digest, and FileNotFoundError if the content file is
+        missing from storage.
         """
         state = self.version_info(v).state
         path_map = to_path_map(state)

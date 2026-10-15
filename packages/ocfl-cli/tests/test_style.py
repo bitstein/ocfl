@@ -1,4 +1,5 @@
 import io
+import sys
 
 from rich.console import Console
 from rich.text import Text
@@ -93,7 +94,7 @@ def test_each_console_reads_the_env_when_made(monkeypatch, capsys):
 
 
 def test_non_tty_no_color(monkeypatch, capsys):
-    # capsys replaces stdout with a non-TTY stream by default.
+    assert not sys.stdout.isatty()
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("FORCE_COLOR", raising=False)
     _style.make_console().print(_style.added("notty"))

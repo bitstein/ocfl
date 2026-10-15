@@ -29,7 +29,6 @@ if TYPE_CHECKING:
 
 EXTENSION_NAME = "NNNN-ots-timestamps"
 EXTENSION_DIR = f"extensions/{EXTENSION_NAME}"
-"""The extension's directory, relative to the object root."""
 CONFIG_PATH = f"{EXTENSION_DIR}/config.json"
 PROOF_SUFFIX = ".ots"
 
