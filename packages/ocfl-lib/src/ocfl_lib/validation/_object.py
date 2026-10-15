@@ -36,7 +36,15 @@ REGISTERED_EXTENSIONS = frozenset(
         "0005-mutable-head",
         "0006-flat-omit-prefix-storage-layout",
         "0007-n-tuple-omit-prefix-storage-layout",
+        "0008-schema-registry",
+        "0009-digest-algorithms",
+        "0010-differential-n-tuple-omit-prefix-storage-layout",
+        "0011-direct-clean-path-layout",
+        "0012-hash-and-no-prefix-id-n-tuple-storage-layout",
     }
+)
+REGISTERED_LAYOUTS = frozenset(
+    e for e in REGISTERED_EXTENSIONS if e.endswith("-layout")
 )
 _KNOWN_OBJECT_EXTENSIONS = REGISTERED_EXTENSIONS | {ots.EXTENSION_NAME}
 _SPEC_OPTIONAL_ROOT_DIRS = frozenset({"extensions", "logs"})

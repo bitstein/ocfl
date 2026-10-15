@@ -621,3 +621,26 @@ class TestE103SpecNeverOlderThanPrevious:
         assert len(e103) == 1
         assert "v2 inventory" in e103[0].render()
         assert "the v1 inventory" in e103[0].render()
+
+
+@pytest.mark.parametrize(
+    "extension",
+    [
+        "0008-schema-registry",
+        "0009-digest-algorithms",
+        "0010-differential-n-tuple-omit-prefix-storage-layout",
+        "0011-direct-clean-path-layout",
+        "0012-hash-and-no-prefix-id-n-tuple-storage-layout",
+    ],
+)
+def test_registered_extension_dir_is_not_w013(tmp_path: Path, extension: str):
+    obj = tmp_path / "o"
+    shutil.copytree(
+        FIXTURES_ROOT / "1.1/good-objects/minimal_one_version_one_file", obj
+    )
+    (obj / "extensions" / extension).mkdir(parents=True)
+    (obj / "extensions" / extension / "config.json").write_text("{}")
+
+    result = validate_object(LocalFS(tmp_path), "o")
+
+    assert [f.code for f in result.findings] == []

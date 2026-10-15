@@ -9,6 +9,7 @@ from ocfl_lib._spec import Spec
 from ocfl_lib.fs import _utils as fs_utils
 from ocfl_lib.validation._object import (
     REGISTERED_EXTENSIONS,
+    REGISTERED_LAYOUTS,
     check_extensions_dir,
     declaration_reads_wrong,
     split_declarations,
@@ -22,19 +23,6 @@ if TYPE_CHECKING:
     from ocfl_lib.validation._report import ValidationReport
 
 _OBJ_DECL_RE = re.compile(r"^0=ocfl_object_(\d+\.\d+)$")
-# Storage layouts in the OCFL extensions registry (E071), supported or not.
-_REGISTERED_LAYOUTS = frozenset(
-    {
-        "0002-flat-direct-storage-layout",
-        "0003-hash-and-id-n-tuple-storage-layout",
-        "0004-hashed-n-tuple-storage-layout",
-        "0006-flat-omit-prefix-storage-layout",
-        "0007-n-tuple-omit-prefix-storage-layout",
-        "0010-differential-n-tuple-omit-prefix-storage-layout",
-        "0011-direct-clean-path-layout",
-        "0012-hash-and-no-prefix-id-n-tuple-storage-layout",
-    }
-)
 
 
 @dataclass
@@ -162,7 +150,7 @@ def _check_layout_file(fsys: FS, path: str, result: FindingCollector) -> None:
         )
         return
     extension = layout_data["extension"]
-    if extension not in _REGISTERED_LAYOUTS:
+    if extension not in REGISTERED_LAYOUTS:
         result.error("E071", path=root, extension=json.dumps(extension))
 
 
