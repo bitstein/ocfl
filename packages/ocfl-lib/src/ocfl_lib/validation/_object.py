@@ -168,11 +168,15 @@ class Declarations(NamedTuple):
 def split_declarations(
     entries: list[FsEntry], kind: Literal["root", "object"]
 ) -> Declarations:
-    decls = [
-        n
-        for entry in entries
-        if (n := Namaste.parse(entry.name)) is not None and n.kind == kind
-    ]
+    decls = sorted(
+        (
+            n
+            for entry in entries
+            if (n := Namaste.parse(entry.name)) is not None and n.kind == kind
+        ),
+        key=lambda n: n.spec.order_key,
+        reverse=True,
+    )
     parsed_names = {d.filename for d in decls}
     unparsed = [
         e.name

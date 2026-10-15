@@ -11,8 +11,9 @@ from digests import D1
 from moto import mock_aws
 
 from ocfl_lib.fs._local import LocalFS
+from ocfl_lib.fs._protocols import FsEntry
 from ocfl_lib.fs.s3 import S3FS
-from ocfl_lib.validation._object import validate_object
+from ocfl_lib.validation._object import split_declarations, validate_object
 from ocfl_lib.validation._report import ValidationReport
 
 _CODE_RE = re.compile(r"[EW]\d+")
@@ -677,3 +678,18 @@ def test_registered_extension_dir_is_not_w013(tmp_path: Path, extension: str):
     result = validate_object(LocalFS(tmp_path), "o")
 
     assert [f.code for f in result.findings] == []
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ["0=ocfl_object_1.0", "0=ocfl_object_1.1"],
+        ["0=ocfl_object_1.1", "0=ocfl_object_1.0"],
+    ],
+)
+def test_highest_declaration_is_used_whatever_the_listing_order(names):
+    entries = [FsEntry(name=n, is_dir=False, is_file=True, size=0) for n in names]
+
+    _unparsed, decls = split_declarations(entries, "object")
+
+    assert [str(d.spec) for d in decls] == ["1.1", "1.0"]
