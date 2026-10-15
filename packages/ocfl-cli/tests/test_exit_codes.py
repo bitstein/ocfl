@@ -217,3 +217,19 @@ def test_invalid_inventory_info_json_error(
             "exit": 1,
         }
     }
+
+
+def test_empty_sidecar_ls_prints_error_line(
+    runner: ObjRunner, storage_root: Path
+) -> None:
+    obj = storage_root / SEED_ID
+    digest = sha512((obj / "inventory.json").read_bytes()).hexdigest()
+    (obj / "inventory.json.sha512").write_text("")
+
+    result = runner.invoke(app, ["--root", str(storage_root), "ls"])
+
+    assert result.exit_code == ExitCode.GENERIC, result.output
+    assert result.stderr == (
+        f"Error: inventory sidecar digest mismatch in {SEED_ID}/inventory.json.sha512:"
+        f" expected ..., got {digest[:16]}...\n"
+    )

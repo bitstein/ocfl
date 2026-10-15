@@ -128,6 +128,24 @@ class TestObjectReadExisting:
         with pytest.raises(InventorySidecarMismatch, match="sidecar"):
             _ = obj.inventory
 
+    @pytest.mark.parametrize("sidecar", ["", " \n"])
+    def test_empty_sidecar_raises_sidecar_mismatch(self, tmp_path: Path, sidecar: str):
+        obj_dir = tmp_path / "obj"
+        obj_dir.mkdir()
+        (obj_dir / "0=ocfl_object_1.1").write_text("ocfl_object_1.1\n")
+        inv = (
+            '{"id":"test:1","type":"https://ocfl.io/1.1/spec/#inventory",'
+            '"digestAlgorithm":"sha512","head":"v1",'
+            '"manifest":{},"versions":{"v1":{"created":"2024-01-01T00:00:00Z","state":{}}}}'
+        )
+        (obj_dir / "inventory.json").write_text(inv)
+        (obj_dir / "inventory.json.sha512").write_text(sidecar)
+        with pytest.raises(InventorySidecarMismatch) as exc_info:
+            Object.load(LocalFS(obj_dir), "")
+        assert exc_info.value.path == "inventory.json.sha512"
+        assert exc_info.value.expected == ""
+        assert exc_info.value.actual == hashlib.sha512(inv.encode()).hexdigest()
+
     @pytest.mark.parametrize(
         ("inv", "message"),
         [

@@ -847,6 +847,21 @@ class TestVersionSidecarAlgorithm:
         ]
 
 
+@pytest.mark.parametrize("sidecar", ["", " \n"])
+def test_empty_root_sidecar_fires_e061(tmp_path: Path, sidecar: str):
+    obj = tmp_path / "o"
+    shutil.copytree(
+        FIXTURES_ROOT / "1.1/good-objects/minimal_one_version_one_file", obj
+    )
+    (obj / "inventory.json.sha512").write_text(sidecar)
+
+    r = validate_object(LocalFS(tmp_path), "o")
+
+    assert [(f.code, dict(f.detail)) for f in r.findings] == [
+        ("E061", {"description": "sidecar must contain digest and filename"})
+    ]
+
+
 def _findings(r: ValidationReport) -> list[tuple[str, dict[str, str]]]:
     return sorted(((f.code, dict(f.detail)) for f in r.findings), key=lambda t: t[0])
 

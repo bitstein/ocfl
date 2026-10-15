@@ -221,7 +221,7 @@ class Object:
 
         sidecar_path = join_path(dir_path, stored.sidecar_filename)
         sidecar_text = fs_utils.read_text(self._fsys, sidecar_path)
-        expected_digest = sidecar_text.strip().split()[0]
+        expected_digest = next(iter(sidecar_text.split()), "")
 
         if stored.digest != expected_digest:
             raise InventorySidecarMismatch(
