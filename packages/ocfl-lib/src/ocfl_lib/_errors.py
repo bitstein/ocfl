@@ -188,6 +188,13 @@ class InventoryBuildError(OcflError, ValueError):
     error_class = ErrorClass.INVALID
 
 
+class InvalidInventory(OcflError, ValueError):
+    """Inventory bytes are not JSON or do not match the inventory schema."""
+
+    code = "invalid_inventory"
+    error_class = ErrorClass.INVALID
+
+
 class InventorySidecarMismatch(OcflError):
     """Inventory sidecar digest does not match the inventory bytes."""
 

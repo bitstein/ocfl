@@ -2,6 +2,7 @@ from typing import Any
 
 import msgspec
 
+from ocfl_lib._errors import InvalidLayoutConfig
 from ocfl_lib._path import join_path
 from ocfl_lib.fs import FS, WriteFS, read_all, write_bytes
 
@@ -12,6 +13,13 @@ _OCFL_LAYOUT_FILE = "ocfl_layout.json"
 class OcflLayout(msgspec.Struct):
     extension: str
     description: str = ""
+
+
+def convert_config[T](config: dict[str, Any], config_type: type[T]) -> T:
+    try:
+        return msgspec.convert(config, config_type)
+    except msgspec.ValidationError as exc:
+        raise InvalidLayoutConfig(f"invalid layout config: {exc}") from exc
 
 
 def _config_dir(root_path: str, layout_name: str) -> str:
@@ -26,7 +34,10 @@ def read_layout_config(
         data = read_all(fsys, path)
     except FileNotFoundError:
         return None
-    return msgspec.json.decode(data)
+    try:
+        return msgspec.json.decode(data, type=dict[str, Any])
+    except msgspec.MsgspecError as exc:
+        raise InvalidLayoutConfig(f"invalid {path}: {exc}") from exc
 
 
 def write_layout_config(
@@ -39,11 +50,15 @@ def write_layout_config(
 
 
 def read_ocfl_layout(fsys: FS, *, root_path: str = "") -> OcflLayout | None:
+    path = join_path(root_path, _OCFL_LAYOUT_FILE)
     try:
-        data = read_all(fsys, join_path(root_path, _OCFL_LAYOUT_FILE))
+        data = read_all(fsys, path)
     except FileNotFoundError:
         return None
-    return msgspec.json.decode(data, type=OcflLayout)
+    try:
+        return msgspec.json.decode(data, type=OcflLayout)
+    except msgspec.MsgspecError as exc:
+        raise InvalidLayoutConfig(f"invalid {path}: {exc}") from exc
 
 
 def write_ocfl_layout(

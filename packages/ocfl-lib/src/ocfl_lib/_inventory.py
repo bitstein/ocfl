@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import msgspec
 
 from ocfl_lib._digest import DigestAlgorithm, bytes_digest
+from ocfl_lib._errors import InvalidInventory
 
 
 class UserInfo(msgspec.Struct, frozen=True, omit_defaults=True):
@@ -81,9 +82,20 @@ class StoredInventory:
     digest_algorithm: DigestAlgorithm
 
     @classmethod
-    def from_bytes(cls, data: bytes, alg: DigestAlgorithm) -> StoredInventory:
-        """Decode inventory from raw JSON bytes, preserving exact bytes."""
-        inv = msgspec.json.decode(data, type=Inventory)
+    def from_bytes(
+        cls, data: bytes, alg: DigestAlgorithm | None = None
+    ) -> StoredInventory:
+        """Decode inventory from raw JSON bytes, preserving exact bytes.
+
+        `alg` defaults to the inventory's own `digestAlgorithm`. Raises
+        InvalidInventory when the bytes do not decode to an Inventory.
+        """
+        try:
+            inv = msgspec.json.decode(data, type=Inventory)
+        except msgspec.MsgspecError as exc:
+            raise InvalidInventory(f"invalid inventory: {exc}") from exc
+        if alg is None:
+            alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
         digest = bytes_digest(data, alg)
         return cls(inventory=inv, raw_bytes=data, digest=digest, digest_algorithm=alg)
 

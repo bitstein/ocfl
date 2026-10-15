@@ -1,9 +1,11 @@
 import json
+from hashlib import sha512
 from pathlib import Path
 
 import pytest
 import typer
 from runner_helpers import ObjRunner
+from seed_root import SEED_ID
 
 from ocfl_cli import _exit
 from ocfl_cli._exit import error_class_of, error_code_of, handle_error
@@ -168,6 +170,50 @@ def test_missing_object_json_error_on_stderr(runner: ObjRunner, tmp_path: Path) 
         "error": {
             "code": "object_not_found",
             "message": "object 'nope' not found",
+            "exit": 1,
+        }
+    }
+
+
+def _drop_head(storage_root: Path) -> None:
+    obj = storage_root / SEED_ID
+    inv = json.loads((obj / "inventory.json").read_bytes())
+    del inv["head"]
+    raw = json.dumps(inv).encode()
+    (obj / "inventory.json").write_bytes(raw)
+    (obj / "inventory.json.sha512").write_text(
+        f"{sha512(raw).hexdigest()} inventory.json\n"
+    )
+
+
+def test_invalid_inventory_ls_prints_error_line(
+    runner: ObjRunner, storage_root: Path
+) -> None:
+    _drop_head(storage_root)
+
+    result = runner.invoke(app, ["--root", str(storage_root), "ls"])
+
+    assert result.exit_code == ExitCode.GENERIC, result.output
+    assert result.stderr == (
+        "Error: invalid inventory: Object missing required field `head`\n"
+    )
+
+
+def test_invalid_inventory_info_json_error(
+    runner: ObjRunner, storage_root: Path
+) -> None:
+    _drop_head(storage_root)
+
+    result = runner.invoke(
+        app, ["--root", str(storage_root), "--json", "info", SEED_ID]
+    )
+
+    assert result.exit_code == ExitCode.GENERIC, result.output
+    assert result.stdout == ""
+    assert json.loads(result.stderr) == {
+        "error": {
+            "code": "invalid_inventory",
+            "message": "invalid inventory: Object missing required field `head`",
             "exit": 1,
         }
     }

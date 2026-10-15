@@ -5,6 +5,7 @@ import msgspec
 from ocfl_lib._errors import InvalidLayoutConfig
 from ocfl_lib._layout._casefold import rfind_casefold_span
 from ocfl_lib._layout._component import require_disk_safe_component
+from ocfl_lib._layout.config import convert_config
 from ocfl_lib._layout.types import Layout
 
 EXTENSION_NAME = "0007-n-tuple-omit-prefix-storage-layout"
@@ -64,7 +65,7 @@ class NTupleOmitPrefixLayout(Layout):
     def from_config(cls, config: dict | None = None) -> NTupleOmitPrefixLayout:
         if config is None:
             return cls()
-        cfg = msgspec.convert(config, NTupleOmitPrefixConfig)
+        cfg = convert_config(config, NTupleOmitPrefixConfig)
         return cls(
             delimiter=cfg.delimiter,
             tuple_size=cfg.tuple_size,

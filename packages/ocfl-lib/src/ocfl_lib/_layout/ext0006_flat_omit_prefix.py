@@ -3,6 +3,7 @@ import msgspec
 from ocfl_lib._errors import InvalidLayoutConfig
 from ocfl_lib._layout._casefold import rfind_casefold_span
 from ocfl_lib._layout._component import require_disk_safe_component
+from ocfl_lib._layout.config import convert_config
 from ocfl_lib._layout.types import Layout
 
 EXTENSION_NAME = "0006-flat-omit-prefix-storage-layout"
@@ -34,7 +35,7 @@ class FlatOmitPrefixLayout(Layout):
     def from_config(cls, config: dict | None = None) -> FlatOmitPrefixLayout:
         if config is None:
             raise InvalidLayoutConfig("config with delimiter is required")
-        cfg = msgspec.convert(config, FlatOmitPrefixConfig)
+        cfg = convert_config(config, FlatOmitPrefixConfig)
         return cls(delimiter=cfg.delimiter)
 
     def resolve(self, object_id: str) -> str:

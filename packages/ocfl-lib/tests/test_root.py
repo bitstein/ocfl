@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from ocfl_lib._errors import (
+    InvalidLayoutConfig,
     LayoutNotConfigured,
     MultipleRootDeclarations,
     NotAnOcflRoot,
@@ -139,6 +140,36 @@ class TestStorageRootLayout:
         fsys = LocalFS(tmp_path)
         with pytest.raises(KeyError, match="unknown layout"):
             StorageRoot.open(fsys)
+
+    @pytest.mark.parametrize(
+        ("ocfl_layout", "config"),
+        [
+            ("not json", None),
+            ('{"extension": 5}', None),
+            ('{"extension": "0004-hashed-n-tuple-storage-layout"}', "not json"),
+            ('{"extension": "0004-hashed-n-tuple-storage-layout"}', "[1]"),
+            (
+                '{"extension": "0004-hashed-n-tuple-storage-layout"}',
+                '{"tupleSize": "x"}',
+            ),
+            (
+                '{"extension": "0002-flat-direct-storage-layout"}',
+                '{"extensionName": 1}',
+            ),
+        ],
+    )
+    def test_malformed_layout_json_raises_invalid_layout_config(
+        self, tmp_path: Path, ocfl_layout: str, config: str | None
+    ):
+        _make_root(tmp_path)
+        (tmp_path / "ocfl_layout.json").write_text(ocfl_layout)
+        if config is not None:
+            ext = json.loads(ocfl_layout)["extension"]
+            ext_dir = tmp_path / "extensions" / ext
+            ext_dir.mkdir(parents=True)
+            (ext_dir / "config.json").write_text(config)
+        with pytest.raises(InvalidLayoutConfig):
+            StorageRoot.open(LocalFS(tmp_path))
 
 
 class TestStorageRootObjectPath:

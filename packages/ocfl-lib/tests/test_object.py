@@ -1,8 +1,14 @@
+import hashlib
 from typing import TYPE_CHECKING
 
 import pytest
 
-from ocfl_lib._errors import InventorySidecarMismatch, VersionNotFound
+from ocfl_lib._errors import (
+    ErrorClass,
+    InventorySidecarMismatch,
+    OcflError,
+    VersionNotFound,
+)
 from ocfl_lib._inventory import VersionInfo
 from ocfl_lib._object import DiffEntry, Object
 from ocfl_lib._spec import Spec, VNum
@@ -121,6 +127,36 @@ class TestObjectReadExisting:
         obj = Object(fsys, "")
         with pytest.raises(InventorySidecarMismatch, match="sidecar"):
             _ = obj.inventory
+
+    @pytest.mark.parametrize(
+        ("inv", "message"),
+        [
+            (
+                '{"id":"test:1","type":"https://ocfl.io/1.1/spec/#inventory",'
+                '"digestAlgorithm":"sha512","manifest":{},"versions":{}}',
+                "invalid inventory: Object missing required field `head`",
+            ),
+            (
+                "<html>",
+                "invalid inventory: JSON is malformed: invalid character (byte 0)",
+            ),
+            ("[1]", "invalid inventory: Expected `object`, got `array`"),
+        ],
+    )
+    def test_malformed_inventory_raises_invalid_inventory(
+        self, tmp_path: Path, inv: str, message: str
+    ):
+        obj_dir = tmp_path / "obj"
+        obj_dir.mkdir()
+        (obj_dir / "0=ocfl_object_1.1").write_text("ocfl_object_1.1\n")
+        (obj_dir / "inventory.json").write_text(inv)
+        digest = hashlib.sha512(inv.encode()).hexdigest()
+        (obj_dir / "inventory.json.sha512").write_text(f"{digest} inventory.json\n")
+        with pytest.raises(OcflError) as exc_info:
+            Object.load(LocalFS(obj_dir), "")
+        assert exc_info.value.code == "invalid_inventory"
+        assert exc_info.value.error_class is ErrorClass.INVALID
+        assert str(exc_info.value) == message
 
     @pytest.mark.parametrize(
         "fixture_name",

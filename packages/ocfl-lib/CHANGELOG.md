@@ -56,6 +56,7 @@ No release is published yet, so every entry below is unreleased and may still ch
 - `validate_object` and `validate_root` return a frozen `ValidationReport` of `Finding(code, severity, object_id, path, detail)`. Use `Finding.render()` for a display message. Root validation keeps every object's findings, including the warnings of valid objects.
 - Validators take `JsonValue` / `JsonObject` instead of `dict[str, Any]`.
 - `read_layout_config` returns `None` when the config is absent.
+- Reading a malformed `inventory.json` raises `InvalidInventory`. A malformed `ocfl_layout.json` or layout `config.json` raises `InvalidLayoutConfig`. Before, raw msgspec and JSON errors escaped.
 
 ### Removed
 
