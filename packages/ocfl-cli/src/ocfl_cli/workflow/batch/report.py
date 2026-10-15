@@ -1,4 +1,4 @@
-from pathlib import Path  # noqa: TC003
+from pathlib import Path  # noqa: TC003 - get_type_hints reads it.
 from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 from ocfl_cli import errors as errors

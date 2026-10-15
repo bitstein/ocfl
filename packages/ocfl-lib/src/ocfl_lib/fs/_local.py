@@ -97,7 +97,6 @@ def _renameat2_noreplace(src: Path, dst: Path) -> None:
 
 
 def _fsync_dir(path: Path) -> None:
-    """Make the entries of directory `path` (creates, renames, removes) durable."""
     fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(fd)

@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 
     from ocfl_lib.fs._protocols import Readable
 
+_DELETE_OBJECTS_MAX_KEYS = 1000
+
 
 def _not_found(e: ClientError) -> bool:
     code = e.response["Error"]["Code"]
@@ -39,8 +41,6 @@ def _precondition_failed(e: ClientError) -> bool:
 
 
 class S3FileReader(io.RawIOBase):
-    """Wrap an S3 StreamingBody as a RawIOBase for use as BinaryIO."""
-
     def __init__(self, body, content_length: int) -> None:
         self._body = body
         self._length = content_length
@@ -74,8 +74,6 @@ class _CountingReader:
 
 
 class S3FS(ConditionalFS, CopyFS, FileWalker):
-    """S3 filesystem implementing WriteFS, CopyFS, and FileWalker."""
-
     def __init__(
         self,
         bucket: str,
@@ -106,7 +104,6 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
         return self._key(normed)
 
     def exists(self, name: str) -> bool:
-        """Return True if an object or prefix exists at name."""
         key = self._resolve(name)
         try:
             self._client.head_object(Bucket=self._bucket, Key=key)
@@ -187,7 +184,6 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
         self._client.delete_object(Bucket=self._bucket, Key=key)
 
     def remove_all(self, name: str) -> None:
-        """Remove a file or directory tree."""
         key = self._resolve(name)
         prefix = f"{key}/" if key else ""
 
@@ -212,20 +208,18 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
 
         unique = list(dict.fromkeys(to_delete))
 
-        # Batch delete in groups of 1000 (S3 limit).
-        for i in range(0, len(unique), 1000):
-            batch = [{"Key": delete_key} for delete_key in unique[i : i + 1000]]
+        for i in range(0, len(unique), _DELETE_OBJECTS_MAX_KEYS):
+            chunk = unique[i : i + _DELETE_OBJECTS_MAX_KEYS]
+            batch = [{"Key": delete_key} for delete_key in chunk]
             self._client.delete_objects(
                 Bucket=self._bucket,
                 Delete={"Objects": batch, "Quiet": True},
             )
 
     def mkdir(self, name: str) -> None:
-        """Create directory (no-op for S3)."""
         self._resolve(name)
 
     def read_tagged(self, name: str) -> tuple[bytes, str]:
-        """Read a file with its ETag. FileNotFoundError if missing."""
         key = self._resolve(name)
         try:
             resp = self._client.get_object(Bucket=self._bucket, Key=key)
@@ -236,7 +230,6 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
         return resp["Body"].read(), resp["ETag"]
 
     def write_new(self, name: str, data: bytes) -> str:
-        """Create a file with If-None-Match: *. FileExistsError if it exists."""
         key = self._resolve(name)
         try:
             resp = self._client.put_object(
@@ -249,7 +242,6 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
         return resp["ETag"]
 
     def write_if_match(self, name: str, data: bytes, tag: str) -> str | None:
-        """Replace a file with If-Match: tag. None if the tag no longer matches."""
         key = self._resolve(name)
         try:
             resp = self._client.put_object(
@@ -262,11 +254,6 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
         return resp["ETag"]
 
     def check_conditional_writes(self, probe: str) -> None:
-        """Raise UnsupportedBackendError if the store ignores the conditions.
-
-        Writes the key `probe` create-only twice and with a wrong If-Match;
-        the store must refuse both, then the probe is removed.
-        """
         self.write_new(probe, b"probe")
         try:
             try:
@@ -307,7 +294,6 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
         return f"S3FS({self._bucket})"
 
     def walk_files(self, name: str) -> Iterator[FileRef]:
-        """Recursively yield FileRef for every file under name."""
         key = self._resolve(name)
         prefix = f"{key}/" if key else ""
 

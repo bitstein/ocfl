@@ -145,18 +145,10 @@ def test_rebuild_atomic_when_partial_ddl_fails(
     path = tmp_path / "i.db"
     _seed_stale_schema(path)
 
-    def partial(tx: db.Tx, sql: str) -> None:
-        first_stmt, _, _ = sql.partition(";")
-        first_stmt = first_stmt.strip()
-        if not first_stmt:
-            raise sqlite3.OperationalError("empty schema sql")
-        tx.execute(first_stmt)
-        raise RuntimeError("ddl fail mid-rebuild")
-
-    monkeypatch.setattr(db, "_execute_schema_sql", partial)
+    monkeypatch.setattr(db, "_SCHEMA_SQL", db._SCHEMA_SQL + "\nNOT SQL;\n")
 
     conn = db.connect(path)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(sqlite3.OperationalError):
         db.ensure_schema(conn, root_path="/srv/root")
 
     rows = conn.execute("SELECT count(*) FROM objects").fetchone()
@@ -177,8 +169,7 @@ def test_standalone_writes_autocommit_cross_connection(tmp_path: Path) -> None:
     conn_b.close()
 
 
-def test_immediate_transaction_rolls_back_on_commit_failure(tmp_path: Path) -> None:
-    """Deferred-FK violations raise at COMMIT; helper must release the writer lock."""
+def test_deferred_fk_violation_at_commit_releases_writer_lock(tmp_path: Path) -> None:
     conn = db.connect(tmp_path / "i.db")
     db.ensure_schema(conn, root_path="/srv/root")
     conn.execute("PRAGMA defer_foreign_keys = ON")

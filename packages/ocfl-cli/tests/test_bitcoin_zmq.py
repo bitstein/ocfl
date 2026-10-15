@@ -1,9 +1,3 @@
-"""Uses real pyzmq with an in-process PAIR socket pair: the test holds one PAIR
-end and pushes a synthetic ``hashblock`` multipart frame to the subscriber's
-PAIR end. Bitcoin Core publishes ``hashblock`` as ``[topic, hash, sequence]``
-on PUB; our ``recv_multipart`` -> ``msg[1]`` logic is identical for PAIR.
-"""
-
 import time
 from collections.abc import Iterator
 from typing import NamedTuple

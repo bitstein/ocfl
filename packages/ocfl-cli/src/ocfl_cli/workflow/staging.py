@@ -178,17 +178,15 @@ def path_kinds(state: DigestMap, paths: list[str]) -> dict[str, str]:
     return {p: "ordinary" if p in ordinary else "proof" for p in paths}
 
 
-def apply_rm_mv_regression(
+def apply_edit_regression(
     staging: LockedStaging,
     new_inv_state: DigestMap,
     command: Literal[PhaseCommand.ADD, PhaseCommand.RM, PhaseCommand.MV],
     cause: str,
 ) -> None:
-    """Update `ots.json` for stage add/rm/mv regressions.
-
-    Proofs stay (ADR-0004): a path whose digest has one reuses it. The staged
-    inventory is dropped; `plan.json` stays so a rebuilt inventory with the
-    same bytes keeps its proof.
+    """Proofs stay (ADR-0004): a path whose digest has one reuses it, and
+    `plan.json` stays so a rebuilt inventory with the same bytes keeps its
+    proof.
     """
     state = load_ots(staging)
     new_phase = check_transition(state.phase, command)
@@ -463,7 +461,7 @@ def add_sources(
     if has_ots(staging_dir):
         with with_lock(staging_dir, runtime) as staging:
             _finalize()
-            apply_rm_mv_regression(staging, state, PhaseCommand.ADD, command)
+            apply_edit_regression(staging, state, PhaseCommand.ADD, command)
     else:
         _finalize()
 
@@ -517,7 +515,7 @@ def move_path(
             if moves_companion:
                 pair_ots_companion_rename(state, src_path, dst_path)
             store.save_inventory(root_path, object_id, update_head_state(inv, state))
-            apply_rm_mv_regression(
+            apply_edit_regression(
                 staging, state, PhaseCommand.MV, f"stage mv {src_path} {dst_path}"
             )
     else:
@@ -582,7 +580,7 @@ def remove_paths(
         with with_lock(staging_dir, runtime) as staging:
             pair_ots_companion_remove(state, path_kinds(before, removed_paths))
             _finalize()
-            apply_rm_mv_regression(
+            apply_edit_regression(
                 staging, state, PhaseCommand.RM, f"stage rm {' '.join(paths)}"
             )
     else:

@@ -39,6 +39,7 @@ REGISTERED_EXTENSIONS = frozenset(
     }
 )
 _KNOWN_OBJECT_EXTENSIONS = REGISTERED_EXTENSIONS | {ots.EXTENSION_NAME}
+_SPEC_OPTIONAL_ROOT_DIRS = frozenset({"extensions", "logs"})
 
 
 def validate_object(
@@ -104,8 +105,7 @@ def _validate_object(
 
     _check_version_dir_sequence(entries, result)
 
-    # extensions/ and logs/ are allowed per spec
-    allowed_root = {"inventory.json", sidecar_name, "extensions", "logs"}
+    allowed_root = {"inventory.json", sidecar_name, *_SPEC_OPTIONAL_ROOT_DIRS}
     if namaste:
         allowed_root.add(namaste.filename)
     for vkey in inv_versions:
@@ -221,13 +221,16 @@ def _check_object_declaration(
     return namaste
 
 
+class _RootInventory(NamedTuple):
+    raw: bytes
+    data: JsonObject
+    inv: Inventory
+    alg: DigestAlgorithm
+
+
 def _load_root_inventory(
     fsys: FS, path: str, result: FindingCollector, *, lax_digests: bool
-) -> tuple[bytes, JsonObject, Inventory, DigestAlgorithm] | None:
-    """None means stop: E063, E033, E034, or a failed `validate_inventory`. An
-    unparseable digestAlgorithm stops silently; `validate_inventory` already
-    reported E025a.
-    """
+) -> _RootInventory | None:
     try:
         inv_bytes = fs_utils.read_all(fsys, join_path(path, "inventory.json"))
     except OSError:
@@ -254,7 +257,7 @@ def _load_root_inventory(
         alg = DigestAlgorithm.from_ocfl_name(inv.digest_algorithm)
     except ValueError:
         return None
-    return inv_bytes, inv_data, inv, alg
+    return _RootInventory(inv_bytes, inv_data, inv, alg)
 
 
 def _check_object_root_entries(

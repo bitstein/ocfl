@@ -19,7 +19,18 @@ if TYPE_CHECKING:
 
 
 class InventoryBuilder:
-    """Builder pattern for constructing Inventory instances."""
+    """Build an Inventory, optionally one that extends `prev` by new versions.
+
+    `prev` seeds the id, spec, content directory, digest algorithm,
+    manifest, versions and fixity; each `add_version` becomes the next
+    version after its head (v1 without `prev`). A digest new to the
+    manifest gets one content path, `<version>/<content dir>/<its first
+    logical path>`, mapped by `content_path_func` when one is set. A
+    builder is single-use. `build` raises
+    InventoryBuildError when called twice, when no id is set, when no
+    version was added, or when a state digest has no logical paths, and
+    InvalidPath for a bad logical path or content directory.
+    """
 
     def __init__(self, prev: Inventory | None = None):
         self._prev = prev

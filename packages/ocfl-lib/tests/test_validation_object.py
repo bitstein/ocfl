@@ -600,9 +600,7 @@ def _set_inventory_type(vdir: Path, spec: str) -> None:
     (vdir / "inventory.json.sha512").write_text(f"{digest} inventory.json\n")
 
 
-class TestE103SpecSequence:
-    """E103: each version is the same or a later spec than the one before."""
-
+class TestE103SpecNeverOlderThanPrevious:
     def test_upgraded_object_is_valid(
         self, bad_objects_1_1: Path, tmp_path: Path
     ) -> None:

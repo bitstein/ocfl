@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 BUCKET = "test-bucket"
 REGION = "us-east-1"
 _A_TXT = b"hello"
+_LIST_OBJECTS_MAX_KEYS = 1000
 
 
 @pytest.fixture
@@ -93,16 +94,16 @@ class TestReadDir:
         with pytest.raises(FileNotFoundError):
             list(fs.read_dir("nope"))
 
-    def test_pagination(self, s3_client: S3Client):
-        """Verify read_dir paginates correctly with >1000 keys."""
+    def test_read_dir_spans_list_pages(self, s3_client: S3Client):
         from ocfl_lib.fs.s3 import S3FS
 
-        for i in range(1050):
+        n = _LIST_OBJECTS_MAX_KEYS + 50
+        for i in range(n):
             s3_client.put_object(Bucket=BUCKET, Key=f"many/{i:04d}.txt", Body=b"x")
         s3fs = S3FS(BUCKET, client=s3_client)
         entries = list(s3fs.read_dir("many"))
         file_entries = [e for e in entries if e.is_file]
-        assert len(file_entries) == 1050
+        assert len(file_entries) == n
 
 
 class TestWrite:
@@ -169,11 +170,10 @@ class TestRemoveAll:
         with pytest.raises(FileNotFoundError):
             fs.remove_all("nope")
 
-    def test_batch_deletion(self, s3_client: S3Client):
-        """Verify batch deletion works for >1000 keys."""
-        from ocfl_lib.fs.s3 import S3FS
+    def test_remove_all_spans_delete_batches(self, s3_client: S3Client):
+        from ocfl_lib.fs.s3 import _DELETE_OBJECTS_MAX_KEYS, S3FS
 
-        for i in range(1050):
+        for i in range(_DELETE_OBJECTS_MAX_KEYS + 50):
             s3_client.put_object(Bucket=BUCKET, Key=f"bulk/{i:04d}.txt", Body=b"x")
         s3fs = S3FS(BUCKET, client=s3_client)
         s3fs.remove_all("bulk")

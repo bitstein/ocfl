@@ -220,10 +220,7 @@ def prepare_submission_locked(
     expect: TimestampTarget | None = None,
     allow_missing_metadata: bool = False,
 ) -> PreparedSubmission:
-    """Send only digests with no proof, requested or received (ADR-0004); with
-    none to send the phase moves on at once when every proof is final. The
-    batch engine calls this per object and sends the digests itself.
-    """
+    """Send only digests with no proof, requested or received (ADR-0004)."""
     state = load_ots(staging)
     rules = resolve(state, expect)
     target_phase = check_transition(

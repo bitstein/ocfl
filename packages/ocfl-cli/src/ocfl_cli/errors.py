@@ -1,11 +1,3 @@
-"""Typed exception hierarchy for ocfl_cli.
-
-Single-rooted at CLIError. Like the lib's errors, every class carries an
-`ErrorClass` (how a caller should react, which picks the exit code) and a
-stable snake_case `code` (part of the `--json` error contract). Bitcoin RPC
-errors are the lib's own (`ocfl_lib.BitcoinRpcError` and subclasses).
-"""
-
 from ocfl_lib import ErrorClass
 
 

@@ -280,12 +280,11 @@ def test_sniff_failure_rolls_back_transaction(
             pass
 
 
-def test_commit_failure_releases_writer_lock(
+def test_deferred_fk_violation_at_commit_releases_writer_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Deferred-FK violations surface at COMMIT; scanner must release the lock."""
     fixture = FixtureRoot(tmp_path)
     fixture.commit("alpha", {"a.txt": "x"}, algorithm=DigestAlgorithm.SHA256)
 

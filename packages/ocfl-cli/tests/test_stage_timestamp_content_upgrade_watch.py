@@ -28,7 +28,6 @@ from ots_helpers import (
     write_config,
 )
 from runner_helpers import ObjRunner, stage_args
-from typer.testing import CliRunner
 
 from ocfl_cli.exit_codes import ExitCode
 from ocfl_cli.main import app
@@ -725,10 +724,8 @@ class TestRegtestRealZmqHashblockDelivery:
 
         result: dict[str, Any] = {}
 
-        # Fresh CliRunner per thread: the fixture runner's stdout/stderr
-        # swap is process-global.
         def _run() -> None:
-            r = CliRunner().invoke(
+            r = runner.invoke(
                 app,
                 stage_args(
                     empty_sha256_root,
@@ -739,7 +736,6 @@ class TestRegtestRealZmqHashblockDelivery:
                     "--expect",
                     "content",
                 ),
-                obj=runner.ports,
             )
             result["exit"] = r.exit_code
             result["output"] = r.output

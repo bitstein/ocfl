@@ -523,7 +523,7 @@ class TestProofsByDigest:
     def test_moving_back_keeps_proofs_and_the_plan(self):
         tree = _tree(CLI_SRC / "workflow/staging.py")
         fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
-        for name in ("apply_rm_mv_regression", "apply_metadata_ots_regression"):
+        for name in ("apply_edit_regression", "apply_metadata_ots_regression"):
             src = ast.unparse(fns[name])
             assert "unlink" not in src, name
             assert "proofs=" not in src and "verify_jobs=" not in src, name

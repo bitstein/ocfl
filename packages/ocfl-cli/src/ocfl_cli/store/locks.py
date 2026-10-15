@@ -2,9 +2,7 @@
 
 Every lock is an exclusive `flock(2)` on a lock file. The kernel drops it
 when its holder exits, however it exits, so no lock can go stale and none
-needs a heartbeat (ADR-0005). A taker polls with `LOCK_NB` and waits through
-`Runtime.sleeper` (tests wait no real time), then fails with
-`LockTimeoutError` (exit 4).
+needs a heartbeat (ADR-0005).
 """
 
 import fcntl
@@ -31,8 +29,6 @@ _OBJECT_LOCK_DIR = "ocfl-cli-object-locks"
 def flock(path: Path, runtime: Runtime, *, what: str) -> Generator[None]:
     """Hold an exclusive `flock` on `path` (created if missing).
 
-    Waits up to `runtime.lock_timeout` seconds, in `POLL_SECONDS` steps
-    through `runtime.sleeper`, then raises `LockTimeoutError` naming `what`.
     Two opens of the same file conflict even within one process.
     """
     path.parent.mkdir(parents=True, exist_ok=True)

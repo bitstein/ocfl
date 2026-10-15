@@ -10,6 +10,8 @@ SCHEMA_VERSION = 1
 
 Tx = NewType("Tx", sqlite3.Connection)
 
+_SCHEMA_SQL = resources.files("ocfl_index").joinpath("schema.sql").read_text()
+
 _TABLES = (
     "ots_inventory",
     "ots_content",
@@ -120,27 +122,8 @@ def _drop_schema(tx: Tx) -> None:
         tx.execute(f"DROP TABLE IF EXISTS {table}")
 
 
-def _execute_schema_sql(tx: Tx, sql: str) -> None:
-    """Run schema DDL one statement at a time on the existing connection.
-
-    ``conn.executescript`` issues an implicit ``COMMIT`` before its body, which
-    would commit a pending drop step inside the rebuild and break atomicity.
-    Splitting on ``sqlite3.complete_statement`` avoids that.
-    """
-    buf: list[str] = []
-    for line in sql.splitlines():
-        buf.append(line)
-        text = "\n".join(buf).strip()
-        if text and sqlite3.complete_statement(text):
-            tx.execute(text)
-            buf = []
-    if "\n".join(buf).strip():
-        raise sqlite3.OperationalError("incomplete schema SQL")
-
-
 def _create_schema(tx: Tx, root_path: str) -> None:
-    sql = resources.files("ocfl_index").joinpath("schema.sql").read_text()
-    _execute_schema_sql(tx, sql)
+    tx.executescript(_SCHEMA_SQL)
     now = now_iso()
     for key, value in (
         ("schema_version", str(SCHEMA_VERSION)),

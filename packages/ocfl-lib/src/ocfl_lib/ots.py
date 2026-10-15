@@ -8,7 +8,7 @@ import enum
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, NamedTuple, Protocol, runtime_checkable
 
 from opentimestamps.core.notary import BitcoinBlockHeaderAttestation
 from opentimestamps.core.serialize import (
@@ -275,8 +275,13 @@ def read_config(fsys: FS, obj_path: str) -> OtsConfig | None:
     return OtsConfig.from_json(raw)
 
 
-def split_state(paths: Iterable[str]) -> tuple[frozenset[str], dict[str, str]]:
-    """(ordinary paths, {content proof: companion}) of one version's state.
+class StateSplit(NamedTuple):
+    ordinary: frozenset[str]
+    companion_of: dict[str, str]
+
+
+def split_state(paths: Iterable[str]) -> StateSplit:
+    """Split one version's state into ordinary paths and content proofs.
 
     `P.ots` is a content proof when `P` is in the same state. Every other
     path, including a standalone `x.ots`, is ordinary and needs a proof.
@@ -287,7 +292,7 @@ def split_state(paths: Iterable[str]) -> tuple[frozenset[str], dict[str, str]]:
         for p in path_set
         if p.endswith(PROOF_SUFFIX) and p.removesuffix(PROOF_SUFFIX) in path_set
     }
-    return frozenset(path_set - proofs.keys()), proofs
+    return StateSplit(frozenset(path_set - proofs.keys()), proofs)
 
 
 def covered_versions(cfg: OtsConfig, versions: Iterable[str]) -> list[str]:
@@ -309,11 +314,11 @@ def covered_versions(cfg: OtsConfig, versions: Iterable[str]) -> list[str]:
 class ProofRef:
     """One proof of an object and the sha256 hex digest it must commit to.
 
-    `kind` is "content" or "inventory"; `path` is relative to the object
-    root; `version` is the first covered version that holds the proof.
+    `path` is relative to the object root; `version` is the first covered
+    version that holds the proof.
     """
 
-    kind: str
+    kind: Literal["content", "inventory"]
     version: str
     path: str
     digest: str
@@ -382,7 +387,7 @@ class ProofChainResult:
 
     @property
     def status(self) -> AttestationStatus | None:
-        """MISMATCH if any check is; else VERIFIED if any; None when pending."""
+        """MISMATCH if any check is; else VERIFIED, else SHALLOW; None when pending."""
         statuses = {c.status for c in self.checks}
         for status in (
             AttestationStatus.MISMATCH,

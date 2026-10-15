@@ -1,11 +1,3 @@
-"""Typed exception hierarchy for ocfl_lib.
-
-Single-rooted at OcflError. Every class carries an `ErrorClass` (how a
-caller should react) and a stable snake_case `code` (part of the CLI's JSON
-contract). Classes replacing a builtin raise also inherit that builtin
-(`ValueError`, `KeyError`) so existing `except` clauses still match.
-"""
-
 import enum
 from typing import ClassVar
 
