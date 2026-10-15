@@ -619,12 +619,16 @@ class TestClaimThenPublish:
         assert doc.is_file()
         assert f"`{WORK_DIR_EXTENSION}`" in doc.read_text()
 
-    def test_work_dir_not_hidden_from_validation(self):
-        """Tool conveniences never weaken the validator: W016 still fires."""
+    def test_leftover_work_dir_is_w016(self, tmp_path):
+        from ocfl_lib import LocalFS, Spec, StorageRoot
         from ocfl_lib._commit import WORK_DIR_EXTENSION
+        from ocfl_lib.validation import validate_root
 
-        text = (LIB_SRC / "validation/_root.py").read_text()
-        assert WORK_DIR_EXTENSION not in text
+        fs = LocalFS(tmp_path)
+        StorageRoot.init(fs, fs, spec=Spec.V1_1)
+        (tmp_path / "extensions" / WORK_DIR_EXTENSION).mkdir(parents=True)
+        report = validate_root(fs, "", validate_objects=False)
+        assert report.has_code("W016")
 
 
 class TestRecoveryTables:
@@ -779,12 +783,15 @@ class TestOtsExtensionSpec:
         with pytest.raises(KeyError):
             get_code("E903")
 
-    def test_activation_is_the_extension_directory(self):
-        """Deleting config.json must not switch the checks off (E908)."""
-        text = (LIB_SRC / "validation/_extension_ots.py").read_text()
-        assert '"E908"' in text
-        assert "if not fsys.exists(ext_dir):" in text
-        assert 'fsys.exists(join_path(ext_dir, "config.json"))' not in text
+    def test_extension_dir_without_config_is_e908(self, tmp_path):
+        from ocfl_lib import LocalFS, ots
+        from ocfl_lib.validation import validate_object
+        from tests.helpers.ots import build_ots_object
+
+        build_ots_object(tmp_path)
+        (tmp_path / ots.CONFIG_PATH).unlink()
+        report = validate_object(LocalFS(tmp_path), "")
+        assert report.has_code("E908")
 
     def test_extra_detail_still_renders(self):
         from ocfl_lib.validation import Finding, Severity
@@ -996,7 +1003,6 @@ class TestCommitRefusesUnproved:
 
 class TestStartTimestamping:
     def test_config_is_written_before_the_proof(self):
-        """Order: claim -> config -> proof -> root inventory -> root sidecar."""
         body = ast.unparse(_func(LIB_SRC / "_commit.py", "write_proof"))
         assert body.index("_start_extension_config(t)") < body.index("inventory_proof)")
         start = ast.unparse(_func(LIB_SRC / "_commit.py", "_start_extension_config"))

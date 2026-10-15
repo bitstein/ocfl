@@ -9,10 +9,10 @@ from ots_helpers import (
     MIN_CONFS,
     VERSION_METADATA,
     bury,
+    final_proof_for,
     inject_fake_btc,
     inject_fake_sp,
     new_ots_staging,
-    ots_for,
     register_attested,
     replace_attested_block,
     verified_content_proof,
@@ -339,7 +339,7 @@ class TestUnverifiedContentGate:
             new_args=VERSION_METADATA,
         )
         d = digests["a.txt"]
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         cache = ots_cache_path(sd, d)
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_bytes(ots_bytes)

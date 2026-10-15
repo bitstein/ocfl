@@ -3,6 +3,7 @@ import json
 import shutil
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 from fakes import FakeBitcoinRPC, FakeSimpleProof
@@ -93,15 +94,13 @@ def replace_attested_block(
 def register_mismatched_merkle_root(
     rpc: FakeBitcoinRPC, height: int = DIGEST_BLOCK_HEIGHT
 ) -> None:
-    rpc.register_merkle_root(height, "00" * 32)
+    rpc.register_merkle_root(height, bytes(32))
 
 
 def register_attested(
     rpc: FakeBitcoinRPC, digest_hex: str, height: int = DIGEST_BLOCK_HEIGHT
 ) -> None:
-    # `build_attestation` has no ops, so the attested merkle root is the
-    # digest itself; bitcoind reports merkle roots in display (reversed) hex.
-    rpc.register_merkle_root(height, bytes.fromhex(digest_hex)[::-1].hex())
+    rpc.register_merkle_root(height, bytes.fromhex(digest_hex))
 
 
 def verified_content_proof(digest_hex: str) -> Proof:
@@ -115,7 +114,9 @@ def verified_content_proof(digest_hex: str) -> Proof:
     )
 
 
-def ots_for(digest_hex: str, *, block_height: int = DIGEST_BLOCK_HEIGHT) -> bytes:
+def final_proof_for(
+    digest_hex: str, *, block_height: int = DIGEST_BLOCK_HEIGHT
+) -> bytes:
     return build_attestation(bytes.fromhex(digest_hex), block_height=block_height)
 
 
@@ -143,14 +144,26 @@ def new_ots_staging(
     return staging_dir(root, staging, object_id), digests
 
 
+class InventoryPendingStaging(NamedTuple):
+    staging_dir: Path
+    content_digest: str
+    inv_digest: str
+
+
+class InventoryUpgradedStaging(NamedTuple):
+    staging_dir: Path
+    content_digest: str
+    inv_digest: str
+    cached_ots_bytes: bytes
+
+
 def setup_at_inventory_pending(
     runner: ObjRunner,
     root: Path,
     staging: Path,
     object_id: str,
     sp_fake: FakeSimpleProof,
-) -> tuple[Path, str, str]:
-    """Returns ``(staging_dir, content_digest, inv_digest)``."""
+) -> InventoryPendingStaging:
     inject_fake_sp(runner, sp_fake)
     sd, digests = new_ots_staging(
         runner,
@@ -163,12 +176,7 @@ def setup_at_inventory_pending(
     da = digests["a.txt"]
 
     ots_src = staging.parent / "a.txt.ots"
-    # A final proof of a.txt: the commit refuses an invalid or pending one.
-    ots_src.write_bytes(
-        build_attestation(
-            hashlib.sha256(b"alpha").digest(), block_height=DIGEST_BLOCK_HEIGHT
-        )
-    )
+    ots_src.write_bytes(final_proof_for(da))
     r = runner.invoke(app, stage_args(root, staging, "add", object_id, str(ots_src)))
     assert r.exit_code == ExitCode.SUCCESS, r.output
 
@@ -199,7 +207,7 @@ def setup_at_inventory_pending(
     assert state.phase is Phase.INVENTORY_PENDING
     assert state.inventory is not None
     assert state.inventory_proof is not None
-    return sd, da, state.inventory.digest
+    return InventoryPendingStaging(sd, da, state.inventory.digest)
 
 
 def seed_inv_completed_verify_job(
@@ -234,13 +242,12 @@ def setup_at_inventory_upgraded(
     object_id: str,
     sp_fake: FakeSimpleProof,
     btc_rpc: FakeBitcoinRPC,
-) -> tuple[Path, str, str, bytes]:
-    """Returns ``(staging_dir, content_digest, inv_digest, cached_ots_bytes)``."""
+) -> InventoryUpgradedStaging:
     inject_fake_btc(runner, btc_rpc)
     sd, da, inv_digest = setup_at_inventory_pending(
         runner, root, staging, object_id, sp_fake
     )
-    ots_bytes = ots_for(inv_digest)
+    ots_bytes = final_proof_for(inv_digest)
     seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
     bury(btc_rpc)
     register_attested(btc_rpc, inv_digest)
@@ -253,7 +260,7 @@ def setup_at_inventory_upgraded(
     state = load_ots(sd)
     assert state.phase is Phase.INVENTORY_UPGRADED
     assert ots_cache_path(sd, inv_digest).read_bytes() == ots_bytes
-    return sd, da, inv_digest, ots_bytes
+    return InventoryUpgradedStaging(sd, da, inv_digest, ots_bytes)
 
 
 def _verified_in(src: object, digest: str) -> bool:

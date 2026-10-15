@@ -203,11 +203,13 @@ class TestValidateObject:
         assert all(line.startswith("Warning: [W") for line in lines), lines
 
 
-def _inflate_head_message(storage_root: Path) -> None:
-    """Rewrite obj:test head inventory with an over-limit (L002) message."""
+OVER_MESSAGE_LIMIT = 64 * 1024 + 1
+
+
+def _inflate_head_message_past_limit(storage_root: Path) -> None:
     obj = storage_root / SEED_ID
     inv = json.loads((obj / "inventory.json").read_bytes())
-    inv["versions"][inv["head"]]["message"] = "x" * (64 * 1024 + 1)
+    inv["versions"][inv["head"]]["message"] = "x" * OVER_MESSAGE_LIMIT
     raw = json.dumps(inv, indent=2).encode()
     digest = hashlib.sha512(raw).hexdigest()
     for d in (obj, obj / inv["head"]):
@@ -215,13 +217,11 @@ def _inflate_head_message(storage_root: Path) -> None:
         (d / "inventory.json.sha512").write_text(f"{digest} inventory.json\n")
 
 
-class TestValidateLimitInfo:
-    """L-codes are info: reported, never fail validation."""
-
+class TestLimitInfoNeverFailsValidation:
     def test_object_json_reports_info_and_valid(
         self, runner: ObjRunner, storage_root: Path
     ):
-        _inflate_head_message(storage_root)
+        _inflate_head_message_past_limit(storage_root)
         result = runner.invoke(
             app, ["--root", str(storage_root), "--json", "validate", SEED_ID]
         )
@@ -232,7 +232,7 @@ class TestValidateLimitInfo:
         assert {i["code"] for i in data["info"]} == {"L002"}
 
     def test_root_json_merges_object_info(self, runner: ObjRunner, storage_root: Path):
-        _inflate_head_message(storage_root)
+        _inflate_head_message_past_limit(storage_root)
         result = runner.invoke(app, ["--root", str(storage_root), "--json", "validate"])
         assert result.exit_code == ExitCode.SUCCESS, result.output
         data = json.loads(result.stdout)
@@ -241,7 +241,7 @@ class TestValidateLimitInfo:
         assert all(i["message"].startswith("obj:test: ") for i in data["info"])
 
     def test_object_text_shows_info(self, runner: ObjRunner, storage_root: Path):
-        _inflate_head_message(storage_root)
+        _inflate_head_message_past_limit(storage_root)
         result = runner.invoke(app, ["--root", str(storage_root), "validate", SEED_ID])
         assert result.exit_code == ExitCode.SUCCESS, result.output
         assert "Info: [L002]" in result.stderr

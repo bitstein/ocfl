@@ -1,5 +1,3 @@
-"""Tests for 0003-hash-and-id-n-tuple-storage-layout."""
-
 import msgspec
 import pytest
 

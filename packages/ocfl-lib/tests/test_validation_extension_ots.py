@@ -17,7 +17,6 @@ def _validate(tmp_path: Path) -> ValidationReport:
 
 
 def test_ots_extension_is_known(tmp_path: Path) -> None:
-    """Object with the extension config does NOT emit W013 (unknown ext)."""
     build_ots_object(tmp_path)
     r = _validate(tmp_path)
     w013 = [w for w in r.warnings if w.code == "W013" and EXTENSION_NAME in w.render()]
@@ -25,7 +24,6 @@ def test_ots_extension_is_known(tmp_path: Path) -> None:
 
 
 def test_sha512_with_ots_extension_rejected(tmp_path: Path) -> None:
-    """SHA-512 manifest + ots extension config → E901."""
     build_ots_object(
         tmp_path,
         digest_algorithm="sha512",
@@ -37,7 +35,6 @@ def test_sha512_with_ots_extension_rejected(tmp_path: Path) -> None:
 
 
 def test_companion_file_missing_for_content(tmp_path: Path) -> None:
-    """Content file with no `.ots` companion → E902."""
     build_ots_object(tmp_path, include_companions=False)
     r = _validate(tmp_path)
     assert r.has_code("E902"), f"expected E902, got errors={[e.code for e in r.errors]}"
@@ -59,7 +56,6 @@ def test_proof_of_a_proof_is_allowed(tmp_path: Path) -> None:
 
 
 def test_inventory_version_ots_missing(tmp_path: Path) -> None:
-    """Extension present but no `inventory.json.v1.ots` → E904."""
     build_ots_object(tmp_path, include_inventory_v1_ots=False)
     r = _validate(tmp_path)
     assert r.has_code("E904"), f"expected E904, got errors={[e.code for e in r.errors]}"
@@ -73,7 +69,6 @@ def test_missing_version_inventory_is_one_e909(tmp_path: Path) -> None:
 
 
 def test_inventory_ots_digest_mismatch(tmp_path: Path) -> None:
-    """Inventory `.ots` committing to wrong digest → E905."""
     bad_ots = build_attestation(
         hashlib.sha256(b"different bytes").digest(),
         block_height=800_000,
@@ -94,7 +89,6 @@ def test_corrupt_inventory_ots_reports_e905(tmp_path: Path) -> None:
 
 
 def test_inventory_ots_match_no_error(tmp_path: Path) -> None:
-    """Inventory `.ots` committing to correct digest → no E905."""
     build_ots_object(tmp_path)
     r = _validate(tmp_path)
     assert not r.has_code("E905"), (
@@ -113,7 +107,6 @@ def test_pending_inventory_ots_warns_w902(tmp_path: Path) -> None:
 
 
 def test_embedded_digest_mismatch(tmp_path: Path) -> None:
-    """`.ots` commits to wrong digest → E905."""
     file_data = b"hello world"
     wrong_digest = hashlib.sha256(b"a different file").digest()
     bad_ots = build_attestation(wrong_digest, block_height=800_000)
@@ -138,7 +131,6 @@ def test_corrupt_companion_file_reports_e905(tmp_path: Path) -> None:
 
 
 def test_embedded_digest_match_no_error(tmp_path: Path) -> None:
-    """`.ots` committing to correct digest → no E905."""
     build_ots_object(tmp_path)
     r = _validate(tmp_path)
     assert not r.has_code("E905"), (

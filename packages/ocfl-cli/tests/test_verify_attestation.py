@@ -24,10 +24,6 @@ from ocfl_lib import BitcoinNoBlockError
 from tests.helpers.ots import build_attestation
 
 DIGEST = hashlib.sha256(b"file-bytes").digest()
-# bitcoind's RPC returns ``merkleroot`` in display (reversed) hex; the OTS
-# attested digest is the raw block-header field in internal byte order. Tests
-# register display hex to mirror real bitcoind output.
-DIGEST_DISPLAY_HEX = DIGEST[::-1].hex()
 
 
 class TestSuccess:
@@ -37,7 +33,7 @@ class TestSuccess:
         ots = build_attestation(DIGEST, block_height=DIGEST_BLOCK_HEIGHT)
         rpc = FakeBitcoinRPC()
         bury(rpc)
-        rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, DIGEST_DISPLAY_HEX)
+        rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, DIGEST)
 
         result = verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
 
@@ -63,7 +59,7 @@ class TestMismatch:
         ots = build_attestation(DIGEST, block_height=DIGEST_BLOCK_HEIGHT)
         rpc = FakeBitcoinRPC()
         bury(rpc)
-        rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, DIGEST_DISPLAY_HEX)
+        rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, DIGEST)
 
         wrong_expected = hashlib.sha256(b"some other bytes").digest()
         assert wrong_expected != DIGEST
@@ -76,11 +72,6 @@ class TestConfirmationsBeforeMerkle:
     def test_insufficient_confs_with_wrong_merkle_is_pending_not_mismatch(
         self,
     ) -> None:
-        """A block not yet buried min_confirmations deep is untrusted, so a
-        merkle mismatch there must surface as PENDING (it self-heals on a
-        shallow fork/reorg), not a HALT-worthy AttestationMismatchError. Only a
-        mismatch at trusted depth is a genuine, alarm-worthy divergence.
-        """
         ots = build_attestation(DIGEST, block_height=DIGEST_BLOCK_HEIGHT)
         rpc = FakeBitcoinRPC()
         bury(rpc, 1)
@@ -92,15 +83,7 @@ class TestConfirmationsBeforeMerkle:
         assert result.reason is PendingReason.INSUFFICIENT_CONFIRMATIONS
 
 
-class TestAttestedDistinctFromCommitment:
-    """With a real merkle path the attested root != the file commitment digest.
-
-    The plain ``build_attestation`` collapses them, so these tests can't tell
-    whether ``verify_attestation`` compares the chain merkle against the
-    attested digest (correct) or the commitment digest. Here they differ:
-    attested = sha256(commitment).
-    """
-
+class TestChainRootComparedToAttestedNotCommitment:
     def test_chain_merkle_matching_attested_verifies(self) -> None:
         ots = build_attestation(
             DIGEST, block_height=DIGEST_BLOCK_HEIGHT, merkle_step=True
@@ -109,7 +92,7 @@ class TestAttestedDistinctFromCommitment:
         assert attested != DIGEST
         rpc = FakeBitcoinRPC()
         bury(rpc)
-        rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, attested[::-1].hex())
+        rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, attested)
 
         result = verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
 
@@ -124,7 +107,7 @@ class TestAttestedDistinctFromCommitment:
         assert attested != DIGEST
         rpc = FakeBitcoinRPC()
         bury(rpc)
-        rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, DIGEST_DISPLAY_HEX)
+        rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, DIGEST)
 
         with pytest.raises(AttestationMismatchError):
             verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
@@ -145,7 +128,7 @@ class TestPending:
         ots = build_attestation(DIGEST, block_height=DIGEST_BLOCK_HEIGHT)
         rpc = FakeBitcoinRPC()
         bury(rpc, 1)
-        rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, DIGEST_DISPLAY_HEX)
+        rpc.register_merkle_root(DIGEST_BLOCK_HEIGHT, DIGEST)
 
         result = verify_attestation(rpc, ots, DIGEST, min_confirmations=MIN_CONFS)
 

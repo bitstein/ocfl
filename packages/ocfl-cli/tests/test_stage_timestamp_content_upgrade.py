@@ -12,10 +12,10 @@ from ots_helpers import (
     bury,
     crash_at,
     end_chain_below,
+    final_proof_for,
     inject_fake_btc,
     inject_fake_sp,
     new_ots_staging,
-    ots_for,
     register_attested,
     register_mismatched_merkle_root,
     replace_attested_block,
@@ -453,7 +453,7 @@ class TestMidflightProgressSnapshots:
         digest = digests_by_name["a.txt"]
         cache_file = ots_cache_path(sd, digest)
         cache_file.parent.mkdir(parents=True, exist_ok=True)
-        cache_file.write_bytes(ots_for(digest))
+        cache_file.write_bytes(final_proof_for(digest))
         bury(btc_fake.rpc)
         register_mismatched_merkle_root(btc_fake.rpc)
         state = load_ots(sd)
@@ -519,7 +519,7 @@ class TestMidflightProgressSnapshots:
         )
         digest = digests_by_name["a.txt"]
         _force_content_pending(sd, (digest,))
-        ots_bytes = ots_for(digest)
+        ots_bytes = final_proof_for(digest)
         job_id = sp_fake.verify_batch([digest]).job_id
         sp_fake.advance_to_completed(job_id, {digest: ots_bytes})
         snapshot: dict[str, tuple[CalendarAttestation, ...]] = {
@@ -585,7 +585,7 @@ class TestUpgradeHappyPath:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
         bury(btc_fake.rpc)
@@ -658,7 +658,7 @@ class TestUpgradeHappyPath:
         da, db = digests["a.txt"], digests["b.txt"]
         _force_content_pending(sd, (da, db))
 
-        ots_a = ots_for(da)
+        ots_a = final_proof_for(da)
         ots_b = _ots_pending(db)
         _seed_completed_verify_job(sp_fake, sd, (da, db), {da: ots_a, db: ots_b})
 
@@ -729,7 +729,7 @@ class TestThreeConfGate:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
         bury(btc_fake.rpc, confs)
@@ -808,7 +808,7 @@ class TestPendingHeld:
         assert state.proofs[d].verified is False
         assert ots_cache_path(sd, d).is_file()
 
-        anchored = ots_for(d)
+        anchored = final_proof_for(d)
         sp_fake._results[f"results://{job_id}"] = {d: anchored}
         register_attested(btc_fake.rpc, d)
 
@@ -840,12 +840,6 @@ class TestReorgShallow:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """First pass: verifies. Reorg replaces the attested block (shallow):
-        the chain is truncated to the attested height, so confirmations drop
-        below MIN_CONFS. Second pass: ``reverify_content_proofs`` sees the
-        insufficient-confirmations window and resets verified=False — no HALT.
-        (Merkle-mismatch-at-sufficient-confs after a reorg is a separate HALT
-        case, covered by ``TestReorgMerkleMismatch``.)"""
         write_config(tmp_path, monkeypatch)
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)
@@ -861,7 +855,7 @@ class TestReorgShallow:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
         bury(btc_fake.rpc)
@@ -925,7 +919,7 @@ class TestReorgDeep:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
         end_chain_below(btc_fake.rpc, MIN_CONFS + 5)
@@ -971,7 +965,7 @@ class TestMerkleMismatch:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
         bury(btc_fake.rpc)
@@ -1004,18 +998,6 @@ class TestReorgMerkleMismatch:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Reorg replaces the attested block with DIFFERENT content, then
-        re-buries it to >= MIN_CONFS. Re-verify reaches the merkle comparison
-        (confs are sufficient, unlike the shallow case) and the replacement
-        block's root no longer matches the cached proof, so the proof is reset
-        to verified=False and a fresh verify job is submitted — graceful
-        re-anchoring, not a HALT (HALT is reserved for deep reorgs > N).
-
-        This is the honest merkle-mismatch path: it only resets because
-        ``reorg_at`` drops the orphaned merkle root. If the fake leaked the
-        stale root, the proof would still match at sufficient confs and stay
-        verified=True — so this test guards that fidelity.
-        """
         write_config(tmp_path, monkeypatch)
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)
@@ -1031,7 +1013,7 @@ class TestReorgMerkleMismatch:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
         bury(btc_fake.rpc)
@@ -1152,7 +1134,7 @@ class TestConfirmationsBeforeMerkleCli:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
 
         bury(btc_fake.rpc, 1)
@@ -1228,7 +1210,7 @@ class TestCrashRecovery:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
         bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
@@ -1274,10 +1256,6 @@ class TestOrphanGuard:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """While at content-pending, ``stage add`` lands a NEW digest with
-        no submission. ``--upgrade`` verifies the existing pending digest
-        but MUST NOT advance: orphan in stage state outside pending_digests.
-        """
         write_config(tmp_path, monkeypatch)
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)
@@ -1293,7 +1271,7 @@ class TestOrphanGuard:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
         bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
@@ -1356,7 +1334,7 @@ class TestPhaseAdvanceInvariant:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
         bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
@@ -1399,7 +1377,7 @@ class TestPhaseAdvanceInvariant:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_for(d)})
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: final_proof_for(d)})
         bury(btc_fake.rpc, 1)
         register_attested(btc_fake.rpc, d)
 
@@ -1444,7 +1422,7 @@ class TestPhaseAdvanceInvariant:
         da = digests["a.txt"]
         _force_content_pending(sd, (da,))
 
-        ots_a = ots_for(da)
+        ots_a = final_proof_for(da)
         _seed_completed_verify_job(sp_fake, sd, (da,), {da: ots_a})
         bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, da)
@@ -1491,7 +1469,7 @@ class TestReverifyIdempotent:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
         bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)

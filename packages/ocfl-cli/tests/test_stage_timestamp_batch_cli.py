@@ -23,9 +23,9 @@ from ots_helpers import (
     UNRELATED_DIGEST,
     bury,
     end_chain_below,
+    final_proof_for,
     inject_fake_btc,
     inject_fake_sp,
-    ots_for,
     register_attested,
     write_config,
 )
@@ -2436,7 +2436,7 @@ def test_batch_content_upgrade_posts_then_ingests_per_digest(
     _assert_z_timestamp(batch.verify_jobs[0].submitted_at)
     assert batch.objects[0].status == "submitted"
 
-    ots_bytes = ots_for(digest)
+    ots_bytes = final_proof_for(digest)
     sp_fake.advance_to_completed(batch.verify_jobs[0].job_id, {digest: ots_bytes})
     bury(btc)
     register_attested(btc, digest)
@@ -2527,7 +2527,7 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
     returned_digest, missing_digest = batch.verify_jobs[0].digests
 
     sp_fake.advance_to_completed(
-        batch.verify_jobs[0].job_id, {returned_digest: ots_for(returned_digest)}
+        batch.verify_jobs[0].job_id, {returned_digest: final_proof_for(returned_digest)}
     )
     bury(btc)
     register_attested(btc, returned_digest)
@@ -2573,7 +2573,7 @@ def test_batch_content_upgrade_marks_partial_results_and_retries_missing_digest(
     ]
 
     sp_fake.advance_to_completed(
-        batch.verify_jobs[1].job_id, {missing_digest: ots_for(missing_digest)}
+        batch.verify_jobs[1].job_id, {missing_digest: final_proof_for(missing_digest)}
     )
     register_attested(btc, missing_digest)
     completed = _invoke(
@@ -2730,7 +2730,7 @@ def test_batch_watch_polls_during_quiet_periods(
                 batch = batch_state.load_batch(staging, batch_id)
                 digest = batch.objects[0].digests[0]
                 sp_fake.advance_to_completed(
-                    batch.verify_jobs[0].job_id, {digest: ots_for(digest)}
+                    batch.verify_jobs[0].job_id, {digest: final_proof_for(digest)}
                 )
                 bury(btc)
                 register_attested(btc, digest)
@@ -2941,7 +2941,9 @@ def test_batch_watch_revalidates_cached_proofs_on_height_jump(
         ),
     )
     ots_cache_path(staging_dir, verified_digest).parent.mkdir(parents=True)
-    ots_cache_path(staging_dir, verified_digest).write_bytes(ots_for(UNRELATED_DIGEST))
+    ots_cache_path(staging_dir, verified_digest).write_bytes(
+        final_proof_for(UNRELATED_DIGEST)
+    )
     save_batch(
         staging,
         BatchFile(
@@ -3058,7 +3060,9 @@ def test_batch_watch_revalidates_mixed_upgraded_content_row(
         ),
     )
     ots_cache_path(upgraded_dir, upgraded_digest).parent.mkdir(parents=True)
-    ots_cache_path(upgraded_dir, upgraded_digest).write_bytes(ots_for(UNRELATED_DIGEST))
+    ots_cache_path(upgraded_dir, upgraded_digest).write_bytes(
+        final_proof_for(UNRELATED_DIGEST)
+    )
     save_batch(
         staging,
         BatchFile(
@@ -3172,7 +3176,9 @@ def test_batch_watch_revalidates_mixed_upgraded_inventory_row(
         ),
     )
     ots_cache_path(upgraded_dir, upgraded_digest).parent.mkdir(parents=True)
-    ots_cache_path(upgraded_dir, upgraded_digest).write_bytes(ots_for(UNRELATED_DIGEST))
+    ots_cache_path(upgraded_dir, upgraded_digest).write_bytes(
+        final_proof_for(UNRELATED_DIGEST)
+    )
     save_batch(
         staging,
         BatchFile(
@@ -3301,7 +3307,9 @@ def test_batch_watch_content_reorg_revalidation_is_object_scoped(
         ),
     )
     ots_cache_path(failed_dir, failed_digest).parent.mkdir(parents=True)
-    ots_cache_path(failed_dir, failed_digest).write_bytes(ots_for(failed_digest))
+    ots_cache_path(failed_dir, failed_digest).write_bytes(
+        final_proof_for(failed_digest)
+    )
     end_chain_below(btc, _HEIGHT_JUMP + MIN_CONFS + 1)
     save_batch(
         staging,
@@ -3417,7 +3425,9 @@ def test_batch_watch_inventory_reorg_revalidation_is_object_scoped(
         ),
     )
     ots_cache_path(failed_dir, failed_digest).parent.mkdir(parents=True)
-    ots_cache_path(failed_dir, failed_digest).write_bytes(ots_for(failed_digest))
+    ots_cache_path(failed_dir, failed_digest).write_bytes(
+        final_proof_for(failed_digest)
+    )
     end_chain_below(btc, _HEIGHT_JUMP + MIN_CONFS + 1)
     save_batch(
         staging,
@@ -3743,7 +3753,9 @@ def test_batch_upgrade_bitcoin_transient_marks_retryable(
     assert first.exit_code == ExitCode.PENDING, first.output
     batch = batch_state.load_batch(staging, batch_id)
     digest = batch.objects[0].digests[0]
-    sp_fake.advance_to_completed(batch.verify_jobs[0].job_id, {digest: ots_for(digest)})
+    sp_fake.advance_to_completed(
+        batch.verify_jobs[0].job_id, {digest: final_proof_for(digest)}
+    )
 
     failed = _invoke(
         runner,
@@ -3883,7 +3895,7 @@ def test_batch_inventory_upgrade_rejects_stale_plan_digest(
     )
     assert first.exit_code == ExitCode.PENDING, first.output
     batch = batch_state.load_batch(staging, batch_id)
-    ots_bytes = ots_for(inv_digest)
+    ots_bytes = final_proof_for(inv_digest)
     sp_fake.advance_to_completed(batch.verify_jobs[0].job_id, {inv_digest: ots_bytes})
     bury(btc)
     register_attested(btc, inv_digest)

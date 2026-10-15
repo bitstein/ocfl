@@ -12,10 +12,10 @@ from ots_helpers import (
     UNRELATED_DIGEST,
     VERSION_METADATA,
     bury,
+    final_proof_for,
     inject_fake_btc,
     inject_fake_sp,
     new_ots_staging,
-    ots_for,
     register_attested,
     seed_inv_completed_verify_job,
     setup_at_inventory_upgraded,
@@ -51,7 +51,7 @@ def _stage_final_content_proof(
         staging.parent / f"{object_id.replace(':', '_')}-ots" / f"{logical_path}.ots"
     )
     proof.parent.mkdir()
-    proof.write_bytes(ots_for(digest_hex))
+    proof.write_bytes(final_proof_for(digest_hex))
     r = runner.invoke(app, stage_args(root, staging, "add", object_id, str(proof)))
     assert r.exit_code == ExitCode.SUCCESS, r.output
 
@@ -121,7 +121,7 @@ def _setup_missing_metadata_inventory_upgraded(
     state = load_ots(sd)
     assert state.inventory is not None
     inv_digest = state.inventory.digest
-    ots_bytes = ots_for(inv_digest)
+    ots_bytes = final_proof_for(inv_digest)
     seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
     bury(btc_rpc)
     register_attested(btc_rpc, inv_digest)
@@ -456,7 +456,7 @@ class TestStageCommitOtsCorruptedCache:
             btc_fake.rpc,
         )
 
-        bad_bytes = ots_for(UNRELATED_DIGEST)
+        bad_bytes = final_proof_for(UNRELATED_DIGEST)
         ots_cache_path(sd, inv_digest).write_bytes(bad_bytes)
 
         r = runner.invoke(

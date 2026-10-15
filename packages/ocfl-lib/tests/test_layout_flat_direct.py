@@ -1,5 +1,3 @@
-"""Tests for 0002-flat-direct-storage-layout."""
-
 import msgspec
 import pytest
 

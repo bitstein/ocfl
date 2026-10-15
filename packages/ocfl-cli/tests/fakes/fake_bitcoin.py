@@ -45,13 +45,9 @@ class FakeBitcoinRPC:
         for h in [h for h in self._merkle_roots if h >= height]:
             del self._merkle_roots[h]
 
-    def register_merkle_root(self, height: int, merkle_hex: str) -> None:
-        """Register the merkle_root reported by getblockheader at *height*.
-
-        ``merkle_hex`` follows bitcoind's RPC convention: hex of the merkle
-        root bytes in *reversed* (display) order.
-        """
-        self._merkle_roots[height] = merkle_hex
+    def register_merkle_root(self, height: int, merkle_root: bytes) -> None:
+        """bitcoind getblockheader reports merkle roots in reversed (display) hex."""
+        self._merkle_roots[height] = merkle_root[::-1].hex()
 
     def getblockchaininfo(self) -> BlockchainInfo:
         return BlockchainInfo(

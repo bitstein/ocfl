@@ -419,7 +419,6 @@ class TestConfigDigestDefault:
 
 @pytest.fixture
 def sha256_root(tmp_path: Path) -> Path:
-    """Storage root using sha256 digest (triggers W004 on validate)."""
     fs = LocalFS(tmp_path)
     layout = get_layout("0002-flat-direct-storage-layout")
     root = StorageRoot.init(fs, fs, spec=Spec.V1_1, layout=layout)

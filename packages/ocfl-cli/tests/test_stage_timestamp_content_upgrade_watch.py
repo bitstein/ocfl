@@ -20,10 +20,10 @@ from ots_helpers import (
     MIN_CONFS,
     SP_OK,
     bury,
+    final_proof_for,
     inject_fake_btc,
     inject_fake_sp,
     new_ots_staging,
-    ots_for,
     register_attested,
     write_config,
 )
@@ -55,13 +55,7 @@ def no_block_processing_delay(runner: ObjRunner) -> None:
 RECHECKED = "Rechecking cached proofs after chain movement"
 
 
-class _ConfirmingStream(FakeBlockStream):
-    """Each wait mines one block (one more confirmation), then reports it.
-
-    A watch runs one pass before the first block, so these tests start one
-    confirmation short: only the block finishes the proof.
-    """
-
+class _MinesOneBlockPerWait(FakeBlockStream):
     def __init__(self, rpc: FakeBitcoinRPC, *, blocks: int = 1) -> None:
         self.rpc = rpc
         self.blocks = blocks
@@ -137,7 +131,7 @@ class TestWatchLoopAdvancesOnBlock:
         )
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
         bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
@@ -189,7 +183,7 @@ class TestWatchLoopAdvancesOnBlock:
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        _inject_fake_zmq(runner, _ConfirmingStream(btc_fake.rpc))
+        _inject_fake_zmq(runner, _MinesOneBlockPerWait(btc_fake.rpc))
 
         sleeper = RecordingSleeper()
         runner.ports.sleeper = sleeper
@@ -201,7 +195,7 @@ class TestWatchLoopAdvancesOnBlock:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
         bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, d)
@@ -235,7 +229,7 @@ class TestWatchLoopAdvancesOnBlock:
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)
 
-        _inject_fake_zmq(runner, _ConfirmingStream(btc_fake.rpc))
+        _inject_fake_zmq(runner, _MinesOneBlockPerWait(btc_fake.rpc))
 
         staging = tmp_path / "staging"
         sd, digests = new_ots_staging(
@@ -244,7 +238,7 @@ class TestWatchLoopAdvancesOnBlock:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
         bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, d)
@@ -286,7 +280,7 @@ class TestWatchLoopAdvancesOnBlock:
         write_config(tmp_path, monkeypatch)
         inject_fake_sp(runner, sp_fake)
         inject_fake_btc(runner, btc_fake.rpc)
-        _inject_fake_zmq(runner, _ConfirmingStream(btc_fake.rpc))
+        _inject_fake_zmq(runner, _MinesOneBlockPerWait(btc_fake.rpc))
 
         staging = tmp_path / "staging"
         sd, digests = new_ots_staging(
@@ -294,7 +288,7 @@ class TestWatchLoopAdvancesOnBlock:
         )
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
-        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_for(d)})
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: final_proof_for(d)})
         bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, d)
 
@@ -351,8 +345,8 @@ class TestWatchHeightJumpTriggersReverify:
         da, db = digests["a.txt"], digests["b.txt"]
         _force_content_pending(sd, (da, db))
 
-        ots_a = ots_for(da)
-        ots_b = ots_for(db, block_height=DIGEST_BLOCK_HEIGHT + 1)
+        ots_a = final_proof_for(da)
+        ots_b = final_proof_for(db, block_height=DIGEST_BLOCK_HEIGHT + 1)
         _seed_completed_verify_job(sp_fake, sd, (da, db), {da: ots_a, db: ots_b})
 
         bury(btc_fake.rpc)
@@ -422,7 +416,7 @@ class TestWatchTipChangeAtStableHeightTriggersReverify:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
         bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, d)
@@ -484,7 +478,7 @@ class TestWatchSigintExits130WithoutTornCheckpoint:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
         bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, d)
@@ -535,7 +529,7 @@ class TestWatchLockTimeoutWarningAndContinue:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
         bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
@@ -610,7 +604,7 @@ class TestTwoWatchersSerializeSafely:
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
 
-        ots_bytes = ots_for(d)
+        ots_bytes = final_proof_for(d)
         _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_bytes})
         bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
@@ -647,11 +641,8 @@ class TestTwoWatchersSerializeSafely:
 
         thread_runtime = dataclasses.replace(runtime, block_streams=_next_stream)
 
-        # Call watch directly per thread. CliRunner patches
-        # process-global sys.stdout/err which is not thread-safe; the
-        # contract under test (flock serialization) lives entirely in
-        # watch. Per-thread state (cfg/store/sr) is built locally;
-        # only the staging dir + its flock are shared.
+        # Call watch directly per thread: CliRunner patches
+        # process-global sys.stdout/err, which is not thread-safe.
         cfg = load_config()
         root_path = str(empty_sha256_root.resolve())
         barrier = threading.Barrier(2)
@@ -800,7 +791,7 @@ class TestWatchFirstPass:
         )
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
-        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_for(d)})
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: final_proof_for(d)})
         bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, d)
 
@@ -864,7 +855,7 @@ class TestWatchFirstPass:
         )
         d = digests["a.txt"]
         _force_content_pending(sd, (d,))
-        _seed_completed_verify_job(sp_fake, sd, (d,), {d: ots_for(d)})
+        _seed_completed_verify_job(sp_fake, sd, (d,), {d: final_proof_for(d)})
         bury(rpc, MIN_CONFS - 1)
         register_attested(rpc, d)
 

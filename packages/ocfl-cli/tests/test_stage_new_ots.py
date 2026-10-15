@@ -31,18 +31,6 @@ def _stage_new_ots_args(
     ]
 
 
-def _strip_paths(text: str) -> str:
-    """Return *text* with any tmp_path-flavored path tokens removed.
-
-    Test parametrize ids (e.g. ``sha512``) and section names (``simpleproof``,
-    ``bitcoin``) leak into pytest-managed temp directory paths. Substring
-    matching against raw output therefore falsely matches paths that the
-    OS happens to print in error messages. Strip whitespace-delimited tokens
-    that look like absolute paths before keyword-matching.
-    """
-    return " ".join(tok for tok in text.split() if not tok.startswith("/"))
-
-
 class TestDigestForcing:
     def test_ots_with_sha512_rejected(
         self,
@@ -57,34 +45,31 @@ class TestDigestForcing:
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new", "--digest", "sha512"),
         )
-        assert result.exit_code != ExitCode.SUCCESS, result.output
-        combined = _strip_paths((result.output + (result.stderr or "")).lower())
-        assert "no such option" not in combined, (
-            f"rejected by Typer, not our check: {result.output}"
+        assert result.exit_code == ExitCode.USAGE, result.output
+        assert result.stderr == (
+            "Error: --ots requires SHA-256 (SimpleProof API constraint); "
+            "got --digest='sha512'\n"
         )
-        assert "sha-256" in combined or "sha256" in combined, result.output
         store = StagingStore(staging)
         assert not store.exists(str(storage_root.resolve()), "obj:new")
 
-    @pytest.mark.parametrize("alg", ["sha512", "blake2b-512"])
-    def test_ots_with_non_sha256_rejected(
+    def test_ots_with_unknown_digest_rejected_by_click(
         self,
         runner: ObjRunner,
         storage_root: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        alg: str,
     ) -> None:
         write_config(tmp_path, monkeypatch, SP_OK + BTC_OK)
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
-            _stage_new_ots_args(storage_root, staging, "obj:new", "--digest", alg),
+            _stage_new_ots_args(
+                storage_root, staging, "obj:new", "--digest", "blake2b-512"
+            ),
         )
-        assert result.exit_code != ExitCode.SUCCESS, result.output
-        combined = _strip_paths((result.output + (result.stderr or "")).lower())
-        assert "no such option" not in combined, result.output
-        assert "sha-256" in combined or "sha256" in combined, result.output
+        assert result.exit_code == ExitCode.USAGE, result.output
+        assert "Invalid value for '--digest'" in result.stderr
         store = StagingStore(staging)
         assert not store.exists(str(storage_root.resolve()), "obj:new")
 
@@ -120,9 +105,10 @@ class TestDigestForcing:
             _stage_new_ots_args(storage_root, staging, SEED_ID),
         )
 
-        assert result.exit_code != ExitCode.SUCCESS, result.output
-        combined = _strip_paths((result.output + (result.stderr or "")).lower())
-        assert "sha-256" in combined or "sha256" in combined, result.output
+        assert result.exit_code == ExitCode.USAGE, result.output
+        assert result.stderr == (
+            "Error: --ots requires existing objects to use SHA-256 (got sha512)\n"
+        )
         store = StagingStore(staging)
         assert not store.exists(str(storage_root.resolve()), SEED_ID)
 
@@ -135,16 +121,16 @@ class TestConfigValidation:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        write_config(tmp_path, monkeypatch, BTC_OK)
+        cfg = write_config(tmp_path, monkeypatch, BTC_OK)
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new"),
         )
         assert result.exit_code == ExitCode.CONFIG, result.output
-        combined = _strip_paths((result.output + (result.stderr or "")).lower())
-        assert "no such option" not in combined, result.output
-        assert "simpleproof" in combined, result.output
+        assert result.stderr == (
+            f"Error: --ots requires [simpleproof] section in {cfg}\n"
+        )
         store = StagingStore(staging)
         assert not store.exists(str(storage_root.resolve()), "obj:new")
 
@@ -155,16 +141,14 @@ class TestConfigValidation:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        write_config(tmp_path, monkeypatch, SP_OK)
+        cfg = write_config(tmp_path, monkeypatch, SP_OK)
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new"),
         )
         assert result.exit_code == ExitCode.CONFIG, result.output
-        combined = _strip_paths((result.output + (result.stderr or "")).lower())
-        assert "no such option" not in combined, result.output
-        assert "bitcoin" in combined, result.output
+        assert result.stderr == (f"Error: --ots requires [bitcoin] section in {cfg}\n")
         store = StagingStore(staging)
         assert not store.exists(str(storage_root.resolve()), "obj:new")
 
@@ -175,16 +159,16 @@ class TestConfigValidation:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        write_config(tmp_path, monkeypatch, "")
+        cfg = write_config(tmp_path, monkeypatch, "")
         staging = tmp_path / "staging"
         result = runner.invoke(
             app,
             _stage_new_ots_args(storage_root, staging, "obj:new"),
         )
         assert result.exit_code == ExitCode.CONFIG, result.output
-        combined = _strip_paths((result.output + (result.stderr or "")).lower())
-        assert "no such option" not in combined, result.output
-        assert "simpleproof" in combined or "bitcoin" in combined, result.output
+        assert result.stderr == (
+            f"Error: --ots requires [simpleproof] section in {cfg}\n"
+        )
         store = StagingStore(staging)
         assert not store.exists(str(storage_root.resolve()), "obj:new")
 

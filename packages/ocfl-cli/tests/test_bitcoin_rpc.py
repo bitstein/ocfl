@@ -105,8 +105,7 @@ class TestGetBlockHeader:
         header = rpc.getblockheader("0000abcd")
 
         assert captured_method == ["getblockheader"]
-        # Bitcoin Core's getblockheader takes (block_hash, verbose=true)
-        assert captured_params[0][0] == "0000abcd"
+        assert captured_params == [["0000abcd", True]]
         assert isinstance(header, BlockHeader)
         assert header.block_hash == "0000abcd"
         assert header.height == 800_000

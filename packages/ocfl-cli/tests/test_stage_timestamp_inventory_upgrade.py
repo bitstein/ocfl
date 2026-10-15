@@ -13,8 +13,8 @@ from ots_helpers import (
     SP_OK,
     bury,
     crash_at,
+    final_proof_for,
     inject_fake_btc,
-    ots_for,
     register_attested,
     seed_inv_completed_verify_job,
     setup_at_inventory_pending,
@@ -156,7 +156,7 @@ class TestInventoryUpgradePrimitives:
         assert len(state.verify_jobs) == 1
         job_id = state.verify_jobs[0].job_id
 
-        sp_fake.advance_to_completed(job_id, {inv_digest: ots_for(inv_digest)})
+        sp_fake.advance_to_completed(job_id, {inv_digest: final_proof_for(inv_digest)})
         with with_lock(sd, runtime) as locked:
             second = wf_timestamp.upgrade_locked(run, locked)
         assert second.phase is Phase.INVENTORY_UPGRADED
@@ -188,7 +188,7 @@ class TestInventoryUpgradeHappyPath:
             runner, empty_sha256_root, staging, "obj:inv-up", sp_fake
         )
 
-        ots_bytes = ots_for(inv_digest)
+        ots_bytes = final_proof_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
         bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, inv_digest)
@@ -316,7 +316,7 @@ class TestInventoryCrashRecovery:
             runner, empty_sha256_root, staging, "obj:inv-crash", sp_fake
         )
 
-        ots_bytes = ots_for(inv_digest)
+        ots_bytes = final_proof_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
         bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, inv_digest)
@@ -368,7 +368,7 @@ class TestInventoryPhaseAdvance:
             runner, empty_sha256_root, staging, "obj:inv-adv", sp_fake
         )
 
-        ots_bytes = ots_for(inv_digest)
+        ots_bytes = final_proof_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
         bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, inv_digest)
@@ -448,7 +448,7 @@ class TestInventoryPhaseAdvance:
             runner, empty_sha256_root, staging, "obj:inv-shallow", sp_fake
         )
 
-        ots_bytes = ots_for(inv_digest)
+        ots_bytes = final_proof_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
         bury(btc_fake.rpc, 1)
         register_attested(btc_fake.rpc, inv_digest)
@@ -490,7 +490,7 @@ class TestInventoryWatchLoop:
             runner, empty_sha256_root, staging, "obj:inv-watch-delay", sp_fake
         )
 
-        ots_bytes = ots_for(inv_digest)
+        ots_bytes = final_proof_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
         bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, inv_digest)
@@ -546,7 +546,7 @@ class TestInventoryWatchLoop:
             runner, empty_sha256_root, staging, "obj:inv-watch-ok", sp_fake
         )
 
-        ots_bytes = ots_for(inv_digest)
+        ots_bytes = final_proof_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
         bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, inv_digest)
@@ -608,7 +608,7 @@ class TestInventoryWatchLoop:
             runner, empty_sha256_root, staging, "obj:inv-watch-sigint", sp_fake
         )
 
-        ots_bytes = ots_for(inv_digest)
+        ots_bytes = final_proof_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
         bury(btc_fake.rpc, MIN_CONFS - 1)
         register_attested(btc_fake.rpc, inv_digest)
@@ -654,7 +654,7 @@ class TestInventoryWatchLoop:
             runner, empty_sha256_root, staging, "obj:inv-watch-lock", sp_fake
         )
 
-        ots_bytes = ots_for(inv_digest)
+        ots_bytes = final_proof_for(inv_digest)
         seed_inv_completed_verify_job(sp_fake, sd, inv_digest, ots_bytes)
         bury(btc_fake.rpc)
         register_attested(btc_fake.rpc, inv_digest)

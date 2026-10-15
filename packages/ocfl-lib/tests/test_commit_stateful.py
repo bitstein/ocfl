@@ -1,11 +1,4 @@
-"""Commit -> crash -> recover, as a hypothesis state machine (ADR-0001).
-
-A writer commits versions and may die at any write (`fail_at`), and may
-die again while recovering. Between steps the object's root inventory is
-always the last published one or the pending plan's, never anything else.
-Once recovered, the root validates clean, with no work-dir leftovers.
-Runs on local disk and on moto S3.
-"""
+"""Commit -> crash -> recover, as a hypothesis state machine (ADR-0001)."""
 
 import dataclasses
 import hashlib
@@ -37,7 +30,6 @@ from ocfl_lib import (
     RevertCompletedError,
     Spec,
     StorageRoot,
-    VNum,
     get_layout,
     ots,
     scan_dir,
@@ -178,11 +170,6 @@ class CommitCrashRules:
 
 
 class OtsCommitCrashRules(CommitCrashRules):
-    """Every version is timestamped: sha256, content proofs, inventory proof.
-
-    A commit without an inventory proof is refused before it writes (E904).
-    """
-
     def _stage(self, files: dict[str, bytes]):
         proved = dict(files)
         for p, b in files.items():
@@ -214,12 +201,7 @@ class OtsCommitCrashRules(CommitCrashRules):
 
 
 class StartTimestampingRules(OtsCommitCrashRules):
-    """The object starts without the extension; a commit with a proof starts it.
-
-    Every later commit is timestamped. A crash while starting recovers to
-    either the old head without the extension or vN with `timestampFrom`
-    set to vN.
-    """
+    started_at: str | None = None
 
     def _timestamped(self) -> bool:
         if self.published_root_inventory is None:
@@ -241,17 +223,16 @@ class StartTimestampingRules(OtsCommitCrashRules):
     @rule(files=FILES, crash_at=CRASH_AT)
     def start_timestamping(self, files, crash_at):
         vs, plan = OtsCommitCrashRules._planned(self, files)
+        self.started_at = plan.version
         self._commit(vs, plan, crash_at)
 
     @invariant()
-    def started_at_a_covered_version(self):
+    def timestamp_from_is_the_started_version(self):
         if self.unrecovered_plan is not None or not self._timestamped():
             return
         cfg = ots.read_config(self.fs, self.root.get_object(OID).path)
         assert cfg is not None
-        if cfg.timestamp_from is not None:
-            head = self.root.get_object(OID).head
-            assert VNum.parse(cfg.timestamp_from) <= VNum.parse(str(head))
+        assert cfg.timestamp_from == self.started_at
 
 
 def with_inventory_proof(plan: CommitPlan) -> CommitPlan:

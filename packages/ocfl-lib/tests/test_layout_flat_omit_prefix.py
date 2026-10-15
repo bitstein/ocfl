@@ -1,5 +1,3 @@
-"""Tests for 0006-flat-omit-prefix-storage-layout."""
-
 import msgspec
 import pytest
 

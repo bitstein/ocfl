@@ -1,5 +1,3 @@
-"""Tests for 0007-n-tuple-omit-prefix-storage-layout."""
-
 import msgspec
 import pytest
 
