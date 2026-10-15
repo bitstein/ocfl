@@ -145,6 +145,7 @@ class TestStorageRootLayout:
         ("ocfl_layout", "config"),
         [
             ("not json", None),
+            ("{}", None),
             ('{"extension": 5}', None),
             ('{"extension": "0004-hashed-n-tuple-storage-layout"}', "not json"),
             ('{"extension": "0004-hashed-n-tuple-storage-layout"}', "[1]"),

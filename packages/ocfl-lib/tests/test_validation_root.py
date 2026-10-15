@@ -2,6 +2,8 @@ import hashlib
 import json
 from typing import TYPE_CHECKING
 
+import pytest
+
 from ocfl_lib.fs._local import LocalFS
 
 if TYPE_CHECKING:
@@ -79,6 +81,66 @@ class TestRootExtensions:
         r = validate_root(fsys, "", validate_objects=False)
         assert r.has_code("W016")
         assert not r.has_code("W901")
+
+
+def _layout_errors(tmp_path: Path, content: str) -> list[tuple[str, dict[str, str]]]:
+    (tmp_path / "0=ocfl_1.1").write_text("ocfl_1.1\n")
+    (tmp_path / "ocfl_layout.json").write_text(content)
+    r = validate_root(LocalFS(tmp_path), "", validate_objects=False)
+    return [(e.code, dict(e.detail)) for e in r.errors]
+
+
+class TestLayoutFile:
+    def test_invalid_json_is_E070(self, tmp_path: Path):
+        [(code, detail)] = _layout_errors(tmp_path, "{not json")
+        assert code == "E070"
+        assert detail["explanation"].startswith("not valid JSON: ")
+
+    @pytest.mark.parametrize("content", ["null", "[]", '"x"', "1"])
+    def test_non_object_is_E070(self, tmp_path: Path, content: str):
+        assert _layout_errors(tmp_path, content) == [
+            ("E070", {"path": ".", "explanation": "not a JSON object"})
+        ]
+
+    @pytest.mark.parametrize(
+        ("content", "missing"),
+        [
+            ("{}", "extension, description"),
+            ('{"description": "d"}', "extension"),
+            ('{"extension": "0002-flat-direct-storage-layout"}', "description"),
+        ],
+    )
+    def test_missing_key_is_E070(self, tmp_path: Path, content: str, missing: str):
+        assert _layout_errors(tmp_path, content) == [
+            ("E070", {"path": ".", "explanation": f"missing key(s): {missing}"})
+        ]
+
+    @pytest.mark.parametrize(
+        ("extension", "rendered"),
+        [
+            ('"9999-made-up-layout"', '"9999-made-up-layout"'),
+            ('"0001-digest-algorithms"', '"0001-digest-algorithms"'),
+            ("5", "5"),
+        ],
+    )
+    def test_unregistered_extension_is_E071(
+        self, tmp_path: Path, extension: str, rendered: str
+    ):
+        content = f'{{"extension": {extension}, "description": "d"}}'
+        assert _layout_errors(tmp_path, content) == [
+            ("E071", {"path": ".", "extension": rendered})
+        ]
+
+    @pytest.mark.parametrize(
+        "extension",
+        [
+            "0004-hashed-n-tuple-storage-layout",
+            "0010-differential-n-tuple-omit-prefix-storage-layout",
+        ],
+    )
+    def test_registered_layout_is_clean(self, tmp_path: Path, extension: str):
+        content = json.dumps({"extension": extension, "description": "d"})
+        assert _layout_errors(tmp_path, content) == []
 
 
 class TestE069cUnparseableDecl:

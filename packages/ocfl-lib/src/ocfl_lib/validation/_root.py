@@ -22,6 +22,19 @@ if TYPE_CHECKING:
     from ocfl_lib.validation._report import ValidationReport
 
 _OBJ_DECL_RE = re.compile(r"^0=ocfl_object_(\d+\.\d+)$")
+# Storage layouts in the OCFL extensions registry (E071), supported or not.
+_REGISTERED_LAYOUTS = frozenset(
+    {
+        "0002-flat-direct-storage-layout",
+        "0003-hash-and-id-n-tuple-storage-layout",
+        "0004-hashed-n-tuple-storage-layout",
+        "0006-flat-omit-prefix-storage-layout",
+        "0007-n-tuple-omit-prefix-storage-layout",
+        "0010-differential-n-tuple-omit-prefix-storage-layout",
+        "0011-direct-clean-path-layout",
+        "0012-hash-and-no-prefix-id-n-tuple-storage-layout",
+    }
+)
 
 
 @dataclass
@@ -129,20 +142,28 @@ def _check_root_declaration(
 
 
 def _check_layout_file(fsys: FS, path: str, result: FindingCollector) -> None:
-    """ocfl_layout.json is optional; when present it must parse (E070) to an
-    object (E071).
-    """
     try:
         layout_bytes = fs_utils.read_all(fsys, join_path(path, "ocfl_layout.json"))
     except OSError:
         return
+    root = path or "."
     try:
         layout_data = parse_json(layout_bytes)
     except (json.JSONDecodeError, ValueError) as e:
-        result.error("E070", path=path or ".", explanation=str(e))
+        result.error("E070", path=root, explanation=f"not valid JSON: {e}")
         return
-    if layout_data is not None and not isinstance(layout_data, dict):
-        result.error("E071", path=path or ".")
+    if not isinstance(layout_data, dict):
+        result.error("E070", path=root, explanation="not a JSON object")
+        return
+    missing = [k for k in ("extension", "description") if k not in layout_data]
+    if missing:
+        result.error(
+            "E070", path=root, explanation=f"missing key(s): {', '.join(missing)}"
+        )
+        return
+    extension = layout_data["extension"]
+    if extension not in _REGISTERED_LAYOUTS:
+        result.error("E071", path=root, extension=json.dumps(extension))
 
 
 def _walk_and_validate(

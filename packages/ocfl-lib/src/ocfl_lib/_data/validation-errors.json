@@ -625,13 +625,14 @@
       "path",
       "explanation"
     ],
-    "description": "OCFL Storage Root {path} ocfl_layout.json is not valid JSON ({explanation})"
+    "description": "OCFL Storage Root {path} ocfl_layout.json must be a JSON object with the keys extension and description ({explanation})"
   },
   "E071": {
     "params": [
-      "path"
+      "path",
+      "extension"
     ],
-    "description": "OCFL Storage Root {path} ocfl_layout.json is not a JSON object"
+    "description": "OCFL Storage Root {path} ocfl_layout.json extension {extension} is not a registered storage layout extension name"
   },
   "E072": {
     "params": [
