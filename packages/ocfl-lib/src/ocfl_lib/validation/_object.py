@@ -1,4 +1,3 @@
-import contextlib
 import json
 import re
 from typing import TYPE_CHECKING, Literal, NamedTuple
@@ -7,7 +6,7 @@ from ocfl_lib import ots
 from ocfl_lib._digest import DigestAlgorithm, bytes_digest, stream_digest
 from ocfl_lib._json_value import as_str, object_field_or_empty, parse_json
 from ocfl_lib._path import join_path
-from ocfl_lib._spec import VERSION_DIR_RE, Namaste
+from ocfl_lib._spec import VERSION_DIR_RE, Namaste, Spec
 from ocfl_lib.fs import _utils as fs_utils
 from ocfl_lib.validation._extension_ots import check_chain, validate_ots_extension
 from ocfl_lib.validation._inventory import (
@@ -16,16 +15,16 @@ from ocfl_lib.validation._inventory import (
     validate_inventory_against_prior,
 )
 from ocfl_lib.validation._report import FindingCollector
+from ocfl_lib.validation._unsupported import RegularEntries
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from ocfl_lib._inventory import Inventory
-    from ocfl_lib._json_value import JsonObject
+    from ocfl_lib._json_value import JsonObject, JsonValue
     from ocfl_lib.fs._protocols import FS, FileWalker, FsEntry
     from ocfl_lib.validation._report import ValidationReport
 
-_SIDECAR_RE = re.compile(r"^inventory\.json\.(\S+)$")
 
 REGISTERED_EXTENSIONS = frozenset(
     {
@@ -36,7 +35,15 @@ REGISTERED_EXTENSIONS = frozenset(
         "0005-mutable-head",
         "0006-flat-omit-prefix-storage-layout",
         "0007-n-tuple-omit-prefix-storage-layout",
+        "0008-schema-registry",
+        "0009-digest-algorithms",
+        "0010-differential-n-tuple-omit-prefix-storage-layout",
+        "0011-direct-clean-path-layout",
+        "0012-hash-and-no-prefix-id-n-tuple-storage-layout",
     }
+)
+REGISTERED_LAYOUTS = frozenset(
+    e for e in REGISTERED_EXTENSIONS if e.endswith("-layout")
 )
 _KNOWN_OBJECT_EXTENSIONS = REGISTERED_EXTENSIONS | {ots.EXTENSION_NAME}
 _SPEC_OPTIONAL_ROOT_DIRS = frozenset({"extensions", "logs"})
@@ -56,11 +63,13 @@ def validate_object(
     Bitcoin (E906, W903); errors from its source propagate.
     """
     result = FindingCollector(path=path)
+    regular = RegularEntries(fsys)
     _validate_object(
-        fsys, path, result, check_digests=check_digests, lax_digests=lax_digests
+        regular, path, result, check_digests=check_digests, lax_digests=lax_digests
     )
     if chain is not None:
-        check_chain(fsys, path, chain, result)
+        check_chain(regular, path, chain, result)
+    regular.report(result)
     return result.report()
 
 
@@ -86,6 +95,8 @@ def _validate_object(
     if loaded is None:
         return
     inv_bytes, inv_data, inv, alg = loaded
+    if namaste is not None:
+        _check_root_type_matches_declaration(inv_data, namaste.spec, result)
 
     sidecar_name = f"inventory.json.{alg.ocfl_name}"
     sidecar_path = join_path(path, sidecar_name)
@@ -158,11 +169,15 @@ class Declarations(NamedTuple):
 def split_declarations(
     entries: list[FsEntry], kind: Literal["root", "object"]
 ) -> Declarations:
-    decls = [
-        n
-        for entry in entries
-        if (n := Namaste.parse(entry.name)) is not None and n.kind == kind
-    ]
+    decls = sorted(
+        (
+            n
+            for entry in entries
+            if (n := Namaste.parse(entry.name)) is not None and n.kind == kind
+        ),
+        key=lambda n: n.spec.order_key,
+        reverse=True,
+    )
     parsed_names = {d.filename for d in decls}
     unparsed = [
         e.name
@@ -328,20 +343,22 @@ def _validate_version_dir(
         result.error("E046a", version_dir=vkey)
         return None
 
-    version_sidecar_alg = None
-    for entry in entries:
-        m = _SIDECAR_RE.match(entry.name)
-        if m:
-            with contextlib.suppress(ValueError):
-                version_sidecar_alg = DigestAlgorithm.from_ocfl_name(m.group(1))
+    vinv_path = join_path(vdir, "inventory.json")
+    try:
+        vinv_bytes = fs_utils.read_all(fsys, vinv_path)
+    except OSError:
+        vinv_bytes = None
+    vinv_data: JsonValue = None
+    parse_error = None
+    if vinv_bytes is not None:
+        try:
+            vinv_data = parse_json(vinv_bytes)
+        except (json.JSONDecodeError, ValueError) as e:
+            parse_error = str(e)
+    sidecar_alg = _declared_digest_algorithm(vinv_data) or root_alg
+    sidecar_name = f"inventory.json.{sidecar_alg.ocfl_name}"
 
-    allowed = {"inventory.json", content_dir}
-    if version_sidecar_alg:
-        allowed.add(f"inventory.json.{version_sidecar_alg.ocfl_name}")
-    else:
-        for entry in entries:
-            if _SIDECAR_RE.match(entry.name):
-                allowed.add(entry.name)
+    allowed = {"inventory.json", content_dir, sidecar_name}
 
     for entry in entries:
         if entry.name in allowed:
@@ -362,15 +379,11 @@ def _validate_version_dir(
     for empty in _empty_dirs_below(fsys, content_path, content_entries):
         result.error("E024", where=vkey, path=empty[len(content_path) + 1 :])
 
-    vinv_path = join_path(vdir, "inventory.json")
-    try:
-        vinv_bytes = fs_utils.read_all(fsys, vinv_path)
-    except OSError:
+    if vinv_bytes is None:
         result.warning("W010", where=vkey)
         return None
 
-    sidecar_alg = version_sidecar_alg or root_alg
-    vsidecar_path = join_path(vdir, f"inventory.json.{sidecar_alg.ocfl_name}")
+    vsidecar_path = join_path(vdir, sidecar_name)
     _validate_sidecar(fsys, vsidecar_path, vinv_bytes, sidecar_alg, result, where=vkey)
 
     head = root_inv_data.get("head", "")
@@ -381,10 +394,8 @@ def _validate_version_dir(
             inv_file=f"{vkey}/inventory.json",
         )
 
-    try:
-        vinv_data = parse_json(vinv_bytes)
-    except (json.JSONDecodeError, ValueError) as e:
-        result.error("E033", where=vkey, explanation=str(e))
+    if parse_error is not None:
+        result.error("E033", where=vkey, explanation=parse_error)
         return None
 
     if not isinstance(vinv_data, dict):
@@ -417,10 +428,7 @@ def _validate_version_dir(
         check_digests=check_digests,
         alg_differs=vinv_alg_name != root_inv_data.get("digestAlgorithm", ""),
     ):
-        try:
-            vinv_alg = DigestAlgorithm.from_ocfl_name(as_str(vinv_alg_name) or "")
-        except ValueError:
-            vinv_alg = None
+        vinv_alg = _declared_digest_algorithm(vinv_data)
         if vinv_alg is not None:
             obj_path = vdir.rsplit("/", 1)[0] if "/" in vdir else ""
             vinv_manifest = vinv_data.get("manifest", {})
@@ -435,6 +443,18 @@ def _validate_version_dir(
     _check_version_metadata(vinv_data, root_inv_data, result, vkey=vkey)
 
     return _inventory_spec(vinv_data)
+
+
+def _declared_digest_algorithm(inv_data: JsonValue) -> DigestAlgorithm | None:
+    """E059: a sidecar is named for its own inventory's digestAlgorithm."""
+    if not isinstance(inv_data, dict):
+        return None
+    try:
+        return DigestAlgorithm.from_ocfl_name(
+            as_str(inv_data.get("digestAlgorithm")) or ""
+        )
+    except ValueError:
+        return None
 
 
 def _must_verify_version_digests(
@@ -549,6 +569,19 @@ def _inventory_spec(inv_data: JsonObject) -> str | None:
     itype = inv_data.get("type", "")
     m = _SPEC_RE.match(itype) if isinstance(itype, str) else None
     return m.group(1) if m else None
+
+
+def _check_root_type_matches_declaration(
+    inv_data: JsonObject, decl: Spec, result: FindingCollector
+) -> None:
+    spec = _inventory_spec(inv_data)
+    if spec in Spec and spec != decl:
+        result.error(
+            "E038a",
+            where="root",
+            expected=decl.inventory_type_url,
+            got=inv_data["type"],
+        )
 
 
 class _SpecAt(NamedTuple):

@@ -2,6 +2,7 @@ import msgspec
 
 from ocfl_lib._digest import DigestAlgorithm
 from ocfl_lib._errors import InvalidLayoutConfig
+from ocfl_lib._layout.config import convert_config
 from ocfl_lib._layout.types import Layout
 
 EXTENSION_NAME = "0004-hashed-n-tuple-storage-layout"
@@ -67,7 +68,7 @@ class HashedNTupleLayout(Layout):
     def from_config(cls, config: dict | None = None) -> HashedNTupleLayout:
         if config is None:
             return cls()
-        cfg = msgspec.convert(config, HashedNTupleConfig)
+        cfg = convert_config(config, HashedNTupleConfig)
         return cls(
             digest_algorithm=cfg.digest_algorithm,
             tuple_size=cfg.tuple_size,

@@ -352,14 +352,14 @@
       "where",
       "version"
     ],
-    "description": "OCFL Object {where} inventory {version} version block created date SHOULD include a timezone designator"
+    "description": "OCFL Object {where} inventory {version} version block created date MUST include a time offset (RFC 3339)"
   },
   "E049b": {
     "params": [
       "where",
       "version"
     ],
-    "description": "OCFL Object {where} inventory {version} version block created date SHOULD be granular to the seconds level"
+    "description": "OCFL Object {where} inventory {version} version block created date MUST include seconds (RFC 3339)"
   },
   "E049c": {
     "params": [
@@ -367,7 +367,7 @@
       "version",
       "description"
     ],
-    "description": "OCFL Object {where} inventory {version} version block has bad created date, must be ISO8601 ({description})"
+    "description": "OCFL Object {where} inventory {version} version block has bad created date, must be RFC 3339 ({description})"
   },
   "E049d": {
     "params": [
@@ -625,13 +625,14 @@
       "path",
       "explanation"
     ],
-    "description": "OCFL Storage Root {path} ocfl_layout.json is not valid JSON ({explanation})"
+    "description": "OCFL Storage Root {path} ocfl_layout.json must be a JSON object with the keys extension and description ({explanation})"
   },
   "E071": {
     "params": [
-      "path"
+      "path",
+      "extension"
     ],
-    "description": "OCFL Storage Root {path} ocfl_layout.json is not a JSON object"
+    "description": "OCFL Storage Root {path} ocfl_layout.json extension {extension} is not a registered storage layout extension name"
   },
   "E072": {
     "params": [
@@ -652,6 +653,12 @@
       "root_spec_version"
     ],
     "description": "OCFL Object {path} conforms to specification version {object_spec_version} which is later than the OCFL Storage Root specification version {root_spec_version}"
+  },
+  "E090": {
+    "params": [
+      "path"
+    ],
+    "description": "OCFL Storage hierarchy contains a link at {path}. Hard and soft (symbolic) links MUST NOT be used"
   },
   "E091": {
     "params": [

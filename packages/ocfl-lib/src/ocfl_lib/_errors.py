@@ -188,6 +188,13 @@ class InventoryBuildError(OcflError, ValueError):
     error_class = ErrorClass.INVALID
 
 
+class InvalidInventory(OcflError, ValueError):
+    """Inventory bytes are not JSON or do not match the inventory schema."""
+
+    code = "invalid_inventory"
+    error_class = ErrorClass.INVALID
+
+
 class InventorySidecarMismatch(OcflError):
     """Inventory sidecar digest does not match the inventory bytes."""
 
@@ -248,10 +255,21 @@ def _short_digest(digest: str | None) -> str:
 
 
 class OcflFileTypeError(OcflError):
-    """Non-regular, non-directory entry encountered (symlink, fifo, etc.)."""
+    """Entries that are neither regular files nor directories (symlink, fifo, etc.).
+
+    `entries` maps each one's path, relative to the filesystem root, to its kind.
+    """
 
     code = "unsupported_file_type"
     error_class = ErrorClass.INVALID
+
+    def __init__(self, entries: dict[str, str]) -> None:
+        self.entries = entries
+        listed = ", ".join(f"{path}: {kind}" for path, kind in entries.items())
+        super().__init__(
+            f"unsupported file type at {listed}; "
+            "only regular files and directories are allowed"
+        )
 
 
 class RevertCompletedError(OcflError):

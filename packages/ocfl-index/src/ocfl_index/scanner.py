@@ -52,7 +52,7 @@ def _read_sidecar(fs: FS, relpath: str) -> tuple[DigestAlgorithm, str] | None:
             text = ocfl_fs.read_text(fs, sidecar)
         except FileNotFoundError:
             continue
-        digest = text.strip().split()[0]
+        digest = next(iter(text.split()), "").lower()
         return alg, digest
     _log.warning("no inventory sidecar for %s; skipping", relpath)
     return None

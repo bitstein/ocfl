@@ -37,16 +37,10 @@ def _classify(mode: int) -> str:
     return "unknown"
 
 
-def _require_dir_or_file(entry: os.DirEntry[str]) -> bool:
-    is_dir = entry.is_dir(follow_symlinks=False)
-    if not is_dir and not entry.is_file(follow_symlinks=False):
-        st = entry.stat(follow_symlinks=False)
-        kind = _classify(st.st_mode)
-        raise OcflFileTypeError(
-            f"unsupported file type at {entry.path}: {kind}; "
-            "only regular files and directories are allowed"
-        )
-    return is_dir
+def _unsupported_kind(entry: os.DirEntry[str]) -> str | None:
+    if entry.is_dir(follow_symlinks=False) or entry.is_file(follow_symlinks=False):
+        return None
+    return _classify(entry.stat(follow_symlinks=False).st_mode)
 
 
 if TYPE_CHECKING:
@@ -160,18 +154,26 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
         return self._resolve(name).exists()
 
     def read_dir(self, name: str) -> Iterator[FsEntry]:
-        """List directory entries. Raises OcflFileTypeError on symlinks etc."""
-        path = self._resolve(name)
-        with os.scandir(path) as it:
+        """List directory entries.
+
+        Yields every file and directory, then raises OcflFileTypeError naming
+        every symlink, FIFO, socket or device node.
+        """
+        unsupported: dict[str, str] = {}
+        with os.scandir(self._resolve(name)) as it:
             for entry in it:
-                is_dir = _require_dir_or_file(entry)
-                is_file = not is_dir
+                if kind := _unsupported_kind(entry):
+                    unsupported[self._relative(entry)] = kind
+                    continue
+                is_dir = entry.is_dir(follow_symlinks=False)
                 yield FsEntry(
                     name=entry.name,
                     is_dir=is_dir,
-                    is_file=is_file,
-                    size=entry.stat(follow_symlinks=False).st_size if is_file else None,
+                    is_file=not is_dir,
+                    size=None if is_dir else entry.stat(follow_symlinks=False).st_size,
                 )
+        if unsupported:
+            raise OcflFileTypeError(unsupported)
 
     def write(self, name: str, data: Readable) -> int:
         """Write data to a file atomically and durably.
@@ -297,20 +299,26 @@ class LocalFS(ClaimFS, CopyFS, FileWalker):
     def walk_files(self, name: str) -> Iterator[FileRef]:
         """Recursively yield FileRef for every file under name.
 
-        Raises OcflFileTypeError if any entry is a symlink, FIFO, socket,
-        or device node.
+        Then raises OcflFileTypeError naming every symlink, FIFO, socket or
+        device node found.
         """
-        base = self._resolve(name)
-        yield from self._walk(base)
+        unsupported: dict[str, str] = {}
+        yield from self._walk(self._resolve(name), unsupported)
+        if unsupported:
+            raise OcflFileTypeError(unsupported)
 
-    def _walk(self, path: Path) -> Iterator[FileRef]:
+    def _walk(self, path: Path, unsupported: dict[str, str]) -> Iterator[FileRef]:
         with os.scandir(path) as it:
             for entry in it:
-                if _require_dir_or_file(entry):
-                    yield from self._walk(Path(entry.path))
+                if kind := _unsupported_kind(entry):
+                    unsupported[self._relative(entry)] = kind
+                elif entry.is_dir(follow_symlinks=False):
+                    yield from self._walk(Path(entry.path), unsupported)
                 else:
-                    rel = Path(entry.path).relative_to(self._root)
                     yield FileRef(
-                        path=rel.as_posix(),
+                        path=self._relative(entry),
                         size=entry.stat(follow_symlinks=False).st_size,
                     )
+
+    def _relative(self, entry: os.DirEntry[str]) -> str:
+        return Path(entry.path).relative_to(self._root).as_posix()

@@ -1,4 +1,3 @@
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, BinaryIO, Literal, Self
 
@@ -218,18 +217,13 @@ class Object:
     def _load_inventory(self, dir_path: str) -> StoredInventory:
         inv_path = join_path(dir_path, INVENTORY_FILENAME)
         inv_bytes = fs_utils.read_all(self._fsys, inv_path)
+        stored = StoredInventory.from_bytes(inv_bytes)
 
-        inv_data = json.loads(inv_bytes)
-        alg_name = inv_data.get("digestAlgorithm", "sha512")
-        alg = DigestAlgorithm.from_ocfl_name(alg_name)
-
-        sidecar_name = f"{INVENTORY_FILENAME}.{alg.ocfl_name}"
-        sidecar_path = join_path(dir_path, sidecar_name)
+        sidecar_path = join_path(dir_path, stored.sidecar_filename)
         sidecar_text = fs_utils.read_text(self._fsys, sidecar_path)
-        expected_digest = sidecar_text.strip().split()[0]
+        expected_digest = next(iter(sidecar_text.split()), "")
 
-        stored = StoredInventory.from_bytes(inv_bytes, alg)
-        if stored.digest != expected_digest:
+        if stored.digest != expected_digest.lower():
             raise InventorySidecarMismatch(
                 path=sidecar_path,
                 expected=expected_digest,

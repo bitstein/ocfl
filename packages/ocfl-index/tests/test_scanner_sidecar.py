@@ -51,3 +51,17 @@ def test_missing_sidecar_warns_and_skips(
     with caplog.at_level(logging.WARNING, logger="ocfl_index.scanner"):
         assert _read_sidecar(fixture.fs, relpath) is None
     assert any("no inventory sidecar" in m for m in caplog.messages)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"), [("", ""), (" \n", ""), ("ABCDEF inventory.json\n", "abcdef")]
+)
+def test_sidecar_digest_is_first_word_lowercased(
+    tmp_path: Path, text: str, expected: str
+) -> None:
+    fixture = FixtureRoot(tmp_path)
+    fixture.commit("gamma", {"c.txt": "x"}, algorithm=DigestAlgorithm.SHA512)
+    relpath = _object_relpath(fixture, "gamma")
+    (fixture.root_dir / relpath / "inventory.json.sha512").write_text(text)
+
+    assert _read_sidecar(fixture.fs, relpath) == (DigestAlgorithm.SHA512, expected)

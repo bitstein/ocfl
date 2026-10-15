@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -11,8 +12,9 @@ from digests import D1
 from moto import mock_aws
 
 from ocfl_lib.fs._local import LocalFS
+from ocfl_lib.fs._protocols import FsEntry
 from ocfl_lib.fs.s3 import S3FS
-from ocfl_lib.validation._object import validate_object
+from ocfl_lib.validation._object import split_declarations, validate_object
 from ocfl_lib.validation._report import ValidationReport
 
 _CODE_RE = re.compile(r"[EW]\d+")
@@ -588,6 +590,70 @@ class TestE024EmptyDirInContent:
         ]
 
 
+def _empty_state_inventory(*version_ids: str) -> dict:
+    block = {
+        "created": "2024-01-01T00:00:00Z",
+        "state": {},
+        "message": "init",
+        "user": {"name": "test", "address": "mailto:t@e.org"},
+    }
+    return inventory(
+        manifest={},
+        head=version_ids[-1],
+        versions={v: block for v in version_ids},
+    )
+
+
+def _codes(r: ValidationReport) -> list[str]:
+    return sorted(f.code for f in r.findings)
+
+
+def _validate_on_s3(obj: Path) -> ValidationReport:
+    """Mirror obj to moto S3, each empty directory as a folder-marker key."""
+    with mock_aws():
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="test-bucket")
+        for p in obj.rglob("*"):
+            key = f"obj/{p.relative_to(obj).as_posix()}"
+            if p.is_file():
+                client.put_object(Bucket="test-bucket", Key=key, Body=p.read_bytes())
+            elif not any(p.iterdir()):
+                client.put_object(Bucket="test-bucket", Key=f"{key}/", Body=b"")
+        return validate_object(S3FS("test-bucket", client=client), "obj")
+
+
+class TestS3FolderMarkerParity:
+    def test_empty_content_dir_is_W003(self, tmp_path: Path):
+        _make_object(tmp_path, _empty_state_inventory("v1"), empty_content=True)
+
+        r = _validate_on_s3(tmp_path)
+
+        assert r.has_code("W003")
+        assert _codes(r) == _codes(validate_object(LocalFS(tmp_path), ""))
+
+    def test_empty_declared_version_dir_is_W010(self, tmp_path: Path):
+        _make_object(tmp_path, _empty_state_inventory("v1", "v2"), empty_content=True)
+        (tmp_path / "v2").mkdir()
+
+        r = _validate_on_s3(tmp_path)
+
+        assert r.has_code("W010")
+        assert not r.has_code("E046")
+        assert _codes(r) == _codes(validate_object(LocalFS(tmp_path), ""))
+
+    def test_nested_empty_dir_in_content_is_E024(self, tmp_path: Path):
+        shutil.copytree(
+            FIXTURES_ROOT / "1.1" / "good-objects" / "minimal_one_version_one_file",
+            tmp_path / "o",
+        )
+        (tmp_path / "o" / "v1" / "content" / "sub").mkdir()
+
+        r = _validate_on_s3(tmp_path / "o")
+
+        assert _codes(r) == ["E024"]
+        assert _codes(r) == _codes(validate_object(LocalFS(tmp_path / "o"), ""))
+
+
 def _set_inventory_type(vdir: Path, spec: str) -> None:
     inv_path = vdir / "inventory.json"
     raw = re.sub(
@@ -621,3 +687,226 @@ class TestE103SpecNeverOlderThanPrevious:
         assert len(e103) == 1
         assert "v2 inventory" in e103[0].render()
         assert "the v1 inventory" in e103[0].render()
+
+
+class TestE038aRootTypeMatchesDeclaration:
+    @pytest.mark.parametrize(("decl", "inv_spec"), [("1.1", "1.0"), ("1.0", "1.1")])
+    def test_root_type_other_than_declaration(
+        self, tmp_path: Path, decl: str, inv_spec: str
+    ) -> None:
+        obj = tmp_path / "obj"
+        shutil.copytree(
+            FIXTURES_ROOT / decl / "good-objects/minimal_one_version_one_file", obj
+        )
+        _set_inventory_type(obj, inv_spec)
+        _set_inventory_type(obj / "v1", inv_spec)
+
+        r = validate_object(LocalFS(obj), "")
+
+        assert [e.render() for e in r.errors] == [
+            "OCFL Object root inventory type attribute has wrong value"
+            f" (expected https://ocfl.io/{decl}/spec/#inventory,"
+            f" got https://ocfl.io/{inv_spec}/spec/#inventory)"
+        ]
+
+    def test_unparseable_type_is_not_e038a(self, tmp_path: Path) -> None:
+        obj = tmp_path / "obj"
+        shutil.copytree(
+            FIXTURES_ROOT / "1.1/good-objects/minimal_one_version_one_file", obj
+        )
+        _set_inventory_type(obj, "x")
+        _set_inventory_type(obj / "v1", "x")
+
+        r = validate_object(LocalFS(obj), "")
+
+        assert [e.code for e in r.errors] == ["E038b", "E038b"]
+
+
+@pytest.mark.parametrize(
+    "extension",
+    [
+        "0008-schema-registry",
+        "0009-digest-algorithms",
+        "0010-differential-n-tuple-omit-prefix-storage-layout",
+        "0011-direct-clean-path-layout",
+        "0012-hash-and-no-prefix-id-n-tuple-storage-layout",
+    ],
+)
+def test_registered_extension_dir_is_not_w013(tmp_path: Path, extension: str):
+    obj = tmp_path / "o"
+    shutil.copytree(
+        FIXTURES_ROOT / "1.1/good-objects/minimal_one_version_one_file", obj
+    )
+    (obj / "extensions" / extension).mkdir(parents=True)
+    (obj / "extensions" / extension / "config.json").write_text("{}")
+
+    result = validate_object(LocalFS(tmp_path), "o")
+
+    assert [f.code for f in result.findings] == []
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ["0=ocfl_object_1.0", "0=ocfl_object_1.1"],
+        ["0=ocfl_object_1.1", "0=ocfl_object_1.0"],
+    ],
+)
+def test_highest_declaration_is_used_whatever_the_listing_order(names):
+    entries = [FsEntry(name=n, is_dir=False, is_file=True, size=0) for n in names]
+
+    _unparsed, decls = split_declarations(entries, "object")
+
+    assert [str(d.spec) for d in decls] == ["1.1", "1.0"]
+
+
+def _write_inventory(vdir: Path, inv: dict, sidecar_alg: str) -> bytes:
+    inv_bytes = json.dumps(inv, sort_keys=True, separators=(",", ":")).encode()
+    (vdir / "inventory.json").write_bytes(inv_bytes)
+    digest = hashlib.new(sidecar_alg, inv_bytes).hexdigest()
+    (vdir / f"inventory.json.{sidecar_alg}").write_text(f"{digest} inventory.json\n")
+    return inv_bytes
+
+
+def _two_version_object(tmp_path: Path, *, v1_alg: str, v1_sidecar_alg: str) -> None:
+    """v1 inventory written under `v1_alg`, v2 (head) under sha512."""
+    content = b"data"
+    (tmp_path / "0=ocfl_object_1.1").write_text("ocfl_object_1.1\n")
+    v1_digest = hashlib.new(v1_alg, content).hexdigest()
+    meta = {"message": "m", "user": {"name": "n", "address": "mailto:n@example.org"}}
+    v1_inv = {
+        "id": "http://example.org/obj1",
+        "type": "https://ocfl.io/1.1/spec/#inventory",
+        "digestAlgorithm": v1_alg,
+        "head": "v1",
+        "manifest": {v1_digest: ["v1/content/file.txt"]},
+        "versions": {
+            "v1": {"created": "2024-01-01T00:00:00Z", "state": {v1_digest: ["f"]}}
+            | meta,
+        },
+    }
+    digest = hashlib.sha512(content).hexdigest()
+    root_inv = {
+        **v1_inv,
+        "digestAlgorithm": "sha512",
+        "head": "v2",
+        "manifest": {digest: ["v1/content/file.txt"]},
+        "versions": {
+            "v1": {"created": "2024-01-01T00:00:00Z", "state": {digest: ["f"]}} | meta,
+            "v2": {"created": "2024-01-02T00:00:00Z", "state": {digest: ["f"]}} | meta,
+        },
+    }
+    (tmp_path / "v1" / "content").mkdir(parents=True)
+    (tmp_path / "v2").mkdir()
+    (tmp_path / "v1" / "content" / "file.txt").write_bytes(content)
+    _write_inventory(tmp_path / "v1", v1_inv, v1_sidecar_alg)
+    _write_inventory(tmp_path / "v2", root_inv, "sha512")
+    _write_inventory(tmp_path, root_inv, "sha512")
+
+
+class TestVersionSidecarAlgorithm:
+    def test_sidecar_in_other_algorithm_fires_e058a(self, tmp_path: Path):
+        obj = tmp_path / "o"
+        shutil.copytree(
+            FIXTURES_ROOT / "1.1/good-objects/minimal_one_version_one_file", obj
+        )
+        v1 = obj / "v1"
+        (v1 / "inventory.json.sha512").unlink()
+        md5 = hashlib.md5((v1 / "inventory.json").read_bytes(), usedforsecurity=False)
+        (v1 / "inventory.json.md5").write_text(f"{md5.hexdigest()} inventory.json\n")
+
+        r = validate_object(LocalFS(tmp_path), "o")
+
+        assert sorted(
+            ((f.code, dict(f.detail)) for f in r.findings), key=lambda t: t[0]
+        ) == [
+            ("E015", {"where": "v1", "entry": "inventory.json.md5"}),
+            ("E058a", {"where": "v1", "path": "o/v1/inventory.json.sha512"}),
+        ]
+
+    def test_sidecar_follows_its_own_inventory_algorithm(self, tmp_path: Path):
+        _two_version_object(tmp_path, v1_alg="sha256", v1_sidecar_alg="sha256")
+
+        r = validate_object(LocalFS(tmp_path), "")
+
+        assert [f.code for f in r.findings] == ["W004"]
+
+    def test_sidecar_in_root_algorithm_for_older_inventory_fires_e058a(
+        self, tmp_path: Path
+    ):
+        _two_version_object(tmp_path, v1_alg="sha256", v1_sidecar_alg="sha512")
+
+        r = validate_object(LocalFS(tmp_path), "")
+
+        assert sorted(
+            ((f.code, dict(f.detail)) for f in r.findings), key=lambda t: t[0]
+        ) == [
+            ("E015", {"where": "v1", "entry": "inventory.json.sha512"}),
+            ("E058a", {"where": "v1", "path": "v1/inventory.json.sha256"}),
+            ("W004", {"where": "v1"}),
+        ]
+
+
+@pytest.mark.parametrize("sidecar", ["", " \n"])
+def test_empty_root_sidecar_fires_e061(tmp_path: Path, sidecar: str):
+    obj = tmp_path / "o"
+    shutil.copytree(
+        FIXTURES_ROOT / "1.1/good-objects/minimal_one_version_one_file", obj
+    )
+    (obj / "inventory.json.sha512").write_text(sidecar)
+
+    r = validate_object(LocalFS(tmp_path), "o")
+
+    assert [(f.code, dict(f.detail)) for f in r.findings] == [
+        ("E061", {"description": "sidecar must contain digest and filename"})
+    ]
+
+
+def _findings(r: ValidationReport) -> list[tuple[str, dict[str, str]]]:
+    return sorted(((f.code, dict(f.detail)) for f in r.findings), key=lambda t: t[0])
+
+
+class TestUnsupportedFileTypes:
+    @pytest.fixture
+    def obj(self, tmp_path: Path) -> Path:
+        obj = tmp_path / "o"
+        shutil.copytree(
+            FIXTURES_ROOT / "1.1/good-objects/minimal_one_version_one_file", obj
+        )
+        return obj
+
+    @pytest.mark.parametrize(
+        "link",
+        ["link", "v1/link", "v1/content/link"],
+    )
+    def test_file_symlink_fires_E090(self, obj: Path, link: str):
+        (obj / link).symlink_to(obj / "v1/content/a_file.txt")
+
+        r = validate_object(LocalFS(obj.parent), "o")
+
+        assert _findings(r) == [("E090", {"path": f"o/{link}"})]
+
+    def test_dir_symlink_in_content_fires_E090(self, obj: Path):
+        (obj / "v1/content/dirlink").symlink_to(obj / "v1", target_is_directory=True)
+
+        r = validate_object(LocalFS(obj.parent), "o")
+
+        assert _findings(r) == [("E090", {"path": "o/v1/content/dirlink"})]
+
+    def test_fifo_in_content_fires_L003(self, obj: Path):
+        os.mkfifo(obj / "v1/content/pipe")
+
+        r = validate_object(LocalFS(obj.parent), "o")
+
+        assert _findings(r) == [("L003", {"path": "o/v1/content/pipe", "kind": "fifo"})]
+
+    def test_other_findings_survive(self, obj: Path):
+        (obj / "link").symlink_to(obj / "inventory.json")
+        (obj / "stray.txt").write_text("x")
+
+        r = validate_object(LocalFS(obj.parent), "o")
+
+        assert _findings(r) == [
+            ("E001a", {"file": "stray.txt"}),
+            ("E090", {"path": "o/link"}),
+        ]

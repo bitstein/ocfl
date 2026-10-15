@@ -152,9 +152,9 @@ class S3FS(ConditionalFS, CopyFS, FileWalker):
                     )
             for obj in page.get("Contents", ()):
                 obj_key = obj["Key"]
+                found_any = True
                 if _is_dir_marker(obj_key):
                     continue
-                found_any = True
                 entry_name = obj_key[len(prefix) :]
                 if entry_name:
                     yield FsEntry(

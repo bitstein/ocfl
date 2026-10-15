@@ -17,13 +17,14 @@ class Spec(enum.StrEnum):
     def inventory_type_url(self) -> str:
         return f"https://ocfl.io/{self.value}/spec/#inventory"
 
+    @property
+    def order_key(self) -> tuple[int, ...]:
+        """Sort key in numeric version order (not string order)."""
+        return tuple(int(p) for p in self.value.split("."))
+
     def is_newer_than(self, other: Spec) -> bool:
         """Numeric version comparison (not string order)."""
-
-        def key(s: Spec) -> tuple[int, ...]:
-            return tuple(int(p) for p in s.value.split("."))
-
-        return key(self) > key(other)
+        return self.order_key > other.order_key
 
     @classmethod
     def from_inventory_type(cls, url: str) -> Spec:

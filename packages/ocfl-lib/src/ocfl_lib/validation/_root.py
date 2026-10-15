@@ -9,12 +9,14 @@ from ocfl_lib._spec import Spec
 from ocfl_lib.fs import _utils as fs_utils
 from ocfl_lib.validation._object import (
     REGISTERED_EXTENSIONS,
+    REGISTERED_LAYOUTS,
     check_extensions_dir,
     declaration_reads_wrong,
     split_declarations,
     validate_object,
 )
 from ocfl_lib.validation._report import FindingCollector
+from ocfl_lib.validation._unsupported import RegularEntries
 
 if TYPE_CHECKING:
     from ocfl_lib import ots
@@ -49,8 +51,9 @@ def validate_root(
     """
     result = FindingCollector(path=path)
     summary = _RootSummary()
-    _validate_root(
-        fsys,
+    regular = RegularEntries(fsys)
+    obj_paths = _validate_root(
+        regular,
         path,
         result,
         summary,
@@ -59,6 +62,7 @@ def validate_root(
         max_errors=max_errors,
         chain=chain,
     )
+    regular.report(result, skip_dirs=obj_paths)
     return result.report(
         objects_checked=summary.objects_checked,
         objects_valid=summary.objects_valid,
@@ -67,7 +71,7 @@ def validate_root(
 
 
 def _validate_root(
-    fsys: FileWalker,
+    fsys: RegularEntries,
     path: str,
     result: FindingCollector,
     summary: _RootSummary,
@@ -76,12 +80,13 @@ def _validate_root(
     check_digests: bool,
     max_errors: int,
     chain: ots.ChainCheck | None,
-) -> None:
+) -> list[str]:
+    """Paths of the objects found, which report their own unsupported entries."""
     try:
         entries = list(fsys.read_dir(path))
     except OSError:
         result.error("E069a", assumed_version="1.1")
-        return
+        return []
 
     root_spec = _check_root_declaration(fsys, path, entries, result)
     _check_layout_file(fsys, path, result)
@@ -93,17 +98,18 @@ def _validate_root(
         not_dir_code="E112",
         unknown_code="W016",
     )
-    if validate_objects:
-        _walk_and_validate(
-            fsys,
-            path,
-            result,
-            summary,
-            check_digests=check_digests,
-            max_errors=max_errors,
-            root_spec=root_spec,
-            chain=chain,
-        )
+    if not validate_objects:
+        return []
+    return _walk_and_validate(
+        fsys,
+        path,
+        result,
+        summary,
+        check_digests=check_digests,
+        max_errors=max_errors,
+        root_spec=root_spec,
+        chain=chain,
+    )
 
 
 def _check_root_declaration(
@@ -129,24 +135,32 @@ def _check_root_declaration(
 
 
 def _check_layout_file(fsys: FS, path: str, result: FindingCollector) -> None:
-    """ocfl_layout.json is optional; when present it must parse (E070) to an
-    object (E071).
-    """
     try:
         layout_bytes = fs_utils.read_all(fsys, join_path(path, "ocfl_layout.json"))
     except OSError:
         return
+    root = path or "."
     try:
         layout_data = parse_json(layout_bytes)
     except (json.JSONDecodeError, ValueError) as e:
-        result.error("E070", path=path or ".", explanation=str(e))
+        result.error("E070", path=root, explanation=f"not valid JSON: {e}")
         return
-    if layout_data is not None and not isinstance(layout_data, dict):
-        result.error("E071", path=path or ".")
+    if not isinstance(layout_data, dict):
+        result.error("E070", path=root, explanation="not a JSON object")
+        return
+    missing = [k for k in ("extension", "description") if k not in layout_data]
+    if missing:
+        result.error(
+            "E070", path=root, explanation=f"missing key(s): {', '.join(missing)}"
+        )
+        return
+    extension = layout_data["extension"]
+    if extension not in REGISTERED_LAYOUTS:
+        result.error("E071", path=root, extension=json.dumps(extension))
 
 
 def _walk_and_validate(
-    fsys: FileWalker,
+    fsys: RegularEntries,
     root_path: str,
     result: FindingCollector,
     summary: _RootSummary,
@@ -155,13 +169,13 @@ def _walk_and_validate(
     max_errors: int,
     root_spec: Spec | None,
     chain: ots.ChainCheck | None,
-) -> None:
+) -> list[str]:
     obj_paths = _walk_hierarchy(fsys, root_path, result, root_spec)
 
     for obj_path in obj_paths:
         summary.objects_checked += 1
         obj_report = validate_object(
-            fsys, obj_path, check_digests=check_digests, chain=chain
+            fsys.inner, obj_path, check_digests=check_digests, chain=chain
         )
         result.extend(obj_report.findings)
         if obj_report.is_valid:
@@ -171,6 +185,7 @@ def _walk_and_validate(
             if summary.objects_invalid >= max_errors:
                 summary.truncated = True
                 break
+    return obj_paths
 
 
 def _walk_hierarchy(

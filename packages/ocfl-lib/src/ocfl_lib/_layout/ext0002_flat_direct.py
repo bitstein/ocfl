@@ -1,6 +1,7 @@
 import msgspec
 
 from ocfl_lib._layout._component import require_disk_safe_component
+from ocfl_lib._layout.config import convert_config
 from ocfl_lib._layout.types import Layout
 
 EXTENSION_NAME = "0002-flat-direct-storage-layout"
@@ -24,7 +25,7 @@ class FlatDirectLayout(Layout):
     @classmethod
     def from_config(cls, config: dict | None = None) -> FlatDirectLayout:
         if config is not None:
-            msgspec.convert(config, FlatDirectConfig)
+            convert_config(config, FlatDirectConfig)
         return cls()
 
     def resolve(self, object_id: str) -> str:

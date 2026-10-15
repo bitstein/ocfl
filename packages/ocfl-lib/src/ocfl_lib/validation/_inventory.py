@@ -1,3 +1,4 @@
+import calendar
 import re
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -346,6 +347,16 @@ def _validate_versions(
             result.error("E107", where=where, digests=digest)
 
 
+# RFC 3339 5.6 date-time, with seconds and offset optional so their absence
+# reports as E049b/E049a; ASCII and case-insensitive per 5.6.
+_CREATED_RE = re.compile(
+    r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})"
+    r"(?::(\d{2})(?:\.\d+)?)?"
+    r"(Z|[+-](\d{2}):(\d{2}))?",
+    re.ASCII | re.IGNORECASE,
+)
+
+
 def _validate_created(
     created: str,
     result: FindingCollector,
@@ -353,37 +364,40 @@ def _validate_created(
     where: str,
     version: str,
 ) -> None:
-    from datetime import datetime
-
-    try:
-        dt = datetime.fromisoformat(created)
-    except ValueError:
-        result.error("E049b", where=where, version=version)
+    match = _CREATED_RE.fullmatch(created)
+    if match is None:
+        result.error(
+            "E049c",
+            where=where,
+            version=version,
+            description="not an RFC 3339 date-time",
+        )
         return
 
-    if dt.tzinfo is None:
+    year, month, day, hour, minute, second, offset, off_hour, off_minute = (
+        match.groups()
+    )
+    in_range = (
+        1 <= int(month) <= 12
+        and 1 <= int(day) <= calendar.monthrange(int(year), int(month))[1]
+        and int(hour) <= 23
+        and int(minute) <= 59
+        and (second is None or int(second) <= 60)
+        and (off_hour is None or (int(off_hour) <= 23 and int(off_minute) <= 59))
+    )
+    if not in_range:
+        result.error(
+            "E049c",
+            where=where,
+            version=version,
+            description="date or time field out of range",
+        )
+        return
+
+    if offset is None:
         result.error("E049a", where=where, version=version)
-
-    if not _created_has_seconds(created):
+    if second is None:
         result.error("E049b", where=where, version=version)
-
-
-def _created_has_seconds(created: str) -> bool:
-    if "T" not in created:
-        return False
-
-    time_part = created.split("T", 1)[1]
-    if time_part.endswith("Z"):
-        time_part = time_part[:-1]
-    else:
-        for sign in ("+", "-"):
-            offset_start = time_part.rfind(sign)
-            if offset_start > 0:
-                time_part = time_part[:offset_start]
-                break
-
-    parts = time_part.split(":")
-    return len(parts) >= 3 and parts[2] != ""
 
 
 def _validate_version_state(
